@@ -1,0 +1,272 @@
+# Aroomo P0 基础 Compose（PRODUCT §5–7、§16 P0；DECISIONS D30/D31）
+#
+# 用法（在 deploy/ 目录下）：
+#   docker compose -f docker-compose.yml -f tiers/<档位>.yml [-f local.yml] [-f data-dir.yml] up -d
+# 档位由 ../scripts/select-tier.sh 按内存自动选择（数值待内存实测报告定稿）。
+#
+# 约定：
+# - 基础文件不发布任何宿主机端口。服务器经 cloudflared（profile: tunnel）对外；
+#   本机 / Windows 使用 local.yml 只绑定 127.0.0.1。
+# - 所有密钥只从 .env 读取（模板见 .env.example），本文件不含任何密钥值。
+# - 每个服务只拿到自己需要的变量，不使用 env_file 把整份 .env 塞进容器。
+# - 镜像全部固定版本号，且都有 linux/amd64 + linux/arm64（PRODUCT §7.1）。
+
+name: aroomo
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL（ParadeDB = PostgreSQL 17 + pgvector + pg_search）
+  # LobeHub 2.x 官方 compose 使用 ParadeDB；LiteLLM 和 Core 各用独立的库和账号。
+  # ---------------------------------------------------------------------------
+  postgres:
+    <<: *restart
+    image: paradedb/paradedb:0.26.3-pg17
+    # 保持镜像默认的预加载列表：首次启动的初始化脚本会创建 pg_cron 扩展
+    command: ['postgres', '-c', 'shared_preload_libraries=pg_search,pg_cron,pg_stat_statements']
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
+      POSTGRES_DB: ${LOBE_DB_NAME:-lobechat}
+      # 供 init 脚本创建 litellm / aroomo_core 两个库与账号
+      LITELLM_DB_PASSWORD: ${LITELLM_DB_PASSWORD:?请在 .env 中设置 LITELLM_DB_PASSWORD}
+      CORE_DB_PASSWORD: ${CORE_DB_PASSWORD:?请在 .env 中设置 CORE_DB_PASSWORD}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      # 只挂单个文件，避免覆盖 ParadeDB 自带的初始化脚本
+      - ./postgres/20-aroomo-dbs.sh:/docker-entrypoint-initdb.d/20-aroomo-dbs.sh:ro
+    healthcheck:
+      # 走 TCP：首次初始化时临时实例只监听 Unix socket
+      test: ['CMD-SHELL', 'pg_isready -U postgres -h 127.0.0.1']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    networks: [aroomo]
+
+  redis:
+    <<: *restart
+    image: redis:7.4.12-alpine
+    command: ['redis-server', '--save', '60', '1000', '--appendonly', 'yes']
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [aroomo]
+
+  # S3 兼容对象存储（LobeHub 文件上传需要；PRODUCT §7.1 对象存储用 S3 接口抽象）
+  rustfs:
+    <<: *restart
+    image: rustfs/rustfs:1.0.4
+    command: ['--access-key', '${RUSTFS_ACCESS_KEY:?请设置 RUSTFS_ACCESS_KEY}', '--secret-key', '${RUSTFS_SECRET_KEY:?请设置 RUSTFS_SECRET_KEY}', '/data']
+    environment:
+      RUSTFS_CONSOLE_ENABLE: 'false'
+    volumes:
+      - rustfs-data:/data
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:9000/health >/dev/null 2>&1 || exit 1']
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks: [aroomo]
+
+  # 一次性：创建 LobeHub 的桶并设置 CORS。与上游不同：不 echo 密钥、不用 set -x。
+  rustfs-init:
+    image: rustfs/rc:v0.1.36
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    environment:
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY}
+      BUCKET: ${RUSTFS_LOBE_BUCKET:-lobe}
+    volumes:
+      - ./lobe/bucket.config.json:/bucket.config.json:ro
+      - ./lobe/rustfs-init.sh:/rustfs-init.sh:ro
+    entrypoint: ['/bin/sh', '/rustfs-init.sh']
+    restart: 'no'
+    networks: [aroomo]
+
+  # ---------------------------------------------------------------------------
+  # LiteLLM 成员网关（DECISIONS：P0 用 LiteLLM）。只在容器网络内可达，不对外。
+  # Key 存储：STORE_MODEL_IN_DB=True 时，模型与供应商凭据写入 litellm 库，
+  # 由 LITELLM_SALT_KEY 加密；该值一旦写入模型就不能更换（见 deploy/README.md）。
+  # ---------------------------------------------------------------------------
+  litellm:
+    <<: *restart
+    image: ghcr.io/berriai/litellm:v1.106.4
+    command: ['--config', '/app/config.yaml', '--port', '4000', '--num_workers', '${LITELLM_NUM_WORKERS:-1}']
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://litellm:${LITELLM_DB_PASSWORD}@postgres:5432/litellm
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?请在 .env 中设置 LITELLM_MASTER_KEY}
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:?请在 .env 中设置 LITELLM_SALT_KEY}
+      STORE_MODEL_IN_DB: 'True'
+      LITELLM_LOG: ${LITELLM_LOG:-INFO}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    healthcheck:
+      test: ['CMD-SHELL', "python3 -c \"import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness', timeout=4); sys.exit(0)\""]
+      interval: 15s
+      timeout: 6s
+      retries: 10
+      start_period: 90s
+    networks: [aroomo]
+
+  # ---------------------------------------------------------------------------
+  # Aroomo Core（TypeScript / Node 22 / Fastify）。只在容器网络内可达。
+  # ---------------------------------------------------------------------------
+  core:
+    <<: *restart
+    build:
+      context: ../core
+    image: aroomo-core:${AROOMO_CORE_TAG:-dev}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      litellm:
+        condition: service_started
+    environment:
+      CORE_PORT: '8080'
+      CORE_LOG_LEVEL: ${CORE_LOG_LEVEL:-info}
+      CORE_TIMEZONE: ${TZ:-Asia/Shanghai}
+      LITELLM_BASE_URL: http://litellm:4000
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      CORE_DATABASE_URL: postgresql://aroomo_core:${CORE_DB_PASSWORD}@postgres:5432/aroomo_core
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [aroomo]
+
+  # ---------------------------------------------------------------------------
+  # 对话界面：LobeHub server 数据库版（2.x 起镜像名为 lobehub/lobehub；
+  # 旧的 lobehub/lobe-chat-database 已停更）。
+  # ---------------------------------------------------------------------------
+  lobe:
+    <<: *restart
+    image: lobehub/lobehub:2.2.20
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rustfs:
+        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
+      litellm:
+        condition: service_started
+    environment:
+      APP_URL: ${APP_URL:-http://localhost:3210}
+      INTERNAL_APP_URL: http://localhost:3210
+      KEY_VAULTS_SECRET: ${KEY_VAULTS_SECRET:?请在 .env 中设置 KEY_VAULTS_SECRET}
+      AUTH_SECRET: ${AUTH_SECRET:?请在 .env 中设置 AUTH_SECRET}
+      JWKS_KEY: ${JWKS_KEY:-}
+      # 单用户：只允许这些邮箱登录（不做多用户，DECISIONS v4.3）
+      AUTH_ALLOWED_EMAILS: ${AUTH_ALLOWED_EMAILS:-}
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/${LOBE_DB_NAME:-lobechat}
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://localhost:9000}
+      S3_INTERNAL_ENDPOINT: http://rustfs:9000
+      S3_BUCKET: ${RUSTFS_LOBE_BUCKET:-lobe}
+      S3_ENABLE_PATH_STYLE: '1'
+      S3_ACCESS_KEY: ${RUSTFS_ACCESS_KEY}
+      S3_ACCESS_KEY_ID: ${RUSTFS_ACCESS_KEY}
+      S3_SECRET_ACCESS_KEY: ${RUSTFS_SECRET_KEY}
+      S3_SET_ACL: '0'
+      LLM_VISION_IMAGE_USE_BASE64: '1'
+      REDIS_URL: redis://redis:6379
+      REDIS_PREFIX: lobechat
+      REDIS_TLS: '0'
+      # 所有模型调用经 LiteLLM（PRODUCT §5.2）；Key 由 Core 写入 LiteLLM，不存在 LobeHub
+      OPENAI_PROXY_URL: http://litellm:4000/v1
+      OPENAI_API_KEY: ${LOBE_LITELLM_VIRTUAL_KEY:-}
+      # Agent Gateway 默认关闭（P0 只需对话）；需要时启用 profile agent-gateway 并设为 1
+      ENABLE_AGENT_GATEWAY: ${LOBE_ENABLE_AGENT_GATEWAY:-0}
+      AGENT_GATEWAY_INTERNAL_URL: http://gateway:8787
+      AGENT_GATEWAY_URL: ${AGENT_GATEWAY_URL:-}
+      AGENT_GATEWAY_SERVICE_TOKEN: ${GATEWAY_SERVICE_TOKEN:-}
+      TZ: ${TZ:-Asia/Shanghai}
+    healthcheck:
+      test: ['CMD', '/bin/node', '-e', "fetch('http://127.0.0.1:3210/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    networks: [aroomo]
+
+  # 可选：LobeHub Agent Gateway（上游 2.2.20 compose 固定为 0.3.2）
+  gateway:
+    <<: *restart
+    image: ghcr.io/lobehub/lobehub-gateway:0.3.2
+    profiles: [agent-gateway]
+    environment:
+      SERVICE_TOKEN: ${GATEWAY_SERVICE_TOKEN:-}
+      JWKS_PUBLIC_KEY: ${JWKS_PUBLIC_KEY:-}
+      LOBE_API_BASE_URL: http://lobe:3210
+    networks: [aroomo]
+
+  # ---------------------------------------------------------------------------
+  # Cloudflare Tunnel（服务器用；除 22 端口外不开放任何入站端口，DECISIONS v4.3 d）
+  # 路由在 Cloudflare 控制台配置：应用域名 → http://lobe:3210，对象存储域名 → http://rustfs:9000。
+  # 镜像是 distroless，没有 shell，因此不写 healthcheck（用 --metrics 的 /ready 由外部探测）。
+  # ---------------------------------------------------------------------------
+  cloudflared:
+    <<: *restart
+    image: cloudflare/cloudflared:2026.10.5
+    profiles: [tunnel]
+    command: ['tunnel', '--no-autoupdate', '--metrics', '0.0.0.0:2000', 'run']
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    networks: [aroomo]
+
+  # ---------------------------------------------------------------------------
+  # 备份 sidecar：restic → AWS 之外的 S3 兼容存储（DECISIONS v4.3 e）。
+  # 需要备份凭据，所以放在 profile backup 里，服务器上 COMPOSE_PROFILES=tunnel,backup 启用。
+  # ---------------------------------------------------------------------------
+  backup:
+    <<: *restart
+    build:
+      context: ./backup
+    image: aroomo-backup:${AROOMO_BACKUP_TAG:-dev}
+    profiles: [backup]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      BACKUP_CRON: ${BACKUP_CRON:-30 3 * * *}
+      RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:-}
+      RESTIC_PASSWORD: ${RESTIC_PASSWORD:-}
+      AWS_ACCESS_KEY_ID: ${BACKUP_S3_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${BACKUP_S3_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION: ${BACKUP_S3_REGION:-auto}
+      PGHOST: postgres
+      PGUSER: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - rustfs-data:/data/rustfs:ro
+      - ./litellm:/data/config/litellm:ro
+      - ../scripts:/opt/aroomo/scripts:ro
+    networks: [aroomo]
+
+networks:
+  aroomo:
+    driver: bridge
+
+# 默认使用 Docker 管理的命名卷（Linux 与 Windows/WSL2 都可用）。
+# 想把数据放到指定文件夹：叠加 data-dir.yml 并在 .env 里设置 DATA_DIR（绝对路径）。
+volumes:
+  pg-data:
+  redis-data:
+  rustfs-data:

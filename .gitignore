@@ -1,0 +1,26 @@
+# 环境变量与密钥（绝不提交）
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# 数据目录
+data/
+deploy/data/
+backups/
+*.dump
+
+# Node
+node_modules/
+dist/
+coverage/
+*.log
+npm-debug.log*
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
