@@ -56,7 +56,7 @@ jobs:
       - run: docker compose version
       - run: scripts/check-compose.sh
       - name: shellcheck
-        run: shellcheck scripts/*.sh deploy/backup/entrypoint.sh deploy/postgres/20-aroomo-dbs.sh deploy/lobe/rustfs-init.sh
+        run: shellcheck -x scripts/*.sh deploy/backup/entrypoint.sh deploy/postgres/20-aroomo-dbs.sh deploy/lobe/rustfs-init.sh
       - name: select-tier 阈值
         run: |
           test "$(MEM_TOTAL_MB=1900 scripts/select-tier.sh)" = demo-2g
@@ -85,6 +85,24 @@ jobs:
             sleep 1
           done
           docker logs core; exit 1
+
+  backup-e2e:
+    name: 备份/恢复端到端（S3 目标 → 删库 → 恢复 → 核对 → 演练）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - run: docker compose version
+      - run: scripts/test-backup-e2e.sh
+        env:
+          E2E_REPORT_DIR: ${{ runner.temp }}/drill-reports
+      - name: 上传恢复演练报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restore-drill-report
+          path: ${{ runner.temp }}/drill-reports/
+          if-no-files-found: ignore
 
   secrets:
     name: 密钥扫描（gitleaks）

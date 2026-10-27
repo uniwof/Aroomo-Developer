@@ -14,7 +14,8 @@
 | `postgres/20-aroomo-dbs.sh` | 首次初始化时为 LiteLLM、Core 各建一个库和账号 |
 | `litellm/config.yaml` | LiteLLM 配置（不含模型和 Key） |
 | `lobe/` | LobeHub 对象存储桶初始化 |
-| `backup/` | 备份 sidecar 镜像（PostgreSQL 17 客户端 + restic） |
+| `backup/` | 备份 sidecar / 恢复镜像（PostgreSQL 17 客户端 + restic + jq） |
+| `test/e2e.yml` | 仅测试用：备份端到端测试接入测试 S3 目标的网络 |
 
 ## 服务与镜像（2026-10-27 核实）
 
@@ -58,11 +59,7 @@ AROOMO_TIER=standard scripts/compose.sh config   # 指定档位并查看合并�
 
 ## 备份与恢复（restic）
 
-- 目标：AWS 之外的 S3 兼容存储（例如 Cloudflare R2、Backblaze B2），由 `RESTIC_REPOSITORY` 指定；数据由 restic 加密。
-- 定时：`BACKUP_CRON`（默认每天 03:30，按 `TZ`）。手动：`docker compose --profile backup run --rm backup now`。
-- 内容：`pg_dumpall` 全量逻辑备份、对象存储数据卷、LiteLLM 配置。不含 `.env`。
-- 恢复：先 `docker compose stop lobe litellm core`，再 `docker compose --profile backup run --rm backup restore --yes-overwrite-database [snapshot]`。
-- `scripts/backup.sh`、`scripts/restore.sh` 目前是骨架；保留策略、校验、对象存储恢复和恢复演练文档见 Jules Issue。P0 必须完成一次恢复演练并记录耗时。
+见 [docs/ops/BACKUP.md](../docs/ops/BACKUP.md)。要点：目标为 AWS 之外的 S3 兼容存储（R2 / B2）；每库 `pg_dump` + 对象存储 + 配置；`.env`（含 `LITELLM_SALT_KEY`）不进备份；恢复用 `restore` 服务并需 `--yes-overwrite-database`；演练用 `scripts/restore-drill.sh`。
 
 ## 尚未验证
 
