@@ -8,3 +8,7 @@
 *.cmd text eol=crlf
 *.docx binary
 *.png binary
+*.psm1 text eol=crlf
+*.psd1 text eol=crlf
+*.iss text eol=crlf
+*.isl -text

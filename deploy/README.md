@@ -9,6 +9,7 @@
 | `docker-compose.yml` | 基础服务；**不发布任何宿主机端口** |
 | `tiers/demo-2g.yml`、`standard.yml`、`full.yml` | 各档位的内存上限（**暂定值**，等 P0-b 内存实测报告定稿） |
 | `local.yml` | 本机访问：只绑定 `127.0.0.1:3210`（界面）和 `127.0.0.1:9000`（对象存储） |
+| `local-backup.yml` | Windows 本地版：restic 仓库放在用户数据文件夹（`LOCAL_BACKUP_DIR` → `/repo`），见 [docs/ops/WINDOWS.md](../docs/ops/WINDOWS.md) |
 | `data-dir.yml` | 把数据放到 `DATA_DIR` 指定的文件夹（绝对路径，需先建好 `postgres/ redis/ rustfs/`） |
 | `.env.example` | 环境变量模板（只有占位符）；复制成 `.env` 填写，`.env` 不入库 |
 | `postgres/20-aroomo-dbs.sh` | 首次初始化时为 LiteLLM、Core 各建一个库和账号 |

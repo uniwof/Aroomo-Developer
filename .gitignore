@@ -28,3 +28,6 @@ npm-debug.log*
 Thumbs.db
 .idea/
 .vscode/
+
+# Windows 安装包构建输出
+installer/windows/Output/
