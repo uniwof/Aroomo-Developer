@@ -1,5 +1,10 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import { registerAuditRoutes } from './audit/routes.js';
+import { installAuth } from './auth/plugin.js';
+import { createTokenVerifier } from './auth/tokens.js';
 import type { CoreConfig } from './config.js';
+import { type CoreDeps, memoryDeps } from './deps.js';
+import { installErrorHandler } from './http/errors.js';
 import { route } from './router/route.js';
 import type { RoutableMember } from './router/types.js';
 
@@ -11,7 +16,7 @@ interface RoutePreviewBody {
   leadId?: string | null;
 }
 
-export function buildServer(cfg: CoreConfig): FastifyInstance {
+export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps()): FastifyInstance {
   const app = Fastify({
     logger:
       cfg.logLevel === 'silent'
@@ -19,9 +24,36 @@ export function buildServer(cfg: CoreConfig): FastifyInstance {
         : {
             level: cfg.logLevel,
             // 防止密钥进日志（PRODUCT 0.4）
-            redact: ['req.headers.authorization', 'req.headers.cookie', 'req.headers["x-api-key"]'],
+            redact: {
+              paths: [
+                'req.headers.authorization',
+                'req.headers.cookie',
+                'req.headers["x-api-key"]',
+                'req.body.apiKey',
+                'body.apiKey',
+                'apiKey',
+                '*.apiKey',
+              ],
+              censor: '[REDACTED]',
+            },
           },
   });
+
+  installErrorHandler(app);
+  installAuth(app, {
+    verify: createTokenVerifier({
+      ownerToken: cfg.ownerToken,
+      tokenSecret: cfg.tokenSecret,
+      operatorTokens: deps.operatorTokens,
+      now: deps.now,
+    }),
+    auditLog: deps.auditLog,
+    ownerConfigured: Boolean(cfg.ownerToken),
+  });
+  if (deps.db) {
+    const db = deps.db;
+    app.addHook('onClose', async () => db.close());
+  }
 
   app.get('/healthz', async () => ({ status: 'ok', service: 'aroomo-core', version: VERSION }));
 
@@ -61,6 +93,8 @@ export function buildServer(cfg: CoreConfig): FastifyInstance {
     },
     async (req) => route(req.body.text, { members: req.body.members, leadId: req.body.leadId ?? null }),
   );
+
+  registerAuditRoutes(app, deps.auditLog);
 
   return app;
 }

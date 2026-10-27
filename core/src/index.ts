@@ -1,4 +1,5 @@
 import { ConfigError, loadConfig, toSafeJSON } from './config.js';
+import { createDeps } from './deps.js';
 import { buildServer } from './server.js';
 
 async function main(): Promise<void> {
@@ -13,8 +14,10 @@ async function main(): Promise<void> {
     throw err;
   }
 
-  const app = buildServer(cfg);
-  app.log.info({ config: toSafeJSON(cfg) }, 'aroomo-core starting');
+  const { deps, migrated, storage } = await createDeps(cfg);
+  const app = buildServer(cfg, deps);
+  app.log.info({ config: toSafeJSON(cfg), storage, migrated }, 'aroomo-core starting');
+  if (storage === 'memory') app.log.warn('CORE_DATABASE_URL 未设置：使用内存存储，重启后数据丢失（只适合开发 / 演示）');
 
   const shutdown = async (signal: string) => {
     app.log.info({ signal }, 'shutting down');

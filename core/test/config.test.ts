@@ -55,3 +55,21 @@ describe('loadConfig', () => {
     expect(s).toContain('(set)');
   });
 });
+
+describe('loadConfig：令牌与迁移', () => {
+  it('令牌过短报错；toSafeJSON 不输出令牌', () => {
+    expect(() => loadConfig({ CORE_OWNER_TOKEN: 'short' })).toThrow(ConfigError);
+    expect(() => loadConfig({ CORE_TOKEN_SECRET: 'short' })).toThrow(ConfigError);
+    const tok = 'placeholder-owner-token-0123456789abcdef';
+    const c = loadConfig({ CORE_OWNER_TOKEN: tok });
+    expect(c.ownerToken).toBe(tok);
+    expect(JSON.stringify(toSafeJSON(c))).not.toContain(tok);
+    expect(toSafeJSON(c).ownerToken).toBe('(set)');
+  });
+
+  it('CORE_AUTO_MIGRATE 默认 true，可关闭，非法值报错', () => {
+    expect(loadConfig({}).autoMigrate).toBe(true);
+    expect(loadConfig({ CORE_AUTO_MIGRATE: 'false' }).autoMigrate).toBe(false);
+    expect(() => loadConfig({ CORE_AUTO_MIGRATE: 'maybe' })).toThrow(ConfigError);
+  });
+});
