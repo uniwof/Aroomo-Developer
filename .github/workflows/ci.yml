@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Core（lint + typecheck + test + build）
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: core/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  compose:
+    name: Compose 配置校验 + 脚本检查
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - run: docker compose version
+      - run: scripts/check-compose.sh
+      - name: shellcheck
+        run: shellcheck scripts/*.sh deploy/backup/entrypoint.sh deploy/postgres/20-aroomo-dbs.sh deploy/lobe/rustfs-init.sh
+      - name: select-tier 阈值
+        run: |
+          test "$(MEM_TOTAL_MB=1900 scripts/select-tier.sh)" = demo-2g
+          test "$(MEM_TOTAL_MB=3900 scripts/select-tier.sh)" = standard
+          test "$(MEM_TOTAL_MB=7700 scripts/select-tier.sh)" = full
+
+  images:
+    name: 自建镜像构建（core、backup）
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - run: docker build -t aroomo-core:ci core
+      - run: docker build -t aroomo-backup:ci deploy/backup
+      - name: backup 镜像自检
+        run: |
+          docker run --rm --entrypoint restic aroomo-backup:ci version
+          docker run --rm --entrypoint pg_dumpall aroomo-backup:ci --version
+      - name: core 镜像冒烟测试
+        run: |
+          docker run -d --name core -e CORE_LOG_LEVEL=warn aroomo-core:ci
+          for i in $(seq 1 20); do
+            if docker exec core node -e "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
+              echo healthy; docker rm -f core; exit 0
+            fi
+            sleep 1
+          done
+          docker logs core; exit 1
+
+  pester:
+    name: Windows PowerShell 脚本测试 (Pester)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: 运行 Pester 测试
+        shell: powershell
+        run: |
+          Invoke-Pester -Path "installer/windows/aroomo.Tests.ps1" -Output Detailed -CI
+
+  secrets:
+    name: 密钥扫描（gitleaks）
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

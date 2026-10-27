@@ -1,0 +1,10 @@
+# Windows 检出时保持脚本为 LF，否则容器内执行会失败（本地版与服务器共用同一套文件）
+* text=auto eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.docx binary
+*.png binary
