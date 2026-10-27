@@ -1,0 +1,12 @@
+# 档位：标准版（约 4 GB 内存，PRODUCT §7.3）
+# ⚠ 暂定值：等 P0-b 内存实测报告后定稿。
+services:
+  postgres: { mem_limit: 768m }
+  redis: { mem_limit: 128m }
+  rustfs: { mem_limit: 256m }
+  litellm: { mem_limit: 768m }
+  core: { mem_limit: 256m }
+  lobe: { mem_limit: 1024m }
+  cloudflared: { mem_limit: 128m }
+  backup: { mem_limit: 256m }
+  gateway: { mem_limit: 128m }
