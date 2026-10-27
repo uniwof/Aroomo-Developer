@@ -5,7 +5,7 @@
 > 最后更新：2026-10-27，主程序员（Hark）。
 
 ## 1. 一句话现状
-准备期。方案文档已转成 Markdown 并合并（PR：docs/spec），旧项目审计进行中（PR：docs/audit）。尚无任何代码、部署或线上改动。
+准备期。方案文档已转成 Markdown 并合并（PR：docs/spec），旧项目审计已完成（PR：docs/audit，叠在 docs/spec 之上）。尚无任何代码、部署或线上改动。
 
 ## 2. 必读
 1. docs/PRODUCT.md（冲突优先级 v4.2 ＞ v4.1 ＞ v4，已合并；原始 Word 在 docs/spec/）
@@ -24,6 +24,8 @@
 - 之后：PRODUCT 第 20 节开工前验证 → docs/VERIFY.md；P0 一页纸计划。
 
 ## 5. 未决问题
+- AUDIT 第 5 节 P1–P20 待负责人裁决，其中 P1（Key 迁移需要改动旧 Worker）、P3（可访问性硬约束）、P4–P6（安全缺口）优先。
+- 旧站线上数据（成员、项目、消息、审计日志）条数未知，需在迁移前做只读导出。
 - D29：仓库名称（aroomo-app vs Aroomo-Developer）。
 - main 分支保护和 CI 尚未配置（PRODUCT 17.2.3 第 1 条，P0 由工单工程师搭建）。
 

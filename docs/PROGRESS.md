@@ -8,7 +8,7 @@
 |----|------|------|-----------|------|
 | 文档转换：三份 Word → docs/PRODUCT.md | 主程序员（Hark） | 🟡 待审查 | 分支 docs/spec | v4 为正文，v4.1/v4.2 合并进对应章节，原文未删减 |
 | 建立 DECISIONS / PROGRESS / HANDOFF | 主程序员 | 🟡 待审查 | 分支 docs/spec | D1–D12 + D13–D26（v4.1/v4.2）+ D27–D29 提议 |
-| 旧项目审计 docs/AUDIT.md | 主程序员 | 🟡 进行中 | 分支 docs/audit | |
+| 旧项目审计 docs/AUDIT.md | 主程序员（Hark） | 🟡 待审查 | 分支 docs/audit | 线上实际数据条数待只读导出；对 PRODUCT 提出 20 条问题（P1–P20） |
 | 开工前验证 docs/VERIFY.md（PRODUCT 第 20 节） | 主程序员 | ⏳ | | 审计合并后开始 |
 | P0 一页纸计划（PRODUCT 0.3 第 4 条） | 主程序员 | ⏳ | | |
 | 方案反对式评审 | 验收员（Muse） | ⏳ | | |
@@ -22,3 +22,4 @@
 
 ## 变更
 - 2026-10-27：建立本文件。
+- 2026-10-27：完成旧项目审计（docs/AUDIT.md）。
