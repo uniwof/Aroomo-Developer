@@ -125,32 +125,32 @@ describe('AuditLog Module', () => {
     it('正例 (≥5 个)：匹配各种密钥与敏感令牌形式应替换为 [REDACTED]', () => {
       const positiveCases = [
         {
-          input: 'sk-proj-1234567890abcdefghijklmnopqrstuvwxyz',
+          input: 'sk-proj-1234567890abcdefghijklmnopqrstuvwxyz', // gitleaks:allow
           expected: '[REDACTED]',
           label: 'OpenAI/LiteLLM sk- Key',
         },
         {
-          input: 'AIzaSyA1234567890abcdefghijklmnopqrst',
+          input: 'AIzaSyA1234567890abcdefghijklmnopqrst', // gitleaks:allow
           expected: '[REDACTED]',
           label: 'Google Cloud AIza Key',
         },
         {
-          input: 'ghp_1234567890abcdefghijklmnopqrstuvwxyz',
+          input: 'ghp_1234567890abcdefghijklmnopqrstuvwxyz', // gitleaks:allow
           expected: '[REDACTED]',
           label: 'GitHub Personal Token ghp_',
         },
         {
-          input: 'Authorization: Bearer my-secret-auth-token-1234567890',
+          input: 'Authorization: Bearer my-secret-auth-token-1234567890', // gitleaks:allow
           expected: 'Authorization: [REDACTED]',
           label: 'Bearer Token',
         },
         {
-          input: '4f3a8b2c1d9e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a',
+          input: '4f3a8b2c1d9e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a', // gitleaks:allow
           expected: '[REDACTED]',
           label: 'Long Hex String (64 chars)',
         },
         {
-          input: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c',
+          input: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c', // gitleaks:allow
           expected: '[REDACTED]',
           label: 'JWT Token',
         },
@@ -208,11 +208,11 @@ describe('AuditLog Module', () => {
 
     it('追加日志时应自动在所有字符串字段上应用脱敏规则', async () => {
       const entry = await auditLog.append({
-        actor: { type: 'operator', id: 'sk-proj-actor-key-1234567890' },
-        action: 'ghp_1234567890abcdefghijklmnopqrstuvwxyz',
-        target: { type: 'AIzaSyA1234567890abcdefghijklmnopqrst', id: '4f3a8b2c1d9e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a' },
+        actor: { type: 'operator', id: 'sk-proj-1234567890abcdefghijklmnopqrstuvwxyz' }, // gitleaks:allow
+        action: 'ghp_1234567890abcdefghijklmnopqrstuvwxyz', // gitleaks:allow
+        target: { type: 'AIzaSyA1234567890abcdefghijklmnopqrst', id: '4f3a8b2c1d9e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a' }, // gitleaks:allow
         result: 'ok',
-        note: 'User provided Bearer token-xyz-secret-123',
+        note: 'User provided Bearer token-xyz-secret-123', // gitleaks:allow
       });
 
       expect(entry.actor.id).toBe('[REDACTED]');
