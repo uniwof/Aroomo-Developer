@@ -121,7 +121,7 @@ jobs:
         if: always()
         run: |
           docker compose --project-directory deploy --profile backup down -v --remove-orphans || true
-          rm -rf /tmp/ci-restic-repo
+          sudo rm -rf /tmp/ci-restic-repo
 
   secrets:
     name: 密钥扫描（gitleaks）
