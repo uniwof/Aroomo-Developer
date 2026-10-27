@@ -7,12 +7,15 @@ import { PgAuditLog } from './audit/pg.js';
 import type { AuditLog } from './audit/types.js';
 import { MemoryOperatorTokenStore, type OperatorTokenStore } from './auth/tokens.js';
 import type { CoreConfig } from './config.js';
+import type { LiteLLMAdmin } from './keys/litellm.js';
 import { createPgDb, type Db } from './db/db.js';
 import { migrate } from './db/migrate.js';
 import { type ConfirmStore, MemoryConfirmStore, PgConfirmStore } from './confirm/confirm.js';
 import { MemoryInboxStore } from './inbox/memory.js';
 import { PgInboxStore } from './inbox/pg.js';
 import type { InboxStore } from './inbox/types.js';
+import { MemoryKeyStore, PgKeyStore } from './keys/stores.js';
+import type { KeyStore } from './keys/types.js';
 import { MemoryMemberStore } from './members/memory.js';
 import { PgMemberStore } from './members/pg.js';
 import type { MemberStore } from './members/types.js';
@@ -24,6 +27,9 @@ export interface CoreDeps {
   members: MemberStore;
   inbox: InboxStore;
   confirmTokens: ConfirmStore;
+  keys: KeyStore;
+  /** 测试时注入；不传则按配置连接 LiteLLM */
+  litellm?: LiteLLMAdmin;
   /** 有数据库时才有；关闭服务时一并关闭 */
   db?: Db;
 }
@@ -36,6 +42,7 @@ export function memoryDeps(now: () => Date = () => new Date()): CoreDeps {
     members: new MemoryMemberStore(),
     inbox: new MemoryInboxStore(),
     confirmTokens: new MemoryConfirmStore(),
+    keys: new MemoryKeyStore(),
   };
 }
 
@@ -48,6 +55,7 @@ export function pgDeps(db: Db, now: () => Date = () => new Date()): CoreDeps {
     members: new PgMemberStore(db),
     inbox: new PgInboxStore(db),
     confirmTokens: new PgConfirmStore(db),
+    keys: new PgKeyStore(db),
     // 操作员令牌的签发 / 持久化属于负责人体系，后续 Issue 再落库
     operatorTokens: new MemoryOperatorTokenStore(),
   };

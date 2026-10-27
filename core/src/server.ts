@@ -6,8 +6,12 @@ import type { CoreConfig } from './config.js';
 import { type CoreDeps, memoryDeps } from './deps.js';
 import { ConfirmService } from './confirm/confirm.js';
 import { installErrorHandler } from './http/errors.js';
+import { scrubForLog } from './http/scrub.js';
 import { registerInboxRoutes } from './inbox/routes.js';
 import { InboxService } from './inbox/service.js';
+import { LiteLLMAdmin } from './keys/litellm.js';
+import { registerKeyRoutes } from './keys/routes.js';
+import { KeysService } from './keys/service.js';
 import { registerMemberRoutes } from './members/routes.js';
 import { MembersService } from './members/service.js';
 import { route } from './router/route.js';
@@ -27,7 +31,12 @@ interface RoutePreviewBody {
   leadId?: string | null;
 }
 
-export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps()): FastifyInstance {
+export interface BuildOptions {
+  /** 日志输出目标（测试用来捕获日志，检查有没有泄露 Key） */
+  logStream?: { write(msg: string): void };
+}
+
+export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps(), opts: BuildOptions = {}): FastifyInstance {
   const app = Fastify({
     // 未声明的字段直接 400，而不是悄悄丢掉（Key 等敏感接口不接受「多余但被忽略」的输入）
     ajv: { customOptions: { removeAdditional: false } },
@@ -49,10 +58,17 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps()): Fas
               ],
               censor: '[REDACTED]',
             },
+            ...(opts.logStream ? { stream: opts.logStream } : {}),
           },
   });
 
   installErrorHandler(app);
+  // trace 级别记录 /api 请求体，便于排障；apiKey 等字段由上面的 redact 规则替换为 [REDACTED]
+  app.addHook('preValidation', async (req) => {
+    if (req.url.startsWith('/api/') && req.body !== undefined && req.log.level === 'trace') {
+      req.log.trace({ body: scrubForLog(req.body) }, 'request body');
+    }
+  });
   installAuth(app, {
     verify: createTokenVerifier({
       ownerToken: cfg.ownerToken,
@@ -113,6 +129,8 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps()): Fas
   // 供其他模块调用 createInboxItem()
   app.decorate('inbox', inbox);
   registerInboxRoutes(app, inbox);
+  const litellm = deps.litellm ?? new LiteLLMAdmin({ baseUrl: cfg.litellmBaseUrl, masterKey: cfg.litellmMasterKey });
+  registerKeyRoutes(app, new KeysService(deps.keys, litellm, deps.now));
 
   return app;
 }
