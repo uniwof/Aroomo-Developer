@@ -18,8 +18,14 @@ export interface CoreConfig {
   litellmBaseUrl: string;
   /** LiteLLM 管理密钥；只用于 Core → LiteLLM 的管理调用，绝不返回给客户端 */
   litellmMasterKey: string | undefined;
-  /** Core 自己的数据库（P0 后续 Issue 使用），可选 */
+  /** Core 自己的数据库；未设置时使用内存存储（只适合开发 / 演示，重启即丢） */
   databaseUrl: string | undefined;
+  /** 启动时自动执行数据库迁移（默认 true） */
+  autoMigrate: boolean;
+  /** 主人（P0 单用户）访问令牌；未设置时 /api/* 一律 503 */
+  ownerToken: string | undefined;
+  /** 操作员令牌 HMAC 用的服务端密钥；未设置时操作员令牌不可用 */
+  tokenSecret: string | undefined;
 }
 
 export class ConfigError extends Error {
@@ -84,6 +90,13 @@ export function loadConfig(env: Env = process.env): CoreConfig {
     throw new ConfigError('CORE_DATABASE_URL 必须以 postgres:// 或 postgresql:// 开头');
   }
 
+  const ownerToken = str(env, 'CORE_OWNER_TOKEN');
+  if (ownerToken !== undefined && ownerToken.length < 32) throw new ConfigError('CORE_OWNER_TOKEN 至少 32 个字符');
+  const tokenSecret = str(env, 'CORE_TOKEN_SECRET');
+  if (tokenSecret !== undefined && tokenSecret.length < 32) throw new ConfigError('CORE_TOKEN_SECRET 至少 32 个字符');
+  const autoMigrateRaw = (str(env, 'CORE_AUTO_MIGRATE') ?? 'true').toLowerCase();
+  if (!['true', 'false', '1', '0'].includes(autoMigrateRaw)) throw new ConfigError('CORE_AUTO_MIGRATE 必须是 true/false');
+
   return {
     host: str(env, 'CORE_HOST') ?? '0.0.0.0',
     port: parsePort(str(env, 'CORE_PORT'), 'CORE_PORT', 8080),
@@ -92,6 +105,9 @@ export function loadConfig(env: Env = process.env): CoreConfig {
     litellmBaseUrl: parseUrl(str(env, 'LITELLM_BASE_URL') ?? 'http://litellm:4000', 'LITELLM_BASE_URL'),
     litellmMasterKey: str(env, 'LITELLM_MASTER_KEY'),
     databaseUrl,
+    autoMigrate: autoMigrateRaw === 'true' || autoMigrateRaw === '1',
+    ownerToken,
+    tokenSecret,
   };
 }
 
@@ -105,5 +121,8 @@ export function toSafeJSON(cfg: CoreConfig): Record<string, unknown> {
     litellmBaseUrl: cfg.litellmBaseUrl,
     litellmMasterKey: cfg.litellmMasterKey ? '(set)' : '(unset)',
     databaseUrl: cfg.databaseUrl ? '(set)' : '(unset)',
+    autoMigrate: cfg.autoMigrate,
+    ownerToken: cfg.ownerToken ? '(set)' : '(unset)',
+    tokenSecret: cfg.tokenSecret ? '(set)' : '(unset)',
   };
 }

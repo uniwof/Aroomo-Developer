@@ -11,6 +11,8 @@ data/
 deploy/data/
 backups/
 *.sql
+# 迁移脚本是代码，必须提交（数据库导出仍被忽略）
+!core/migrations/*.sql
 *.dump
 
 # Node

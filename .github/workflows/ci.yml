@@ -21,6 +21,20 @@ jobs:
     defaults:
       run:
         working-directory: core
+    # 真 PostgreSQL：数据库相关测试除 PGlite 外再对它跑一遍（test/helpers/db.ts）
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: aroomo_test
+          POSTGRES_PASSWORD: placeholder-ci-only
+          POSTGRES_DB: aroomo_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U aroomo_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      CORE_TEST_DATABASE_URL: postgresql://aroomo_test:placeholder-ci-only@localhost:5432/aroomo_test
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -63,6 +77,7 @@ jobs:
       - name: core 镜像冒烟测试
         run: |
           docker run -d --name core -e CORE_LOG_LEVEL=warn aroomo-core:ci
+          docker exec core ls /app/migrations/0001_audit_log.sql
           for i in $(seq 1 20); do
             if docker exec core node -e "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
               echo healthy; docker rm -f core; exit 0
