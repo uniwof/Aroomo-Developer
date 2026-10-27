@@ -1,0 +1,7 @@
+title = "gitleaks config"
+
+[allowlist]
+description = "Allowlist test files"
+paths = [
+  '''core/test/.*''',
+]

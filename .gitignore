@@ -6,11 +6,10 @@
 *.key
 secrets/
 
-# 数据目录
+# 数据目录与数据库导出的转储文件
 data/
 deploy/data/
 backups/
-*.sql
 *.dump
 
 # Node
