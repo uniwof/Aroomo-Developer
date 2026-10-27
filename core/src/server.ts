@@ -29,6 +29,7 @@ interface RoutePreviewBody {
   text: string;
   members: RoutableMember[];
   leadId?: string | null;
+  sensitive?: boolean;
 }
 
 export interface BuildOptions {
@@ -101,6 +102,7 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps(), opts
           properties: {
             text: { type: 'string', maxLength: 20000 },
             leadId: { type: ['string', 'null'] },
+            sensitive: { type: 'boolean' },
             members: {
               type: 'array',
               maxItems: 500,
@@ -113,6 +115,7 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps(), opts
                   name: { type: 'string', minLength: 1, maxLength: 128 },
                   aliases: { type: 'array', maxItems: 20, items: { type: 'string', maxLength: 64 } },
                   enabled: { type: 'boolean' },
+                  external: { type: 'boolean' },
                 },
               },
             },
@@ -120,7 +123,8 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps(), opts
         },
       },
     },
-    async (req) => route(req.body.text, { members: req.body.members, leadId: req.body.leadId ?? null }),
+    async (req) =>
+      route(req.body.text, { members: req.body.members, leadId: req.body.leadId ?? null, sensitive: req.body.sensitive === true }),
   );
 
   registerAuditRoutes(app, deps.auditLog);

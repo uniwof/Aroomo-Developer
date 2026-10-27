@@ -5,7 +5,7 @@
 > 最后更新：2026-10-27，主程序员（Hark）。
 
 ## 1. 一句话现状
-P0（MVP）已开始。负责人 v4.3 裁决已入档为 D30–D61（其中 D31 = 讨论模式），PRODUCT.md 已按裁决加修订注；Key 存储方案和三张时序图已写好待审。仓库骨架 / Compose / CI 在 p0/skeleton 分支进行中。尚无服务器、尚无线上部署。
+P0（MVP）进行中。dev 上已有：仓库骨架 / Compose / CI（#4）、v4.3 裁决文档（#3）、备份恢复脚本与 CI 端到端（#17），以及 Core 的审计日志（#18）、成员（#20）、收件箱（#22）、Key 管理（#24），以及点名解析（#8，最后一个 P0 Core PR，合并后本行即为现状）。Core 有 HTTP API 和 PostgreSQL 存储，但还没有前端接入、还没真正经 LiteLLM 调模型。尚无服务器、尚无线上部署。
 
 ## 2. 必读
 1. docs/PRODUCT.md（优先级 v4.3 ＞ v4.2 ＞ v4.1 ＞ v4；P0 范围见 16.1；讨论模式见 9.4.1；改动清单见文末「附录：v4.3 修订记录」）
@@ -21,18 +21,21 @@ P0（MVP）已开始。负责人 v4.3 裁决已入档为 D30–D61（其中 D31 
 - 服务器（待建）：AWS 法兰克福 m7i-flex.large，Ubuntu 24.04，60 GB，固定 IP，用户名 ubuntu；只开 22，仅密钥登录，fail2ban；对外经 Cloudflare Tunnel + Access（D57、D58）。主程序员不持有 AWS 凭据。额度约 $80/月，用到一半前交迁移方案（D59）。
 
 ## 4. 进行中 / 下一步
-1. 等审查：PR「docs: v4.3 裁决（D30–D31）、讨论模式、Key 存储与时序图」（docs/v4.3 → dev）。
-2. P0 a：仓库骨架、Docker Compose、CI（p0/skeleton）；可拆任务开 Issue 打 jules 标签。
-3. 生成 ed25519 SSH 密钥并把公钥发给用户（若尚未完成）；经安全表单一次性要齐 P0 凭据（D60）。
-4. 拿到服务器后：全模块部署 → 内存实测报告 → 定档位（D40）；Cloudflare 接入；AWS 之外备份 + 恢复演练。
-5. 最后：Windows 本地完整版（需要用户电脑配置）。
-6. 沟通：每天日报 ≤5 行，末行「需要你做」（D61）。用户 48 小时未回复：不卡脖子的继续，卡脖子的暂停并记录（D54）。
+1. Core 代码地图（`core/src/`）：`db/`（pg 连接池 + 迁移器，迁移在 `core/migrations/NNNN_*.sql`，合并后只增不改）、`auth/`（主人令牌 `CORE_OWNER_TOKEN`、操作员令牌只存 HMAC、能力白名单 `capabilities.ts`，D36）、`audit/`（只追加；`req.audit(action, target, result, note?)`）、`members/`、`inbox/`、`confirm/`（不可逆操作一次性确认令牌，D50，可复用）、`keys/`（LiteLLM 管理 API；完整 Key 只在 LiteLLM）、`router/`（D31 点名 / 交给负责人）。依赖装配在 `deps.ts`，路由注册在 `server.ts`。
+2. 测试约定：每个存储都有内存 + PostgreSQL 实现，跑同一套契约测试（`test/helpers/db.ts`：PGlite 总是跑，设置 `CORE_TEST_DATABASE_URL` 时再跑真 PG；CI 已配 postgres:17 服务容器）。测试里的假密钥在运行时拼接（避免 gitleaks 误报），前缀 `placeholder-`。
+3. 下一步（Core）：对话链路——LobeHub 发一句话 → Core 路由（`route()` / `executeMentionPlan()`）→ LiteLLM，见 SEQUENCES.md「发一句话」；前端接入成员 / Key / 收件箱 API；定时任务（回收站 30 天清理、确认令牌清理、LiteLLM 部署对账）；操作员令牌签发 / 吊销与落库（负责人体系）。
+4. 生成 ed25519 SSH 密钥并把公钥发给用户（若尚未完成）；经安全表单一次性要齐 P0 凭据（D60）。
+5. 拿到服务器后：全模块部署 → 内存实测报告 → 定档位（D40）；Cloudflare 接入；AWS 之外备份 + 真实恢复演练；对真实 LiteLLM v1.106.4 联调 Key 管理（见 #24「未验证事项」）。
+6. 最后：Windows 本地完整版。
+7. 沟通：每天日报 ≤5 行，末行「需要你做」（D61）。用户 48 小时未回复：不卡脖子的继续，卡脖子的暂停并记录（D54）。
 
 ## 5. 阻塞 / 未决问题
 - 服务器 IP 未到；P0 凭据未交付；用户电脑配置（Windows 版本、内存、剩余硬盘）未填。
 - PR #1、#2 仍为 open、未合并到 main（2026-10-27 经 GitHub API 核实；用户消息中说已合并，两者不一致，需用户确认）。
 - Muse 1–15 清单与负责人裁决表未提供：D36–D39、D46、D50 的细节标为待补充。
-- 新系统域名未定（旧站域名已冻结，D30/D57）；值班哨兵排期未定（不在 P0 MVP）。
+- 值班哨兵排期未定（不在 P0 MVP）。
+- Jules 对 #11/#5/#6/#8 已开了重复 PR（#13/#15/#16/#14），已留言建议关闭；需要用户（或 Jules）关闭，**不要合并**，否则会覆盖 dev 上的实现。
+- 待负责人确认：操作员白名单目前只含 `members:read`、`inbox:read`、`inbox:act`（`core/src/auth/capabilities.ts`）；成员 / Key 的「彻底删除」目前用 `confirm: true`（按 Issue），收件箱的不可逆动作用一次性令牌——是否统一为令牌式二次确认。
 - 负责人换人的默认超时、点名时同一成员多来源之间是否允许回退：待负责人确认（SEQUENCES.md）。
 - D27、D28 仍待负责人确认。
 
