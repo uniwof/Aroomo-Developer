@@ -41,6 +41,13 @@ fi
 rand_id=$(( RANDOM % 90000 + 10000 ))
 project_name="aroomo-drill-$rand_id"
 
+# 如果使用本地目录作为 restic 仓库（如 file:// 或本地路径），共享宿主机目录；S3/HTTP 仓库不受影响
+extra_volumes=()
+if [[ "$RESTIC_REPOSITORY" =~ ^file:// || "$RESTIC_REPOSITORY" =~ ^/ ]]; then
+  repo_dir="${RESTIC_REPOSITORY#file://}"
+  extra_volumes+=("-v" "$repo_dir:$repo_dir")
+fi
+
 tmp_env="$(mktemp)"
 cleanup() {
   local exit_code=$?
@@ -90,6 +97,7 @@ started_step=$(date +%s)
 echo "drill: [2/4] 从快照 $snapshot 恢复数据库与文件..."
 docker compose --project-name "$project_name" --project-directory "$deploy" --env-file "$tmp_env" \
   --profile backup run --rm \
+  "${extra_volumes[@]}" \
   -e RESTIC_REPOSITORY="$RESTIC_REPOSITORY" \
   -e RESTIC_PASSWORD="$RESTIC_PASSWORD" \
   -e AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-${BACKUP_S3_ACCESS_KEY_ID:-}}" \

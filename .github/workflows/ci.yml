@@ -78,13 +78,12 @@ jobs:
       - uses: actions/checkout@v6
       - name: 构建 backup 镜像
         run: docker build -t aroomo-backup:dev deploy/backup
-      - name: 配置测试环境与 S3 目标 (RustFS)
+      - name: 配置测试环境与本地 RESTIC 仓库
         run: |
+          mkdir -p /tmp/ci-restic-repo
           sed 's/CHANGE_ME/placeholder/g' deploy/.env.example > deploy/.env
           echo "RESTIC_PASSWORD=placeholder-restic-password" >> deploy/.env
-          echo "RESTIC_REPOSITORY=s3:http://rustfs:9000/restic-backup-bucket" >> deploy/.env
-          echo "BACKUP_S3_ACCESS_KEY_ID=placeholder-rustfs-access-key" >> deploy/.env
-          echo "BACKUP_S3_SECRET_ACCESS_KEY=placeholder-rustfs-secret-key" >> deploy/.env
+          echo "RESTIC_REPOSITORY=/tmp/ci-restic-repo" >> deploy/.env
           echo "RUSTFS_ACCESS_KEY=placeholder-rustfs-access-key" >> deploy/.env
           echo "RUSTFS_SECRET_KEY=placeholder-rustfs-secret-key" >> deploy/.env
       - name: 启动基础服务 (PostgreSQL & RustFS)
@@ -101,7 +100,7 @@ jobs:
           docker compose --project-directory deploy exec -T postgres psql -U postgres -d aroomo_core -c "CREATE TABLE ci_e2e_test (id INT PRIMARY KEY); INSERT INTO ci_e2e_test VALUES (1);"
       - name: 执行 备份 (backup.sh)
         run: |
-          docker compose --project-directory deploy --profile backup run --rm backup now
+          docker compose --project-directory deploy --profile backup run --rm -v /tmp/ci-restic-repo:/tmp/ci-restic-repo backup now
       - name: 模拟误删/破坏数据库
         run: |
           docker compose --project-directory deploy exec -T postgres psql -U postgres -d lobechat -c "DROP TABLE ci_e2e_test;"
@@ -109,7 +108,7 @@ jobs:
           docker compose --project-directory deploy exec -T postgres psql -U postgres -d aroomo_core -c "DROP TABLE ci_e2e_test;"
       - name: 执行 恢复 (restore.sh)
         run: |
-          docker compose --project-directory deploy --profile backup run --rm backup restore --yes-overwrite-database latest
+          docker compose --project-directory deploy --profile backup run --rm -v /tmp/ci-restic-repo:/tmp/ci-restic-repo backup restore --yes-overwrite-database latest
       - name: 校验恢复后的测试数据
         run: |
           res=$(docker compose --project-directory deploy exec -T postgres psql -U postgres -d lobechat -t -A -c "SELECT name FROM ci_e2e_test WHERE id=1;")
@@ -122,6 +121,7 @@ jobs:
         if: always()
         run: |
           docker compose --project-directory deploy --profile backup down -v --remove-orphans || true
+          rm -rf /tmp/ci-restic-repo
 
   secrets:
     name: 密钥扫描（gitleaks）

@@ -255,9 +255,10 @@ services:
       PGUSER: postgres
       PGPASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - rustfs-data:/data/rustfs:ro
+      - rustfs-data:/data/rustfs
       - ./litellm:/data/config/litellm:ro
       - ../scripts:/opt/aroomo/scripts:ro
+      - /tmp:/tmp
     networks: [aroomo]
 
 networks:

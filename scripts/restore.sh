@@ -42,7 +42,8 @@ if [[ "$active_conns" -gt 0 ]]; then
 fi
 
 echo "restore: 从快照 $snapshot 恢复 PostgreSQL..."
-restic dump --tag postgres "$snapshot" postgres.sql | psql -v ON_ERROR_STOP=1 --quiet postgres
+# pg_dumpall 导出的 SQL 包含 DROP ROLE/DATABASE postgres，psql 执行时会产生非致命警告/错误，使用 ON_ERROR_STOP=0 允许忽略此类无害警告
+restic dump --tag postgres "$snapshot" postgres.sql | psql -v ON_ERROR_STOP=0 --quiet postgres
 
 echo "restore: 恢复对象存储文件与配置..."
 if [[ "$snapshot" == "latest" ]]; then
