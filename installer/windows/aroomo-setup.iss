@@ -33,11 +33,9 @@ UninstallDisplayName=Aroomo 本地版
 CloseApplications=no
 
 [Languages]
-#if FileExists(AddBackslash(CompilerPath) + "Languages\ChineseSimplified.isl")
-Name: "zh"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
-#else
-Name: "en"; MessagesFile: "compiler:Default.isl"
-#endif
+; 简体中文界面：installer\windows\languages\ChineseSimplified.isl 取自 Inno Setup 官方仓库
+; jrsoftware/issrc 标签 is-6_7_1 的 Files/Languages/Unofficial/ChineseSimplified.isl（适用 6.5.0+）
+Name: "zh"; MessagesFile: "installer\windows\languages\ChineseSimplified.isl"
 
 [Files]
 Source: "deploy\*"; DestDir: "{app}\deploy"; Excludes: ".env,data,local-backups,test,drill-reports,*.log"; Flags: recursesubdirs createallsubdirs ignoreversion

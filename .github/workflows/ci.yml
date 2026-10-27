@@ -60,8 +60,11 @@ jobs:
       - name: Pester（pwsh，含与 select-tier.sh 的对照）
         shell: pwsh
         run: |
-          Set-PSRepository PSGallery -InstallationPolicy Trusted
-          Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force -SkipPublisherCheck
+          if (Get-Command Install-PSResource -ErrorAction SilentlyContinue) {
+            Install-PSResource Pester -Version 5.7.1 -TrustRepository -Scope CurrentUser -Reinstall
+          } else {
+            Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force -SkipPublisherCheck
+          }
           Import-Module Pester -RequiredVersion 5.7.1
           $c = New-PesterConfiguration
           $c.Run.Path = 'installer/windows/tests'
