@@ -16,6 +16,11 @@ export interface RoutableMember {
   aliases?: string[];
   /** 停用的成员不能被点名回答 */
   enabled: boolean;
+  /**
+   * 外部智能体成员（Poke、Webhook、Telegram、小桥等）。敏感项目的内容不发给外部方（D38），
+   * 因此敏感项目里不能点名外部成员，外部智能体也不能作为负责人接手敏感任务。
+   */
+  external?: boolean;
 }
 
 export interface MentionParseResult {
@@ -37,7 +42,10 @@ export interface Hint {
   /** 一行提示，直接显示给用户 */
   text: string;
   memberId?: string;
+  /** 「交给负责人」按钮；为空表示没有可用的补救动作（例如敏感项目的负责人是外部智能体） */
   actions: Array<{ id: 'delegate_to_lead'; label: '交给负责人' }>;
+  /** 原问题正文：用户点「交给负责人」时原样交给负责人（delegateFromHint） */
+  body?: string;
 }
 
 export interface MentionPlan {
@@ -63,4 +71,6 @@ export interface RouteContext {
   members: RoutableMember[];
   /** 当前负责人；为 null 时由调用方提示用户先设置负责人 */
   leadId: string | null;
+  /** 敏感项目（PRODUCT §9.6、D38）：不点名外部成员；负责人只用单人完成（D31） */
+  sensitive?: boolean;
 }
