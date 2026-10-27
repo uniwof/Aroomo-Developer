@@ -1,0 +1,10 @@
+# 本机（Windows 本地版）备份：把 restic 仓库放在用户数据文件夹里的 backups 子文件夹。
+# 与 local.yml 一起叠加；.env 里 RESTIC_REPOSITORY=/repo，LOCAL_BACKUP_DIR=<数据文件夹>/backups（正斜杠写法，如 D:/AroomoData/backups）。
+# 这是「本机快照」，防误删和升级失败；不替代异地备份（硬盘坏了会一起丢）。需要异地时把 RESTIC_REPOSITORY 改成 R2/B2，见 docs/ops/BACKUP.md。
+services:
+  backup:
+    volumes:
+      - ${LOCAL_BACKUP_DIR:?使用 local-backup.yml 时必须设置 LOCAL_BACKUP_DIR}:/repo
+  restore:
+    volumes:
+      - ${LOCAL_BACKUP_DIR:?使用 local-backup.yml 时必须设置 LOCAL_BACKUP_DIR}:/repo

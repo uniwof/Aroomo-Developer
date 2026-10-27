@@ -57,6 +57,16 @@ jobs:
       - run: scripts/check-compose.sh
       - name: shellcheck
         run: shellcheck -x scripts/*.sh deploy/backup/entrypoint.sh deploy/postgres/20-aroomo-dbs.sh deploy/lobe/rustfs-init.sh
+      - name: Pester（pwsh，含与 select-tier.sh 的对照）
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force -SkipPublisherCheck
+          Import-Module Pester -RequiredVersion 5.7.1
+          $c = New-PesterConfiguration
+          $c.Run.Path = 'installer/windows/tests'
+          $c.Run.Exit = $true
+          Invoke-Pester -Configuration $c
       - name: select-tier 阈值
         run: |
           test "$(MEM_TOTAL_MB=1900 scripts/select-tier.sh)" = demo-2g
@@ -103,6 +113,52 @@ jobs:
           name: restore-drill-report
           path: ${{ runner.temp }}/drill-reports/
           if-no-files-found: ignore
+
+  windows-installer:
+    name: Windows 安装器（PSScriptAnalyzer + Pester + 构建 .exe）
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: 安装 Pester 5 / PSScriptAnalyzer
+        shell: powershell
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force -SkipPublisherCheck
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser -Force
+      - name: PSScriptAnalyzer
+        shell: powershell
+        run: |
+          $r = Invoke-ScriptAnalyzer -Path installer/windows -Recurse -Settings installer/windows/PSScriptAnalyzerSettings.psd1
+          $r | Format-Table -AutoSize RuleName, Severity, ScriptName, Line, Message | Out-String -Width 250
+          if (@($r).Count -gt 0) { exit 1 }
+      - name: Pester（Windows PowerShell 5.1）
+        shell: powershell
+        run: |
+          Import-Module Pester -RequiredVersion 5.7.1
+          $c = New-PesterConfiguration
+          $c.Run.Path = 'installer/windows/tests'
+          $c.Run.Exit = $true
+          $c.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $c
+      - name: 构建安装包（Inno Setup）
+        shell: powershell
+        run: |
+          $iscc = Get-Command iscc.exe -ErrorAction SilentlyContinue
+          if (-not $iscc) {
+            $default = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+            if (-not (Test-Path $default)) { choco install innosetup -y --no-progress | Out-Host }
+            $iscc = $default
+          } else { $iscc = $iscc.Source }
+          & $iscc "/DAppVersion=0.1.0-ci.${{ github.run_number }}" installer\windows\aroomo-setup.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem installer\windows\Output | Format-Table Name, Length
+      - name: 上传安装包
+        uses: actions/upload-artifact@v4
+        with:
+          name: aroomo-setup-windows
+          path: installer/windows/Output/*.exe
+          if-no-files-found: error
 
   secrets:
     name: 密钥扫描（gitleaks）

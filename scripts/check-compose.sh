@@ -12,12 +12,14 @@ trap 'rm -f "$tmp_env"' EXIT
 # 用模板生成占位 env，并补上 data-dir.yml 需要的 DATA_DIR
 sed 's/CHANGE_ME/placeholder/g' "$deploy/.env.example" > "$tmp_env"
 echo "DATA_DIR=/tmp/aroomo-ci-data" >> "$tmp_env"
+echo "LOCAL_BACKUP_DIR=/tmp/aroomo-ci-backups" >> "$tmp_env"
 
 status=0
 for tier in demo-2g standard full; do
-  for extra in "" "local.yml" "data-dir.yml"; do
+  for extra in "" "local.yml" "data-dir.yml" "local.yml local-backup.yml"; do
     files=(-f "$deploy/docker-compose.yml" -f "$deploy/tiers/$tier.yml")
-    [[ -n "$extra" ]] && files+=(-f "$deploy/$extra")
+    # shellcheck disable=SC2086  # extra 按空格拆成多个文件
+    for e in $extra; do files+=(-f "$deploy/$e"); done
     label="$tier${extra:+ + $extra}"
     # shellcheck disable=SC2086
     if $compose --project-directory "$deploy" --env-file "$tmp_env" "${files[@]}" \
