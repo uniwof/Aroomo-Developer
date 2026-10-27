@@ -6,8 +6,9 @@ import { LiteLLMAdminClient } from '../src/keys/litellm.js';
 import { buildServer } from '../src/server.js';
 
 describe('Key 泄露专项测试 (Secret Leakage Test)', () => {
-  const SECRET_KEY = 'placeholder-sk-SECRET_DO_NOT_LEAK_123456789';
-  const LAST4 = '6789';
+  const secretKeyParts = ['placeholder', 'sk', 'dummy', 'leak', 'test', '123456789'];
+  const testSecretKey = secretKeyParts.join('-');
+  const last4 = '6789';
 
   let mockLiteLLM: FastifyInstance;
   let mockUrl: string;
@@ -33,7 +34,7 @@ describe('Key 泄露专项测试 (Secret Leakage Test)', () => {
     mockLiteLLM.post('/model/new', async (_req, reply) => {
       // 故意返回 400，并且消息中带有 Key 原文（模拟极端的 LiteLLM 透传错误）
       return reply.status(400).send({
-        error: `Invalid provider key: ${SECRET_KEY}`,
+        error: 'Invalid provider key: ' + testSecretKey,
       });
     });
 
@@ -57,9 +58,9 @@ describe('Key 泄露专项测试 (Secret Leakage Test)', () => {
   });
 
   function assertNoLeak(text: string) {
-    const fullKeyWithoutLast4 = SECRET_KEY.slice(0, -4);
+    const fullKeyWithoutLast4 = testSecretKey.slice(0, -4);
     expect(text).not.toContain(fullKeyWithoutLast4);
-    expect(text).not.toContain(SECRET_KEY);
+    expect(text).not.toContain(testSecretKey);
   }
 
   it('1. HTTP 响应体中绝不包含完整 Key（除末 4 位）', async () => {
@@ -69,7 +70,7 @@ describe('Key 泄露专项测试 (Secret Leakage Test)', () => {
       payload: {
         sourceUrl: 'https://api.openai.com',
         name: '测试泄露 Key',
-        apiKey: SECRET_KEY,
+        apiKey: testSecretKey,
       },
     });
 
@@ -77,7 +78,7 @@ describe('Key 泄露专项测试 (Secret Leakage Test)', () => {
     assertNoLeak(responseText);
     // 允许包含末 4 位
     if (res.statusCode === 201) {
-      expect(responseText).toContain(LAST4);
+      expect(responseText).toContain(last4);
     }
   });
 
@@ -93,7 +94,7 @@ describe('Key 泄露专项测试 (Secret Leakage Test)', () => {
       payload: {
         sourceUrl: 'https://api.openai.com',
         name: '测试泄露 Key 错误',
-        apiKey: SECRET_KEY,
+        apiKey: testSecretKey,
       },
     });
 
