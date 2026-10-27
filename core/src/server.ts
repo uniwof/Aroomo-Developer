@@ -4,13 +4,22 @@ import { installAuth } from './auth/plugin.js';
 import { createTokenVerifier } from './auth/tokens.js';
 import type { CoreConfig } from './config.js';
 import { type CoreDeps, memoryDeps } from './deps.js';
+import { ConfirmService } from './confirm/confirm.js';
 import { installErrorHandler } from './http/errors.js';
+import { registerInboxRoutes } from './inbox/routes.js';
+import { InboxService } from './inbox/service.js';
 import { registerMemberRoutes } from './members/routes.js';
 import { MembersService } from './members/service.js';
 import { route } from './router/route.js';
 import type { RoutableMember } from './router/types.js';
 
 export const VERSION = '0.0.1';
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    inbox: InboxService;
+  }
+}
 
 interface RoutePreviewBody {
   text: string;
@@ -100,6 +109,10 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps()): Fas
 
   registerAuditRoutes(app, deps.auditLog);
   registerMemberRoutes(app, new MembersService(deps.members, deps.now));
+  const inbox = new InboxService(deps.inbox, new ConfirmService(deps.confirmTokens, deps.now), deps.now);
+  // 供其他模块调用 createInboxItem()
+  app.decorate('inbox', inbox);
+  registerInboxRoutes(app, inbox);
 
   return app;
 }
