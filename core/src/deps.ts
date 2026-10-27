@@ -9,11 +9,15 @@ import { MemoryOperatorTokenStore, type OperatorTokenStore } from './auth/tokens
 import type { CoreConfig } from './config.js';
 import { createPgDb, type Db } from './db/db.js';
 import { migrate } from './db/migrate.js';
+import { MemoryMemberStore } from './members/memory.js';
+import { PgMemberStore } from './members/pg.js';
+import type { MemberStore } from './members/types.js';
 
 export interface CoreDeps {
   now: () => Date;
   auditLog: AuditLog;
   operatorTokens: OperatorTokenStore;
+  members: MemberStore;
   /** 有数据库时才有；关闭服务时一并关闭 */
   db?: Db;
 }
@@ -23,6 +27,7 @@ export function memoryDeps(now: () => Date = () => new Date()): CoreDeps {
     now,
     auditLog: new MemoryAuditLog(now),
     operatorTokens: new MemoryOperatorTokenStore(),
+    members: new MemoryMemberStore(),
   };
 }
 
@@ -32,6 +37,7 @@ export function pgDeps(db: Db, now: () => Date = () => new Date()): CoreDeps {
     now,
     db,
     auditLog: new PgAuditLog(db, now),
+    members: new PgMemberStore(db),
     // 操作员令牌的签发 / 持久化属于负责人体系，后续 Issue 再落库
     operatorTokens: new MemoryOperatorTokenStore(),
   };

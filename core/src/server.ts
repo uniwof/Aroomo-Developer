@@ -5,6 +5,8 @@ import { createTokenVerifier } from './auth/tokens.js';
 import type { CoreConfig } from './config.js';
 import { type CoreDeps, memoryDeps } from './deps.js';
 import { installErrorHandler } from './http/errors.js';
+import { registerMemberRoutes } from './members/routes.js';
+import { MembersService } from './members/service.js';
 import { route } from './router/route.js';
 import type { RoutableMember } from './router/types.js';
 
@@ -18,6 +20,8 @@ interface RoutePreviewBody {
 
 export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps()): FastifyInstance {
   const app = Fastify({
+    // 未声明的字段直接 400，而不是悄悄丢掉（Key 等敏感接口不接受「多余但被忽略」的输入）
+    ajv: { customOptions: { removeAdditional: false } },
     logger:
       cfg.logLevel === 'silent'
         ? false
@@ -95,6 +99,7 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps()): Fas
   );
 
   registerAuditRoutes(app, deps.auditLog);
+  registerMemberRoutes(app, new MembersService(deps.members, deps.now));
 
   return app;
 }
