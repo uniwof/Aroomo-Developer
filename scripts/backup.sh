@@ -160,7 +160,10 @@ rm -rf "$STAGE"
 step="按保留策略清理旧快照"
 keep=()
 (( ${RETENTION_KEEP_LAST:-0} > 0 )) && keep+=(--keep-last "$RETENTION_KEEP_LAST")
-keep+=(--keep-daily "${RETENTION_KEEP_DAILY:-7}" --keep-weekly "${RETENTION_KEEP_WEEKLY:-4}" --keep-monthly "${RETENTION_KEEP_MONTHLY:-6}")
+(( ${RETENTION_KEEP_DAILY:-7} > 0 )) && keep+=(--keep-daily "${RETENTION_KEEP_DAILY:-7}")
+(( ${RETENTION_KEEP_WEEKLY:-4} > 0 )) && keep+=(--keep-weekly "${RETENTION_KEEP_WEEKLY:-4}")
+(( ${RETENTION_KEEP_MONTHLY:-6} > 0 )) && keep+=(--keep-monthly "${RETENTION_KEEP_MONTHLY:-6}")
+(( ${#keep[@]} > 0 )) || fail "保留策略至少要有一项大于 0（RETENTION_KEEP_*）"
 log "保留策略：${keep[*]}"
 restic forget --host "$HOST_TAG" --tag "$TAG" "${keep[@]}" --prune >&2
 

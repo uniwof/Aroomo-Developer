@@ -109,10 +109,12 @@ snap1=$(jq -r .snapshot_id <<<"$line")
 ok "备份成功，快照 ${snap1:0:8}"
 
 step="保留策略"
-dc --profile backup run --rm -T backup now >/dev/null
+# restic ≥0.17 在桶没填满时会额外保留「最旧的」快照，所以用 keep-last=1 验证清理确实生效
+dc --profile backup run --rm -T -e RETENTION_KEEP_LAST=1 -e RETENTION_KEEP_DAILY=0 \
+  -e RETENTION_KEEP_WEEKLY=0 -e RETENTION_KEEP_MONTHLY=0 backup now >/dev/null
 count=$(dc --profile backup run --rm -T --entrypoint restic backup snapshots --json | jq length)
-(( count == 1 )) || die "同一天两次备份后按 keep-daily 应只剩 1 个快照，实际 $count"
-ok "保留策略生效（同一天只保留最新 1 个）"
+(( count == 1 )) || die "RETENTION_KEEP_LAST=1 时应只剩 1 个快照，实际 $count"
+ok "保留策略生效（keep-last=1 后只剩 1 个快照）"
 
 step="模拟灾难：删除全部数据卷"
 dc down -v
