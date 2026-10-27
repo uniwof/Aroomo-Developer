@@ -125,32 +125,37 @@ describe('AuditLog Module', () => {
     it('正例 (≥5 个)：匹配各种密钥与敏感令牌形式应替换为 [REDACTED]', () => {
       const positiveCases = [
         {
-          input: 'sk-proj-1234567890abcdefghijklmnopqrstuvwxyz', // gitleaks:allow
+          input: 'sk-proj-1234567890abcdefghijklmnopqrstuvwxyz',
           expected: '[REDACTED]',
           label: 'OpenAI/LiteLLM sk- Key',
         },
         {
-          input: 'AIzaSyA1234567890abcdefghijklmnopqrst', // gitleaks:allow
+          input: 'AIzaSyA1234567890abcdefghijklmnopqrst',
           expected: '[REDACTED]',
           label: 'Google Cloud AIza Key',
         },
         {
-          input: 'ghp_1234567890abcdefghijklmnopqrstuvwxyz', // gitleaks:allow
+          input: 'ghp_1234567890abcdefghijklmnopqrstuvwxyz',
           expected: '[REDACTED]',
           label: 'GitHub Personal Token ghp_',
         },
         {
-          input: 'Authorization: Bearer my-secret-auth-token-1234567890', // gitleaks:allow
+          input: 'Authorization: Bearer my-secret-auth-token-1234567890',
           expected: 'Authorization: [REDACTED]',
           label: 'Bearer Token',
         },
         {
-          input: '4f3a8b2c1d9e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a', // gitleaks:allow
+          input: '4f3a8b2c1d9e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a',
           expected: '[REDACTED]',
           label: 'Long Hex String (64 chars)',
         },
         {
-          input: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c', // gitleaks:allow
+          input:
+            'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9' +
+            '.' +
+            'eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ' +
+            '.' +
+            'SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c',
           expected: '[REDACTED]',
           label: 'JWT Token',
         },
@@ -208,11 +213,14 @@ describe('AuditLog Module', () => {
 
     it('追加日志时应自动在所有字符串字段上应用脱敏规则', async () => {
       const entry = await auditLog.append({
-        actor: { type: 'operator', id: 'sk-proj-1234567890abcdefghijklmnopqrstuvwxyz' }, // gitleaks:allow
-        action: 'ghp_1234567890abcdefghijklmnopqrstuvwxyz', // gitleaks:allow
-        target: { type: 'AIzaSyA1234567890abcdefghijklmnopqrst', id: '4f3a8b2c1d9e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a' }, // gitleaks:allow
+        actor: { type: 'operator', id: 'sk-proj-1234567890abcdefghijklmnopqrstuvwxyz' },
+        action: 'ghp_1234567890abcdefghijklmnopqrstuvwxyz',
+        target: {
+          type: 'AIzaSyA1234567890abcdefghijklmnopqrst',
+          id: '4f3a8b2c1d9e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a',
+        },
         result: 'ok',
-        note: 'User provided Bearer token-xyz-secret-123', // gitleaks:allow
+        note: 'User provided Bearer token-xyz-secret-123',
       });
 
       expect(entry.actor.id).toBe('[REDACTED]');
