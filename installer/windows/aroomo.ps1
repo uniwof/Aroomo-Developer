@@ -1,12 +1,12 @@
 <#
 .SYNOPSIS
-    Aroomo Windows 控制脚本，支持 start / stop / update / status 子命令。
+    Aroomo Windows control script supporting start / stop / update / status subcommands.
 
 .DESCRIPTION
-    调用与 scripts/compose.sh 相同的 Compose 文件组合，逻辑如下：
-    - 基础：deploy/docker-compose.yml + deploy/tiers/<tier>.yml
-    - AROOMO_LOCAL=1 (默认启用)：添加 -f deploy/local.yml
-    - AROOMO_DATA_DIR=1 或 DATA_DIR 已设置：添加 -f deploy/data-dir.yml
+    Invokes the same Docker Compose file combinations as scripts/compose.sh:
+    - Base: deploy/docker-compose.yml + deploy/tiers/<tier>.yml
+    - AROOMO_LOCAL=1 (enabled by default): adds -f deploy/local.yml
+    - AROOMO_DATA_DIR=1 or DATA_DIR set: adds -f deploy/data-dir.yml
 #>
 [CmdletBinding()]
 param (
@@ -38,7 +38,7 @@ if ([string]::IsNullOrWhiteSpace($Tier)) {
 
 $TierFile = Join-Path $DeployDir "tiers\$Tier.yml"
 if (-not (Test-Path $TierFile)) {
-    Write-Error "aroomo.ps1: 未知档位 $Tier (找不到文件 $TierFile)"
+    Write-Error "aroomo.ps1: Unknown tier $Tier (file not found: $TierFile)"
     exit 2
 }
 
@@ -71,8 +71,7 @@ switch ($Command) {
         $DockerArgs += @("down")
     }
     "update" {
-        Write-Host "正在执行升级前本地数据快照..." -ForegroundColor Cyan
-        # 快照/升级提示逻辑
+        Write-Host "Creating pre-update local data snapshot..." -ForegroundColor Cyan
         $DockerArgs += @("pull")
     }
     "status" {
@@ -92,11 +91,11 @@ if ($DryRun) {
 }
 
 if ($Command -eq "update") {
-    Write-Host "拉取最新镜像..." -ForegroundColor Green
+    Write-Host "Pulling latest images..." -ForegroundColor Green
     & docker compose @DockerArgs
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-    Write-Host "重新启动服务..." -ForegroundColor Green
+    Write-Host "Restarting services..." -ForegroundColor Green
     $StartArgs = @("--project-directory", $DeployDir) + $ComposeFiles + @("up", "-d")
     & docker compose @StartArgs
     exit $LASTEXITCODE

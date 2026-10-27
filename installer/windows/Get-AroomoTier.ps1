@@ -1,14 +1,14 @@
 <#
 .SYNOPSIS
-    根据系统内存自动选择 Aroomo 部署档位 (PRODUCT §7.1, §7.3, DECISIONS v4.3)。
+    Select Aroomo tier based on system memory (PRODUCT §7.1, §7.3, DECISIONS v4.3).
 
 .DESCRIPTION
-    按内存（MB）计算档位：
+    Memory thresholds (MB):
     - < 3500 MB  -> demo-2g
     - < 7000 MB  -> standard
     - >= 7000 MB -> full
 
-    阈值与 scripts/select-tier.sh 严格保持一致。
+    Thresholds match scripts/select-tier.sh exactly.
 #>
 [CmdletBinding()]
 param (
@@ -24,7 +24,7 @@ if ($null -eq $MemTotalMB) {
         if ([int64]::TryParse($env:MEM_TOTAL_MB, [ref]$parsed)) {
             $MemTotalMB = $parsed
         } else {
-            Write-Error "Get-AroomoTier: MEM_TOTAL_MB 必须是整数" -Category IllegalArgument
+            Write-Error "Get-AroomoTier: MEM_TOTAL_MB must be an integer" -Category IllegalArgument
             exit 2
         }
     } else {
@@ -36,7 +36,7 @@ if ($null -eq $MemTotalMB) {
                 $gcMem = [GC]::GetGCMemoryInfo().TotalAvailableMemoryBytes
                 $MemTotalMB = [math]::Floor($gcMem / 1MB)
             } catch {
-                Write-Error "Get-AroomoTier: 无法自动获取内存，请指定 -MemTotalMB 或设置环境变量 MEM_TOTAL_MB" -Category InvalidOperation
+                Write-Error "Get-AroomoTier: Unable to detect memory automatically. Specify -MemTotalMB or set MEM_TOTAL_MB" -Category InvalidOperation
                 exit 2
             }
         }
@@ -44,7 +44,7 @@ if ($null -eq $MemTotalMB) {
 }
 
 if ($MemTotalMB -lt 0) {
-    Write-Error "Get-AroomoTier: MEM_TOTAL_MB 必须是正整数" -Category IllegalArgument
+    Write-Error "Get-AroomoTier: MEM_TOTAL_MB must be a positive integer" -Category IllegalArgument
     exit 2
 }
 
