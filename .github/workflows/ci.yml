@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Core（lint + typecheck + test + build）
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: core/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  compose:
+    name: Compose 配置校验 + 脚本检查
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - run: docker compose version
+      - run: scripts/check-compose.sh
+      - name: shellcheck
+        run: shellcheck scripts/*.sh deploy/backup/entrypoint.sh deploy/postgres/20-aroomo-dbs.sh deploy/lobe/rustfs-init.sh
+      - name: select-tier 阈值
+        run: |
+          test "$(MEM_TOTAL_MB=1900 scripts/select-tier.sh)" = demo-2g
+          test "$(MEM_TOTAL_MB=3900 scripts/select-tier.sh)" = standard
+          test "$(MEM_TOTAL_MB=7700 scripts/select-tier.sh)" = full
+
+  images:
+    name: 自建镜像构建（core、backup）
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - run: docker build -t aroomo-core:ci core
+      - run: docker build -t aroomo-backup:ci deploy/backup
+      - name: backup 镜像自检
+        run: |
+          docker run --rm --entrypoint restic aroomo-backup:ci version
+          docker run --rm --entrypoint pg_dumpall aroomo-backup:ci --version
+      - name: core 镜像冒烟测试
+        run: |
+          docker run -d --name core -e CORE_LOG_LEVEL=warn aroomo-core:ci
+          for i in $(seq 1 20); do
+            if docker exec core node -e "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
+              echo healthy; docker rm -f core; exit 0
+            fi
+            sleep 1
+          done
+          docker logs core; exit 1
+
+  e2e-backup-restore:
+    name: 端到端备份/恢复测试
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: 构建 backup 镜像
+        run: docker build -t aroomo-backup:dev deploy/backup
+      - name: 配置测试环境与本地 RESTIC 仓库
+        run: |
+          mkdir -p /tmp/ci-restic-repo
+          sed 's/CHANGE_ME/placeholder/g' deploy/.env.example > deploy/.env
+          echo "RESTIC_PASSWORD=placeholder-restic-password" >> deploy/.env
+          echo "RESTIC_REPOSITORY=/tmp/ci-restic-repo" >> deploy/.env
+          echo "RUSTFS_ACCESS_KEY=placeholder-rustfs-access-key" >> deploy/.env
+          echo "RUSTFS_SECRET_KEY=placeholder-rustfs-secret-key" >> deploy/.env
+      - name: 启动基础服务 (PostgreSQL & RustFS)
+        run: |
+          docker compose --project-directory deploy up -d postgres rustfs
+          until docker compose --project-directory deploy exec -T postgres pg_isready -U postgres -h 127.0.0.1; do
+            echo "Waiting for PostgreSQL..."
+            sleep 1
+          done
+      - name: 写入测试数据
+        run: |
+          docker compose --project-directory deploy exec -T postgres psql -U postgres -d lobechat -c "CREATE TABLE ci_e2e_test (id INT PRIMARY KEY, name TEXT); INSERT INTO ci_e2e_test VALUES (1, 'e2e-sample-data');"
+          docker compose --project-directory deploy exec -T postgres psql -U postgres -d litellm -c "CREATE TABLE ci_e2e_test (id INT PRIMARY KEY); INSERT INTO ci_e2e_test VALUES (1);"
+          docker compose --project-directory deploy exec -T postgres psql -U postgres -d aroomo_core -c "CREATE TABLE ci_e2e_test (id INT PRIMARY KEY); INSERT INTO ci_e2e_test VALUES (1);"
+      - name: 执行 备份 (backup.sh)
+        run: |
+          docker compose --project-directory deploy --profile backup run --rm -v /tmp/ci-restic-repo:/tmp/ci-restic-repo backup now
+      - name: 模拟误删/破坏数据库
+        run: |
+          docker compose --project-directory deploy exec -T postgres psql -U postgres -d lobechat -c "DROP TABLE ci_e2e_test;"
+          docker compose --project-directory deploy exec -T postgres psql -U postgres -d litellm -c "DROP TABLE ci_e2e_test;"
+          docker compose --project-directory deploy exec -T postgres psql -U postgres -d aroomo_core -c "DROP TABLE ci_e2e_test;"
+      - name: 执行 恢复 (restore.sh)
+        run: |
+          docker compose --project-directory deploy --profile backup run --rm -v /tmp/ci-restic-repo:/tmp/ci-restic-repo backup restore --yes-overwrite-database latest
+      - name: 校验恢复后的测试数据
+        run: |
+          res=$(docker compose --project-directory deploy exec -T postgres psql -U postgres -d lobechat -t -A -c "SELECT name FROM ci_e2e_test WHERE id=1;")
+          test "$res" = "e2e-sample-data"
+          echo "E2E backup/restore verification successful!"
+      - name: 执行 恢复演练脚本 (restore-drill.sh)
+        run: |
+          scripts/restore-drill.sh
+      - name: 清理测试资源
+        if: always()
+        run: |
+          docker compose --project-directory deploy --profile backup down -v --remove-orphans || true
+          sudo rm -rf /tmp/ci-restic-repo
+
+  secrets:
+    name: 密钥扫描（gitleaks）
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
