@@ -17,6 +17,10 @@ describe('Key Management API (Mock LiteLLM)', () => {
   let modelDeleteCalled = false;
   let syncModelsCalled = false;
 
+  const sampleApiKey = 'placeholder-sk-1234567890abcdef';
+  const updatedApiKey = 'placeholder-sk-newkey9999';
+  const fallbackApiKey = 'placeholder-sk-testsecretkey1234';
+
   beforeAll(async () => {
     // 启动本地 mock LiteLLM 服务
     mockLiteLLM = Fastify();
@@ -77,7 +81,7 @@ describe('Key Management API (Mock LiteLLM)', () => {
       payload: {
         sourceUrl: 'https://api.openai.com',
         name: 'OpenAI 官方 Key',
-        apiKey: 'placeholder-sk-1234567890abcdef',
+        apiKey: sampleApiKey,
       },
     });
 
@@ -150,7 +154,7 @@ describe('Key Management API (Mock LiteLLM)', () => {
     const res2 = await app.inject({
       method: 'PUT',
       url: `/api/keys/${created.id}`,
-      payload: { apiKey: 'placeholder-sk-newkey9999' },
+      payload: { apiKey: updatedApiKey },
     });
     expect(res2.statusCode).toBe(200);
     expect(res2.json().last4).toBe('9999');
@@ -199,7 +203,7 @@ describe('Key Management API (Mock LiteLLM)', () => {
       payload: {
         sourceUrl: 'https://api.openai.com',
         name: '测试 Key',
-        apiKey: 'placeholder-sk-testsecretkey1234',
+        apiKey: fallbackApiKey,
       },
     });
 
