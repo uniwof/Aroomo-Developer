@@ -21,7 +21,7 @@ for tier in demo-2g standard full; do
     label="$tier${extra:+ + $extra}"
     # shellcheck disable=SC2086
     if $compose --project-directory "$deploy" --env-file "$tmp_env" "${files[@]}" \
-        --profile tunnel --profile backup --profile agent-gateway config --quiet; then
+        --profile tunnel --profile backup --profile restore --profile agent-gateway config --quiet; then
       echo "ok   $label"
     else
       echo "FAIL $label" >&2
@@ -33,7 +33,7 @@ done
 # 基础文件不得发布宿主机端口（服务器除 22 外不开端口）
 # shellcheck disable=SC2086
 if $compose --project-directory "$deploy" --env-file "$tmp_env" -f "$deploy/docker-compose.yml" \
-    --profile tunnel --profile backup --profile agent-gateway config --format json \
+    --profile tunnel --profile backup --profile restore --profile agent-gateway config --format json \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); bad=[n for n,s in d["services"].items() if s.get("ports")]; print("published ports in base:", bad) if bad else None; sys.exit(1 if bad else 0)'; then
   echo "ok   base publishes no host ports"
 else
@@ -43,7 +43,7 @@ fi
 # 镜像必须固定版本（不允许 latest 或无标签）
 # shellcheck disable=SC2086
 if $compose --project-directory "$deploy" --env-file "$tmp_env" -f "$deploy/docker-compose.yml" \
-    --profile tunnel --profile backup --profile agent-gateway config --format json \
+    --profile tunnel --profile backup --profile restore --profile agent-gateway config --format json \
     | python3 -c '
 import json,sys
 d=json.load(sys.stdin); bad=[]

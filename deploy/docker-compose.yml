@@ -245,9 +245,15 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    environment:
+    environment: &backup-env
       TZ: ${TZ:-Asia/Shanghai}
       BACKUP_CRON: ${BACKUP_CRON:-30 3 * * *}
+      BACKUP_HOST_TAG: ${BACKUP_HOST_TAG:-aroomo}
+      BACKUP_CHECK: ${BACKUP_CHECK:-weekly}
+      RETENTION_KEEP_LAST: ${RETENTION_KEEP_LAST:-0}
+      RETENTION_KEEP_DAILY: ${RETENTION_KEEP_DAILY:-7}
+      RETENTION_KEEP_WEEKLY: ${RETENTION_KEEP_WEEKLY:-4}
+      RETENTION_KEEP_MONTHLY: ${RETENTION_KEEP_MONTHLY:-6}
       RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:-}
       RESTIC_PASSWORD: ${RESTIC_PASSWORD:-}
       AWS_ACCESS_KEY_ID: ${BACKUP_S3_ACCESS_KEY_ID:-}
@@ -256,9 +262,30 @@ services:
       PGHOST: postgres
       PGUSER: postgres
       PGPASSWORD: ${POSTGRES_PASSWORD}
+      # 注意：这里故意不传 LITELLM_SALT_KEY；backup.sh 发现它会拒绝备份
     volumes:
       - rustfs-data:/data/rustfs:ro
       - ./litellm:/data/config/litellm:ro
+      - ./lobe:/data/config/lobe:ro
+      - ../scripts:/opt/aroomo/scripts:ro
+    networks: [aroomo]
+
+  # 恢复：与 backup 同一镜像，一次性运行；对象存储卷可写（挂在 /restore-root/data/rustfs）。
+  #   docker compose stop lobe litellm core rustfs
+  #   docker compose --profile restore run --rm restore --yes-overwrite-database [快照id]
+  restore:
+    build:
+      context: ./backup
+    image: aroomo-backup:${AROOMO_BACKUP_TAG:-dev}
+    profiles: [restore]
+    entrypoint: ['/opt/aroomo/scripts/restore.sh']
+    restart: 'no'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment: *backup-env
+    volumes:
+      - rustfs-data:/restore-root/data/rustfs
       - ../scripts:/opt/aroomo/scripts:ro
     networks: [aroomo]
 
