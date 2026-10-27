@@ -173,6 +173,9 @@ describe('Key 管理（/api/keys，mock LiteLLM）', () => {
     mock.mode.add = 'slow';
     const r2 = await create();
     expect(r2.statusCode).toBe(503);
+    // 假网关的慢请求在客户端超时后仍会完成并写入部署：等它结束再清掉，避免影响后面的用例
+    await new Promise((r) => setTimeout(r, 400));
+    mock.deployments.clear();
 
     build(mock.url, null);
     const r3 = await create();
