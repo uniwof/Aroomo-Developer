@@ -18,10 +18,13 @@ password="placeholder-$(openssl rand -hex 8)"
 
 env_file="$(mktemp)"
 python3 - "$deploy/.env.example" >"$env_file" <<'PY'
-import secrets, sys
+import base64, secrets, sys
 for line in open(sys.argv[1], encoding='utf-8'):
     line = line.rstrip('\n')
-    if line.endswith('=CHANGE_ME'):
+    if line.startswith('KEY_VAULTS_SECRET='):
+        # LobeHub 要求 base64 解码后正好 16/24/32 字节（openssl rand -base64 32）
+        line = 'KEY_VAULTS_SECRET=' + base64.b64encode(secrets.token_bytes(32)).decode()
+    elif line.endswith('=CHANGE_ME'):
         line = line[:-len('CHANGE_ME')] + secrets.token_hex(24)
     elif line.endswith('=sk-CHANGE_ME'):
         line = line[:-len('sk-CHANGE_ME')] + 'sk-' + secrets.token_hex(24)

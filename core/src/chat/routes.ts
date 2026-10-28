@@ -6,6 +6,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { Readable } from 'node:stream';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { HttpError } from '../http/errors.js';
+import { chatToResponses, responsesToChat } from './responses.js';
 import type { ChatService } from './service.js';
 
 function tokenOk(req: FastifyRequest, expected: string | undefined): void {
@@ -39,6 +40,27 @@ export function registerChatRoutes(app: FastifyInstance, chat: ChatService, chat
         if (!reply.raw.writableEnded) ctrl.abort();
       });
       const out = await chat.complete(req.body, ctrl.signal);
+      reply.code(out.status).headers(out.headers);
+      if (out.stream) return reply.send(Readable.fromWeb(out.stream as import('node:stream/web').ReadableStream));
+      return reply.send(out.json);
+    },
+  );
+
+  // LobeHub 开启联网 / 智能搜索时走 Responses API：转成 chat/completions 走同一套路由，再转回来
+  app.post<{ Body: Record<string, unknown> }>(
+    '/v1/responses',
+    {
+      bodyLimit: 32 * 1024 * 1024,
+      schema: { body: { type: 'object', properties: { model: { type: 'string', maxLength: 200 } } } },
+    },
+    async (req, reply) => {
+      tokenOk(req, chatToken);
+      const ctrl = new AbortController();
+      req.raw.on('close', () => {
+        if (!reply.raw.writableEnded) ctrl.abort();
+      });
+      const model = typeof req.body.model === 'string' ? req.body.model : 'aroomo';
+      const out = chatToResponses(await chat.complete(responsesToChat(req.body), ctrl.signal), model);
       reply.code(out.status).headers(out.headers);
       if (out.stream) return reply.send(Readable.fromWeb(out.stream as import('node:stream/web').ReadableStream));
       return reply.send(out.json);

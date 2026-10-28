@@ -163,4 +163,38 @@ describe('/v1 对话入口（LobeHub → Core → LiteLLM，D31）', () => {
     expect(seen[0]!.messages.at(-1)!.content).toBe('给这段对话起个标题：@x');
     expect(text(r)).toBe('我是 Claude');
   });
+  it('Responses API（LobeHub 联网 / 智能搜索时走这条）：转成同一套路由，流式事件和署名都在', async () => {
+    await addMember('GPT-4o mini');
+    const r = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: chatAuth,
+      payload: {
+        model: 'aroomo',
+        stream: true,
+        instructions: 's',
+        tools: [{ type: 'web_search' }],
+        input: [{ role: 'user', content: [{ type: 'input_text', text: '你好' }] }],
+      },
+    });
+    expect(r.statusCode).toBe(200);
+    expect(seen[0]).toMatchObject({ model: 'GPT-4o mini', stream: true });
+    expect(seen[0]!.messages).toEqual([{ role: 'system', content: 's' }, { role: 'user', content: '你好' }]);
+    expect(seen[0]).not.toHaveProperty('tools');
+    const types = [...r.body.matchAll(/^event: (\S+)$/gm)].map((m) => m[1]);
+    expect(types[0]).toBe('response.created');
+    expect(types).toContain('response.output_text.delta');
+    expect(types.at(-1)).toBe('response.completed');
+    expect(r.body).toContain('我是 GPT-4o mini');
+    expect(r.body).toContain('GPT-4o mini（负责人）');
+  });
+
+  it('Responses API 非流式 + 点名不存在的成员', async () => {
+    await addMember('Claude');
+    const r = await app.inject({ method: 'POST', url: '/v1/responses', headers: chatAuth, payload: { model: 'aroomo', input: '@Nobody 你好' } });
+    expect(seen).toHaveLength(0);
+    expect(r.json()).toMatchObject({ object: 'response', status: 'completed' });
+    expect(r.json().output_text).toContain('没有叫「Nobody」的成员');
+    expect((await app.inject({ method: 'POST', url: '/v1/responses', payload: { input: 'x' } })).statusCode).toBe(401);
+  });
 });
