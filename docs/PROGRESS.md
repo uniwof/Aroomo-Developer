@@ -26,7 +26,7 @@ P0 范围与验收见 PRODUCT 16.1。分支规则：CI 通过后主程序员可�
 | a | 经安全表单一次性要齐 P0 凭据（Cloudflare 限定令牌、测试模型 Key、AWS 之外的备份存储密钥） | 主程序员 | ⏳ | D60 |
 | b | 服务器全模块部署 + 2 个浏览器任务 + 逐容器内存峰值 → 内存实测报告 → 定档位 + 长期主机建议 | 主程序员 | 🟡 已部署标准版并完成空闲 + 2 并发页面负载实测（PR #34，docs/ops/MEMORY-REPORT.md）；**真实对话负载待测试模型 Key** | D40、D59、D66 |
 | c | 三张时序图 | 主程序员 | 🟡 待审查 | docs/architecture/SEQUENCES.md |
-| d | Cloudflare Tunnel + Access；只开 22；仅密钥登录；fail2ban | 主程序员 | ✅ 2026-10-28：只开 22（安全组 + ufw）、仅密钥登录、禁 root、fail2ban、自动安全更新、4 GB swap；Tunnel `aroomo-app` → app.pcmanai.com → `http://lobe:3210`；Access 只允许用户本人邮箱（邮箱一次性验证码，会话 30 天，D67） | D57、D66、D67 |
+| d | Cloudflare Tunnel + Access；只开 22；仅密钥登录；fail2ban | 主程序员 | ✅ 2026-10-28：只开 22（安全组 + ufw）、仅密钥登录、禁 root、fail2ban、自动安全更新、4 GB swap；Tunnel `aroomo-app` → app.pcmanai.com → `http://shell:3000`（2026-10-28 由 `lobe:3210` 改指 Shell）；Access 只允许用户本人邮箱（邮箱一次性验证码，会话 30 天，D67） | D57、D66、D67 |
 | e | AWS 之外备份 + 恢复演练（记录耗时） | 主程序员 | 🟡 改为主密钥公钥加密（age，D64）并通过 CI 端到端（#28）；真实环境演练 ⛔ 等 R2 桶 + 只限该桶的独立令牌（D72，现有 Cloudflare 令牌无 R2 权限，需用户在控制台创建）和主密钥公钥 | D49、D64、D65；KEY-STORAGE 2.3；docs/ops/BACKUP.md |
 | f | 本地完整版（Windows 一键安装包等） | 主程序员 | 🟡 安装器已合并（#23）；D64 主密钥窗口 + D65 电脑版备份已合并（#29）；测试版发布到预发布 `local-test`（#30）；**尚未在真实电脑上跑过** | D56 f；docs/ops/WINDOWS.md |
 | — | Key 加密存储方案 | 主程序员 | 🟡 待审查 | docs/architecture/KEY-STORAGE.md |
@@ -48,13 +48,14 @@ P0 范围与验收见 PRODUCT 16.1。分支规则：CI 通过后主程序员可�
 | fix | AGENT_GATEWAY_URL 为空导致 LobeHub 崩溃（compose 默认 http://gateway:8787）+ D66–D75 入档 | ✅ 已合并到 dev | #33 | |
 | 界面 | Aroomo Shell 界面薄层：品牌 Aroomo、按 §8 隐藏（FEATURE_FLAGS + 浏览器端）、朗读禁用（D68）、侧栏底部图标、PWA 清单（D77-2）、同源转发 Core；D76–D80 入档；提议 H1/H2 | ✅ 已合并到 dev | #36 | CI 界面冒烟（官方 LobeHub + Shell，电脑 + 手机截图）通过 |
 | 界面 | 品牌第二轮：上游文字 Logo、逐字动画标题、匿名数据开关行 | ✅ 已合并到 dev | #37 | |
-| 界面 + Core | Aroomo 页面接 Core（成员 / Key 与接入 / 收件箱 / 设置 + 确认卡）、D73、负责人、填 Key 自动建成员；提议 H3/H4 | 🟡 | #38 | |
-| 对话 | LobeHub → Core /v1（D31 点名 / 交给负责人）→ LiteLLM；界面冒烟用假模型验证「填 Key 后能对话」；提议 H5 | 🟡 | p0/chat-route | |
+| 界面 + Core | Aroomo 页面接 Core（成员 / Key 与接入 / 收件箱 / 设置 + 确认卡）、D73、负责人、填 Key 自动建成员；提议 H3/H4 | ✅ 已合并到 dev | #38 | |
+| 对话 | LobeHub → Core /v1（D31 点名 / 交给负责人）→ LiteLLM；界面冒烟用假模型验证「填 Key 后能对话」；提议 H5 | ✅ 已合并到 dev | #39 | 含 `/v1/responses` 转换（LobeHub 开联网 / 智能搜索时走 Responses API）；P0 不转发工具（web_search / 函数工具） |
+| Core | 定时任务：回收站 30 天彻底删除（6 小时）、过期确认清理（1 小时）、Key 与 LiteLLM 对账（1 小时，缺失只提醒一次） | ✅ 已合并到 dev | #40 | `CORE_JOBS=off` 可关；结果写审计 `job.run` |
 
 - 存储：有 `CORE_DATABASE_URL` 用 PostgreSQL（启动自动迁移），否则内存（只适合开发 / 演示）。测试：PGlite 每次跑 + CI 的 PostgreSQL 17 服务容器再跑一遍。
 - 访问：`/api/*` 需要 `Authorization: Bearer <CORE_OWNER_TOKEN>`（P0 单用户）；未配置时一律 503。
 - 界面入口：浏览器 → Aroomo Shell（`shell/`，H1）→ 官方 LobeHub；Aroomo 页面在 `/aroomo/*`，`/aroomo/api/*` 同源转发 Core。
-- 尚未接入：定时任务（回收站清理、过期确认清理、Key 对账）。
+- 对话入口：LobeHub 的 OpenAI 服务商指向 `http://core:8080/v1`（令牌 `CORE_CHAT_TOKEN`），模型名 `aroomo`。
 
 ### P0 验收标准
 
@@ -78,13 +79,15 @@ P0 范围与验收见 PRODUCT 16.1。分支规则：CI 通过后主程序员可�
 - AWS EC2 **t4g.medium（ARM64/Graviton）**，**us-east-2 俄亥俄**，2 vCPU / 3.7 GiB + 4 GB swap，Ubuntu 24.04，58 GB。原计划的法兰克福 m7i-flex.large 已由负责人 D66 改为此机（不再换更大的机器；完整版内存以后在用户电脑上实测）。
 - 代码在 `/opt/aroomo`（dev），`AROOMO_TIER=standard`，`COMPOSE_PROFILES=tunnel`（backup 等 R2）。服务器 `.env` 只在服务器上（chmod 600），含 `LITELLM_SALT_KEY` 等，**用户需离线另存一份**。
 - 访问：https://app.pcmanai.com（Cloudflare Access 团队 `aroomo.cloudflareaccess.com`）。
+- 2026-10-28 13:24（北京时间）更新到 dev `f349d90`（#38–#40）：新增 `CORE_CHAT_TOKEN`；`KEY_VAULTS_SECRET` 原为 64 位十六进制（base64 解码 48 字节，LobeHub 拒绝），已改为 `openssl rand -base64 32`（旧值从未成功加密过数据；改前的 .env 备份在服务器 `deploy/.env.bak-*`）。8 个容器健康（cloudflared 无健康检查，Tunnel 状态 healthy、4 条连接），未登录访问 302 到 Access 登录页；空闲内存约 1.8 GiB 已用 / 3.7 GiB，swap 0。
 
 ## 阻塞
 
 | 阻塞项 | 卡住什么 | 需要谁 |
 |--------|----------|--------|
 | R2 备份桶 + 只限该桶的令牌（D72） | P0 e | 用户（Cloudflare 控制台） |
-| 测试模型 Key | P0 b 真实对话负载、验收「能和模型对话」 | 用户（安全表单） |
+| 测试模型 Key | P0 b 真实对话负载、验收「能和模型对话」（CI 已用假模型验证整条链路） | 用户（安全表单） |
+| Windows 安装器生成的 `KEY_VAULTS_SECRET` 是 64 位十六进制（`New-AroomoSecret`），LobeHub 要求 base64 解码后 16/24/32 字节 | 本地版 LobeHub 设置加密报错 | 主程序员（与单机版安装器任务协调后修） |
 | 本地测试版在用户电脑上的第一次真实安装（Windows 版本、内存、剩余硬盘仍未知） | P0 f 验收 | 用户 |
 | 主密钥公钥（用户在电脑上生成后发来 `age1…`） | 服务器备份（D64/D65 共用主密钥） | 用户 |
 | D64 实现注 a/b、D65 实现注 a、「新增 Key 也算涉及凭据」 | 确认实现方向 | 负责人 |
@@ -92,6 +95,7 @@ P0 范围与验收见 PRODUCT 16.1。分支规则：CI 通过后主程序员可�
 | Muse 1–15 清单与负责人裁决表 | D39 细节 | 用户转达 |
 
 ## 变更
+- 2026-10-28：#38 Aroomo 页面接 Core、#39 对话经 Core /v1 → LiteLLM（含 Responses API 转换、冒烟修复）、#40 Core 定时任务合并到 dev；服务器更新到 `f349d90`，Tunnel 改指 `shell:3000`。
 - 2026-10-28：#33 修复 AGENT_GATEWAY_URL 空值 + D66–D75 入档；#36 Aroomo Shell 界面薄层 + D76–D80 入档、提议 H1/H2。
 - 2026-10-28：负责人裁决 D62–D65 入档（#26）并实现：操作员白名单 + 统一确认服务（#27）、备份公钥加密（#28）、安装器主密钥窗口与电脑版备份（#29）、测试版发布流程（#30）。
 - 2026-10-27：建立本文件。
