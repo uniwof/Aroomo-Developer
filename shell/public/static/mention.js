@@ -268,7 +268,7 @@
     var m = state.items[i];
     var el = state.el;
     // 名字里有空格等字符时加引号；「/」「:」不加（模型名常见，如 openai/gpt-oss-20b；Core 按成员名最长匹配，见 core/src/router/mentions.ts）
-    var name = /^[\p{L}\p{N}\p{M}_+\-.\/:]+$/u.test(m.name) && !/[.\s]$/.test(m.name) ? m.name : '"' + m.name.replace(/"/g, '') + '"';
+    var name = /^[\p{L}\p{N}\p{M}_+\-. \/:]+$/u.test(m.name) && !/[.\s]$/.test(m.name) ? m.name : '"' + m.name.replace(/"/g, '') + '"';
     var text = name + ' ';
     var query = state.query;
     close();
