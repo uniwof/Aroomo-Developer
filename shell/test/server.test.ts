@@ -102,7 +102,7 @@ describe('LobeHub 页面', () => {
     expect(body).toContain('/aroomo/static/shell.js');
     expect(body).toContain('/aroomo/static/shell.css');
     // 输入框 @ 联想 Aroomo 成员（H3）
-    expect(body).toMatch(/<script src="\/aroomo\/static\/mention\.js\?v=\w+" defer><\/script>/);
+    expect(body).toMatch(/<script src="\/aroomo\/static\/mention\.js\?v=\w+"><\/script>/);
     expect(body).toContain('href="/aroomo/static/favicon.ico"');
     expect(body).toContain('href="/aroomo/static/manifest.json"');
     // HTML 向上游要不压缩的版本

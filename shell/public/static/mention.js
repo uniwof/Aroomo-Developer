@@ -207,6 +207,7 @@
   }
 
   function update(el) {
+    if (document.readyState === 'loading' && !document.body) return;
     var info = caretInfo(el);
     var m = info && AT_RE.exec(info.before);
     if (!m) return close();
@@ -237,8 +238,13 @@
       el.dispatchEvent(new Event('input', { bubbles: true }));
       return;
     }
-    el.focus();
-    // 删掉已经输入的筛选词（保留 @），再插入完整名字：都是普通编辑操作，编辑器会同步自己的状态
+    if (document.activeElement !== el) el.focus();
+    // 筛选词是名字的开头（最常见）：只在光标处补上剩下的部分，和用户继续打字完全一样
+    if (text.toLowerCase().indexOf(query.toLowerCase()) === 0 && text.slice(0, query.length) === query) {
+      document.execCommand('insertText', false, text.slice(query.length));
+      return;
+    }
+    // 否则删掉已经输入的筛选词（保留 @），再插入完整名字：都是普通编辑操作，编辑器会同步自己的状态
     for (var i = 0; i < query.length; i++) document.execCommand('delete', false);
     document.execCommand('insertText', false, text);
   }

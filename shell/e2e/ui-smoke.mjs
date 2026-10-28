@@ -316,7 +316,8 @@ for (const [label, viewport, isMobile] of [
     await shoot(page, 'desktop-chat-mention-suggest');
     check('对话：@ 弹出 Aroomo 成员联想', popOk && (await pop.innerText().catch(() => '')).includes('Fake Model'), await pop.innerText().catch(() => 'no popup'));
     await page.keyboard.press('Enter');
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(800);
+    await shoot(page, 'desktop-chat-mention-picked');
     const typed = await input.innerText().catch(() => input.inputValue().catch(() => ''));
     check('对话：回车填入「@Fake Model 」且没有直接发送', /@Fake Model\s*$/.test(typed.replace(/\u00a0/g, ' ')), JSON.stringify(typed));
     await page.keyboard.type('在吗');
