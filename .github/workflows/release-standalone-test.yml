@@ -155,7 +155,9 @@ jobs:
           "@
           Set-Content -Path notes.md -Value $notes -Encoding utf8
           # 删掉旧的同名草稿（草稿不建标签，按 tag_name 找）
-          $ids = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.draft and .tag_name == \"$env:TAG\") | .id"
+          # PowerShell 里 \" 不是转义（会把一个参数拆成两个，2026-10-28 CI「accepts 1 arg(s), received 2」）：用单引号拼 jq 表达式
+          $sel = '.[] | select(.draft and .tag_name == "' + $env:TAG + '")'
+          $ids = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq ($sel + ' | .id')
           foreach ($id in $ids) { if ($id) { gh api -X DELETE "repos/$env:GITHUB_REPOSITORY/releases/$id" | Out-Null } }
           gh release create $env:TAG --draft --prerelease --target $env:GITHUB_SHA --title "Aroomo 独立版测试包（standalone-test，草稿）$env:version" --notes-file notes.md dist/AroomoStandalone-Setup.exe dist/SHA256SUMS.txt
-          gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=20" --jq ".[] | select(.draft and .tag_name == \"$env:TAG\") | .html_url"
+          gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=20" --jq ($sel + ' | .html_url')
