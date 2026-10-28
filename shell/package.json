@@ -11,7 +11,7 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint . && node --check public/static/shell.js && node --check public/static/app.js",
+    "lint": "eslint . && node --check public/static/shell.js && node --check public/static/app.js && node --check e2e/ui-smoke.mjs",
     "test": "vitest run",
     "check": "npm run lint && npm run typecheck && npm run test"
   },
