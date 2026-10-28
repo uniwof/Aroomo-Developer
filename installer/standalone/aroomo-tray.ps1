@@ -139,7 +139,9 @@ $timer.Add_Tick({
             $script:lastCheck = Get-Date
             $ctx = Get-AroomoSAContext
             if (-not $ctx) { return }
-            $down = @($ctx.Specs | Where-Object { -not (Test-AroomoSAServiceHealthy -Spec $_ -Paths $ctx.Paths) })
+            # 监听表只读一次；进程还在（正在启动，例如稍后启动的完整档模块）的不算「掉了」
+            $listen = Get-AroomoSAListeningPorts
+            $down = @($ctx.Specs | Where-Object { -not (Test-AroomoSAServiceHealthy -Spec $_ -Paths $ctx.Paths -Listening $listen) -and -not (Test-AroomoSAServiceAlive -Spec $_ -Paths $ctx.Paths) })
             if ($down.Count -gt 0) {
                 # D78：有进程退出了就自动重启（start 只启动没在运行的）
                 Start-BackgroundStart

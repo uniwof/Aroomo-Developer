@@ -95,6 +95,7 @@ function Get-AroomoSAPaths {
         RustFSData  = (& $c $DataDir 'rustfs')
         Logs        = (& $c $DataDir 'logs')
         Run         = (& $c $DataDir 'run')
+        State       = (& $c $DataDir 'state')
         Backups     = (& $c $DataDir 'backups')
     }
 }
@@ -266,6 +267,7 @@ function Get-AroomoSAPrismaEnv {
 
 function Get-AroomoSAModuleSpecs {
     # 完整档模块（所有者 2026-10-28：全部功能离线可用）。都只听 127.0.0.1；没带的模块不出现
+    # Deferred：主界面（Shell → LobeHub、Core、LiteLLM）就绪后才启动、不等它们就绪（D77-3：不和主界面抢 CPU）；托盘巡检照常看管
     [OutputType([object[]])]
     param([Parameter(Mandatory)][hashtable]$Paths, [Parameter(Mandatory)][hashtable]$Config, [string]$LiteLLMUrl, [string]$Tz, [string]$SysPath)
     $c = $Config
@@ -275,7 +277,7 @@ function Get-AroomoSAModuleSpecs {
     $browserUrl = "http://127.0.0.1:$($c['BROWSER_PORT'])"
     if ($hasKarakeep -and (Test-Path -LiteralPath $Paths.Meili)) {
         $out += [pscustomobject]@{
-            Name = 'meilisearch'; Label = '全文搜索（Meilisearch）'; Kind = 'process'; Port = [int]$c['MEILI_PORT']; TimeoutSec = 90
+            Name = 'meilisearch'; Label = '全文搜索（Meilisearch）'; Kind = 'process'; Port = [int]$c['MEILI_PORT']; TimeoutSec = 90; DependsOn = @(); Deferred = $true
             Exe = $Paths.Meili
             Arguments = @('--http-addr', "127.0.0.1:$($c['MEILI_PORT'])", '--db-path', $Paths.MeiliData, '--dump-dir', ([IO.Path]::Combine($Paths.MeiliData, 'dumps')),
                 '--env', 'production', '--no-analytics')
@@ -286,7 +288,7 @@ function Get-AroomoSAModuleSpecs {
     if (($hasKarakeep -or $hasRsshub) -and (Test-Path -LiteralPath $Paths.Chrome) -and $c['BROWSER_PORT']) {
         # 无界面浏览器（Karakeep 抓网页、截图）：随包的 Chromium，只开本机调试端口，单独的配置文件夹
         $out += [pscustomobject]@{
-            Name = 'browser'; Label = '网页抓取浏览器（Chromium）'; Kind = 'process'; Port = [int]$c['BROWSER_PORT']; TimeoutSec = 60
+            Name = 'browser'; Label = '网页抓取浏览器（Chromium）'; Kind = 'process'; Port = [int]$c['BROWSER_PORT']; TimeoutSec = 60; DependsOn = @(); Deferred = $true
             Exe = $Paths.Chrome
             Arguments = @('--headless=new', "--remote-debugging-port=$($c['BROWSER_PORT'])", '--remote-debugging-address=127.0.0.1', "--user-data-dir=$($Paths.BrowserProfile)",
                 '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--disable-sync', '--disable-component-update', '--disable-background-networking',
@@ -316,13 +318,13 @@ function Get-AroomoSAModuleSpecs {
             $kWebEnv['KARAKEEP_OWNER_EMAIL'] = [string]$c['LOCAL_OWNER_EMAIL']; $kWebEnv['KARAKEEP_OWNER_PASSWORD'] = [string]$c['LOCAL_OWNER_PASSWORD']
         }
         $out += [pscustomobject]@{
-            Name = 'karakeep'; Label = '收藏（Karakeep）'; Kind = 'process'; Port = [int]$c['KARAKEEP_PORT']; TimeoutSec = 300
+            Name = 'karakeep'; Label = '收藏（Karakeep）'; Kind = 'process'; Port = [int]$c['KARAKEEP_PORT']; TimeoutSec = 300; DependsOn = @(); Deferred = $true
             Exe = $Paths.Node; Arguments = @(([IO.Path]::Combine($Paths.Runtime, 'karakeep-start.cjs')), 'web')
             WorkingDir = [IO.Path]::Combine($Paths.KarakeepDir, 'apps', 'web'); Env = $kWebEnv
             Health = 'http'; HealthUrl = "http://127.0.0.1:$($c['KARAKEEP_PORT'])/api/health"
         }
         $out += [pscustomobject]@{
-            Name = 'karakeep-workers'; Label = '收藏后台任务（抓取、搜索索引、OCR）'; Kind = 'process'; Port = [int]$c['KARAKEEP_WORKERS_PORT']; TimeoutSec = 180
+            Name = 'karakeep-workers'; Label = '收藏后台任务（抓取、搜索索引、OCR）'; Kind = 'process'; Port = [int]$c['KARAKEEP_WORKERS_PORT']; TimeoutSec = 180; DependsOn = @(); Deferred = $true
             Exe = $Paths.Node; Arguments = @(([IO.Path]::Combine($Paths.Runtime, 'karakeep-start.cjs')), 'workers')
             WorkingDir = [IO.Path]::Combine($Paths.KarakeepDir, 'apps', 'workers'); Env = $kEnv
             Health = 'tcp'; HealthUrl = $null
@@ -330,7 +332,7 @@ function Get-AroomoSAModuleSpecs {
     }
     if ($hasRsshub) {
         $out += [pscustomobject]@{
-            Name = 'rsshub'; Label = '订阅源（RSSHub）'; Kind = 'process'; Port = [int]$c['RSSHUB_PORT']; TimeoutSec = 240
+            Name = 'rsshub'; Label = '订阅源（RSSHub）'; Kind = 'process'; Port = [int]$c['RSSHUB_PORT']; TimeoutSec = 240; DependsOn = @(); Deferred = $true
             Exe = $Paths.Node; Arguments = @('--max-http-header-size=32768', ([IO.Path]::Combine($Paths.RsshubDir, 'dist', 'index.mjs')))
             WorkingDir = $Paths.RsshubDir
             Env = @{
@@ -345,7 +347,9 @@ function Get-AroomoSAModuleSpecs {
 }
 
 function Get-AroomoSAServiceSpecs {
-    # 启动顺序：postgres → redis → rustfs → litellm → core → lobe → shell（停止时倒过来）
+    # 列表顺序：postgres → redis → rustfs → litellm → core → lobe → 完整档模块 → shell（停止时倒过来）
+    # 启动按 DependsOn 并行（Start-AroomoSAParallel）：shell / redis / rustfs / postgres 同时起，
+    # 数据库好了 LiteLLM、Core、LobeHub 同时起；完整档模块（Deferred）等主界面就绪后再起
     # 每个服务只拿到自己需要的环境变量（和 docker-compose.yml 相同的原则）
     [OutputType([object[]])]
     param([Parameter(Mandatory)][hashtable]$Paths, [Parameter(Mandatory)][hashtable]$Config)
@@ -368,33 +372,35 @@ function Get-AroomoSAServiceSpecs {
         LITELLM_MASTER_KEY = $c['LITELLM_MASTER_KEY']; LITELLM_SALT_KEY = $c['LITELLM_SALT_KEY']
         STORE_MODEL_IN_DB = 'True'; LITELLM_LOG = 'INFO'; LITELLM_PRISMA_MIGRATE_DEPLOY_TIMEOUT = '1800'; LITELLM_PRISMA_COMMAND_TIMEOUT = '300'
         USE_V2_MIGRATION_RESOLVER = 'true'
+        # 离线可用 + 启动快：用随包的模型价格表，不在启动时去 GitHub 下载（断网时要等到超时）
+        LITELLM_LOCAL_MODEL_COST_MAP = 'True'
     }
     foreach ($kv in (Get-AroomoSAPrismaEnv -Paths $Paths).GetEnumerator()) { $litellmEnv[$kv.Key] = $kv.Value }
     $list = @(
         [pscustomobject]@{
-            Name = 'postgres'; Label = '数据库（PostgreSQL）'; Kind = 'pgctl'; Port = [int]$c['PG_PORT']; TimeoutSec = 120
+            Name = 'postgres'; Label = '数据库（PostgreSQL）'; Kind = 'pgctl'; Port = [int]$c['PG_PORT']; TimeoutSec = 120; DependsOn = @()
             Exe = [IO.Path]::Combine($Paths.PgBin, 'pg_ctl.exe'); Arguments = @(); Env = @{}; Health = 'pg'; HealthUrl = $null
         },
         [pscustomobject]@{
-            Name = 'redis'; Label = '缓存（Redis）'; Kind = 'process'; Port = [int]$c['REDIS_PORT']; TimeoutSec = 60
+            Name = 'redis'; Label = '缓存（Redis）'; Kind = 'process'; Port = [int]$c['REDIS_PORT']; TimeoutSec = 60; DependsOn = @()
             Exe = $Paths.Redis; Arguments = @((Split-Path -Leaf $Paths.RedisConf)); WorkingDir = (Split-Path -Parent $Paths.RedisConf); Env = @{}; Health = 'tcp'; HealthUrl = $null
         },
         [pscustomobject]@{
-            Name = 'rustfs'; Label = '文件存储（RustFS）'; Kind = 'process'; Port = [int]$c['RUSTFS_PORT']; TimeoutSec = 120
+            Name = 'rustfs'; Label = '文件存储（RustFS）'; Kind = 'process'; Port = [int]$c['RUSTFS_PORT']; TimeoutSec = 120; DependsOn = @()
             Exe = $Paths.RustFS; Arguments = @('server', $Paths.RustFSData)
             Env = @{ RUSTFS_ADDRESS = "127.0.0.1:$($c['RUSTFS_PORT'])"; RUSTFS_ACCESS_KEY = $c['RUSTFS_ACCESS_KEY']; RUSTFS_SECRET_KEY = $c['RUSTFS_SECRET_KEY']; RUSTFS_CONSOLE_ENABLE = 'false'; RUSTFS_OBS_LOGGER_LEVEL = 'warn' }
             Health = 'http'; HealthUrl = "http://127.0.0.1:$($c['RUSTFS_PORT'])/health"
         },
         [pscustomobject]@{
             # LiteLLM 本体（与服务器同一版本，D70：不在 Core 里重做路由 / Key / 限额）
-            Name = 'litellm'; Label = '模型网关（LiteLLM）'; Kind = 'process'; Port = [int]$c['LITELLM_PORT']; TimeoutSec = 900
+            Name = 'litellm'; Label = '模型网关（LiteLLM）'; Kind = 'process'; Port = [int]$c['LITELLM_PORT']; TimeoutSec = 900; DependsOn = @('postgres')
             Exe = $Paths.Python
             Arguments = @('-m', 'litellm.proxy.proxy_cli', '--config', ([IO.Path]::Combine($Paths.LiteLLMDir, 'config.yaml')), '--host', '127.0.0.1', '--port', [string]$c['LITELLM_PORT'], '--num_workers', '1')
             Env = $litellmEnv
             Health = 'http'; HealthUrl = "$litellmUrl/health/liveliness"
         },
         [pscustomobject]@{
-            Name = 'core'; Label = 'Aroomo Core'; Kind = 'process'; Port = [int]$c['CORE_PORT']; TimeoutSec = 90
+            Name = 'core'; Label = 'Aroomo Core'; Kind = 'process'; Port = [int]$c['CORE_PORT']; TimeoutSec = 90; DependsOn = @('postgres')
             Exe = $Paths.Node; Arguments = @($coreJs)
             Env = @{
                 NODE_ENV = 'production'; NODE_OPTIONS = ''; TZ = $tz
@@ -407,7 +413,8 @@ function Get-AroomoSAServiceSpecs {
             Health = 'http'; HealthUrl = "http://127.0.0.1:$($c['CORE_PORT'])/healthz"
         },
         [pscustomobject]@{
-            Name = 'lobe'; Label = '对话界面（LobeHub）'; Kind = 'process'; Port = [int]$c['LOBE_PORT']; TimeoutSec = 900
+            # LobeHub 启动时不需要 LiteLLM（对话时才用），所以和 LiteLLM 同时启动
+            Name = 'lobe'; Label = '对话界面（LobeHub）'; Kind = 'process'; Port = [int]$c['LOBE_PORT']; TimeoutSec = 900; DependsOn = @('postgres', 'redis', 'rustfs')
             Exe = $Paths.Node; Arguments = @($lobeStart)
             Env = @{
                 NODE_ENV = 'production'; NODE_OPTIONS = '--dns-result-order=ipv4first'; TZ = $tz
@@ -430,7 +437,8 @@ function Get-AroomoSAServiceSpecs {
     $list += @(Get-AroomoSAModuleSpecs -Paths $Paths -Config $c -LiteLLMUrl $litellmUrl -Tz $tz -SysPath $sysPath)
     if (Test-AroomoSAShell -Paths $Paths) {
         $list += [pscustomobject]@{
-            Name = 'shell'; Label = 'Aroomo 界面层（Shell）'; Kind = 'process'; Port = [int]$c['SHELL_PORT']; TimeoutSec = 60
+            # Shell 不依赖任何服务，最先就绪：窗口一打开就是 Aroomo 自己的「正在准备」页，LobeHub 好了自动进入（D77-4）
+            Name = 'shell'; Label = 'Aroomo 界面层（Shell）'; Kind = 'process'; Port = [int]$c['SHELL_PORT']; TimeoutSec = 60; DependsOn = @()
             Exe = $Paths.Node; Arguments = @(([IO.Path]::Combine($Paths.ShellDir, 'dist', 'index.js')))
             Env = @{
                 NODE_ENV = 'production'; NODE_OPTIONS = ''; TZ = $tz
@@ -441,7 +449,8 @@ function Get-AroomoSAServiceSpecs {
                 SHELL_LOCAL_OWNER_EMAIL = [string]$c['LOCAL_OWNER_EMAIL']; SHELL_LOCAL_OWNER_PASSWORD = [string]$c['LOCAL_OWNER_PASSWORD']
                 SHELL_PUBLIC_URL = $publicUrl
             }
-            Health = 'http'; HealthUrl = "http://127.0.0.1:$($c['SHELL_PORT'])/"
+            # Shell 自己的健康检查（不经过 LobeHub；LobeHub 没好时 / 返回 503「正在准备」）
+            Health = 'http'; HealthUrl = "http://127.0.0.1:$($c['SHELL_PORT'])/aroomo/healthz"
         }
     }
     return $list
@@ -711,9 +720,27 @@ function Test-AroomoSATcp {
     }
 }
 
+function Get-AroomoSAListeningPorts {
+    # 正在监听的本机 TCP 端口（读系统的监听表，不发起连接）。Windows 上连一个没人听的本机端口要等 1～2 秒
+    # （系统会重试 SYN），健康检查先查这张表，没在听就直接算「没就绪」，启动和托盘巡检不再空等（D77-3）。
+    # 读不到时返回 $null（调用方退回原来的直接连接检查）
+    [OutputType([object])]
+    param()
+    $set = New-Object 'System.Collections.Generic.HashSet[int]'
+    try {
+        foreach ($ep in [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()) { [void]$set.Add([int]$ep.Port) }
+    } catch {
+        return $null
+    }
+    return , $set
+}
+
 function Test-AroomoSAServiceHealthy {
+    # Listening：Get-AroomoSAListeningPorts 的结果（一轮检查多个服务时只读一次）；不传就现读
     [OutputType([bool])]
-    param([Parameter(Mandatory)][pscustomobject]$Spec, [Parameter(Mandatory)][hashtable]$Paths)
+    param([Parameter(Mandatory)][pscustomobject]$Spec, [Parameter(Mandatory)][hashtable]$Paths, [object]$Listening)
+    if (-not $PSBoundParameters.ContainsKey('Listening')) { $Listening = Get-AroomoSAListeningPorts }
+    if ($null -ne $Listening -and -not $Listening.Contains([int]$Spec.Port)) { return $false }
     switch ($Spec.Health) {
         'pg' {
             $r = Invoke-AroomoSAHidden -Exe ([IO.Path]::Combine($Paths.PgBin, 'pg_isready.exe')) -Arguments @('-h', '127.0.0.1', '-p', [string]$Spec.Port, '-t', '3') -TimeoutSec 10
@@ -726,6 +753,26 @@ function Test-AroomoSAServiceHealthy {
         }
     }
     return $false
+}
+
+function Test-AroomoSAServiceAlive {
+    # 服务的进程还在（已经启动、可能还没就绪）：用来避免重复启动同一个服务（托盘巡检、第二次 start）。
+    # 只认本程序启动时记下的进程号，且必须是那时启动的 cmd.exe（防止进程号被别的程序重用）
+    [OutputType([bool])]
+    param([Parameter(Mandatory)][pscustomobject]$Spec, [Parameter(Mandatory)][hashtable]$Paths)
+    if ($Spec.Kind -ne 'process') { return $false }
+    $pidFile = [IO.Path]::Combine($Paths.Run, "$($Spec.Name).pid")
+    if (-not (Test-Path -LiteralPath $pidFile)) { return $false }
+    $procId = 0
+    if (-not [int]::TryParse(([IO.File]::ReadAllText($pidFile)).Trim(), [ref]$procId)) { return $false }
+    $p = Get-Process -Id $procId -ErrorAction SilentlyContinue
+    if (-not $p -or $p.ProcessName -ne 'cmd') { return $false }
+    try {
+        $written = (Get-Item -LiteralPath $pidFile).LastWriteTime
+        return ([math]::Abs(($p.StartTime - $written).TotalSeconds) -lt 30)
+    } catch {
+        return $false
+    }
 }
 
 function Get-AroomoSAPortOwner {
@@ -914,7 +961,7 @@ function Start-AroomoSAService {
             $extra = if ($Spec.Name -eq 'lobe') { '第一次启动要准备数据库，可能需要几分钟。' } else { '' }
             Write-AroomoSay "$($Spec.Label) 还在启动。$extra"
         }
-        Start-Sleep -Seconds 2
+        Start-Sleep -Milliseconds 300
     }
     Write-AroomoSay "$($Spec.Label) 等了 $([int]($Spec.TimeoutSec / 60)) 分钟还没就绪。详细原因在数据文件夹的 logs\$($Spec.Name).log。"
     return $false
@@ -934,16 +981,222 @@ function Initialize-AroomoSABucket {
     return $true
 }
 
+# ---------------------------------------------------------------------------
+# 启动标记（data\state\）：记下「数据库结构已经是这个版本」「文件存储的桶已建好」，第二次启动跳过这些步骤（D77-3）。
+# 换了版本（标记内容对不上）、数据库重建（initdb）或从备份恢复后，标记作废，下次启动照常迁移 / 建桶。
+# ---------------------------------------------------------------------------
+function Get-AroomoSAMarker {
+    [OutputType([string])]
+    param([Parameter(Mandatory)][hashtable]$Paths, [Parameter(Mandatory)][string]$Name)
+    $f = [IO.Path]::Combine($Paths.State, "$Name.txt")
+    if (-not (Test-Path -LiteralPath $f)) { return '' }
+    return ([IO.File]::ReadAllText($f)).Trim()
+}
+
+function Set-AroomoSAMarker {
+    param([Parameter(Mandatory)][hashtable]$Paths, [Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$Value)
+    New-Item -ItemType Directory -Path $Paths.State -Force | Out-Null
+    [IO.File]::WriteAllText([IO.Path]::Combine($Paths.State, "$Name.txt"), $Value)
+}
+
+function Clear-AroomoSAStartupMarkers {
+    # 数据库或文件存储换过了（新建、恢复备份）：下次启动重新迁移、重新检查桶
+    param([Parameter(Mandatory)][hashtable]$Paths)
+    if (Test-Path -LiteralPath $Paths.State) { Remove-Item -LiteralPath $Paths.State -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
+function Get-AroomoSALiteLLMStamp {
+    # 随包 LiteLLM 的版本（litellm、litellm-proxy-extras 等的 dist-info 目录名；数据库迁移在 proxy-extras 里）。读不到返回空串（= 每次都迁移）
+    [OutputType([string])]
+    param([Parameter(Mandatory)][hashtable]$Paths)
+    $site = [IO.Path]::Combine($Paths.PythonDir, 'Lib', 'site-packages')
+    if (-not (Test-Path -LiteralPath $site)) { return '' }
+    [string[]]$names = @(Get-ChildItem -LiteralPath $site -Directory -Filter 'litellm*.dist-info' -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+    [Array]::Sort($names, [StringComparer]::Ordinal)
+    return ($names -join ';')
+}
+
+function Get-AroomoSALobeStamp {
+    # 已解开的 LobeHub 程序包的 SHA-256（Expand-AroomoSAPackage 写的标记）。没有返回空串（= 每次都迁移）
+    [OutputType([string])]
+    param([Parameter(Mandatory)][hashtable]$Paths)
+    $f = [IO.Path]::Combine($Paths.LobeDir, '.aroomo-lobe-sha256')
+    if (-not (Test-Path -LiteralPath $f)) { return '' }
+    return ([IO.File]::ReadAllText($f)).Trim()
+}
+
+function Start-AroomoSAParallel {
+    # 按 DependsOn 并行启动（D77-3：第二次启动 ≤ 15 秒的目标）。返回 $true / $false
+    #  - 没有依赖的（Shell、Redis、RustFS、PostgreSQL）同时起；数据库好了 LiteLLM、Core、LobeHub 同时起
+    #  - Deferred 的完整档模块等主界面就绪后才起；不加 -WaitAll 时不等它们就绪（托盘巡检照常看管，起不来会变红）
+    #  - 已经在运行或正在启动（进程还在）的服务不重复启动
+    #  - 第二次启动跳过已经做过的数据库迁移和建桶（见上面的启动标记）
+    # Timing：传入一个表，返回每个服务的「开始启动 / 就绪」秒数（写进 logs\startup-timing.json，冒烟测试打印）
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory)][hashtable]$Context,
+        [string[]]$Only = @(),
+        [switch]$WaitAll,
+        [switch]$EnsureDbAccounts,
+        [switch]$Quiet,
+        [System.Collections.IDictionary]$Timing
+    )
+    $paths = $Context.Paths
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $specs = @($Context.Specs | Where-Object { $Only.Count -eq 0 -or $Only -contains $_.Name })
+    $names = @($specs | ForEach-Object { $_.Name })
+    $isDeferred = { param($sp) [bool]($sp.PSObject.Properties['Deferred'] -and $sp.Deferred) }
+    $state = @{}; $until = @{}; $procIds = @{}; $migrating = @{}
+    foreach ($sp in $specs) { $state[$sp.Name] = 'pending' }
+    # PostgreSQL 用 pg_ctl -w 启动（会等它就绪），放在每一轮最后，不耽误别的服务先起
+    $order = @($specs | Where-Object { $_.Kind -ne 'pgctl' }) + @($specs | Where-Object { $_.Kind -eq 'pgctl' })
+    $mark = {
+        param($n, $k)
+        if ($null -eq $Timing) { return }
+        if (-not $Timing.Contains($n)) { $Timing[$n] = [ordered]@{} }
+        $Timing[$n][$k] = [math]::Round($sw.Elapsed.TotalSeconds, 1)
+    }
+    $fail = {
+        param($sp, $msg)
+        $state[$sp.Name] = 'failed'
+        & $mark $sp.Name 'failed'
+        Write-AroomoSay $msg
+    }
+    # 启动前：LiteLLM / LobeHub 的数据库迁移这个版本做过就跳过；LobeHub 的桶建过就跳过
+    $before = {
+        param($sp)
+        $run = $sp.PSObject.Copy()
+        $run.Env = $sp.Env.Clone()
+        switch ($sp.Name) {
+            'litellm' {
+                $stamp = Get-AroomoSALiteLLMStamp -Paths $paths
+                if ($stamp -and (Get-AroomoSAMarker -Paths $paths -Name 'litellm-schema') -eq $stamp) {
+                    $run.Env['DISABLE_SCHEMA_UPDATE'] = 'true'
+                    # 不迁移时 LiteLLM 仍会跑一次只读的结构比对（prisma migrate diff，要再起一个 Python + Node，只打印提示）。
+                    # 这个超时只管 Prisma 命令行（迁移这次不跑）：比对超时按「没有差异」继续启动（LiteLLM 的既定行为），不影响数据
+                    $run.Env['LITELLM_PRISMA_COMMAND_TIMEOUT'] = '2'
+                }
+                else { $migrating['litellm'] = $stamp }
+            }
+            'lobe' {
+                $bucket = if ($Context.Config['RUSTFS_LOBE_BUCKET']) { [string]$Context.Config['RUSTFS_LOBE_BUCKET'] } else { 'lobe' }
+                if ((Get-AroomoSAMarker -Paths $paths -Name 'lobe-bucket') -ne $bucket) {
+                    if (-not (Initialize-AroomoSABucket -Context $Context)) { return $null }
+                    Set-AroomoSAMarker -Paths $paths -Name 'lobe-bucket' -Value $bucket
+                }
+                $stamp = Get-AroomoSALobeStamp -Paths $paths
+                if ($stamp -and (Get-AroomoSAMarker -Paths $paths -Name 'lobe-schema') -eq $stamp) { $run.Env['AROOMO_LOBE_SKIP_MIGRATION'] = '1' }
+                else { $migrating['lobe'] = $stamp }
+            }
+            'redis' { Write-AroomoSARedisConf -Context $Context }
+            'rustfs' { New-Item -ItemType Directory -Path $paths.RustFSData -Force | Out-Null }
+            'meilisearch' { New-Item -ItemType Directory -Path $paths.MeiliData -Force | Out-Null }
+            'karakeep' { New-Item -ItemType Directory -Path $paths.KarakeepData -Force | Out-Null }
+        }
+        return $run
+    }
+    # 就绪后：确认数据库账号；记下迁移已完成；建 LobeHub 调模型用的虚拟 Key。返回错误说明，成功返回 $null
+    $after = {
+        param($sp)
+        switch ($sp.Name) {
+            'postgres' {
+                if ($EnsureDbAccounts) {
+                    $r = Invoke-AroomoSAPsql -Context $Context -Sql (Get-AroomoSAInitSql -Config $Context.Config)
+                    if ($r.ExitCode -ne 0) { return '检查数据库账号没有成功' }
+                }
+            }
+            'litellm' {
+                if ($migrating['litellm']) { Set-AroomoSAMarker -Paths $paths -Name 'litellm-schema' -Value $migrating['litellm'] }
+                if (-not (Initialize-AroomoSALiteLLMKey -Context $Context)) { Write-Verbose 'LobeHub 调用模型用的虚拟 Key 没建成（之后会重试）' }
+            }
+            'lobe' {
+                if ($migrating['lobe']) { Set-AroomoSAMarker -Paths $paths -Name 'lobe-schema' -Value $migrating['lobe'] }
+            }
+        }
+        return $null
+    }
+    $longest = ($specs | Measure-Object -Property TimeoutSec -Maximum).Maximum
+    $giveUp = (Get-Date).AddSeconds([int]$longest + 120)
+    while ($true) {
+        $listen = Get-AroomoSAListeningPorts
+        $mainPending = @($specs | Where-Object { -not (& $isDeferred $_) -and $state[$_.Name] -ne 'ready' })
+        if (@($mainPending | Where-Object { $state[$_.Name] -eq 'failed' }).Count -gt 0) { return $false }
+        $mainReady = ($mainPending.Count -eq 0)
+        # 1. 依赖都就绪的服务：已在运行就记为就绪，进程还在就等它，否则启动
+        foreach ($sp in $order) {
+            $n = $sp.Name
+            if ($state[$n] -ne 'pending') { continue }
+            if (& $isDeferred $sp) {
+                if (-not $mainReady) { continue }
+            } else {
+                $waiting = @($sp.DependsOn | Where-Object { $names -contains $_ -and $state[$_] -ne 'ready' })
+                if ($waiting.Count -gt 0) { continue }
+            }
+            if (Test-AroomoSAServiceHealthy -Spec $sp -Paths $paths -Listening $listen) {
+                $err = & $after $sp
+                if ($err) { & $fail $sp $err; return $false }
+                $state[$n] = 'ready'; & $mark $n 'ready'
+                continue
+            }
+            $until[$n] = (Get-Date).AddSeconds($sp.TimeoutSec)
+            if (Test-AroomoSAServiceAlive -Spec $sp -Paths $paths) { $state[$n] = 'starting'; continue }
+            if (-not (Test-Path -LiteralPath $sp.Exe)) { & $fail $sp "找不到 $($sp.Label) 的程序。请重新运行 Aroomo 独立版安装包。"; if (& $isDeferred $sp) { continue } else { return $false } }
+            if (-not $Quiet) { Write-AroomoSay "正在启动 $($sp.Label)。" }
+            & $mark $n 'start'
+            if ($sp.Kind -eq 'pgctl') {
+                New-Item -ItemType Directory -Path $paths.Logs -Force | Out-Null
+                $r = Invoke-AroomoSAHidden -Exe $sp.Exe -Arguments @('start', '-D', $paths.PgData, '-l', ([IO.Path]::Combine($paths.Logs, 'postgres.log')), '-w', '-t', '120', '-s') -TimeoutSec 150 -NoCapture
+                if ($r.ExitCode -ne 0) { & $fail $sp "$($sp.Label) 没能启动。详细原因在数据文件夹的 logs\postgres.log。"; return $false }
+            } else {
+                $run = & $before $sp
+                if ($null -eq $run) { & $fail $sp "$($sp.Label) 启动前的准备没有成功。"; return $false }
+                $procIds[$n] = Start-AroomoSAProcess -Spec $run -Paths $paths
+            }
+            $state[$n] = 'starting'
+        }
+        # 2. 正在启动的服务：就绪了吗？退出了吗？超时了吗？
+        $listen = Get-AroomoSAListeningPorts
+        foreach ($sp in $order) {
+            $n = $sp.Name
+            if ($state[$n] -ne 'starting') { continue }
+            $deferred = & $isDeferred $sp
+            if (Test-AroomoSAServiceHealthy -Spec $sp -Paths $paths -Listening $listen) {
+                $err = & $after $sp
+                if ($err) { & $fail $sp $err; if ($deferred) { continue } else { return $false } }
+                $state[$n] = 'ready'; & $mark $n 'ready'
+                continue
+            }
+            if ($procIds[$n] -and -not (Get-Process -Id $procIds[$n] -ErrorAction SilentlyContinue)) {
+                & $fail $sp "$($sp.Label) 启动后马上退出了。详细原因在数据文件夹的 logs\$n.log。"
+                if ($deferred) { continue } else { return $false }
+            }
+            if ((Get-Date) -gt $until[$n]) {
+                & $fail $sp "$($sp.Label) 等了 $([int]($sp.TimeoutSec / 60)) 分钟还没就绪。详细原因在数据文件夹的 logs\$n.log。"
+                if ($deferred) { continue } else { return $false }
+            }
+        }
+        # 3. 结束条件：主界面都就绪；完整档模块都已启动（-WaitAll 时要都就绪）
+        $mainOk = (@($specs | Where-Object { -not (& $isDeferred $_) -and $state[$_.Name] -ne 'ready' }).Count -eq 0)
+        $deferredSpecs = @($specs | Where-Object { & $isDeferred $_ })
+        if ($mainOk) {
+            if ($WaitAll) {
+                if (@($deferredSpecs | Where-Object { $state[$_.Name] -eq 'pending' -or $state[$_.Name] -eq 'starting' }).Count -eq 0) {
+                    return (@($deferredSpecs | Where-Object { $state[$_.Name] -eq 'failed' }).Count -eq 0)
+                }
+            } elseif (@($deferredSpecs | Where-Object { $state[$_.Name] -eq 'pending' }).Count -eq 0) {
+                return $true
+            }
+        }
+        if ((Get-Date) -gt $giveUp) { return $false }
+        Start-Sleep -Milliseconds 250
+    }
+}
+
 function Start-AroomoSAAll {
-    # 按顺序启动全部服务。返回 $true / $false
+    # 启动全部服务并等全部就绪（含完整档模块）。返回 $true / $false
     [OutputType([bool])]
     param([Parameter(Mandatory)][hashtable]$Context, [string[]]$Only = @(), [switch]$Quiet)
-    foreach ($spec in $Context.Specs) {
-        if ($Only.Count -gt 0 -and $Only -notcontains $spec.Name) { continue }
-        if ($spec.Name -eq 'lobe' -and -not (Initialize-AroomoSABucket -Context $Context)) { return $false }
-        if (-not (Start-AroomoSAService -Context $Context -Spec $spec -Quiet:$Quiet)) { return $false }
-    }
-    return $true
+    return (Start-AroomoSAParallel -Context $Context -Only $Only -WaitAll -Quiet:$Quiet)
 }
 
 function Stop-AroomoSAService {
@@ -1008,6 +1261,8 @@ function Initialize-AroomoSADatabase {
     }
     $conf = [IO.Path]::Combine($paths.PgData, 'postgresql.conf')
     [IO.File]::AppendAllText($conf, (Get-AroomoSAPgConf -Port ([int]$Context.Config['PG_PORT'])))
+    # 新数据库：以前的启动标记（迁移、建桶）都不算数
+    Clear-AroomoSAStartupMarkers -Paths $paths
     if (-not (Start-AroomoSAService -Context $Context -Spec (Get-AroomoSASpec $Context 'postgres') -Quiet)) { throw '数据库没能启动' }
     $r = Invoke-AroomoSAPsql -Context $Context -Sql (Get-AroomoSAInitSql -Config $Context.Config)
     if ($r.ExitCode -ne 0) {
@@ -1251,6 +1506,8 @@ function Restore-AroomoSABackup {
 
         # 停掉除数据库以外的服务
         Stop-AroomoSAAll -Context $Context -Only @('shell', 'rsshub', 'karakeep-workers', 'karakeep', 'browser', 'meilisearch', 'lobe', 'core', 'litellm', 'rustfs', 'redis')
+        # 数据库和文件存储要换成备份里的：启动标记作废，下次启动重新做迁移（备份可能来自别的版本）和建桶检查
+        Clear-AroomoSAStartupMarkers -Paths $Context.Paths
         # 配置：密钥用备份里的（数据库里的加密数据要靠它们打开）；端口、地址、备份设置保留这台电脑现在的
         $restoredEnv = [IO.Path]::Combine($dataRoot, 'secrets', 'aroomo.env')
         $current = $Context.Config

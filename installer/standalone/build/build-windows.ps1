@@ -179,8 +179,10 @@ foreach ($pat in 'tests', 'test', '__pycache__', 'docs') {
 foreach ($d in 'Lib\test', 'Lib\idlelib', 'Lib\tkinter', 'Lib\turtledemo', 'tcl', 'Lib\ensurepip') {
     $p = Join-Path $py $d; if (Test-Path $p) { Remove-Item -Recurse -Force $p }
 }
-# 预编译 .pyc（D77-3：冷启动快）；编译失败的个别文件不影响运行
-& $pyexe -m compileall -q -j 0 $py *> $null
+# 预编译 .pyc（D77-3：冷启动快）；编译失败的个别文件不影响运行。
+# unchecked-hash：Python 直接用 .pyc，不再拿源文件的修改时间去比（程序文件夹装好后不会改；
+# 以前按时间比，安装后时间一变就全部过期，运行时又不写缓存 → 每次启动都重新编译）
+& $pyexe -m compileall -q -f -j 0 --invalidation-mode unchecked-hash $py *> $null
 
 # ---------------------------------------------------------------------------
 Step '6/9 Aroomo Core'

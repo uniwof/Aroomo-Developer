@@ -5,6 +5,8 @@
  *   1. 执行数据库迁移（docker.cjs，LobeHub 官方迁移脚本）
  *   2. 启动 Next.js 服务（server.js）
  *   3. 服务就绪后调用一次 /api/agent/gateway/start（与 startServer.js 的 startGateway 相同）
+ * AROOMO_LOBE_SKIP_MIGRATION=1：启动器确认这个 LobeHub 版本已经对这个数据库迁移过（data\state\lobe-schema.txt，
+ * 换版本 / 新建数据库 / 恢复备份后作废），跳过第 1 步，第二次启动更快（D77-3）。
  * 不做的：proxychains（只在设置 PROXY_URL 时用，独立版不需要）；QStash 定时（没有 QSTASH_TOKEN 时 startServer.js 也跳过）。
  * 环境变量由 aroomo-standalone.ps1 传入（LOBE_APP_DIR、DATABASE_URL 等），本文件不打印任何密钥。
  */
@@ -17,12 +19,19 @@ if (!dir) {
   process.exit(2);
 }
 
-console.log('lobe-start: 正在执行数据库迁移。');
-const mig = spawnSync(process.execPath, [path.join(dir, 'docker.cjs')], { cwd: dir, stdio: 'inherit', env: process.env });
-if (mig.status !== 0) {
-  console.error(`lobe-start: 数据库迁移失败（退出码 ${mig.status}）`);
-  process.exit(mig.status || 1);
+if (process.env.AROOMO_LOBE_SKIP_MIGRATION === '1') {
+  console.log('lobe-start: 数据库结构已是这个版本（之前的启动已迁移），跳过迁移。');
+} else {
+  console.log('lobe-start: 正在执行数据库迁移。');
+  const t0 = Date.now();
+  const mig = spawnSync(process.execPath, [path.join(dir, 'docker.cjs')], { cwd: dir, stdio: 'inherit', env: process.env });
+  if (mig.status !== 0) {
+    console.error(`lobe-start: 数据库迁移失败（退出码 ${mig.status}）`);
+    process.exit(mig.status || 1);
+  }
+  console.log(`lobe-start: 数据库迁移完成（${((Date.now() - t0) / 1000).toFixed(1)} 秒）。`);
 }
+delete process.env.AROOMO_LOBE_SKIP_MIGRATION;
 
 async function startGateway() {
   const secret = process.env.KEY_VAULTS_SECRET;

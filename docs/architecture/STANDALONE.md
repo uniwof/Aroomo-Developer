@@ -23,7 +23,7 @@
 | D68/D69 | 隐藏 §8 以外功能、TTS 隐藏且禁用；薄层不 fork | 官方 `FEATURE_FLAGS` 关掉能关的；其余由 Aroomo Shell 隐藏（和 Docker 版同一个 shell/） |
 | D73 | 用户手动增改 Key = 普通保存；智能体 / 操作员新增、查看明文、导出、删除 = 重要确认 | Core 的 keys 服务实现，独立版和 Docker 版共用同一份 Core |
 | D77-1 | 先评估官方 LobeHub Desktop | 结论见 §3：**不采用** |
-| D77-3 | 一个 PG、一个 Node、python-build-standalone、预编译 | 已按此实现（§2） |
+| D77-3 | 一个 PG、一个 Node、python-build-standalone、预编译；后台冷启动 ≤ 15 秒 | 组成已按此实现（§2）；启动按依赖并行、完整档模块延后、跳过已做过的迁移（§4.1），CI 每次记录启动计时 |
 | D77-4 | 登录 30 秒后静默启动；窗口立即出现，未就绪显示「正在准备」 | `aroomo-launch.vbs tray 30` + `preparing.html` |
 | D77-5/6 | 分层更新、A/B 目录、回滚；更新源用 R2 / app.pcmanai.com + ed25519 签名清单 | 设计见 §7，**本版未实现** |
 | D78 | %LOCALAPPDATA%、无管理员、无选项、装完自动打开；只需粘贴一次主密钥（DPAPI）；托盘红黄绿；自动修复；「修复」按钮 + 诊断包；无语音；标准控件 | 已实现，R2 自动恢复和诊断包上传未实现（§8） |
@@ -75,6 +75,25 @@
 - 数据库损坏 → 恢复最近的本机备份（需要普通确认）：恢复函数已有（`Restore-AroomoSABackup`），自动检测损坏**未实现**。
 - 没有语音提示；所有窗口用标准 WinForms 控件 + 14pt 字号，有 AccessibleName。
 
+### 4.1 启动速度（D77-3：后台冷启动 ≤ 15 秒）
+
+`start`（托盘、修复都调用它）由 `Start-AroomoSAParallel` 按每个服务的 `DependsOn` 并行启动：
+
+| 阶段 | 服务 | 说明 |
+| --- | --- | --- |
+| 立即 | Shell、Redis、RustFS、PostgreSQL | Shell 不依赖任何服务，最先就绪：窗口一打开就是 Aroomo 自己的「正在准备」页，LobeHub 好了自动进入 |
+| 数据库就绪后 | LiteLLM、Core、LobeHub（LobeHub 还等 Redis、RustFS） | 三个同时起；LobeHub 启动不需要 LiteLLM（对话时才用） |
+| 主界面就绪后 | Meilisearch、Chromium、收藏（Karakeep + 后台任务）、RSSHub | `Deferred`：主界面就绪后才启动、`start` 不等它们就绪（不和主界面抢 CPU）；托盘每 20 秒巡检照常看管。`start -WaitAll`（修复、冒烟测试）会等它们也就绪 |
+
+其他：
+
+- **健康检查先看系统监听表**（`Get-AroomoSAListeningPorts`）：Windows 上连一个没人听的本机端口要等 1～2 秒（系统重试 SYN），以前每个还没起来的服务都要空等这一下（启动前检查、换端口检查、托盘巡检各一次）。现在端口没在听就直接算「没就绪」。就绪轮询间隔 2 秒 → 0.25 秒。
+- **启动标记**（`<数据文件夹>\state\`）：`litellm-schema`（随包 LiteLLM 的版本）、`lobe-schema`（LobeHub 程序包的 SHA-256）、`lobe-bucket`。版本对得上时第二次启动跳过 LiteLLM 的 Prisma 迁移（`DISABLE_SCHEMA_UPDATE=true`，LiteLLM 仍会做一次只读的结构比对）、LobeHub 的数据库迁移（`AROOMO_LOBE_SKIP_MIGRATION=1`，`runtime/lobe-start.cjs`）和建桶。换版本、新建数据库（initdb）、从备份恢复后标记作废，下次启动照常迁移（备份可能来自别的版本）。
+- 不迁移时 LiteLLM 仍会跑一次只读的结构比对（`prisma migrate diff`，再起一个 Python + Node，只打印提示）：这次启动把 Prisma 命令行超时设为 2 秒（`LITELLM_PRISMA_COMMAND_TIMEOUT`，迁移不跑时只管这次比对），超时按「没有差异」继续（LiteLLM 的既定行为），不影响数据。
+- LiteLLM 用随包的模型价格表（`LITELLM_LOCAL_MODEL_COST_MAP=True`）：启动时不去 GitHub 下载，断网时不用等超时。
+- **.pyc 在用户电脑上真正有效**：构建时 `compileall --invalidation-mode unchecked-hash`（不拿源文件时间比）；安装包 `TimeStampsInUTC=yes`（默认按本地时间还原文件时间，UTC+8 的电脑上全部差 8 小时）。以前这两点会让用户电脑上的 .pyc 全部「过期」，运行时又不写缓存，每次启动都重新编译 LiteLLM——CI（构建和安装都在 UTC）测不出来。
+- 每次启动把每个服务「开始 / 就绪」的秒数写进 `logs\startup-timing.json`，`launcher.log` 里一行摘要；冒烟测试打印第二次启动的 `ui_ready_s`（界面可用：Shell 替浏览器登录 LobeHub 成功）、`second_start_s`（`start` 结束：主界面全部就绪）、`all_ready_s`（完整档模块也就绪）和每个服务的计时，超过 15 秒时在 CI 里给出警告（不判失败：CI 机器的速度和用户电脑不同）。
+
 ## 5. 备份（D64、D65、D79：和服务器同一格式）
 
 格式和服务器 `scripts/backup.sh` 一致（**format 2**）：`aroomo-<标签>-<UTC 时间>.tar.zst.age` + 明文 `.meta.json`。压缩包里：
@@ -123,5 +142,5 @@ CI 冒烟测试做本机备份 → 恢复演练（删库重建再导入）→ �
 - `build/prepare-lobe.sh`（Ubuntu）：crane 按摘要导出官方 LobeHub 镜像 /app，换 Windows 版 sharp / ffmpeg，检查无 Linux 二进制、无非法文件名。
 - `build/build-windows.ps1`（windows-latest + MSVC）：组装程序文件夹、编译 pgvector、pip 安装 LiteLLM、Prisma 生成 Windows 引擎、构建 Core / Shell、瘦身、预编译。
 - `aroomo-standalone.iss`：Inno Setup，lzma2/max。
-- `build/smoke-test.ps1`：静默安装后 初始化 → 启动全部服务 → LiteLLM 虚拟 Key 列模型 + 写入一个模型 → Core 健康 → LobeHub / Shell HTTP → 加密备份 → 停止 → 再启动计时 → 卸载（数据必须保留）。
+- `build/smoke-test.ps1`：静默安装后 初始化 → 启动全部服务 → LiteLLM 虚拟 Key 列模型 + 写入一个模型 → Core 健康 → LobeHub / Shell HTTP → 加密备份 → 恢复演练 → 停止 → 恢复后启动（重新迁移）并核对数据 → 停止 → 第二次启动计时（§4.1）→ 卸载（数据必须保留）。
 - `.github/workflows/release-standalone-test.yml`：push 到 dev / p0/standalone* 时发布到**草稿**预发布 `standalone-test`（旧草稿先删）。PR 只构建和测试。

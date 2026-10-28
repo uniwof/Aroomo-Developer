@@ -7,7 +7,8 @@
   firstrun   安装后自动运行：生成配置、解开对话界面、初始化数据库、首次启动、登录自启、快捷方式，然后打开窗口
   init       只生成配置和安装信息（没有窗口；CI 冒烟测试用）
   open       立刻打开窗口（后台没准备好时先显示「正在准备」），并确保托盘和后台在运行（桌面快捷方式用）
-  start      启动全部后台服务（等到就绪）
+  start      启动后台服务：主界面（Shell、LobeHub、Core、LiteLLM 及其依赖）并行启动并等到就绪；
+             完整档模块（收藏、RSSHub、Chromium、Meilisearch）随后启动、不等（加 -WaitAll 时也等它们就绪）
   stop       先备份，再停止全部后台服务
   backup     立即备份（主密钥公钥加密；本机留 3 份；配置了异地存储时同时上传）
   repair     修复：停止 → 检查 → 修复 → 启动，并生成去掉密钥的诊断包
@@ -21,6 +22,7 @@ param(
     [ValidateSet('firstrun', 'init', 'open', 'bookmarks', 'start', 'stop', 'backup', 'repair', 'status', 'masterkey', 'uninstall', 'tray')]
     [string]$Action = 'open',
     [int]$Delay = 0,
+    [switch]$WaitAll,
     [string]$AppDir = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path,
     [string]$DataDir
 )
@@ -115,18 +117,30 @@ function Get-Ctx {
 }
 
 function Start-Backend {
+    # D77-3：按依赖并行启动（Start-AroomoSAParallel）；每个服务的开始 / 就绪秒数写进 logs\startup-timing.json
+    param([switch]$All)
+    $sw = [Diagnostics.Stopwatch]::StartNew()
     $ctx = Get-Ctx
     if (-not $ctx -or $ctx.Config.Count -eq 0) { throw '还没有完成安装。请重新运行 Aroomo 安装包。' }
     if (Resolve-BusyPorts $ctx) { $ctx = Get-Ctx }
     [void](Expand-AroomoSALobe -Paths $ctx.Paths)
     Expand-AroomoSAModules -Paths $ctx.Paths
-    [void](Initialize-AroomoSADatabase -Context $ctx)
-    foreach ($spec in $ctx.Specs) {
-        if ($spec.Name -eq 'lobe' -and -not (Initialize-AroomoSABucket -Context $ctx)) { return $false }
-        if (-not (Start-AroomoSAService -Context $ctx -Spec $spec -Quiet)) { Write-Log "$($spec.Name) 没能启动"; return $false }
-        if ($spec.Name -eq 'litellm' -and -not (Initialize-AroomoSALiteLLMKey -Context $ctx)) { Write-Log 'LobeHub 调用模型用的虚拟 Key 没建成（之后会重试）' }
-    }
-    return $true
+    # 第一次：initdb + 建库和账号（已有数据库时，账号检查在数据库就绪后由 -EnsureDbAccounts 做）
+    if (-not (Test-Path -LiteralPath (Join-Path $ctx.Paths.PgData 'PG_VERSION'))) { [void](Initialize-AroomoSADatabase -Context $ctx) }
+    $prep = [math]::Round($sw.Elapsed.TotalSeconds, 1)
+    $timing = [ordered]@{}
+    $ok = Start-AroomoSAParallel -Context $ctx -EnsureDbAccounts -WaitAll:$All -Quiet -Timing $timing
+    $total = [math]::Round($sw.Elapsed.TotalSeconds, 1)
+    $failed = @($timing.Keys | Where-Object { $timing[$_].Contains('failed') })
+    $line = ($timing.Keys | ForEach-Object { '{0}={1}' -f $_, $(if ($timing[$_].Contains('ready')) { $timing[$_]['ready'] } elseif ($timing[$_].Contains('failed')) { '失败' } else { '已启动' }) }) -join ' '
+    Write-Log "启动计时（秒，从并行启动开始算）：准备 $prep，合计 $total；$line"
+    if ($failed.Count -gt 0) { Write-Log "没能启动：$($failed -join '、')" }
+    try {
+        $obj = [ordered]@{ ok = $ok; wait_all = [bool]$All; prepare_s = $prep; total_s = $total; services = $timing }
+        New-Item -ItemType Directory -Path $ctx.Paths.Logs -Force | Out-Null
+        [IO.File]::WriteAllText((Join-Path $ctx.Paths.Logs 'startup-timing.json'), ($obj | ConvertTo-Json -Depth 4))
+    } catch { Write-Verbose '写启动计时失败' }
+    return $ok
 }
 
 # ---------------------------------------------------------------------------
@@ -313,7 +327,7 @@ function Invoke-Repair {
         if (-not ([int]::TryParse($first, [ref]$n)) -or -not (Get-Process -Id $n -ErrorAction SilentlyContinue)) { Remove-Item -LiteralPath $pidFile -Force }
     }
     [void](Resolve-BusyPorts $ctx)
-    $ok = Start-Backend
+    $ok = Start-Backend -All
     $zip = New-DiagnosticBundle (Get-Ctx)
     return [pscustomobject]@{ Ok = $ok; Diagnostics = $zip }
 }
@@ -356,7 +370,7 @@ switch ($Action) {
         Start-TrayDetached
     }
     'start' {
-        if (-not (Start-Backend)) { Write-Host '有服务没能启动。请运行「Aroomo 修复」。'; exit 1 }
+        if (-not (Start-Backend -All:$WaitAll)) { Write-Host '有服务没能启动。请运行「Aroomo 修复」。'; exit 1 }
         Write-Host 'Aroomo 已启动。'
     }
     'stop' {
