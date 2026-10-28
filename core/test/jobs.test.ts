@@ -33,8 +33,8 @@ describe('定时任务', () => {
   const req = (method: 'GET' | 'POST' | 'DELETE', url: string, payload?: unknown) =>
     app.inject({ method, url, headers: ownerAuth, ...(payload !== undefined ? { payload: payload as object } : {}) });
 
-  it('注册了三个任务', () => {
-    expect(app.jobs.names().sort()).toEqual(['confirm-cleanup', 'key-reconcile', 'recycle-bin']);
+  it('注册了四个任务', () => {
+    expect(app.jobs.names().sort()).toEqual(['confirm-cleanup', 'key-reconcile', 'model-caps', 'recycle-bin']);
   });
 
   it('回收站：29 天还在，30 天后彻底删除并写审计', async () => {

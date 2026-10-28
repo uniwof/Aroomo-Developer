@@ -111,6 +111,43 @@ export class LiteLLMAdmin {
       .map((d) => ({ id: d.model_info!.id as string, modelName: String(d.model_name ?? '') }));
   }
 
+  /**
+   * 每个对外模型名（model_name）的模型事实，来自 GET /model/info 的 model_info（LiteLLM 会并入它自带的模型数据：
+   * mode、max_input_tokens、supports_function_calling）。同一模型名有多个部署（多个来源）时合并：
+   * 上下文取最大、工具调用任一部署支持即可、mode 取第一个给出的。只读这几个字段，不读任何凭据。
+   * 返回的 key 是小写的模型名。
+   */
+  async modelCaps(): Promise<Map<string, { mode: string | null; maxInputTokens: number | null; supportsTools: boolean | null }>> {
+    const { json } = await this.#call('GET', '/model/info');
+    const data = (json as { data?: Array<{ model_name?: string; model_info?: Record<string, unknown> | null }> } | null)?.data ?? [];
+    const out = new Map<string, { mode: string | null; maxInputTokens: number | null; supportsTools: boolean | null }>();
+    for (const d of data) {
+      const name = String(d.model_name ?? '').trim().toLowerCase();
+      if (!name) continue;
+      const info = d.model_info ?? {};
+      const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null);
+      const ctx = num(info.max_input_tokens) ?? num(info.max_tokens);
+      const tools =
+        typeof info.supports_function_calling === 'boolean'
+          ? info.supports_function_calling
+          : typeof info.supports_tool_choice === 'boolean'
+            ? info.supports_tool_choice
+            : null;
+      const mode = typeof info.mode === 'string' && info.mode ? info.mode : null;
+      const prev = out.get(name);
+      if (!prev) {
+        out.set(name, { mode, maxInputTokens: ctx, supportsTools: tools });
+        continue;
+      }
+      out.set(name, {
+        mode: prev.mode ?? mode,
+        maxInputTokens: prev.maxInputTokens === null ? ctx : ctx === null ? prev.maxInputTokens : Math.max(prev.maxInputTokens, ctx),
+        supportsTools: prev.supportsTools === true || tools === true ? true : (prev.supportsTools ?? tools),
+      });
+    }
+    return out;
+  }
+
   /** 同步模型列表（/v1/models），返回模型名。 */
   async syncModels(): Promise<string[]> {
     const { json } = await this.#call('GET', '/v1/models');

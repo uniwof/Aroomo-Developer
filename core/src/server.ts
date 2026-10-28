@@ -21,7 +21,10 @@ import { LeadService } from './settings/lead.js';
 import { ChatService } from './chat/service.js';
 import { registerChatRoutes } from './chat/routes.js';
 import { Scheduler } from './jobs/scheduler.js';
-import { confirmCleanupJob, keyReconcileJob, recycleBinJob } from './jobs/jobs.js';
+import { confirmCleanupJob, keyReconcileJob, modelCapsJob, recycleBinJob } from './jobs/jobs.js';
+import { CandidateFlow } from './members/candidates.js';
+import { refreshModelCaps } from './members/caps.js';
+import { SecurityService } from './settings/security.js';
 import { bindAudit } from './audit/common.js';
 import { registerSettingsRoutes } from './settings/routes.js';
 import type { RoutableMember } from './router/types.js';
@@ -152,10 +155,24 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps(), opts
   registerConfirmRoutes(app, confirm);
 
   registerAuditRoutes(app, deps.auditLog);
+  const litellm = deps.litellm ?? new LiteLLMAdmin({ baseUrl: cfg.litellmBaseUrl, masterKey: cfg.litellmMasterKey });
   const members = new MembersService(deps.members, deps.now, confirm);
-  registerMemberRoutes(app, members);
+  const inbox = new InboxService(deps.inbox, confirm, deps.now);
+  // 供其他模块调用 createInboxItem()
+  app.decorate('inbox', inbox);
+  registerInboxRoutes(app, inbox);
+  // 入职流程（PRODUCT §9.1）：加 Key → 候选 → 一键入职
+  const candidates = new CandidateFlow(members, deps.members, inbox, litellm, deps.now);
+  registerMemberRoutes(app, members, {
+    onboard: (id, audit) => candidates.onboard(id, audit),
+    afterCreate: async (m) => {
+      await refreshModelCaps(deps.members, litellm, deps.now, [m.name]).catch(() => 0);
+      return (await deps.members.get(m.id)) ?? m;
+    },
+  });
   const lead = new LeadService(deps.settings, deps.members, deps.now);
-  registerSettingsRoutes(app, lead);
+  const security = new SecurityService(deps.settings, deps.now);
+  registerSettingsRoutes(app, lead, security);
   // 对话入口（提议 H5）：LobeHub → Core /v1（D31 点名 / 交给负责人）→ LiteLLM
   registerChatRoutes(
     app,
@@ -164,22 +181,20 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps(), opts
       litellmKey: cfg.litellmMasterKey,
       listMembers: () => deps.members.listAll(),
       lead,
+      security,
       ...(deps.chatFetch ? { fetchImpl: deps.chatFetch } : {}),
     }),
     cfg.chatToken,
   );
-  const inbox = new InboxService(deps.inbox, confirm, deps.now);
-  // 供其他模块调用 createInboxItem()
-  app.decorate('inbox', inbox);
-  registerInboxRoutes(app, inbox);
-  const litellm = deps.litellm ?? new LiteLLMAdmin({ baseUrl: cfg.litellmBaseUrl, masterKey: cfg.litellmMasterKey });
   registerKeyRoutes(
     app,
     new KeysService(deps.keys, litellm, deps.now, confirm, {
-      // 新 Key 的模型自动成为成员（名字 = LiteLLM 里对外的模型名；对话时 Core 按这个名字调用 LiteLLM）
+      // 新 Key 的模型先进候选（名字 = LiteLLM 里对外的模型名），收件箱发「入职」卡片；同名成员已存在则只刷新模型事实
       afterCreate: async (rec, audit) => {
-        const exists = (await members.list()).some((m) => m.name.toLowerCase() === rec.modelName.toLowerCase());
-        if (!exists) await members.create({ name: rec.modelName }, audit);
+        await candidates.propose(rec.modelName, audit);
+      },
+      afterReplace: async (rec) => {
+        await refreshModelCaps(deps.members, litellm, deps.now, [rec.modelName]);
       },
       // 这个模型已经没有任何 Key：停用对应成员（可以在成员页重新启用）
       afterDelete: async (rec, audit) => {
@@ -196,6 +211,7 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps(), opts
   jobs.add(recycleBinJob(members));
   jobs.add(confirmCleanupJob(deps.confirmChallenges, deps.now));
   jobs.add(keyReconcileJob(deps.keys, litellm, inbox, deps.now));
+  jobs.add(modelCapsJob(deps.members, litellm, deps.now));
   app.decorate('jobs', jobs);
   if (opts.startJobs ?? cfg.jobs) {
     app.addHook('onReady', async () => jobs.start());

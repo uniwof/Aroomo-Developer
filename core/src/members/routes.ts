@@ -3,11 +3,14 @@
  * 操作员白名单只含 members:read，D36）。
  */
 import type { FastifyInstance } from 'fastify';
+import type { AuditFn } from '../audit/types.js';
 import { confirmCtx, guard } from '../auth/plugin.js';
 import type { CreateMemberInput, MembersService, UpdateMemberInput } from './service.js';
 import { CAPABILITY_TAGS, type Member } from './types.js';
+import { leadEligibility } from './caps.js';
 
 export function memberJson(m: Member) {
+  const lead = leadEligibility(m);
   return {
     id: m.id,
     name: m.name,
@@ -16,6 +19,10 @@ export function memberJson(m: Member) {
     enabled: m.enabled,
     pinned: m.pinned,
     sortOrder: m.sortOrder,
+    status: m.status,
+    modelCaps: m.modelCaps ? { mode: m.modelCaps.mode, maxInputTokens: m.modelCaps.maxInputTokens, supportsTools: m.modelCaps.supportsTools } : null,
+    leadEligible: lead.eligible,
+    leadIneligibleReason: lead.reason,
     deletedAt: m.deletedAt ? m.deletedAt.toISOString() : null,
     createdAt: m.createdAt.toISOString(),
     updatedAt: m.updatedAt.toISOString(),
@@ -35,7 +42,14 @@ const editable = {
   enabled: { type: 'boolean' },
 } as const;
 
-export function registerMemberRoutes(app: FastifyInstance, svc: MembersService): void {
+export interface MemberRouteHooks {
+  /** 一键入职（候选 → 在职）；由候选流程实现（同时处理收件箱里的候选卡片） */
+  onboard?: (id: string, audit: AuditFn) => Promise<Member>;
+  /** 手动添加成员之后（例如：按名字去 LiteLLM 取模型事实），返回最新的成员 */
+  afterCreate?: (m: Member) => Promise<Member>;
+}
+
+export function registerMemberRoutes(app: FastifyInstance, svc: MembersService, hooks: MemberRouteHooks = {}): void {
   app.get<{ Querystring: { deleted?: boolean } }>(
     '/api/members',
     {
@@ -58,7 +72,11 @@ export function registerMemberRoutes(app: FastifyInstance, svc: MembersService):
         },
       },
     },
-    async (req, reply) => reply.status(201).send({ member: memberJson(await svc.create(req.body, req.audit)) }),
+    async (req, reply) => {
+      let m = await svc.create(req.body, req.audit);
+      if (hooks.afterCreate) m = await hooks.afterCreate(m).catch(() => m);
+      return reply.status(201).send({ member: memberJson(m) });
+    },
   );
 
   app.patch<{ Params: { id: string }; Body: UpdateMemberInput }>(
@@ -68,6 +86,12 @@ export function registerMemberRoutes(app: FastifyInstance, svc: MembersService):
       schema: { params: idParam, body: { type: 'object', additionalProperties: false, minProperties: 1, properties: editable } },
     },
     async (req) => ({ member: memberJson(await svc.update(req.params.id, req.body, req.audit)) }),
+  );
+
+  app.post<{ Params: { id: string } }>(
+    '/api/members/:id/onboard',
+    { ...guard('members:write'), schema: { params: idParam } },
+    async (req) => ({ member: memberJson(await (hooks.onboard ?? ((id, audit) => svc.onboard(id, audit)))(req.params.id, req.audit)) }),
   );
 
   app.delete<{ Params: { id: string } }>(

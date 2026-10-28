@@ -17,6 +17,7 @@ import {
   InvalidOrderError,
   type Member,
   MEMBER_ID_RE,
+  type MemberStatus,
   type MemberStore,
   RECYCLE_MS,
 } from './types.js';
@@ -27,6 +28,8 @@ export interface CreateMemberInput {
   aliases?: string[];
   capabilityTags?: CapabilityTag[];
   enabled?: boolean;
+  /** 只供内部调用（加 Key 自动发现 → 候选）；HTTP 接口不接受这个字段，用户手动添加的成员直接在职 */
+  status?: MemberStatus;
 }
 
 export interface UpdateMemberInput {
@@ -99,6 +102,8 @@ export class MembersService {
         enabled: input.enabled ?? true,
         pinned: false,
         sortOrder: maxOrder + 1,
+        status: input.status ?? 'active',
+        modelCaps: null,
         deletedAt: null,
         createdAt: now,
         updatedAt: now,
@@ -117,6 +122,17 @@ export class MembersService {
       this.#checkAliasConflicts(id, name, aliases, await this.store.listAll());
       const next: Member = { ...m, name, aliases, capabilityTags: tags, enabled: patch.enabled ?? m.enabled, updatedAt: this.now() };
       await this.#write(() => this.store.update(next));
+      return next;
+    });
+  }
+
+  /** 候选 → 在职（PRODUCT §9.1「用户一键入职」）。已经在职的直接返回。 */
+  async onboard(id: string, audit: AuditFn): Promise<Member> {
+    return this.#audited(audit, 'members.onboard', id, async () => {
+      const m = await this.#getActive(id);
+      if (m.status === 'active') return m;
+      const next: Member = { ...m, status: 'active', updatedAt: this.now() };
+      await this.store.update(next);
       return next;
     });
   }

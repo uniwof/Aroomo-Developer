@@ -18,6 +18,8 @@ export function headSnippet(version = ASSET_VERSION): string {
     `<link rel="stylesheet" href="/aroomo/static/shell.css?v=${version}">`,
     // 同步脚本，放在 <head> 最前：要在 LobeHub 的代码运行前禁用朗读（D68）
     `<script src="/aroomo/static/shell.js?v=${version}"></script>`,
+    // 输入框 @ 联想 Aroomo 成员（H3 最小改动方案）；不需要抢在 LobeHub 之前运行
+    `<script src="/aroomo/static/mention.js?v=${version}" defer></script>`,
   ].join('');
 }
 

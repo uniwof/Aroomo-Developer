@@ -196,7 +196,7 @@ for (const [label, viewport, isMobile] of [
     await shoot(page, `${label}-aroomo-${p}`);
   }
   if (!isMobile) {
-    // —— 功能：填 Key → 成员自动出现并成为负责人；收件箱重要确认；删 Key 走确认卡（D63/D73）——
+    // —— 功能：填 Key → 进入候选 → 一键入职后成为负责人（§9.1）；收件箱重要确认；删 Key 走确认卡（D63/D73）——
     const fakeKey = ['placeholder', 'sk', 'uie2e', 'ABCDEFGHIJKLMNOP'].join('-');
     await page.goto(`${base}/aroomo/members/keys`, { waitUntil: 'domcontentloaded' });
     await page.fill('input[name=sourceUrl]', 'https://platform.openai.com/api-keys');
@@ -212,10 +212,23 @@ for (const [label, viewport, isMobile] of [
     check('Key 明文不出现在页面', !(await page.content()).includes(fakeKey));
     await shoot(page, 'desktop-aroomo-keys');
     await page.goto(`${base}/aroomo/members`, { waitUntil: 'domcontentloaded' });
+    const candRow = page.locator('#clist .row', { hasText: 'GPT-4o mini' });
+    await candRow.waitFor({ timeout: 10000 }).catch(() => {});
+    check('填 Key 后模型进入候选（§9.1 入职流程）', (await candRow.count()) === 1 && (await page.locator('#mlist .row', { hasText: 'GPT-4o mini' }).count()) === 0, await page.locator('#tab').innerText().catch(() => ''));
+    check('候选卡片显示上下文 / 工具调用（后端判定）', /上下文 \d+k/.test(await candRow.innerText().catch(() => '')), await candRow.innerText().catch(() => ''));
+    await shoot(page, 'desktop-aroomo-members-candidate');
+    await candRow.locator('[data-onboard]').click({ timeout: 10000 }).catch(() => {});
     const memberRow = page.locator('#mlist .row', { hasText: 'GPT-4o mini' });
     await memberRow.waitFor({ timeout: 10000 }).catch(() => {});
-    check('填 Key 后模型自动成为成员并是负责人', (await memberRow.count()) === 1 && (await memberRow.innerText()).includes('负责人'), await page.locator('#tab').innerText().catch(() => ''));
+    check('一键入职后成为负责人（合格：对话 + ≥32k + 工具调用）', (await memberRow.count()) === 1 && (await memberRow.innerText()).includes('负责人'), await page.locator('#tab').innerText().catch(() => ''));
     await shoot(page, 'desktop-aroomo-members-filled');
+    await page.goto(`${base}/aroomo/settings/account`, { waitUntil: 'domcontentloaded' });
+    check('设置 → 账号有「退出登录」', (await page.locator('#logout').count()) === 1);
+    await page.goto(`${base}/aroomo/settings/security`, { waitUntil: 'domcontentloaded' });
+    const sens = page.locator('#sens');
+    await sens.waitFor({ timeout: 10000 }).catch(() => {});
+    check('设置 → 安全有敏感内容保护开关（默认开）', (await sens.count()) === 1 && (await sens.isChecked().catch(() => false)));
+    await shoot(page, 'desktop-settings-security');
 
     const posted = await page.evaluate(() =>
       fetch('/aroomo/api/inbox', {
@@ -262,8 +275,12 @@ for (const [label, viewport, isMobile] of [
       fetch('/aroomo/api/keys', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-aroomo-request': '1' },
-        body: JSON.stringify({ name: '假模型', sourceUrl: 'https://example.com/keys', model: 'openai/fake-model', modelName: 'Fake Model', apiBase: 'http://fake-llm:8000/v1', apiKey: fake }),
-      }).then((r) => r.status),
+        // 底层模型名用 LiteLLM 认识的 gpt-4o-mini（能对话、128k、工具调用 → 可当负责人），请求实际发往假模型服务
+        body: JSON.stringify({ name: '假模型', sourceUrl: 'https://example.com/keys', model: 'openai/gpt-4o-mini', modelName: 'Fake Model', apiBase: 'http://fake-llm:8000/v1', apiKey: fake }),
+      })
+        .then((r) => r.status)
+        // §9.1：新模型先进候选，一键入职
+        .then((st) => fetch('/aroomo/api/members/fake-model/onboard', { method: 'POST', headers: { 'x-aroomo-request': '1' } }).then((r) => (st === 201 && r.ok ? 201 : `${st}/${r.status}`))),
       ['placeholder', 'sk', 'fake', 'ABCDEFGHIJKLMNOP'].join('-'),
     );
     check('对话：填入指向假模型的 Key', k === 201, k);
@@ -286,6 +303,25 @@ for (const [label, viewport, isMobile] of [
     const ok2 = await sendAndWait('@Nobody 在吗', '没有叫「Nobody」的成员');
     await shoot(page, 'desktop-chat-mention');
     check('对话：点名不存在的成员只给提示（D31）', ok2);
+    // —— 输入框 @ 联想 Aroomo 成员（H3 最小改动方案）——
+    await input.click().catch(() => {});
+    await page.keyboard.type('@Fak');
+    const pop = page.locator('#aroomo-mention');
+    const popOk = await pop.waitFor({ timeout: 10000 }).then(() => true).catch(() => false);
+    await shoot(page, 'desktop-chat-mention-suggest');
+    check('对话：@ 弹出 Aroomo 成员联想', popOk && (await pop.innerText().catch(() => '')).includes('Fake Model'), await pop.innerText().catch(() => 'no popup'));
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(300);
+    const typed = await input.innerText().catch(() => input.inputValue().catch(() => ''));
+    check('对话：回车填入「@Fake Model 」且没有直接发送', /@Fake Model\s*$/.test(typed.replace(/\u00a0/g, ' ')), JSON.stringify(typed));
+    await page.keyboard.type('在吗');
+    await page.keyboard.press('Enter');
+    const ok3 = await page
+      .waitForFunction(() => { const t = document.body.innerText; const i = t.lastIndexOf('— Fake Model'); return i >= 0 && t.charAt(i + '— Fake Model'.length) !== '（' && t.includes('在吗'); }, null, { timeout: 90000 })
+      .then(() => true)
+      .catch(() => false);
+    const lastText = (await page.evaluate(() => document.body.innerText)).slice(-300);
+    check('对话：联想填入的点名能用（直接回答、不署「负责人」）', ok3 && /— Fake Model(?!（)/.test(lastText), lastText);
   }
 
   const tts = await page.evaluate(() => fetch('/webapi/tts/openai', { method: 'POST' }).then((r) => r.status).catch((e) => String(e)));
@@ -297,7 +333,7 @@ await browser.close();
 writeFileSync(path.join(out, 'checks.json'), JSON.stringify(checks, null, 1));
 const failed = checks.filter((c) => !c.ok);
 // 第一轮只把核心项设为必须通过；其余写进报告供核对选择器
-const required = /标题是 Aroomo|shell.js 已加载|跳回首页|跳到 Aroomo 设置|设置 6 个 Tab|朗读接口禁用|登录接口|填 Key|Key 明文|对话：|自动成为成员|发收件箱卡片|确认卡|倒计时|处理完毕|删除 Key/;
+const required = /标题是 Aroomo|shell.js 已加载|跳回首页|跳到 Aroomo 设置|设置 6 个 Tab|朗读接口禁用|登录接口|填 Key|Key 明文|对话：|进入候选|一键入职|退出登录|敏感内容保护开关|发收件箱卡片|确认卡|倒计时|处理完毕|删除 Key/;
 const hard = failed.filter((c) => required.test(c.name));
 console.log(`\n${checks.length - failed.length}/${checks.length} 通过；必须项失败 ${hard.length}`);
 process.exit(hard.length ? 1 : 0);

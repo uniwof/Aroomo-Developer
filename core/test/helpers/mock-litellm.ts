@@ -6,6 +6,14 @@ import Fastify, { type FastifyInstance } from 'fastify';
 
 export const MOCK_MASTER_KEY = 'placeholder-master-key-for-tests-0001';
 
+/** 模拟 LiteLLM 自带的模型数据（只列测试用到的） */
+export const KNOWN_MODELS: Record<string, Record<string, unknown>> = {
+  'openai/gpt-4o-mini': { mode: 'chat', max_input_tokens: 128000, supports_function_calling: true },
+  'openai/small-ctx': { mode: 'chat', max_input_tokens: 8192, supports_function_calling: true },
+  'openai/no-tools': { mode: 'chat', max_input_tokens: 200000, supports_function_calling: false },
+  'openai/dall-e-3': { mode: 'image_generation' },
+};
+
 export type MockMode = 'ok' | 'server_error_echo' | 'reject_echo' | 'slow';
 
 export interface MockLiteLLM {
@@ -50,11 +58,13 @@ export async function startMockLiteLLM(): Promise<MockLiteLLM> {
     if (!deployments.delete(req.body.id)) return reply.status(404).send({ error: 'not found' });
     return { message: 'deleted' };
   });
+  // 真实 LiteLLM 会把它自带的模型数据并进 model_info（mode、max_input_tokens、supports_function_calling）；
+  // 这里用 KNOWN_MODELS 模拟，表里没有的模型只有 id（= 能力未知）
   app.get('/model/info', async () => ({
     data: [...deployments.values()].map((d) => ({
       model_name: d.model_name,
       litellm_params: { ...d.litellm_params, api_key: '****' },
-      model_info: d.model_info,
+      model_info: { ...(KNOWN_MODELS[String(d.litellm_params.model)] ?? {}), ...d.model_info },
     })),
   }));
   app.get('/v1/models', async (_req, reply) => {

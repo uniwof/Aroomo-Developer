@@ -15,6 +15,7 @@ import { route } from '../router/route.js';
 import type { Hint, RoutableMember } from '../router/types.js';
 import type { LeadService } from '../settings/lead.js';
 import { activeMembers } from '../settings/lead.js';
+import { looksSensitive, type SecurityService } from '../settings/security.js';
 
 export const CHAT_MODEL = 'aroomo';
 export const MEMBER_TIMEOUT_MS = 120_000;
@@ -24,8 +25,13 @@ export interface ChatDeps {
   litellmKey: string | undefined;
   listMembers: () => Promise<Member[]>;
   lead: LeadService;
+  /** 敏感内容保护开关（D38）；不传 = 开 */
+  security?: SecurityService;
   fetchImpl?: typeof fetch;
 }
+
+export const NO_LEAD_TEXT =
+  '还没有合格的负责人（要能文字对话、上下文 ≥32k、支持工具调用）。可以用「@成员名」直接点名，或在「成员」里让一个合格的模型入职。';
 
 type Json = Record<string, unknown>;
 interface ChatMessage {
@@ -149,23 +155,26 @@ export class ChatService {
     const leadState = await this.d.lead.get();
     const nameOf = (id: string | null) => members.find((m) => m.id === id)?.name ?? null;
 
-    if (!members.length || !leadState.effectiveLeadId) {
-      return textReply(stream, '还没有可用的成员。请先打开「成员 → Key 与接入」填入一个 Key，填好后就能对话。');
+    if (!members.length) {
+      return textReply(stream, '还没有可用的成员。请先打开「成员 → Key 与接入」填入一个 Key，再在「成员」里点「入职」，就能对话了。');
     }
 
-    // 系统任务（起标题、翻译等）：直接交给负责人，不解析 @、不加提示和署名
+    // 系统任务（起标题、翻译等）：交给负责人，不解析 @、不加提示和署名。
+    // 还没有合格负责人时，用第一个在职成员做这类内部小任务（不以「负责人」身份出现在对话里）。
     const last = lastUserText(messages);
     if (!decorated || !last) {
-      return this.#forward(req, nameOf(leadState.effectiveLeadId)!, '', '', stream, signal);
+      return this.#forward(req, nameOf(leadState.effectiveLeadId) ?? members[0]!.name, '', '', stream, signal);
     }
 
-    const plan = route(last.text, { members: routable, leadId: leadState.effectiveLeadId });
+    const protect = this.d.security ? (await this.d.security.get()).sensitiveProtect : true;
+    const sensitive = protect && looksSensitive(last.text);
+    const plan = route(last.text, { members: routable, leadId: leadState.effectiveLeadId, sensitive });
     const prefix = plan.hints.length ? `${hintText(plan.hints)}\n\n` : '';
     const nextMessages = replaceUserText(messages, last.index, plan.body);
 
     if (plan.mode === 'delegate') {
       const leadName = nameOf(plan.leadId);
-      if (!leadName) return textReply(stream, prefix + '还没有负责人。请在「设置 → 负责人」里选一位。');
+      if (!leadName) return textReply(stream, prefix + NO_LEAD_TEXT);
       return this.#forward({ ...req, messages: nextMessages }, leadName, prefix, `\n\n— ${leadName}（负责人）`, stream, signal);
     }
 

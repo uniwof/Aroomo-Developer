@@ -204,16 +204,41 @@
     return '<span aria-hidden="true" style="flex:none;width:32px;height:32px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;box-shadow:0 0 0 2px var(--bg),0 0 0 4px ' + (m.enabled ? 'var(--accent)' : 'var(--line)') + ';background:var(--bg-2);font-weight:600;' + style + '">' + esc(ch) + '</span>';
   }
 
+  /* 模型事实（后端从模型网关判定，§9.1）：上下文、工具调用、可当负责人 */
+  function capsTags(m) {
+    var c = m.modelCaps;
+    var out = '';
+    if (c && c.maxInputTokens) out += '<span class="tag">上下文 ' + Math.round(c.maxInputTokens / 1000) + 'k</span>';
+    if (c && c.supportsTools) out += '<span class="tag">工具调用</span>';
+    if (c && c.mode && c.mode !== 'chat' && c.mode !== 'responses') out += '<span class="tag">专用模型</span>';
+    if (!c) out += '<span class="tag">能力未知</span>';
+    if (m.leadEligible || (c && c.mode && /^(chat|responses)$/.test(c.mode) && c.maxInputTokens >= 32000 && c.supportsTools)) out += '<span class="tag">可当负责人</span>';
+    return out;
+  }
+
   function membersTab(el) {
     Promise.all([api('GET', '/members'), api('GET', '/members?deleted=true'), api('GET', '/settings/lead')]).then(function (rs) {
-      var list = (rs[0].data && rs[0].data.members) || [];
+      var all = (rs[0].data && rs[0].data.members) || [];
+      var list = all.filter(function (m) { return m.status !== 'candidate'; });
+      var cands = all.filter(function (m) { return m.status === 'candidate'; });
       var bin = (rs[1].data && rs[1].data.members) || [];
       var lead = rs[2].data || {};
       if (!rs[0].ok) { el.innerHTML = '<p class="status-bad">' + esc(errMsg(rs[0])) + '</p>'; return; }
       var html = '<form class="addbar" id="add-member"><input name="name" required maxlength="200" placeholder="成员英文原名，例如 Gemini 2.5 Pro" aria-label="成员名字"><button class="btn primary">添加</button></form>';
+      if (cands.length) {
+        // §8.3「候选（N）」、§9.1 入职流程：加 Key 自动发现的模型先在这里，一键入职
+        html += '<h2 id="candidates">候选（' + cands.length + '）</h2><div id="clist">';
+        cands.forEach(function (m) {
+          html += '<div class="row" data-id="' + esc(m.id) + '">' + avatar(m) +
+            '<span class="grow"><span class="name">' + esc(m.name) + '</span>' + capsTags(m) + '</span>' +
+            '<button class="btn primary" data-onboard>入职</button><button class="btn" data-reject>不要</button></div>';
+        });
+        html += '</div>';
+      }
       if (!list.length) {
-        html += empty('还没有成员。在「Key 与接入」里填入一个 Key，它的模型会自动成为成员。', '<a class="btn primary" href="/aroomo/members/keys">去填 Key</a>');
+        html += cands.length ? '' : empty('还没有成员。在「Key 与接入」里填入一个 Key，它的模型会进入候选，点「入职」就能在对话里用。', '<a class="btn primary" href="/aroomo/members/keys">去填 Key</a>');
       } else {
+        if (cands.length) html += '<h2>在职（' + list.length + '）</h2>';
         html += '<div class="addbar" style="justify-content:space-between"><span class="muted">拖动排序；选中后可批量删除</span><button class="btn danger" id="batch-del" disabled>删除选中</button></div><div id="mlist">';
         list.forEach(function (m) {
           var isLead = lead.effectiveLeadId === m.id;
@@ -247,8 +272,10 @@
         });
       };
       var ids = list.map(function (m) { return m.id; });
+      var candIds = cands.map(function (m) { return m.id; });
       function saveOrder(next) {
-        api('PUT', '/members/order', { ids: next }).then(function (res) {
+        // 排序接口要求包含全部未删除成员：候选排在后面
+        api('PUT', '/members/order', { ids: next.concat(candIds) }).then(function (res) {
           if (!res.ok) toast(errMsg(res));
           membersTab(el);
         });
@@ -298,6 +325,26 @@
           });
         });
       };
+      $all('#clist .row', el).forEach(function (row) {
+        var id = row.getAttribute('data-id');
+        var m = cands.filter(function (x) { return x.id === id; })[0];
+        $('[data-onboard]', row).onclick = function () {
+          api('POST', '/members/' + encodeURIComponent(id) + '/onboard').then(function (res) {
+            if (!res.ok) return toast(errMsg(res));
+            toast('「' + m.name + '」已入职，可以在对话里 @ 它了');
+            refreshUnread().then(function () { membersTab(el); });
+          });
+        };
+        $('[data-reject]', row).onclick = function () {
+          api('DELETE', '/members/' + encodeURIComponent(id)).then(function (res) {
+            if (!res.ok) return toast(errMsg(res));
+            membersTab(el);
+            toast('已移到回收站：' + m.name, function () {
+              api('POST', '/members/' + encodeURIComponent(id) + '/restore').then(function () { membersTab(el); });
+            });
+          });
+        };
+      });
       $all('[data-restore]', el).forEach(function (b) {
         b.onclick = function () {
           var id = b.closest('.row').getAttribute('data-id');
@@ -334,7 +381,7 @@
         '<details style="flex-basis:100%"><summary class="muted">高级</summary><div class="addbar" style="margin:8px 0 0;padding:0">' +
         '<input name="modelName" maxlength="128" placeholder="成员名字（默认 = 模型）" aria-label="成员名字">' +
         '<input name="apiBase" type="url" placeholder="接口地址（默认服务商地址）" aria-label="接口地址"></div></details></form>';
-      if (!keys.length) html += empty('还没有 Key。填一个 Key，保存后它的模型会自动成为成员，就能在对话里用了。', ' ');
+      if (!keys.length) html += empty('还没有 Key。填一个 Key，保存后它的模型会进入「成员 → 候选」，点「入职」就能在对话里用了。', ' ');
       keys.forEach(function (k) {
         html += '<div class="row" data-id="' + esc(k.id) + '"><span class="grow"><span class="name">' + esc(k.name) + '</span><span class="tag">…' + esc(k.last4) + '</span>' +
           (k.status === 'active' ? '<span class="tag status-ok">可用</span>' : '<span class="tag status-bad">模型列表同步失败</span>') + '</span>' +
@@ -361,7 +408,8 @@
           body.apiKey = '';
           if (r.cancelled) return;
           if (!r.ok) return toast(errMsg(r));
-          toast('已保存，末 4 位 ' + r.data.key.last4);
+          toast('已保存（末 4 位 ' + r.data.key.last4 + '）。模型已进入候选，去「成员」点「入职」');
+          refreshUnread();
           keysTab(el);
         });
       };
@@ -483,15 +531,25 @@
       panel.innerHTML = field('语言', '简体中文') + field('外观', '跟随系统', '深色 / 浅色跟随电脑或手机的设置') + field('Key 与接入', '<a class="btn" href="/aroomo/members/keys">管理 Key</a>');
     } else if (tab === 'lead') {
       Promise.all([api('GET', '/members'), api('GET', '/settings/lead')]).then(function (rs) {
-        var members = ((rs[0].data && rs[0].data.members) || []).filter(function (m) { return m.enabled; });
+        var all = ((rs[0].data && rs[0].data.members) || []).filter(function (m) { return m.enabled && m.status !== 'candidate'; });
+        var members = all.filter(function (m) { return m.leadEligible; });
+        var others = all.filter(function (m) { return !m.leadEligible; });
         var lead = rs[1].data || {};
-        if (!members.length) { panel.innerHTML = empty('还没有可用的成员。先填入一个 Key。', '<a class="btn primary" href="/aroomo/members/keys">去填 Key</a>'); return; }
-        var opts = '<option value="">自动（第一个启用的成员）</option>' + members.map(function (m) {
+        var rule = '负责人要能文字对话、上下文 ≥32k、支持工具调用（由后台判定，§9.1）';
+        if (!all.length) { panel.innerHTML = empty('还没有在职的成员。先填入一个 Key，再到「成员」点「入职」。', '<a class="btn primary" href="/aroomo/members/keys">去填 Key</a>'); return; }
+        var why = others.length ? '<h2>不能当负责人</h2>' + others.map(function (m) {
+          return '<div class="row"><span class="grow">' + esc(m.name) + '</span><span class="muted">' + esc(m.leadIneligibleReason || '') + '</span></div>';
+        }).join('') : '';
+        if (!members.length) {
+          panel.innerHTML = field('负责人', '还没有合格的成员', rule) + '<p class="muted">没有负责人时，不 @ 的消息不会有人接；可以用「@成员名」直接点名。</p>' + why;
+          return;
+        }
+        var opts = '<option value="">自动（第一个合格的成员）</option>' + members.map(function (m) {
           return '<option value="' + esc(m.id) + '"' + (lead.leadId === m.id && !lead.auto ? ' selected' : '') + '>' + esc(m.name) + '</option>';
         }).join('');
         var eff = members.filter(function (m) { return m.id === lead.effectiveLeadId; })[0];
-        panel.innerHTML = field('负责人', '<select id="lead" aria-label="负责人">' + opts + '</select>', '对话里没有 @ 成员时，交给负责人回答（D31）') +
-          field('当前生效', esc(eff ? eff.name : '—') + (lead.auto ? '（自动）' : ''));
+        panel.innerHTML = field('负责人', '<select id="lead" aria-label="负责人">' + opts + '</select>', '对话里没有 @ 成员时，交给负责人回答（D31）。' + rule) +
+          field('当前生效', esc(eff ? eff.name : '—') + (lead.auto ? '（自动）' : '')) + why;
         $('#lead', panel).onchange = function (e) {
           api('PUT', '/settings/lead', { leadId: e.target.value || null }).then(function (res) {
             if (!res.ok) toast(errMsg(res));
@@ -501,16 +559,36 @@
         };
       });
     } else if (tab === 'account') {
-      panel.innerHTML = empty('网站账号管理会在下一期开放。', ' ');
+      panel.innerHTML = field('登录', '<button class="btn" id="logout">退出登录</button>', '退出后需要重新验证邮箱才能再进来') +
+        '<p class="muted">网站账号管理会在下一期开放。</p>';
+      $('#logout', panel).onclick = function (e) {
+        var b = e.currentTarget;
+        b.disabled = true;
+        fetch('/aroomo/logout', { method: 'POST', credentials: 'same-origin', headers: { 'x-aroomo-request': '1', accept: 'application/json' } })
+          .then(function (res) { return res.ok ? res.json() : null; })
+          .then(function (j) { location.href = (j && j.location) || '/signin'; })
+          .catch(function () { b.disabled = false; toast('退出失败，请稍后再试'); });
+      };
     } else if (tab === 'notify') {
       panel.innerHTML = empty('通知设置会在下一期开放；现在所有提醒都进收件箱。', '<a class="btn" href="/aroomo/inbox">打开收件箱</a>');
     } else if (tab === 'security') {
-      api('GET', '/audit?limit=20').then(function (res) {
+      Promise.all([api('GET', '/audit?limit=20'), api('GET', '/settings/security')]).then(function (rs) {
+        var res = rs[0];
+        var sec = (rs[1].ok && rs[1].data) || { sensitiveProtect: true };
         var rows = (res.ok && res.data && res.data.entries) || [];
         panel.innerHTML = field('登录', '只允许你的邮箱登录', '服务器版还要先通过 Cloudflare Access 验证') +
+          field('敏感内容保护', '<label class="switch"><input type="checkbox" role="switch" id="sens"' + (sec.sensitiveProtect ? ' checked' : '') + ' aria-label="敏感内容保护"><span aria-hidden="true"></span></label>',
+            '开着时，含密码、银行卡号、Key 等敏感信息的消息不发给外部成员（D38，默认开）') +
           '<h2>最近操作记录</h2>' + (rows.length ? rows.map(function (e) {
             return '<div class="row"><span class="muted" style="width:150px;flex:none">' + esc(new Date(e.ts).toLocaleString('zh-CN', { hour12: false })) + '</span><span class="grow">' + esc(e.action) + ' · ' + esc(e.target && e.target.type) + '</span><span class="' + (e.result === 'ok' ? 'status-ok' : 'status-bad') + '">' + esc(e.result) + '</span></div>';
           }).join('') : '<p class="muted">还没有记录</p>');
+        $('#sens', panel).onchange = function (e) {
+          var on = e.target.checked;
+          api('PUT', '/settings/security', { sensitiveProtect: on }).then(function (r2) {
+            if (!r2.ok) { e.target.checked = !on; return toast(errMsg(r2)); }
+            toast(on ? '已开启敏感内容保护' : '已关闭敏感内容保护');
+          });
+        };
       });
     } else {
       panel.innerHTML = field('Key 与接入', '<a class="btn" href="/aroomo/members/keys">管理 Key</a>', 'Key 只保存在模型网关里，页面上只显示末 4 位') +

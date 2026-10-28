@@ -40,12 +40,42 @@ export interface BatchDismissResult {
 
 const ACTION_ID_RE = /^[a-z0-9_-]{1,64}$/;
 
+/**
+ * 动作处理器：按条目的 kind 注册（例如 member.candidate 的「入职」）。在确认通过之后、标记已处理之前执行；
+ * 抛错则条目保持未处理，用户可以再点。
+ */
+export type InboxActionHandler = (item: InboxItem, actionId: string, audit: AuditFn) => Promise<void>;
+
 export class InboxService {
+  readonly #handlers = new Map<string, InboxActionHandler>();
+
   constructor(
     private readonly store: InboxStore,
     private readonly confirm: ConfirmService,
     private readonly now: () => Date,
   ) {}
+
+  /** 注册某类条目的动作处理器（同一 kind 只能注册一个）。 */
+  registerHandler(kind: string, handler: InboxActionHandler): void {
+    this.#handlers.set(kind, handler);
+  }
+
+  /**
+   * 把与某个对象相关的未处理条目标记为已处理（例如候选在成员页直接入职后，收件箱里的候选卡片也随之处理）。
+   * 返回处理掉的条数。
+   */
+  async resolveRelated(kind: string, related: InboxRef, status: 'done' | 'dismissed', audit: AuditFn, resolvedAction?: string): Promise<number> {
+    const open = (await this.store.list({ status: 'open' })).filter((i) => i.kind === kind && i.related?.type === related.type && i.related.id === related.id);
+    let n = 0;
+    for (const it of open) {
+      const done = await this.store.resolveIfOpen(it.id, { status, resolvedAt: this.now(), ...(resolvedAction ? { resolvedAction } : {}) });
+      if (done) {
+        n++;
+        await audit(status === 'done' ? 'inbox.resolve_related' : 'inbox.dismiss', { type: 'inbox', id: it.id }, 'ok', kind);
+      }
+    }
+    return n;
+  }
 
   /** 供其他模块调用。返回 created=false 表示命中去重、返回的是已有条目。 */
   async createInboxItem(input: CreateInboxInput, audit: AuditFn): Promise<{ item: InboxItem; created: boolean }> {
@@ -126,6 +156,8 @@ export class InboxService {
         audit,
       );
 
+      const handler = this.#handlers.get(item.kind);
+      if (handler) await handler(item, actionId, audit);
       const done = await this.store.resolveIfOpen(id, { status: 'done', resolvedAt: this.now(), resolvedAction: actionId });
       if (!done) throw conflict('这条事项已经处理过了', 'ALREADY_RESOLVED');
       await audit('inbox.action.execute', target, 'ok', `${actionId}${kind !== 'normal' ? ` (${kind}, confirmed)` : ''}`);
