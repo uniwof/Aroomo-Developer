@@ -3,7 +3,7 @@
  * 操作员白名单只含 members:read，D36）。
  */
 import type { FastifyInstance } from 'fastify';
-import { requireCapability } from '../auth/plugin.js';
+import { confirmCtx, guard } from '../auth/plugin.js';
 import type { CreateMemberInput, MembersService, UpdateMemberInput } from './service.js';
 import { CAPABILITY_TAGS, type Member } from './types.js';
 
@@ -39,7 +39,7 @@ export function registerMemberRoutes(app: FastifyInstance, svc: MembersService):
   app.get<{ Querystring: { deleted?: boolean } }>(
     '/api/members',
     {
-      preHandler: requireCapability('members:read'),
+      ...guard('members:read'),
       schema: { querystring: { type: 'object', properties: { deleted: { type: 'boolean' } } } },
     },
     async (req) => ({ members: (await svc.list({ deleted: req.query.deleted === true })).map(memberJson) }),
@@ -48,7 +48,7 @@ export function registerMemberRoutes(app: FastifyInstance, svc: MembersService):
   app.post<{ Body: CreateMemberInput }>(
     '/api/members',
     {
-      preHandler: requireCapability('members:write'),
+      ...guard('members:write'),
       schema: {
         body: {
           type: 'object',
@@ -64,7 +64,7 @@ export function registerMemberRoutes(app: FastifyInstance, svc: MembersService):
   app.patch<{ Params: { id: string }; Body: UpdateMemberInput }>(
     '/api/members/:id',
     {
-      preHandler: requireCapability('members:write'),
+      ...guard('members:write'),
       schema: { params: idParam, body: { type: 'object', additionalProperties: false, minProperties: 1, properties: editable } },
     },
     async (req) => ({ member: memberJson(await svc.update(req.params.id, req.body, req.audit)) }),
@@ -72,44 +72,47 @@ export function registerMemberRoutes(app: FastifyInstance, svc: MembersService):
 
   app.delete<{ Params: { id: string } }>(
     '/api/members/:id',
-    { preHandler: requireCapability('members:delete'), schema: { params: idParam } },
+    { ...guard('members:delete'), schema: { params: idParam } },
     async (req) => ({ member: memberJson(await svc.softDelete(req.params.id, req.audit)) }),
   );
 
   app.post<{ Params: { id: string } }>(
     '/api/members/:id/restore',
-    { preHandler: requireCapability('members:delete'), schema: { params: idParam } },
+    { ...guard('members:delete'), schema: { params: idParam } },
     async (req) => ({ member: memberJson(await svc.restore(req.params.id, req.audit)) }),
   );
 
-  app.post<{ Params: { id: string }; Body: { confirm?: boolean } | undefined }>(
+  app.post<{ Params: { id: string }; Body: { confirmToken?: string } | undefined }>(
     '/api/members/:id/purge',
     {
-      preHandler: requireCapability('members:purge'),
-      schema: { params: idParam, body: { type: ['object', 'null'], properties: { confirm: { type: 'boolean' } } } },
+      ...guard('members:purge'),
+      schema: {
+        params: idParam,
+        body: { type: ['object', 'null'], additionalProperties: false, properties: { confirmToken: { type: 'string', minLength: 1, maxLength: 128 } } },
+      },
     },
     async (req, reply) => {
-      await svc.purge(req.params.id, req.body?.confirm === true, req.audit);
+      await svc.purge(req.params.id, confirmCtx(req.principal!, req.body?.confirmToken), req.audit);
       return reply.status(204).send();
     },
   );
 
   app.put<{ Params: { id: string } }>(
     '/api/members/:id/pin',
-    { preHandler: requireCapability('members:write'), schema: { params: idParam } },
+    { ...guard('members:write'), schema: { params: idParam } },
     async (req) => ({ member: memberJson(await svc.setPinned(req.params.id, true, req.audit)) }),
   );
 
   app.delete<{ Params: { id: string } }>(
     '/api/members/:id/pin',
-    { preHandler: requireCapability('members:write'), schema: { params: idParam } },
+    { ...guard('members:write'), schema: { params: idParam } },
     async (req) => ({ member: memberJson(await svc.setPinned(req.params.id, false, req.audit)) }),
   );
 
   app.put<{ Body: { ids: string[] } }>(
     '/api/members/order',
     {
-      preHandler: requireCapability('members:write'),
+      ...guard('members:write'),
       schema: {
         body: {
           type: 'object',

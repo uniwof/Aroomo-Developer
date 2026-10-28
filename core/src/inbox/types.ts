@@ -2,6 +2,7 @@
  * 收件箱（PRODUCT §2.2「老板的办公桌」、§8.3、§9.9、§12 InboxItem）。
  * 三组：decision（待你拍板或接管）、candidate（候选）、brief（每日简报）。
  */
+import type { ConfirmKind } from '../confirm/confirm.js';
 
 export const INBOX_GROUPS = ['decision', 'candidate', 'brief'] as const;
 export type InboxGroup = (typeof INBOX_GROUPS)[number];
@@ -9,11 +10,26 @@ export const URGENCIES = ['urgent', 'normal', 'low'] as const;
 export type Urgency = (typeof URGENCIES)[number];
 export type InboxStatus = 'open' | 'done' | 'dismissed' | 'expired';
 
+export interface InboxActionConfirm {
+  /** normal = 普通确认（点一下）；其他 = 重要确认（D63） */
+  kind: ConfirmKind;
+  /** 重要确认必填：后果，每条一句 */
+  consequences?: string[];
+}
+
 export interface InboxAction {
   id: string;
   label: string;
-  /** 不可逆动作：必须二次确认（D50） */
+  /** 确认级别（D63）。不写 = 普通确认 */
+  confirm?: InboxActionConfirm;
+  /** 旧写法（D50 时期）：等同 confirm.kind = irreversible。只为兼容已存的条目和旧调用方 */
   irreversible?: boolean;
+}
+
+/** 动作的确认种类：新写法优先，旧的 irreversible: true 视为不可逆。 */
+export function actionKind(a: InboxAction): ConfirmKind {
+  if (a.confirm) return a.confirm.kind;
+  return a.irreversible ? 'irreversible' : 'normal';
 }
 
 export interface InboxRef {

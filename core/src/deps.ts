@@ -10,7 +10,8 @@ import type { CoreConfig } from './config.js';
 import type { LiteLLMAdmin } from './keys/litellm.js';
 import { createPgDb, type Db } from './db/db.js';
 import { migrate } from './db/migrate.js';
-import { type ConfirmStore, MemoryConfirmStore, PgConfirmStore } from './confirm/confirm.js';
+import type { AccessVerifier } from './confirm/access.js';
+import { type ChallengeStore, MemoryChallengeStore, PgChallengeStore } from './confirm/confirm.js';
 import { MemoryInboxStore } from './inbox/memory.js';
 import { PgInboxStore } from './inbox/pg.js';
 import type { InboxStore } from './inbox/types.js';
@@ -26,7 +27,9 @@ export interface CoreDeps {
   operatorTokens: OperatorTokenStore;
   members: MemberStore;
   inbox: InboxStore;
-  confirmTokens: ConfirmStore;
+  confirmChallenges: ChallengeStore;
+  /** 测试时注入假的 Cloudflare Access 校验；不传则按配置创建 */
+  access?: AccessVerifier;
   keys: KeyStore;
   /** 测试时注入；不传则按配置连接 LiteLLM */
   litellm?: LiteLLMAdmin;
@@ -41,7 +44,7 @@ export function memoryDeps(now: () => Date = () => new Date()): CoreDeps {
     operatorTokens: new MemoryOperatorTokenStore(),
     members: new MemoryMemberStore(),
     inbox: new MemoryInboxStore(),
-    confirmTokens: new MemoryConfirmStore(),
+    confirmChallenges: new MemoryChallengeStore(),
     keys: new MemoryKeyStore(),
   };
 }
@@ -54,7 +57,7 @@ export function pgDeps(db: Db, now: () => Date = () => new Date()): CoreDeps {
     auditLog: new PgAuditLog(db, now),
     members: new PgMemberStore(db),
     inbox: new PgInboxStore(db),
-    confirmTokens: new PgConfirmStore(db),
+    confirmChallenges: new PgChallengeStore(db),
     keys: new PgKeyStore(db),
     // 操作员令牌的签发 / 持久化属于负责人体系，后续 Issue 再落库
     operatorTokens: new MemoryOperatorTokenStore(),

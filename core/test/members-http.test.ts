@@ -4,6 +4,7 @@ import { hmacToken, MemoryOperatorTokenStore } from '../src/auth/tokens.js';
 import { loadConfig } from '../src/config.js';
 import { type CoreDeps, memoryDeps } from '../src/deps.js';
 import { buildServer } from '../src/server.js';
+import { confirmOverHttp } from './helpers/confirm.js';
 import { OWNER_TOKEN, TOKEN_SECRET, fakeClock, ownerAuth } from './helpers/db.js';
 
 const OP = 'placeholder-operator-token-members-01';
@@ -12,10 +13,12 @@ const opAuth = { authorization: `Bearer ${OP}` };
 describe('/api/members HTTP', () => {
   let app: FastifyInstance;
   let deps: CoreDeps;
+  let clock: ReturnType<typeof fakeClock>;
   const apps: FastifyInstance[] = [];
 
   beforeEach(() => {
-    deps = memoryDeps(fakeClock().now);
+    clock = fakeClock();
+    deps = memoryDeps(clock.now);
     (deps.operatorTokens as MemoryOperatorTokenStore).add({
       id: 'op',
       hmac: hmacToken(TOKEN_SECRET, OP),
@@ -63,7 +66,7 @@ describe('/api/members HTTP', () => {
     expect((await req('PATCH', '/api/members/a', { name: 'b' })).statusCode).toBe(409);
   });
 
-  it('DELETE / restore / purge：200、404、409（无 confirm）、204', async () => {
+  it('DELETE / restore / purge：200、404、428（需要重要确认）、204', async () => {
     await req('POST', '/api/members', { id: 'a', name: 'A' });
     expect((await req('DELETE', '/api/members/a')).statusCode).toBe(200);
     expect((await req('DELETE', '/api/members/a')).statusCode).toBe(404);
@@ -71,11 +74,13 @@ describe('/api/members HTTP', () => {
     expect((await req('POST', '/api/members/a/restore')).statusCode).toBe(404);
     await req('DELETE', '/api/members/a');
     const noConfirm = await req('POST', '/api/members/a/purge');
-    expect(noConfirm.statusCode).toBe(409);
-    expect(noConfirm.json().error.code).toBe('CONFIRM_REQUIRED');
-    expect((await req('POST', '/api/members/a/purge', { confirm: false })).statusCode).toBe(409);
-    expect((await req('POST', '/api/members/a/purge', { confirm: true })).statusCode).toBe(204);
-    expect((await req('POST', '/api/members/a/purge', { confirm: true })).statusCode).toBe(404);
+    expect(noConfirm.statusCode).toBe(428);
+    expect(noConfirm.json().error).toMatchObject({ code: 'CONFIRM_REQUIRED', confirm: { level: 'important', kind: 'irreversible', steps: 2 } });
+    // 旧的 confirm: true 参数已废止（D63）
+    expect((await req('POST', '/api/members/a/purge', { confirm: true })).statusCode).toBe(400);
+    const done = await confirmOverHttp(app, clock, ownerAuth, (t) => req('POST', '/api/members/a/purge', t ? { confirmToken: t } : undefined));
+    expect(done.statusCode).toBe(204);
+    expect((await req('POST', '/api/members/a/purge')).statusCode).toBe(404);
   });
 
   it('置顶 PUT / 取消 DELETE；不存在 404', async () => {
@@ -97,13 +102,13 @@ describe('/api/members HTTP', () => {
     expect((await req('PUT', '/api/members/order', {})).statusCode).toBe(400);
   });
 
-  it('鉴权：无令牌 401；操作员只有白名单内的 members:read（写/彻底删除 403 并留审计）', async () => {
+  it('鉴权：无令牌 401；操作员只有白名单内的 members:read（写/彻底删除 403 并留审计，D62）', async () => {
     expect((await app.inject({ method: 'GET', url: '/api/members' })).statusCode).toBe(401);
     expect((await req('GET', '/api/members', undefined, opAuth)).statusCode).toBe(200);
     expect((await req('POST', '/api/members', { name: 'X' }, opAuth)).statusCode).toBe(403);
     await req('POST', '/api/members', { id: 'a', name: 'A' });
     await req('DELETE', '/api/members/a');
-    expect((await req('POST', '/api/members/a/purge', { confirm: true }, opAuth)).statusCode).toBe(403);
+    expect((await req('POST', '/api/members/a/purge', undefined, opAuth)).statusCode).toBe(403);
     const denied = await deps.auditLog.query({ action: 'auth.denied' });
     expect(denied.entries.map((e) => e.target.id)).toEqual(['members:purge', 'members:write']);
   });

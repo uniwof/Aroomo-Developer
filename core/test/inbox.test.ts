@@ -1,7 +1,8 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { bindAudit } from '../src/audit/common.js';
 import { MemoryAuditLog } from '../src/audit/memory.js';
-import { CONFIRM_TTL_MS, ConfirmService, type ConfirmStore, MemoryConfirmStore, PgConfirmStore } from '../src/confirm/confirm.js';
+import { type ChallengeStore, CONFIRM_TTL_MS, ConfirmService, MemoryChallengeStore, PgChallengeStore } from '../src/confirm/confirm.js';
+import { challengeOf } from './helpers/confirm.js';
 import type { Db } from '../src/db/db.js';
 import { HttpError } from '../src/http/errors.js';
 import { MemoryInboxStore } from '../src/inbox/memory.js';
@@ -10,14 +11,14 @@ import { type CreateInboxInput, InboxService } from '../src/inbox/service.js';
 import type { InboxStore } from '../src/inbox/types.js';
 import { dbTargets, fakeClock } from './helpers/db.js';
 
-type Factory = { name: string; make: () => Promise<{ store: InboxStore; confirm: ConfirmStore; db?: Db }> };
+type Factory = { name: string; make: () => Promise<{ store: InboxStore; confirm: ChallengeStore; db?: Db }> };
 const factories: Factory[] = [
-  { name: 'memory', make: async () => ({ store: new MemoryInboxStore(), confirm: new MemoryConfirmStore() }) },
+  { name: 'memory', make: async () => ({ store: new MemoryInboxStore(), confirm: new MemoryChallengeStore() }) },
   ...dbTargets.map<Factory>((t) => ({
     name: t.name,
     make: async () => {
       const db = await t.open();
-      return { store: new PgInboxStore(db), confirm: new PgConfirmStore(db), db };
+      return { store: new PgInboxStore(db), confirm: new PgChallengeStore(db), db };
     },
   })),
 ];
@@ -40,7 +41,7 @@ const decision = (over: Partial<CreateInboxInput> = {}): CreateInboxInput => ({
   actions: [
     { id: 'approve', label: '采纳' },
     { id: 'reject', label: '不采纳' },
-    { id: 'pay', label: '付款 ¥20', irreversible: true },
+    { id: 'pay', label: '付款 ¥20', confirm: { kind: 'payment', consequences: ['会从你的账户扣 ¥20，不能撤回。'] } },
   ],
   ...over,
 });
@@ -50,15 +51,17 @@ for (const f of factories) {
     const dbs: Db[] = [];
     let clock: ReturnType<typeof fakeClock>;
     let svc: InboxService;
+    let confirm: ConfirmService;
     let log: MemoryAuditLog;
     let audit: ReturnType<typeof bindAudit>;
-    const owner = { actorKey: 'owner', canConfirmIrreversible: true };
+    const owner = { actor: 'owner', canConfirmImportant: true };
 
     beforeEach(async () => {
-      const { store, confirm, db } = await f.make();
-      if (db) dbs.push(db);
+      const made = await f.make();
+      if (made.db) dbs.push(made.db);
       clock = fakeClock();
-      svc = new InboxService(store, new ConfirmService(confirm, clock.now), clock.now);
+      confirm = new ConfirmService(made.confirm, { now: clock.now });
+      svc = new InboxService(made.store, confirm, clock.now);
       log = new MemoryAuditLog(clock.now);
       audit = bindAudit(log, { type: 'owner', id: 'owner' });
     });
@@ -107,11 +110,10 @@ for (const f of factories) {
       const { item } = await svc.createInboxItem(decision(), audit);
       clock.advance(5000);
       const r = await svc.act(item.id, 'approve', owner, audit);
-      expect(r.needsConfirm).toBe(false);
-      if (!r.needsConfirm) {
-        expect(r.item).toMatchObject({ status: 'done', resolvedAction: 'approve' });
-        expect(r.item.resolvedAt?.toISOString()).toBe('2026-10-27T00:00:05.000Z');
-      }
+      expect(r).toMatchObject({ status: 'done', resolvedAction: 'approve' });
+      expect(r.resolvedAt?.toISOString()).toBe('2026-10-27T00:00:05.000Z');
+      // 普通确认：点一下即执行，记 confirm.normal
+      expect((await log.query({ action: 'confirm.normal' })).entries).toHaveLength(1);
       expect(await code(svc.act(item.id, 'approve', owner, audit))).toBe('409 ALREADY_RESOLVED');
       expect(await code(svc.act(item.id, 'reject', owner, audit))).toBe('409 ALREADY_RESOLVED');
       expect(await code(svc.dismiss(item.id, audit))).toBe('409 ALREADY_RESOLVED');
@@ -134,66 +136,86 @@ for (const f of factories) {
       expect(ok).toHaveLength(1);
     });
 
-    it('不可逆动作：无令牌只返回 needsConfirm，不执行；带令牌才执行；全程审计', async () => {
+    /** 重要确认走完两步，返回一次性令牌 */
+    async function tokenFor(id: string, actor = 'owner') {
+      await confirm.step(id, 1, { actor }, audit);
+      clock.advance(3000);
+      const out = await confirm.step(id, 2, { actor }, audit);
+      return out.confirmToken as string;
+    }
+
+    it('重要动作（花钱）：无令牌 428 + challenge（含后果），不执行；两步确认后带令牌才执行；全程审计', async () => {
       const { item } = await svc.createInboxItem(decision(), audit);
-      const first = await svc.act(item.id, 'pay', owner, audit);
-      expect(first.needsConfirm).toBe(true);
-      if (!first.needsConfirm) throw new Error('unreachable');
-      expect(first.confirmToken.length).toBeGreaterThanOrEqual(32);
-      expect(first.expiresAt.getTime() - clock.now().getTime()).toBe(CONFIRM_TTL_MS);
+      const ch = await challengeOf(svc.act(item.id, 'pay', owner, audit));
+      expect(ch).toMatchObject({ level: 'important', kind: 'payment', steps: 2, nextStep: 1, minDelayMs: 3000, requiresAccessReauth: false });
+      expect(ch.consequences).toEqual(['会从你的账户扣 ¥20，不能撤回。']);
+      expect(new Date(ch.expiresAt).getTime() - clock.now().getTime()).toBe(CONFIRM_TTL_MS);
       expect((await svc.list({ status: 'open' })).map((i) => i.id)).toContain(item.id);
-      const second = await svc.act(item.id, 'pay', { ...owner, confirmToken: first.confirmToken }, audit);
-      expect(second.needsConfirm).toBe(false);
+      const token = await tokenFor(ch.id);
+      expect(token.length).toBeGreaterThanOrEqual(32);
+      const done = await svc.act(item.id, 'pay', { ...owner, confirmToken: token }, audit);
+      expect(done.status).toBe('done');
       const actions = (await log.query({ limit: 20 })).entries.map((e) => `${e.action}:${e.result}`).reverse();
-      expect(actions).toEqual(['inbox.create:ok', 'inbox.action.confirm_requested:ok', 'inbox.action.execute:ok']);
+      expect(actions).toEqual([
+        'inbox.create:ok',
+        'confirm.requested:ok',
+        'confirm.step1:ok',
+        'confirm.step2:ok',
+        'confirm.consumed:ok',
+        'inbox.action.execute:ok',
+      ]);
       const exec = (await log.query({ action: 'inbox.action.execute' })).entries[0];
-      expect(exec?.note).toContain('irreversible');
+      expect(exec?.note).toContain('payment');
     });
 
-    it('不可逆动作：过期、重放、伪造、换动作、换操作者的令牌都失败', async () => {
+    it('旧写法 irreversible: true 仍按重要确认（不可逆）处理，并有默认后果文字', async () => {
+      const { item } = await svc.createInboxItem(decision({ actions: [{ id: 'del', label: '永久删除', irreversible: true }] }), audit);
+      expect(item.actions[0]).toEqual({ id: 'del', label: '永久删除', confirm: { kind: 'irreversible', consequences: ['这个操作不可撤销。'] } });
+      const ch = await challengeOf(svc.act(item.id, 'del', owner, audit));
+      expect(ch.kind).toBe('irreversible');
+    });
+
+    it('重要动作必须写后果', async () => {
+      expect(await code(svc.createInboxItem(decision({ actions: [{ id: 'x', label: 'X', confirm: { kind: 'irreversible' } }] }), audit))).toBe(
+        '400 CONSEQUENCES_REQUIRED',
+      );
+    });
+
+    it('令牌：过期、伪造、换操作者、换事项、重放都失败', async () => {
       const a = (await svc.createInboxItem(decision(), audit)).item;
-      const t1 = await svc.act(a.id, 'pay', owner, audit);
-      if (!t1.needsConfirm) throw new Error('unreachable');
-      // 过期
+      const t1 = await tokenFor((await challengeOf(svc.act(a.id, 'pay', owner, audit))).id);
       clock.advance(CONFIRM_TTL_MS);
-      expect(await code(svc.act(a.id, 'pay', { ...owner, confirmToken: t1.confirmToken }, audit))).toBe('409 CONFIRM_EXPIRED');
-      // 伪造
+      expect(await code(svc.act(a.id, 'pay', { ...owner, confirmToken: t1 }, audit))).toBe('409 CONFIRM_EXPIRED');
       expect(await code(svc.act(a.id, 'pay', { ...owner, confirmToken: 'forged-token' }, audit))).toBe('409 CONFIRM_INVALID');
-      // 换操作者
-      const t2 = await svc.act(a.id, 'pay', owner, audit);
-      if (!t2.needsConfirm) throw new Error('unreachable');
-      expect(await code(svc.act(a.id, 'pay', { actorKey: 'someone-else', canConfirmIrreversible: true, confirmToken: t2.confirmToken }, audit))).toBe('409 CONFIRM_INVALID');
-      // 换到另一条事项（scope 不同）
+      const t2 = await tokenFor((await challengeOf(svc.act(a.id, 'pay', owner, audit))).id);
+      expect(await code(svc.act(a.id, 'pay', { actor: 'someone-else', canConfirmImportant: true, confirmToken: t2 }, audit))).toBe('409 CONFIRM_INVALID');
       const b = (await svc.createInboxItem(decision({ title: 'b' }), audit)).item;
-      expect(await code(svc.act(b.id, 'pay', { ...owner, confirmToken: t2.confirmToken }, audit))).toBe('409 CONFIRM_INVALID');
-      // 正常使用后重放
-      const ok = await svc.act(a.id, 'pay', { ...owner, confirmToken: t2.confirmToken }, audit);
-      expect(ok.needsConfirm).toBe(false);
-      const t3 = await svc.act(b.id, 'pay', owner, audit);
-      if (!t3.needsConfirm) throw new Error('unreachable');
-      await svc.act(b.id, 'pay', { ...owner, confirmToken: t3.confirmToken }, audit);
+      expect(await code(svc.act(b.id, 'pay', { ...owner, confirmToken: t2 }, audit))).toBe('409 CONFIRM_INVALID');
+      expect((await svc.act(a.id, 'pay', { ...owner, confirmToken: t2 }, audit)).status).toBe('done');
+      const t3 = await tokenFor((await challengeOf(svc.act(b.id, 'pay', owner, audit))).id);
+      await svc.act(b.id, 'pay', { ...owner, confirmToken: t3 }, audit);
       const c = (await svc.createInboxItem(decision({ title: 'c' }), audit)).item;
-      expect(await code(svc.act(c.id, 'pay', { ...owner, confirmToken: t3.confirmToken }, audit))).toBe('409 CONFIRM_INVALID');
+      expect(await code(svc.act(c.id, 'pay', { ...owner, confirmToken: t3 }, audit))).toBe('409 CONFIRM_INVALID');
       const failed = (await log.query({ action: 'inbox.action.execute', limit: 50 })).entries.filter((e) => e.result === 'failed');
       expect(failed.length).toBe(5);
     });
 
-    it('不可逆动作：同一令牌并发两次，只执行一次', async () => {
+    it('同一令牌并发两次，只执行一次', async () => {
       const { item } = await svc.createInboxItem(decision(), audit);
-      const t = await svc.act(item.id, 'pay', owner, audit);
-      if (!t.needsConfirm) throw new Error('unreachable');
+      const t = await tokenFor((await challengeOf(svc.act(item.id, 'pay', owner, audit))).id);
       const rs = await Promise.allSettled([
-        svc.act(item.id, 'pay', { ...owner, confirmToken: t.confirmToken }, audit),
-        svc.act(item.id, 'pay', { ...owner, confirmToken: t.confirmToken }, audit),
+        svc.act(item.id, 'pay', { ...owner, confirmToken: t }, audit),
+        svc.act(item.id, 'pay', { ...owner, confirmToken: t }, audit),
       ]);
       expect(rs.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
     });
 
-    it('不能确认不可逆操作的操作者（操作员）→ 403 并审计 denied', async () => {
+    it('操作员不能完成重要确认 → 403 并审计 denied（D62）', async () => {
       const { item } = await svc.createInboxItem(decision(), audit);
-      expect(await code(svc.act(item.id, 'pay', { actorKey: 'operator:x', canConfirmIrreversible: false }, audit))).toBe('403 FORBIDDEN');
+      expect(await code(svc.act(item.id, 'pay', { actor: 'operator:x', canConfirmImportant: false }, audit))).toBe('403 FORBIDDEN');
       const e = (await log.query({ action: 'inbox.action.execute' })).entries[0];
       expect(e?.result).toBe('denied');
+      expect((await log.query({ action: 'confirm.denied' })).entries).toHaveLength(1);
     });
 
     it('忽略、批量忽略、到期', async () => {

@@ -5,7 +5,9 @@ import type { Db } from '../src/db/db.js';
 import { HttpError } from '../src/http/errors.js';
 import { MemoryMemberStore } from '../src/members/memory.js';
 import { PgMemberStore } from '../src/members/pg.js';
+import { ConfirmService, MemoryChallengeStore } from '../src/confirm/confirm.js';
 import { MembersService } from '../src/members/service.js';
+import { challengeOf } from './helpers/confirm.js';
 import { type MemberStore, RECYCLE_MS } from '../src/members/types.js';
 import { dbTargets, fakeClock } from './helpers/db.js';
 
@@ -36,6 +38,7 @@ for (const f of factories) {
     const dbs: Db[] = [];
     let clock: ReturnType<typeof fakeClock>;
     let svc: MembersService;
+    let confirm: ConfirmService;
     let log: MemoryAuditLog;
     let audit: ReturnType<typeof bindAudit>;
 
@@ -43,7 +46,8 @@ for (const f of factories) {
       const { store, db } = await f.make();
       if (db) dbs.push(db);
       clock = fakeClock();
-      svc = new MembersService(store, clock.now);
+      confirm = new ConfirmService(new MemoryChallengeStore(), { now: clock.now });
+      svc = new MembersService(store, clock.now, confirm);
       log = new MemoryAuditLog(clock.now);
       audit = bindAudit(log, { type: 'owner', id: 'owner' });
     });
@@ -120,17 +124,25 @@ for (const f of factories) {
       expect(await code(svc.restore('a', audit))).toBe('409 DUPLICATE_NAME');
     });
 
-    it('彻底删除：无 confirm → 409；未在回收站 → 409；成功后不可撤销', async () => {
+    it('彻底删除：未在回收站 → 409；重要确认（不可逆，D63）两步完成后才删；成功后不可撤销', async () => {
+      const owner = { actor: 'owner', canConfirmImportant: true };
       await svc.create({ id: 'a', name: 'Alpha' }, audit);
-      expect(await code(svc.purge('a', true, audit))).toBe('409 NOT_IN_RECYCLE_BIN');
+      expect(await code(svc.purge('a', owner, audit))).toBe('409 NOT_IN_RECYCLE_BIN');
       await svc.softDelete('a', audit);
-      expect(await code(svc.purge('a', false, audit))).toBe('409 CONFIRM_REQUIRED');
-      await svc.purge('a', true, audit);
+      const ch = await challengeOf(svc.purge('a', owner, audit));
+      expect(ch).toMatchObject({ kind: 'irreversible', requiresAccessReauth: false, confirmLabel: '彻底删除' });
+      expect(ch.consequences.length).toBeGreaterThan(0);
+      expect(await svc.list({ deleted: true })).toHaveLength(1);
+      await confirm.step(ch.id, 1, { actor: 'owner' }, audit);
+      clock.advance(3000);
+      const { confirmToken } = await confirm.step(ch.id, 2, { actor: 'owner' }, audit);
+      await svc.purge('a', { ...owner, confirmToken: confirmToken as string }, audit);
       expect(await svc.list({ deleted: true })).toEqual([]);
       expect(await code(svc.restore('a', audit))).toBe('404 NOT_FOUND');
-      expect(await code(svc.purge('a', true, audit))).toBe('404 NOT_FOUND');
+      expect(await code(svc.purge('a', owner, audit))).toBe('404 NOT_FOUND');
       const entries = (await log.query({ action: 'members.purge' })).entries;
-      expect(entries.map((e) => `${e.result}:${e.note ?? ''}`)).toEqual(['failed:NOT_FOUND', 'ok:', 'failed:CONFIRM_REQUIRED', 'failed:NOT_IN_RECYCLE_BIN']);
+      expect(entries.map((e) => `${e.result}:${e.note ?? ''}`)).toEqual(['failed:NOT_FOUND', 'ok:', 'failed:NOT_IN_RECYCLE_BIN']);
+      expect(await code(svc.purge('zz', { actor: 'operator:x', canConfirmImportant: false }, audit))).toBe('404 NOT_FOUND');
     });
 
     it('回收站超过 30 天：列表与撤销都不可见；sweepExpired 清理', async () => {

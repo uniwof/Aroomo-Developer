@@ -143,6 +143,11 @@ services:
       CORE_DATABASE_URL: postgresql://aroomo_core:${CORE_DB_PASSWORD}@postgres:5432/aroomo_core
       CORE_OWNER_TOKEN: ${CORE_OWNER_TOKEN:-}
       CORE_TOKEN_SECRET: ${CORE_TOKEN_SECRET:-}
+      # 统一确认（D63）：涉及凭据的重要确认要重新验证 Cloudflare Access。本地版设 CORE_ACCESS_REAUTH=off
+      CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
+      CF_ACCESS_AUD: ${CF_ACCESS_AUD:-}
+      CORE_ACCESS_REAUTH: ${CORE_ACCESS_REAUTH:-required}
+      CORE_ACCESS_REAUTH_MAX_AGE_S: ${CORE_ACCESS_REAUTH_MAX_AGE_S:-300}
     healthcheck:
       test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s

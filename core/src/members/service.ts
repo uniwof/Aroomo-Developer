@@ -1,12 +1,13 @@
 /**
  * 成员业务规则（Issue #5）：
  * - 列表：置顶在前，再按 sortOrder、创建时间；默认不含已删除；回收站只显示 30 天内删除的。
- * - 删除 = 软删除进回收站；撤销删除；彻底删除需 confirm: true（否则 409），且只能删回收站里的。
+ * - 删除 = 软删除进回收站；撤销删除；彻底删除是不可逆操作，走统一确认服务的重要确认（D63），且只能删回收站里的。
  * - 名字非空、大小写不敏感去重；id 只允许 [a-z0-9-]；别名不能与其他成员的名字/别名冲突（会让点名有歧义）。
  * - 每个写操作都写审计（成功 ok；业务拒绝 failed 并带错误码）。
  */
 import { randomBytes } from 'node:crypto';
 import type { AuditFn } from '../audit/types.js';
+import { type ConfirmCtx, ConfirmService, MemoryChallengeStore } from '../confirm/confirm.js';
 import { badRequest, conflict, HttpError, notFound } from '../http/errors.js';
 import {
   CAPABILITY_TAGS,
@@ -56,6 +57,7 @@ export class MembersService {
   constructor(
     private readonly store: MemberStore,
     private readonly now: () => Date,
+    private readonly confirm: ConfirmService = new ConfirmService(new MemoryChallengeStore(), { now }),
   ) {}
 
   #inBin(m: Member, now: Date): boolean {
@@ -143,13 +145,23 @@ export class MembersService {
     });
   }
 
-  /** 彻底删除：不可逆，必须 confirm: true（DECISIONS D50）；只能删回收站里的成员。 */
-  async purge(id: string, confirm: boolean, audit: AuditFn): Promise<void> {
+  /** 彻底删除：不可逆，重要确认（D63）；只能删回收站里的成员。 */
+  async purge(id: string, ctx: ConfirmCtx, audit: AuditFn): Promise<void> {
     await this.#audited(audit, 'members.purge', id, async () => {
-      if (confirm !== true) throw conflict('彻底删除不可恢复，请确认后再试', 'CONFIRM_REQUIRED');
       const m = await this.store.get(id);
       if (!m) throw notFound('找不到这个成员');
       if (m.deletedAt === null) throw conflict('请先删除（移入回收站）再彻底删除', 'NOT_IN_RECYCLE_BIN');
+      await this.confirm.require(
+        {
+          scope: `members:purge:${id}`,
+          kind: 'irreversible',
+          title: `彻底删除成员「${m.name}」`,
+          consequences: ['成员会被永久删除，不能从回收站恢复。', '它的名字和别名之后可以给别的成员使用。'],
+          confirmLabel: '彻底删除',
+        },
+        ctx,
+        audit,
+      );
       await this.store.delete(id);
     });
   }
@@ -233,7 +245,8 @@ export class MembersService {
       await audit(action, { type: 'member', id }, 'ok');
       return out;
     } catch (err) {
-      if (err instanceof HttpError) await audit(action, { type: 'member', id: targetId }, 'failed', err.code);
+      // 428 = 请确认，不是失败（确认服务已记 confirm.requested）
+      if (err instanceof HttpError && err.code !== 'CONFIRM_REQUIRED') await audit(action, { type: 'member', id: targetId }, 'failed', err.code);
       throw err;
     }
   }

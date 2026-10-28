@@ -4,7 +4,9 @@ import { installAuth } from './auth/plugin.js';
 import { createTokenVerifier } from './auth/tokens.js';
 import type { CoreConfig } from './config.js';
 import { type CoreDeps, memoryDeps } from './deps.js';
+import { CfAccessVerifier } from './confirm/access.js';
 import { ConfirmService } from './confirm/confirm.js';
+import { registerConfirmRoutes } from './confirm/routes.js';
 import { installErrorHandler } from './http/errors.js';
 import { scrubForLog } from './http/scrub.js';
 import { registerInboxRoutes } from './inbox/routes.js';
@@ -127,14 +129,26 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps(), opts
       route(req.body.text, { members: req.body.members, leadId: req.body.leadId ?? null, sensitive: req.body.sensitive === true }),
   );
 
+  // 统一确认服务（D63）：所有需要确认的操作共用这一个实例
+  const access =
+    deps.access ??
+    (cfg.cfAccessTeamDomain && cfg.cfAccessAud ? new CfAccessVerifier({ teamDomain: cfg.cfAccessTeamDomain, aud: cfg.cfAccessAud, now: deps.now }) : undefined);
+  const confirm = new ConfirmService(deps.confirmChallenges, {
+    now: deps.now,
+    reauth: cfg.accessReauth,
+    reauthMaxAgeS: cfg.accessReauthMaxAgeS,
+    ...(access ? { access } : {}),
+  });
+  registerConfirmRoutes(app, confirm);
+
   registerAuditRoutes(app, deps.auditLog);
-  registerMemberRoutes(app, new MembersService(deps.members, deps.now));
-  const inbox = new InboxService(deps.inbox, new ConfirmService(deps.confirmTokens, deps.now), deps.now);
+  registerMemberRoutes(app, new MembersService(deps.members, deps.now, confirm));
+  const inbox = new InboxService(deps.inbox, confirm, deps.now);
   // 供其他模块调用 createInboxItem()
   app.decorate('inbox', inbox);
   registerInboxRoutes(app, inbox);
   const litellm = deps.litellm ?? new LiteLLMAdmin({ baseUrl: cfg.litellmBaseUrl, masterKey: cfg.litellmMasterKey });
-  registerKeyRoutes(app, new KeysService(deps.keys, litellm, deps.now));
+  registerKeyRoutes(app, new KeysService(deps.keys, litellm, deps.now, confirm));
 
   return app;
 }

@@ -7,9 +7,14 @@ import { bindAudit } from '../audit/common.js';
 import type { AuditActor, AuditFn, AuditLog } from '../audit/types.js';
 import { HttpError } from '../http/errors.js';
 import type { Capability } from './capabilities.js';
-import { type Principal, principalCan } from './tokens.js';
+import type { ConfirmCtx } from '../confirm/confirm.js';
+import { actorKey, type Principal, principalCan } from './tokens.js';
 
 declare module 'fastify' {
+  interface FastifyContextConfig {
+    /** 这个接口需要的能力（D62：操作员只能调用声明了白名单能力的接口） */
+    capability?: Capability;
+  }
   interface FastifyRequest {
     principal: Principal | null;
     /** 已绑定当前操作者的审计回调 */
@@ -45,7 +50,20 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
     if (!principal) throw new HttpError(401, 'UNAUTHORIZED', '请先登录');
     req.principal = principal;
     req.audit = bindAudit(opts.auditLog, actorOf(principal));
+    // D62：操作员只按白名单放行。没有声明能力的接口、不存在的接口、白名单外的能力，一律拒绝并审计。
+    if (principal.type === 'operator') {
+      const cap = req.routeOptions.config?.capability;
+      if (!cap || !principalCan(principal, cap)) {
+        await req.audit('auth.denied', { type: 'capability', id: cap ?? '(none)' }, 'denied', `${req.method} ${req.routeOptions.url ?? req.url.split('?')[0]}`);
+        throw new HttpError(403, 'FORBIDDEN', '没有权限执行这个操作');
+      }
+    }
   });
+}
+
+/** 路由选项：声明所需能力（供操作员白名单检查）并挂上 requireCapability。用法：`{ ...guard('members:read'), schema }` */
+export function guard(cap: Capability): { config: { capability: Capability }; preHandler: preHandlerAsyncHookHandler } {
+  return { config: { capability: cap }, preHandler: requireCapability(cap) };
 }
 
 /** 路由级权限：白名单式，默认拒绝；拒绝也写审计（result=denied）。 */
@@ -69,3 +87,8 @@ export const requireOwner: preHandlerAsyncHookHandler = async function (req: Fas
     throw new HttpError(403, 'FORBIDDEN', '只有主人可以执行这个操作');
   }
 };
+
+/** 统一确认服务需要的操作者上下文（D63）。重要确认只能由主人完成（confirm:important，D62）。 */
+export function confirmCtx(p: Principal, confirmToken?: string): ConfirmCtx {
+  return { actor: actorKey(p), canConfirmImportant: principalCan(p, 'confirm:important'), ...(confirmToken ? { confirmToken } : {}) };
+}
