@@ -150,6 +150,9 @@ jobs:
           $c.Run.Exit = $true
           $c.Output.Verbosity = 'Detailed'
           Invoke-Pester -Configuration $c
+      - name: 下载 age-keygen.exe（核对 SHA-256，D64 主密钥离线生成）
+        shell: powershell
+        run: installer\windows\Get-AgeKeygen.ps1
       - name: 构建安装包（Inno Setup）
         shell: powershell
         run: |

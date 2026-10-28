@@ -199,13 +199,87 @@ Describe '路径、端口、数据文件夹' {
 }
 
 Describe '快捷方式' {
-    It '启动、停止、更新、备份都在桌面' {
+    It '启动、停止、更新、备份都在桌面；设置异地备份、重新生成主密钥在开始菜单' {
+        $menu = @(Get-AroomoShortcutSpecs | ForEach-Object Command)
+        foreach ($c in 'offsite', 'masterkey') { $menu | Should -Contain $c }
         $desk = @(Get-AroomoShortcutSpecs | Where-Object Desktop | ForEach-Object Command)
         foreach ($c in 'start', 'stop', 'update', 'backup') { $desk | Should -Contain $c }
     }
     It '每个子命令 aroomo.ps1 都支持' {
         $src = Get-Content -Raw (Join-Path $script:WinDir 'aroomo.ps1')
         foreach ($s in Get-AroomoShortcutSpecs) { $src | Should -Match ("'{0}'" -f $s.Command) }
+    }
+}
+
+Describe '主密钥（D64）' {
+    BeforeAll {
+        # 假密钥在运行时拼出来（源码里不出现像密钥的字面量）
+        $script:FakeId = 'AGE-SECRET-KEY-1' + ('Q' * 58)
+        $script:FakePub = 'age1' + ('q' * 58)
+    }
+    It '解析 age-keygen 输出：取私钥和公钥' {
+        $text = "# created: 2026-10-28T08:00:00+08:00`r`n# public key: $($script:FakePub)`r`n$($script:FakeId)`r`n"
+        $k = ConvertFrom-AroomoAgeKeygenOutput -Text $text
+        $k.Identity | Should -BeExactly $script:FakeId
+        $k.PublicKey | Should -BeExactly $script:FakePub
+    }
+    It '输出不完整时报错' {
+        { ConvertFrom-AroomoAgeKeygenOutput -Text "# public key: $($script:FakePub)" } | Should -Throw
+        { ConvertFrom-AroomoAgeKeygenOutput -Text '' } | Should -Throw
+    }
+    It '公钥格式检查（bech32 字符集，没有 b、i、o、1）' {
+        Test-AroomoAgeRecipient $script:FakePub | Should -BeTrue
+        Test-AroomoAgeRecipient ('age1' + ('b' * 58)) | Should -BeFalse
+        Test-AroomoAgeRecipient '' | Should -BeFalse
+        Test-AroomoAgeRecipient $script:FakePub.ToUpperInvariant() | Should -BeFalse
+    }
+    It '分组显示：开头一行 AGE-SECRET-KEY-1，之后每 4 个字符一组、每行 6 组，拼回去与原文相同' {
+        $lines = Format-AroomoKeyGroups -Key $script:FakeId
+        $lines[0] | Should -BeExactly 'AGE-SECRET-KEY-1'
+        $lines[1] | Should -BeExactly ((@('QQQQ') * 6) -join ' ')
+        (($lines -join '') -replace ' ', '') | Should -BeExactly $script:FakeId
+    }
+    It '已有公钥时不重新生成；无人值守时不生成' {
+        $p = Join-Path ([IO.Path]::GetTempPath()) ("aroomo-mk-{0}.env" -f (New-AroomoSecret -Bytes 16))
+        try {
+            [IO.File]::WriteAllText($p, "BACKUP_AGE_RECIPIENT=$($script:FakePub)`n")
+            Invoke-AroomoMasterKeySetup -AppDir ([IO.Path]::GetTempPath()) -EnvPaths @($p) | Should -Be 'exists'
+            [IO.File]::WriteAllText($p, "BACKUP_AGE_RECIPIENT=`n")
+            Invoke-AroomoMasterKeySetup -AppDir ([IO.Path]::GetTempPath()) -EnvPaths @($p) -Unattended | Should -Be 'unavailable'
+            Invoke-AroomoMasterKeySetup -AppDir ([IO.Path]::GetTempPath()) -EnvPaths @($p) | Should -Be 'unavailable'
+        } finally { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+Describe '本地版配置（D63、D65）' {
+    It 'Set-AroomoEnvValues：改已有键、追加新键、删除指定键，重复执行结果不变' {
+        $c = "# 注释`nA=1`nRESTIC_PASSWORD=x`nB='有 空格'`n"
+        $out = Set-AroomoEnvValues -Content $c -Values @{ A = '2'; C = '3' } -Remove @('RESTIC_PASSWORD')
+        $out | Should -Match '(?m)^A=2$'
+        $out | Should -Match '(?m)^C=3$'
+        $out | Should -Match "(?m)^B='有 空格'$"
+        $out | Should -Not -Match 'RESTIC_PASSWORD'
+        $out | Should -Match '(?m)^# 注释$'
+        (Set-AroomoEnvValues -Content $out -Values @{ A = '2'; C = '3' } -Remove @('RESTIC_PASSWORD')) | Should -BeExactly $out
+    }
+    It '电脑版异地目录 pc/<电脑名>（小写、只留字母数字和连字符）' {
+        Get-AroomoPcBackupPrefix -HostName 'DESKTOP-AB_12 x' | Should -BeExactly 'pc/desktop-ab-12-x'
+        Get-AroomoPcBackupPrefix -HostName '' | Should -BeExactly 'pc/pc'
+    }
+    It '本地版固定值：不常驻备份进程、留 3 份、没有 Cloudflare Access' {
+        $d = Get-AroomoLocalEnvDefaults -HostName 'PC1'
+        $d['COMPOSE_PROFILES'] | Should -BeExactly ''
+        $d['BACKUP_LOCAL_KEEP'] | Should -Be '3'
+        $d['CORE_ACCESS_REAUTH'] | Should -Be 'off'
+        $d['BACKUP_S3_PREFIX'] | Should -Be 'pc/pc1'
+    }
+    It '新生成的 .env：没有 restic 的键和定时备份，主密钥只有公钥位置' {
+        $tpl = [IO.File]::ReadAllText((Join-Path $script:Root 'deploy/.env.example'))
+        $out = Set-AroomoEnvValues -Content (ConvertTo-AroomoEnv -Template $tpl -Values (Get-AroomoLocalEnvDefaults -HostName 'PC1')) -Remove (Get-AroomoObsoleteEnvKeys)
+        $out | Should -Not -Match '(?m)^(RESTIC_REPOSITORY|RESTIC_PASSWORD|BACKUP_CRON)='
+        $out | Should -Match '(?m)^BACKUP_AGE_RECIPIENT=$'
+        $out | Should -Match '(?m)^CORE_ACCESS_REAUTH=off$'
+        $out | Should -Not -Match 'AGE-SECRET-KEY-1[0-9A-Z]{58}'
     }
 }
 
