@@ -1079,8 +1079,9 @@ function Invoke-AroomoSABackup {
             $kdst = [IO.Path]::Combine($stage, 'backup-stage', 'karakeep-db.db')
             $r = Invoke-AroomoSAHidden -Exe $paths.Node -Arguments @(([IO.Path]::Combine($paths.Runtime, 'karakeep-start.cjs')), 'backup', $kdb, $kdst) -Env @{ KARAKEEP_DIR = $paths.KarakeepDir } -TimeoutSec 1800
             if ($r.ExitCode -ne 0) { return (& $fail '导出收藏数据库') }
-            $tarArgs = @('--exclude', 'karakeep/db.db*', '--exclude', 'data/karakeep/db.db*') + $tarArgs + @('-C', $paths.DataDir, 'karakeep')
         }
+        # 收藏的上传 / 抓取资料（assets）；队列库等运行中的 SQLite 文件不打包（被锁着读不了，也不需要）
+        if (Test-Path -LiteralPath ([IO.Path]::Combine($paths.KarakeepData, 'assets'))) { $tarArgs += @('-C', $paths.DataDir, 'karakeep/assets') }
         $r = Invoke-AroomoSAHidden -Exe $tar -Arguments $tarArgs -TimeoutSec 3600
         if ($r.ExitCode -ne 0) {
             $rs = Get-AroomoSASpec $Context 'rustfs'
@@ -1089,7 +1090,10 @@ function Invoke-AroomoSABackup {
             Remove-Item -LiteralPath $plainTar -Force -ErrorAction SilentlyContinue
             $r = Invoke-AroomoSAHidden -Exe $tar -Arguments $tarArgs -TimeoutSec 3600
             if ($wasUp) { [void](Start-AroomoSAService -Context $Context -Spec $rs -Quiet) }
-            if ($r.ExitCode -ne 0) { return (& $fail '打包') }
+            if ($r.ExitCode -ne 0) {
+                [IO.File]::WriteAllText([IO.Path]::Combine($paths.Logs, 'backup-tar.log'), [string]$r.Output)
+                return (& $fail '打包（详细原因在 logs\backup-tar.log）')
+            }
         }
         if (-not (Test-Path -LiteralPath $paths.Zstd)) { return (& $fail '找不到 zstd.exe，请重新运行安装包') }
         $r = Invoke-AroomoSAHidden -Exe $paths.Zstd -Arguments @('-q', '-f', '-T0', '-3', '--rm', $plainTar, '-o', $tarFile) -TimeoutSec 3600
