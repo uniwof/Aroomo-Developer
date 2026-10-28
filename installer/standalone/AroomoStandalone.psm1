@@ -310,10 +310,15 @@ function Get-AroomoSAModuleSpecs {
             OPENAI_BASE_URL = "$LiteLLMUrl/v1"; OPENAI_API_KEY = $c['LOBE_LITELLM_VIRTUAL_KEY']
             WORKERS_HOST = '127.0.0.1'; WORKERS_PORT = $c['KARAKEEP_WORKERS_PORT']
         }
+        # 本机主人自动登录（D78）：和 LobeHub 同一个随机主人账号，用户不用注册收藏（runtime/karakeep-gate.cjs）；后台任务不需要
+        $kWebEnv = $kEnv.Clone()
+        if ($c['LOCAL_OWNER_EMAIL'] -and $c['LOCAL_OWNER_PASSWORD']) {
+            $kWebEnv['KARAKEEP_OWNER_EMAIL'] = [string]$c['LOCAL_OWNER_EMAIL']; $kWebEnv['KARAKEEP_OWNER_PASSWORD'] = [string]$c['LOCAL_OWNER_PASSWORD']
+        }
         $out += [pscustomobject]@{
             Name = 'karakeep'; Label = '收藏（Karakeep）'; Kind = 'process'; Port = [int]$c['KARAKEEP_PORT']; TimeoutSec = 300
             Exe = $Paths.Node; Arguments = @(([IO.Path]::Combine($Paths.Runtime, 'karakeep-start.cjs')), 'web')
-            WorkingDir = [IO.Path]::Combine($Paths.KarakeepDir, 'apps', 'web'); Env = $kEnv
+            WorkingDir = [IO.Path]::Combine($Paths.KarakeepDir, 'apps', 'web'); Env = $kWebEnv
             Health = 'http'; HealthUrl = "http://127.0.0.1:$($c['KARAKEEP_PORT'])/api/health"
         }
         $out += [pscustomobject]@{
@@ -1269,7 +1274,7 @@ function Restore-AroomoSABackup {
             Write-AroomoPrivateFile -Path $paths.EnvFile -Content (Set-AroomoEnvValues -Content ([IO.File]::ReadAllText($restoredEnv)) -Values $keepLocal)
         }
         $newCfg = Read-AroomoEnv -Path $paths.EnvFile
-        $problems = Get-AroomoSAEnvProblems -Config $newCfg
+        $problems = @(Get-AroomoSAEnvProblems -Config $newCfg)
         if ($problems.Count -gt 0) {
             Copy-Item -LiteralPath "$($paths.EnvFile).before-restore-$stamp" -Destination $paths.EnvFile -Force
             $res.Step = "备份里的配置不完整（$($problems -join '；')）"

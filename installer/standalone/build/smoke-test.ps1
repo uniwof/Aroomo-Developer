@@ -102,6 +102,27 @@ try {
         if ($code -lt 200 -or $code -ge 400) { throw "$($m.Name) 返回 $code" }
     }
 
+    # D78：收藏（Karakeep）也由本机主人自动登录（第一次自动注册主人账号），用户不用注册
+    if (Get-AroomoSASpec $ctx 'karakeep') {
+        $kurl = "http://127.0.0.1:$($c['KARAKEEP_PORT'])"
+        $req = [System.Net.HttpWebRequest]::Create("$kurl/")
+        $req.Accept = 'text/html'; $req.AllowAutoRedirect = $false; $req.Proxy = $null; $req.Timeout = 120000
+        try { $resp = $req.GetResponse() } catch [System.Net.WebException] { $resp = $_.Exception.Response }
+        $kcode = [int]$resp.StatusCode
+        $kraw = [string]$resp.Headers['Set-Cookie']
+        $resp.Close()
+        $kpairs = @([regex]::Matches($kraw, '(?:^|,)\s*([A-Za-z0-9_.\-]+)=([^;,]*)') | ForEach-Object { "$($_.Groups[1].Value)=$($_.Groups[2].Value)" })
+        $results.karakeep_autologin_cookies = (@($kpairs | ForEach-Object { ($_ -split '=', 2)[0] }) -join ' ')
+        if ($kcode -ne 302 -or -not ($kpairs -match 'session_token=.')) { throw "收藏的本机主人自动登录没有成功（HTTP $kcode）" }
+        $kq = [System.Net.HttpWebRequest]::Create("$kurl/api/auth/get-session")
+        $kq.Proxy = $null; $kq.Timeout = 60000; $kq.Accept = 'application/json'
+        $kq.Headers.Add('Cookie', (@($kpairs | Where-Object { $_ -notmatch '^aroomo_al=' }) -join '; '))
+        try { $krs = $kq.GetResponse() } catch [System.Net.WebException] { $krs = $_.Exception.Response }
+        $ksr = New-Object IO.StreamReader($krs.GetResponseStream()); $kbody = $ksr.ReadToEnd(); $ksr.Close(); $krs.Close()
+        if ($kbody -notmatch '"user"\s*:\s*\{') { throw '收藏自动登录后拿不到会话' }
+        $results.karakeep_autologin = 'ok'
+    }
+
     # 备份：测试用主密钥（只在这台 CI 机器上，用完即弃）
     $k = New-AroomoMasterKey -AgeKeygenPath (Get-AroomoAgeKeygenPath -AppDir $AppDir)
     Write-AroomoPrivateFile -Path $ctx.Paths.EnvFile -Content (Set-AroomoEnvValues -Content ([IO.File]::ReadAllText($ctx.Paths.EnvFile)) -Values @{ BACKUP_AGE_RECIPIENT = $k.PublicKey })

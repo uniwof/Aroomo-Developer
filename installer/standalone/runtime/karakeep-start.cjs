@@ -1,7 +1,8 @@
 'use strict';
 /**
  * 独立版启动收藏（Karakeep，官方镜像里的程序原样使用，一个文件都不改）。代替镜像里 s6 的三个服务脚本：
- *   web       先跑数据库迁移（/db_migrations/index.js，同 init-db-migration），再启动 Next.js（apps/web/server.js，同 svc-web）
+ *   web       先跑数据库迁移（/db_migrations/index.js，同 init-db-migration），再启动 Next.js（apps/web/server.js，同 svc-web）；
+ *             有本机主人账号时前面加自动登录转发（karakeep-gate.cjs，D78）
  *   workers   后台任务（apps/workers/dist/index.js，同 svc-workers）：抓网页、搜索索引、OCR、AI 打标签
  *   backup <库文件> <目标文件>   用 SQLite 在线备份接口拷一份一致的副本（备份时用，服务可以在运行）
  * 环境变量由 AroomoStandalone.psm1 传入（KARAKEEP_DIR、DATA_DIR 等），本文件不打印任何密钥。
@@ -40,6 +41,29 @@ async function main() {
       process.exit(mig.status || 1);
     }
     const web = path.join(dir, 'apps', 'web');
+    // 本机主人自动登录（D78）：设置了 KARAKEEP_OWNER_EMAIL / KARAKEEP_OWNER_PASSWORD 时，PORT 上放自动登录转发，
+    // Karakeep 本身改听一个本机空闲端口（karakeep-gate.cjs）
+    if (process.env.KARAKEEP_OWNER_EMAIL && process.env.KARAKEEP_OWNER_PASSWORD) {
+      const { createGate, freePort } = require('./karakeep-gate.cjs');
+      const publicPort = Number(process.env.PORT);
+      const host = process.env.HOSTNAME || '127.0.0.1';
+      const inner = await freePort();
+      process.env.PORT = String(inner);
+      const gate = createGate({
+        publicPort,
+        upstreamPort: inner,
+        host,
+        email: process.env.KARAKEEP_OWNER_EMAIL,
+        password: process.env.KARAKEEP_OWNER_PASSWORD,
+        publicUrl: process.env.NEXTAUTH_URL || `http://localhost:${publicPort}`,
+      });
+      gate.on('error', (e) => {
+        console.error(`karakeep-start: 收藏端口 ${publicPort} 打不开：${e.message}`);
+        process.exit(1);
+      });
+      delete process.env.KARAKEEP_OWNER_PASSWORD;
+      console.log('karakeep-start: 本机主人自动登录已开启。');
+    }
     process.chdir(web);
     console.log('karakeep-start: 正在启动收藏界面。');
     await import(pathToFileURL(path.join(web, 'server.js')).href);

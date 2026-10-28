@@ -78,7 +78,7 @@
 ## 5. 备份（D64、D65、D79：和服务器同一格式）
 
 格式和服务器 `scripts/backup.sh` 一致（**format 2**）：`aroomo-<标签>-<UTC 时间>.tar.zst.age` + 明文 `.meta.json`。压缩包里：
-`backup-stage/`（`manifest.json`、`globals.sql`、`db/<库>.dump`，每个库 `pg_dump -Fc`）、`data/secrets/aroomo.env`、`data/rustfs/`（对象存储）；独立版另有 `data/karakeep/`（收藏资料）和 `backup-stage/karakeep-db.db`（收藏 SQLite 的在线一致副本）。zstd 用随包的官方 `zstd.exe`，加密用 age（主密钥的公钥）。`backups\` 留 3 份；配置了 S3（R2）时 rclone 上传到 `pc/<电脑名>/`，按天 / 周 / 月保留。
+`backup-stage/`（`manifest.json`、`globals.sql`、`db/<库>.dump`，每个库 `pg_dump -Fc`）、`data/secrets/aroomo.env`、`data/rustfs/`（对象存储）；独立版另有 `data/karakeep/`（收藏资料）和 `backup-stage/karakeep-db.db`（收藏 SQLite 的在线一致副本）。zstd 用随包的官方 `zstd.exe`，加密用 age（主密钥的公钥）。Windows 自带的 tar.exe（bsdtar）不支持 `-s` 改名，所以对象存储和收藏资料先硬链接（不同盘时复制）到 `<数据文件夹>\backup-tmp-*\data\` 再打包，打完删除。`backups\` 留 3 份；配置了 S3（R2）时 rclone 上传到 `pc/<电脑名>/`，按天 / 周 / 月保留。
 时机：每次登录后后台就绪时、托盘「退出」时、「立即备份」。主密钥只用于恢复（DPAPI 解出，用完删临时文件）。
 
 **恢复（`Restore-AroomoSABackup`）认三种来源：** 本机 format 2、早期测试版 `standalone-1`（`.tar.gz.age`）、**服务器的 format 2**（D79 单向恢复）。
@@ -90,7 +90,7 @@ CI 冒烟测试做本机备份 → 恢复演练（删库重建再导入）→ �
 | 模块 | 做法 | 本版状态 |
 | --- | --- | --- |
 | LobeHub、LiteLLM、Core、Shell、PG + pgvector、Redis、RustFS、备份 | §2 | 已包含，CI 冒烟测试 |
-| 本机主人自动登录（D78） | Shell 只听 127.0.0.1 时，替浏览器用随机主人账号登录 LobeHub（Better Auth 邮箱登录 / 第一次注册）；用户不注册、不输入密码 | 已包含，CI 检查 |
+| 本机主人自动登录（D78） | Shell 只听 127.0.0.1 时，替浏览器用随机主人账号登录 LobeHub（Better Auth 邮箱登录 / 第一次注册）；收藏（Karakeep 0.34 同为 Better Auth）由 `runtime/karakeep-gate.cjs` 用同一个主人账号做同样的事（Karakeep 改听本机空闲端口，3283 上是只听本机的转发）；用户不注册、不输入密码 | 已包含，CI 检查 |
 | 收藏 Karakeep 0.34.1（+ 搜索） | `build/prepare-apps.sh`：官方镜像 `/app` + `/db_migrations` 原样使用，sharp / re2 换官方 Windows 预编译，better-sqlite3 用自带的 win32 预编译；`runtime/karakeep-start.cjs` 代替镜像里的 s6：迁移 → web；workers 单独进程。Meilisearch 官方 Windows 版；抓网页用随包 Chromium（无界面，只开 127.0.0.1 调试端口）；OCR 语言数据（英文、简体中文）随包；AI 打标签走本机 LiteLLM | 已包含（端口 3283，开始菜单「Aroomo 收藏」），CI 检查 |
 | RSSHub | 官方镜像 `/app`（按摘要固定），oxc-parser 换 Windows 绑定，ws 用纯 JS；需要浏览器的路由用随包 Chromium；内存缓存 | 已包含（端口 1280），CI 检查 |
 | 网页代办（智能体操作浏览器） | Core 侧服务尚未实现（P1+，Docker 版也没有）；Chromium 已随包 | **未接入**：没有服务可接。最近替代：收藏的网页抓取 + RSSHub 已用同一个 Chromium |
@@ -109,7 +109,7 @@ CI 冒烟测试做本机备份 → 恢复演练（删库重建再导入）→ �
 ## 8. 已知问题和限制
 
 1. **未在用户电脑上验证**：只在 GitHub windows-latest 上做了静默安装 + 冒烟测试 + 恢复演练。
-2. 收藏（Karakeep）有自己的账号：第一次打开要注册（第一个账号就是管理员）。LobeHub 那样的自动登录还没给收藏做。
+2. 收藏（Karakeep）的主人自动登录用的是在 Karakeep 前面加一层本机转发（`runtime/karakeep-gate.cjs`），Karakeep 升级改了 Better Auth 接口时要跟着核对（CI 冒烟测试会检查）。
 3. 用服务器真实备份恢复到本机（D79）代码已写、格式一致，但没有演练过（需要 R2 桶和主密钥）。开机自动从 R2 恢复、窗口默认连服务器（§7）未实现。
 4. 安装包未做代码签名（SmartScreen 会提示「仍要运行」）。
 5. Redis 用的是社区 Windows 构建（redis-windows），不是 Redis 官方发布。
