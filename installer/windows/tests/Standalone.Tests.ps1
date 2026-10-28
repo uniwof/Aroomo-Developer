@@ -113,6 +113,18 @@ Describe 'Start-AroomoSAParallel（D77-3 并行启动）' {
         $t['karakeep'].Contains('ready') | Should -BeTrue
     }
 
+    It '之前起的主界面服务卡住（进程在、不健康）：等 AdoptGraceSec 后结束并重启一次' {
+        $script:stopped = @()
+        Mock -ModuleName AroomoStandalone Test-AroomoSAServiceAlive { return ($Spec.Name -eq 'litellm' -and $script:stopped -notcontains 'litellm') }
+        Mock -ModuleName AroomoStandalone Stop-AroomoSAService { $script:stopped += $Spec.Name }
+        $t = [ordered]@{}
+        Start-AroomoSAParallel -Context $script:ctx -WaitAll -Quiet -Timing $t -AdoptGraceSec 1 | Should -BeTrue
+        $script:stopped | Should -Be @('litellm')
+        $t['litellm'].Contains('restart') | Should -BeTrue
+        $t['litellm']['ready'] | Should -BeGreaterOrEqual $t['litellm']['restart']
+        Should -Invoke -ModuleName AroomoStandalone Stop-AroomoSAService -Times 1 -Exactly
+    }
+
     It '第一次迁移并建桶，记下标记；第二次跳过迁移和建桶；标记清掉后重新迁移' {
         Start-AroomoSAParallel -Context $script:ctx -Quiet | Should -BeTrue
         $script:startedEnv['litellm'].ContainsKey('DISABLE_SCHEMA_UPDATE') | Should -BeFalse

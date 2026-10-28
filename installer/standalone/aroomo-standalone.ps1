@@ -23,10 +23,12 @@ param(
     [string]$Action = 'open',
     [int]$Delay = 0,
     [switch]$WaitAll,
-    [string]$AppDir = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path,
+    [string]$AppDir,
     [string]$DataDir
 )
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell 5.1 在 param 默认值里 $PSScriptRoot 为空（用户实测 firstrun 因此静默失败），在这里计算
+if (-not $AppDir) { $AppDir = (Resolve-Path (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) '..\..')).Path }
 Import-Module (Join-Path $AppDir 'installer\windows\Aroomo.psm1') -Force -DisableNameChecking
 Import-Module (Join-Path $AppDir 'installer\standalone\AroomoStandalone.psm1') -Force -DisableNameChecking
 Set-AroomoSpeech $false   # D78：不用语音提示，用标准控件让「放大镜 / 讲述人」能读

@@ -263,8 +263,10 @@ function Write-AroomoPrivateFile {
     if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     [IO.File]::WriteAllText($Path, $Content, (New-Object System.Text.UTF8Encoding $false))
     if ($env:OS -eq 'Windows_NT') {
-        $who = "$env:USERDOMAIN\$env:USERNAME"
-        & icacls.exe $Path /inheritance:r /grant:r "${who}:(F)" /grant:r 'SYSTEM:(F)' | Out-Null
+        # 用 SID，不用「域\用户名」：远程 / 工作组环境下 USERDOMAIN 可能是 WORKGROUP，icacls 找不到账户却已去掉继承，文件谁都读不了
+        $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        & icacls.exe $Path /inheritance:r /grant:r "*${sid}:(F)" /grant:r '*S-1-5-18:(F)' | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "设置文件权限失败：$Path" }
     }
 }
 
@@ -319,6 +321,14 @@ function Find-AroomoFreePort {
         [int]$MaxTries = 50
     )
     for ($p = $Preferred; $p -lt $Preferred + $MaxTries; $p++) {
+        if ($Exclude -contains $p) { continue }
+        if (& $IsFree $p) { return $p }
+    }
+    # 装了 Hyper-V / WSL / Docker 的电脑会整段保留端口（netsh int ipv4 show excludedportrange，用户实机 1055–5340 多段被占），
+    # 默认端口附近全不可用时改到 20000–29999 再找（避开 49152 以上的动态端口）
+    $base = 20000 + ($Preferred % 10000)
+    for ($i = 0; $i -lt 10000; $i++) {
+        $p = 20000 + (($base - 20000 + $i) % 10000)
         if ($Exclude -contains $p) { continue }
         if (& $IsFree $p) { return $p }
     }

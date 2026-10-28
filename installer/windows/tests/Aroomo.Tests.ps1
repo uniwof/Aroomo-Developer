@@ -186,6 +186,8 @@ Describe '路径、端口、数据文件夹' {
         $busy = @(3210, 3211)
         Find-AroomoFreePort -Preferred 3210 -IsFree { param($p) $busy -notcontains $p } | Should -Be 3212
         Find-AroomoFreePort -Preferred 9000 -Exclude @(9000) -IsFree { param($p) $p -gt 0 } | Should -Be 9001
+        # 默认端口附近被 Hyper-V 整段保留时换到 20000 段
+        Find-AroomoFreePort -Preferred 3280 -IsFree { param($p) $p -ge 20000 } | Should -Be 23280
     }
     It '默认数据文件夹选剩余空间最大的非系统盘' {
         $drives = @(
