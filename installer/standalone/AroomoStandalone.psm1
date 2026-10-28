@@ -1023,6 +1023,21 @@ function Get-AroomoSATar {
     return 'tar'
 }
 
+function Copy-AroomoSALinkTree {
+    # 把 Source 目录原样摆到 Destination：文件用硬链接（同一个盘、不占空间），做不了硬链接就复制。出错抛异常
+    param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$Destination)
+    $src = (Resolve-Path -LiteralPath $Source).ProviderPath.TrimEnd('\')
+    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    foreach ($d in [IO.Directory]::EnumerateDirectories($src, '*', [IO.SearchOption]::AllDirectories)) {
+        [void][IO.Directory]::CreateDirectory([IO.Path]::Combine($Destination, $d.Substring($src.Length + 1)))
+    }
+    foreach ($f in [IO.Directory]::EnumerateFiles($src, '*', [IO.SearchOption]::AllDirectories)) {
+        $dst = [IO.Path]::Combine($Destination, $f.Substring($src.Length + 1))
+        try { New-Item -ItemType HardLink -Path $dst -Value $f -ErrorAction Stop | Out-Null }
+        catch { [IO.File]::Copy($f, $dst, $true) }
+    }
+}
+
 function Invoke-AroomoSABackup {
     # 返回 [pscustomobject]@{ Ok; Step; File; LocalCount; Offsite; DurationS }
     [OutputType([pscustomobject])]
@@ -1069,10 +1084,9 @@ function Invoke-AroomoSABackup {
         Copy-Item -LiteralPath $paths.EnvFile -Destination ([IO.Path]::Combine($stage, 'data', 'secrets', 'aroomo.env'))
 
         # 打包：先在运行中直接读对象存储；读不了（文件被占用）就暂停对象存储几秒再读
+        # Windows 自带的 tar.exe（bsdtar）不支持 -s 改名：对象存储和收藏资料先用硬链接（不占空间；不同盘或失败时复制）
+        # 摆进数据文件夹里的临时目录 <数据文件夹>\backup-tmp-*\data\，再和 backup-stage、data\secrets 一起打包，压缩包里的路径和服务器一致
         $tar = Get-AroomoSATar
-        # 对象存储和收藏资料在压缩包里放到 data/ 下（-s 改名，不复制）
-        $tarArgs = @('-s', ',^rustfs,data/rustfs,', '-s', ',^karakeep,data/karakeep,', '-cf', $plainTar, '-C', $stage, 'backup-stage', 'data')
-        if (Test-Path -LiteralPath $paths.RustFSData) { $tarArgs += @('-C', $paths.DataDir, 'rustfs') }
         # 收藏（Karakeep）：SQLite 用在线备份接口拷一份一致的副本放进备份；正在用的库文件不直接打包
         $kdb = [IO.Path]::Combine($paths.KarakeepData, 'db.db')
         if (Test-Path -LiteralPath $kdb) {
@@ -1080,20 +1094,45 @@ function Invoke-AroomoSABackup {
             $r = Invoke-AroomoSAHidden -Exe $paths.Node -Arguments @(([IO.Path]::Combine($paths.Runtime, 'karakeep-start.cjs')), 'backup', $kdb, $kdst) -Env @{ KARAKEEP_DIR = $paths.KarakeepDir } -TimeoutSec 1800
             if ($r.ExitCode -ne 0) { return (& $fail '导出收藏数据库') }
         }
-        # 收藏的上传 / 抓取资料（assets）；队列库等运行中的 SQLite 文件不打包（被锁着读不了，也不需要）
-        if (Test-Path -LiteralPath ([IO.Path]::Combine($paths.KarakeepData, 'assets'))) { $tarArgs += @('-C', $paths.DataDir, 'karakeep/assets') }
-        $r = Invoke-AroomoSAHidden -Exe $tar -Arguments $tarArgs -TimeoutSec 3600
-        if ($r.ExitCode -ne 0) {
-            $rs = Get-AroomoSASpec $Context 'rustfs'
-            $wasUp = Test-AroomoSAServiceHealthy -Spec $rs -Paths $paths
-            if ($wasUp) { Stop-AroomoSAService -Context $Context -Spec $rs }
+        # 上次中断留下的临时目录（只有硬链接 / 副本）先清掉
+        Get-ChildItem -LiteralPath $paths.DataDir -Directory -Filter 'backup-tmp-*' -ErrorAction SilentlyContinue | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+        $linkRoot = [IO.Path]::Combine($paths.DataDir, ('backup-tmp-{0}' -f [Guid]::NewGuid().ToString('N')))
+        $pack = {
+            Remove-Item -LiteralPath $linkRoot -Recurse -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $plainTar -Force -ErrorAction SilentlyContinue
-            $r = Invoke-AroomoSAHidden -Exe $tar -Arguments $tarArgs -TimeoutSec 3600
-            if ($wasUp) { [void](Start-AroomoSAService -Context $Context -Spec $rs -Quiet) }
-            if ($r.ExitCode -ne 0) {
-                [IO.File]::WriteAllText([IO.Path]::Combine($paths.Logs, 'backup-tar.log'), [string]$r.Output)
-                return (& $fail '打包（详细原因在 logs\backup-tar.log）')
+            $items = @()
+            try {
+                if (Test-Path -LiteralPath $paths.RustFSData) {
+                    Copy-AroomoSALinkTree -Source $paths.RustFSData -Destination ([IO.Path]::Combine($linkRoot, 'data', 'rustfs'))
+                    $items += 'data/rustfs'
+                }
+                # 收藏的上传 / 抓取资料（assets）；队列库等运行中的 SQLite 文件不打包（被锁着读不了，也不需要）
+                $ka = [IO.Path]::Combine($paths.KarakeepData, 'assets')
+                if (Test-Path -LiteralPath $ka) {
+                    Copy-AroomoSALinkTree -Source $ka -Destination ([IO.Path]::Combine($linkRoot, 'data', 'karakeep', 'assets'))
+                    $items += 'data/karakeep/assets'
+                }
+            } catch {
+                return [pscustomobject]@{ ExitCode = 1; Output = "准备打包文件失败：$($_.Exception.Message)" }
             }
+            $a = @('-cf', $plainTar, '-C', $stage, 'backup-stage', 'data/secrets')
+            if ($items.Count -gt 0) { $a += @('-C', $linkRoot) + $items }
+            return (Invoke-AroomoSAHidden -Exe $tar -Arguments $a -TimeoutSec 3600)
+        }
+        try {
+            $r = & $pack
+            if ($r.ExitCode -ne 0) {
+                $rs = Get-AroomoSASpec $Context 'rustfs'
+                $wasUp = Test-AroomoSAServiceHealthy -Spec $rs -Paths $paths
+                if ($wasUp) { Stop-AroomoSAService -Context $Context -Spec $rs }
+                try { $r = & $pack } finally { if ($wasUp) { [void](Start-AroomoSAService -Context $Context -Spec $rs -Quiet) } }
+                if ($r.ExitCode -ne 0) {
+                    [IO.File]::WriteAllText([IO.Path]::Combine($paths.Logs, 'backup-tar.log'), [string]$r.Output)
+                    return (& $fail '打包（详细原因在 logs\backup-tar.log）')
+                }
+            }
+        } finally {
+            Remove-Item -LiteralPath $linkRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
         if (-not (Test-Path -LiteralPath $paths.Zstd)) { return (& $fail '找不到 zstd.exe，请重新运行安装包') }
         $r = Invoke-AroomoSAHidden -Exe $paths.Zstd -Arguments @('-q', '-f', '-T0', '-3', '--rm', $plainTar, '-o', $tarFile) -TimeoutSec 3600
@@ -1156,6 +1195,17 @@ function Invoke-AroomoSABackup {
         $lobe = Get-AroomoSASpec $Context 'lobe'
         if (-not $pgWasRunning -and -not (Test-AroomoSAServiceHealthy -Spec $lobe -Paths $paths)) { Stop-AroomoSAService -Context $Context -Spec $pgSpec }
     }
+}
+
+function Move-AroomoSADirectory {
+    # 临时目录和数据文件夹常在不同的盘，Windows PowerShell 的 Move-Item 不能跨盘移动文件夹：跨盘时复制后删除
+    param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$Destination)
+    if ([IO.Path]::GetPathRoot((Resolve-Path -LiteralPath $Source).ProviderPath) -ieq [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($Destination))) {
+        Move-Item -LiteralPath $Source -Destination $Destination
+        return
+    }
+    Copy-Item -LiteralPath $Source -Destination $Destination -Recurse -Force -ErrorAction Stop
+    Remove-Item -LiteralPath $Source -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 function Restore-AroomoSABackup {
@@ -1264,14 +1314,14 @@ function Restore-AroomoSABackup {
                 $res.Kept = "$($paths.RustFSData).before-restore-$stamp"
                 Move-Item -LiteralPath $paths.RustFSData -Destination $res.Kept
             }
-            Move-Item -LiteralPath $restoredFiles -Destination $paths.RustFSData
+            Move-AroomoSADirectory -Source $restoredFiles -Destination $paths.RustFSData
         }
         # 收藏（Karakeep）：资料文件夹 + 一致的数据库副本；搜索索引（Meilisearch）不备份，清掉后由收藏重新建立
         $restoredK = [IO.Path]::Combine($dataRoot, 'karakeep')
         $restoredKdb = [IO.Path]::Combine($stage, 'backup-stage', 'karakeep-db.db')
         if ((Test-Path -LiteralPath $restoredK) -or (Test-Path -LiteralPath $restoredKdb)) {
             if (Test-Path -LiteralPath $paths.KarakeepData) { Move-Item -LiteralPath $paths.KarakeepData -Destination "$($paths.KarakeepData).before-restore-$stamp" }
-            if (Test-Path -LiteralPath $restoredK) { Move-Item -LiteralPath $restoredK -Destination $paths.KarakeepData } else { New-Item -ItemType Directory -Path $paths.KarakeepData -Force | Out-Null }
+            if (Test-Path -LiteralPath $restoredK) { Move-AroomoSADirectory -Source $restoredK -Destination $paths.KarakeepData } else { New-Item -ItemType Directory -Path $paths.KarakeepData -Force | Out-Null }
             if (Test-Path -LiteralPath $restoredKdb) { Copy-Item -LiteralPath $restoredKdb -Destination ([IO.Path]::Combine($paths.KarakeepData, 'db.db')) -Force }
             if (Test-Path -LiteralPath $paths.MeiliData) { Move-Item -LiteralPath $paths.MeiliData -Destination "$($paths.MeiliData).before-restore-$stamp" }
         }
