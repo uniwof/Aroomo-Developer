@@ -5,11 +5,11 @@
 > 最后更新：2026-10-28，主程序员（Hark）。
 
 ## 1. 一句话现状
-P0（MVP）进行中。dev 上已有：仓库骨架 / Compose / CI（#4）、v4.3 裁决文档（#3）、Core 的审计日志（#18）、成员（#20）、收件箱（#22）、Key 管理（#24）、点名解析（#25）、Windows 安装器（#23）；2026-10-28 负责人裁决 D62–D65 已入档（#26）并实现：操作员白名单 + 统一确认服务（#27）、备份改为主密钥公钥加密（#28）、安装器主密钥窗口 + 电脑版备份（#29）、测试版发布流程（#30，预发布 `local-test`）。Core 有 HTTP API 和 PostgreSQL 存储，但还没有前端接入、还没真正经 LiteLLM 调模型。试用服务器已上线（AWS 俄亥俄 t4g.medium ARM64，标准版，https://app.pcmanai.com 经 Cloudflare Tunnel + Access，2026-10-28）；Windows 测试版尚未在真实电脑上跑过。
+P0（MVP）进行中。dev 上已有：仓库骨架 / Compose / CI（#4）、v4.3 裁决文档（#3）、Core 的审计日志（#18）、成员（#20）、收件箱（#22）、Key 管理（#24）、点名解析（#25）、Windows 安装器（#23）；2026-10-28 负责人裁决 D62–D65 已入档（#26）并实现：操作员白名单 + 统一确认服务（#27）、备份改为主密钥公钥加密（#28）、安装器主密钥窗口 + 电脑版备份（#29）、测试版发布流程（#30，预发布 `local-test`）。Core 有 HTTP API 和 PostgreSQL 存储。界面入口已改为 Aroomo Shell（#36，`shell/`，提议 H1）：浏览器 → Shell → 官方 LobeHub，品牌 Aroomo、按 §8 隐藏、朗读禁用；**服务器更新到 #36 之后，Tunnel 的应用域名要改指 `http://shell:3000`**（原来是 `lobe:3210`）。Aroomo 页面接 Core API、对话经 Core 路由到 LiteLLM 仍在进行。试用服务器已上线（AWS 俄亥俄 t4g.medium ARM64，标准版，https://app.pcmanai.com 经 Cloudflare Tunnel + Access，2026-10-28）；Windows 测试版尚未在真实电脑上跑过。
 
 ## 2. 必读
 1. docs/PRODUCT.md（优先级 v4.3 ＞ v4.2 ＞ v4.1 ＞ v4；P0 范围见 16.1；讨论模式见 9.4.1；改动清单见文末「附录：v4.3 修订记录」）
-2. docs/DECISIONS.md（D30–D61 为 v4.3 裁决；D62–D65 为 2026-10-28 裁决，含待确认的实现注；D27–D28 仍为提议）
+2. docs/DECISIONS.md（D30–D61 为 v4.3 裁决；D62–D80 为 2026-10-28 裁决；第八节 H1、H2… 为主程序员提议待确认；D27–D28 仍为提议）
 3. docs/PROGRESS.md
 4. docs/architecture/KEY-STORAGE.md、docs/architecture/SEQUENCES.md、docs/architecture/CONFIRM-CARD.md；docs/ops/BACKUP.md、docs/ops/WINDOWS.md
 5. docs/AUDIT.md（第 5 节 P1–P20 的处理见 DECISIONS 第五节末表）
