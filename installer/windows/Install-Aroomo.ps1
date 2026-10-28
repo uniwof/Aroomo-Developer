@@ -257,8 +257,9 @@ if ($NoStart) {
     Write-AroomoSay -Step 10 -Total $total -Text '已按要求跳过启动。以后双击桌面上的「Aroomo 启动」即可。'
 } else {
     Write-AroomoSay -Step 10 -Total $total -Text "第一次启动。需要下载几 GB 的程序，通常 10 到 30 分钟。`n期间每分钟会报告一次进度。完成后会自动打开浏览器。"
-    $startArgs = @('start', '-NoPause')
-    if ($NoBrowser) { $startArgs += '-NoBrowser' }
+    # 用哈希表传参：数组展开时 '-NoPause' 会被当成位置参数字符串，导致第 10 步报错
+    $startArgs = @{ Command = 'start'; NoPause = $true }
+    if ($NoBrowser) { $startArgs['NoBrowser'] = $true }
     & (Join-Path $PSScriptRoot 'aroomo.ps1') @startArgs
     if ($LASTEXITCODE -ne 0) { Stop-WithMessage "Aroomo 第一次启动没有成功。`n可以稍后双击桌面上的「Aroomo 启动」再试。日志在 %LOCALAPPDATA%\Aroomo\logs。" }
 }
