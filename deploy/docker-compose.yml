@@ -201,7 +201,9 @@ services:
       # Agent Gateway 默认关闭（P0 只需对话）；需要时启用 profile agent-gateway 并设为 1
       ENABLE_AGENT_GATEWAY: ${LOBE_ENABLE_AGENT_GATEWAY:-0}
       AGENT_GATEWAY_INTERNAL_URL: http://gateway:8787
-      AGENT_GATEWAY_URL: ${AGENT_GATEWAY_URL:-}
+      # 不能为空：LobeHub 启动时 new URL('') 会报 "Invalid URL" 直接崩溃。
+      # `:-` 同时覆盖「未设置」和「设为空」两种情况（Windows 安装器按模板写出的 .env 里是空值）
+      AGENT_GATEWAY_URL: ${AGENT_GATEWAY_URL:-http://gateway:8787}
       AGENT_GATEWAY_SERVICE_TOKEN: ${GATEWAY_SERVICE_TOKEN:-}
       TZ: ${TZ:-Asia/Shanghai}
     healthcheck:

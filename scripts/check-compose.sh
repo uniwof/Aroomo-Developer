@@ -64,4 +64,19 @@ else
   status=1
 fi
 
+# LobeHub 的 AGENT_GATEWAY_URL 不能为空（空值 → "Invalid URL" 崩溃）；模板里留空 / 显式设空时都要有默认值
+for override in "" "AGENT_GATEWAY_URL="; do
+  env_check="$(mktemp)"
+  cp "$tmp_env" "$env_check"
+  [ -n "$override" ] && echo "$override" >> "$env_check"
+  # shellcheck disable=SC2086
+  url="$($compose --project-directory "$deploy" --env-file "$env_check" -f "$deploy/docker-compose.yml" config --format json \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["lobe"]["environment"].get("AGENT_GATEWAY_URL",""))')"
+  rm -f "$env_check"
+  case "$url" in
+    http://*|https://*|ws://*|wss://*) echo "ok   lobe AGENT_GATEWAY_URL non-empty (${override:-unset})" ;;
+    *) echo "FAIL lobe AGENT_GATEWAY_URL empty/invalid (${override:-unset}): '$url'" >&2; status=1 ;;
+  esac
+done
+
 exit $status
