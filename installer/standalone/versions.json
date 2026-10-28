@@ -134,5 +134,11 @@
     "license_url": "https://raw.githubusercontent.com/DIYgod/RSSHub/1d73c7c6158e0fe2bfab06300f41b040716127ab/LICENSE",
     "license_sha256": "8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef",
     "_note": "完整档：RSS 订阅源（RSSHub，AGPL-3.0），官方镜像 2026-10-27 构建（按摘要固定）。上游只发 latest / 提交号标签"
+  },
+  "zstd": {
+    "version": "v1.5.7",
+    "url": "https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-v1.5.7-win64.zip",
+    "sha256": "acb4e8111511749dc7a3ebedca9b04190e37a17afeb73f55d4425dbf0b90fad9",
+    "_note": "备份和服务器同一格式（format 2：tar + zstd + age，D79）"
   }
 }

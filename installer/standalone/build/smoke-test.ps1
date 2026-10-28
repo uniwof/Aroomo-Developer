@@ -91,17 +91,32 @@ try {
     # 备份：测试用主密钥（只在这台 CI 机器上，用完即弃）
     $k = New-AroomoMasterKey -AgeKeygenPath (Get-AroomoAgeKeygenPath -AppDir $AppDir)
     Write-AroomoPrivateFile -Path $ctx.Paths.EnvFile -Content (Set-AroomoEnvValues -Content ([IO.File]::ReadAllText($ctx.Paths.EnvFile)) -Values @{ BACKUP_AGE_RECIPIENT = $k.PublicKey })
+    $testIdentity = $k.Identity
     Remove-Variable k
     $ctx = Get-AroomoSAContext -AppDir $AppDir -DataDir $DataDir
     $b = Invoke-AroomoSABackup -Context $ctx
     if (-not $b.Ok) { throw "备份失败：$($b.Step)" }
     $results.backup = "ok（$($b.DurationS) 秒，$([int]((Get-Item $b.File).Length / 1KB)) KB）"
+    # 格式和服务器一致（D79，format 2）：.tar.zst.age，里面是 backup-stage/manifest.json、data/secrets/aroomo.env、data/rustfs
+    if ($b.File -notmatch '\.tar\.zst\.age$') { throw "备份文件名不是服务器格式：$($b.File)" }
+    $meta = Get-Content -Raw ($b.File -replace '\.tar\.zst\.age$', '.meta.json') | ConvertFrom-Json
+    if ($meta.format -ne 2 -or $meta.compression -ne 'zstd') { throw '备份元数据不是 format 2 / zstd' }
+    # 恢复演练：用测试主密钥把刚才的备份恢复回去（删库重建再导入），之后重启并核对数据还在
+    $rr = Restore-AroomoSABackup -Context $ctx -File $b.File -Identity $testIdentity
+    Remove-Variable testIdentity
+    if (-not $rr.Ok) { throw "恢复演练失败：$($rr.Step)" }
+    $results.restore_drill = 'ok'
 
     if ((Run 'stop') -ne 0) { throw '停止失败' }
     # 第二次（热数据）冷启动时间：D77-3 目标 ≤ 15 秒
     $t = [Diagnostics.Stopwatch]::StartNew()
     if ((Run 'start') -ne 0) { throw '第二次启动失败' }
     $results.second_start_s = [int]$t.Elapsed.TotalSeconds
+    # 恢复后的数据：备份前加的模型还在（LiteLLM 库）
+    $ctx = Get-AroomoSAContext -AppDir $AppDir -DataDir $DataDir
+    $mi = Invoke-RestMethod -Uri "http://127.0.0.1:$($ctx.Config['LITELLM_PORT'])/model/info" -Headers @{ Authorization = "Bearer $($ctx.Config['LITELLM_MASTER_KEY'])" } -UseBasicParsing
+    if (-not (@($mi.data) | Where-Object { $_.model_name -eq 'smoke-test' })) { throw '恢复后找不到备份前加的模型' }
+    $results.restore_data_check = 'ok'
     [void](Run 'stop')
     $results.data_dir_mb = [int]((Get-ChildItem -Recurse -File $DataDir | Measure-Object Length -Sum).Sum / 1MB)
     $results.installed_mb = [int]((Get-ChildItem -Recurse -File $AppDir -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum / 1MB)

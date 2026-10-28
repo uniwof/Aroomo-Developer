@@ -108,6 +108,13 @@ if (-not (Test-Path (Join-Path $app 'chromium\chrome.exe'))) { throw '缺少 chr
 New-Item -ItemType Directory -Path (Join-Path $app 'meilisearch') -Force | Out-Null
 Copy-Item (Get-Verified $v.meilisearch.url $v.meilisearch.sha256 'meilisearch.exe') (Join-Path $app 'meilisearch\meilisearch.exe')
 $bom.chromium = $v.chromium.version; $bom.meilisearch = $v.meilisearch.version
+# zstd：备份与服务器同一格式（tar.zst.age，D79）
+$zx = Join-Path $dl 'zstd-x'
+Expand-Into (Get-Verified $v.zstd.url $v.zstd.sha256 'zstd.zip') $zx
+New-Item -ItemType Directory -Path (Join-Path $app 'zstd') -Force | Out-Null
+Copy-Item (Join-Path $zx 'zstd.exe') (Join-Path $app 'zstd\zstd.exe')
+Remove-Item -Recurse -Force $zx
+$bom.zstd = $v.zstd.version
 $bom.redis = "$($v.redis.version)（社区 Windows 构建）"; $bom.rustfs = $v.rustfs.version; $bom.rclone = $v.rclone.version; $bom.age = $v.age.version
 
 # ---------------------------------------------------------------------------

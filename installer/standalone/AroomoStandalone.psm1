@@ -8,7 +8,10 @@ Set-StrictMode -Version 2.0
 
 $script:MinBuild = 17763   # Windows 10 1809
 $script:RegPath = 'HKCU:\Software\Aroomo\Standalone'
-$script:BackupRegex = '^aroomo-(?<tag>[a-z0-9-]+)-(?<stamp>\d{8}T\d{6}Z)\.tar\.gz\.age$'
+# 备份格式和服务器一致（D79）：format 2 = tar + zstd + age，文件名 aroomo-<标签>-<UTC 时间>.tar.zst.age（scripts/lib/backup-common.sh）。
+# 早期测试版的 standalone-1（.tar.gz.age）仍然能恢复，保留策略也照常清理
+$script:BackupRegex = '^aroomo-(?<tag>[a-z0-9-]+)-(?<stamp>\d{8}T\d{6}Z)\.tar\.(zst|gz)\.age$'
+$script:BackupFormat = 2
 
 # ---------------------------------------------------------------------------
 # 版本、路径
@@ -71,6 +74,7 @@ function Get-AroomoSAPaths {
         RustFS      = (& $c $AppDir 'rustfs\rustfs.exe')
         Rclone      = (& $c $AppDir 'rclone\rclone.exe')
         Age         = (& $c $AppDir 'installer\windows\bin\age.exe')
+        Zstd        = (& $c $AppDir 'zstd\zstd.exe')
         CoreDir     = (& $c $AppDir 'core')
         LobeDir     = (& $c $AppDir 'lobe')
         LobeArchive = (& $c $AppDir 'lobe.tar.gz')
@@ -507,7 +511,7 @@ function Get-AroomoSABackupName {
     param([Parameter(Mandatory)][string]$HostTag, [Parameter(Mandatory)][datetime]$Time)
     $tag = ($HostTag.ToLowerInvariant() -replace '[^a-z0-9-]', '-').Trim('-')
     if (-not $tag) { $tag = 'standalone' }
-    return ('aroomo-{0}-{1}.tar.gz.age' -f $tag, $Time.ToUniversalTime().ToString('yyyyMMddTHHmmssZ', [Globalization.CultureInfo]::InvariantCulture))
+    return ('aroomo-{0}-{1}.tar.zst.age' -f $tag, $Time.ToUniversalTime().ToString('yyyyMMddTHHmmssZ', [Globalization.CultureInfo]::InvariantCulture))
 }
 
 function Select-AroomoSABackupsToKeep {
@@ -1039,7 +1043,8 @@ function Invoke-AroomoSABackup {
     $pgWasRunning = Test-AroomoSAServiceHealthy -Spec $pgSpec -Paths $paths
     if (-not $pgWasRunning -and -not (Start-AroomoSAService -Context $Context -Spec $pgSpec -Quiet)) { return (& $fail '数据库没能启动') }
     $stage = Join-Path ([IO.Path]::GetTempPath()) ('aroomo-backup-{0}' -f [Guid]::NewGuid().ToString('N'))
-    $tarFile = "$stage.tar.gz"
+    $tarFile = "$stage.tar.zst"
+    $plainTar = "$stage.tar"
     $name = Get-AroomoSABackupName -HostTag $(if ($c['BACKUP_HOST_TAG']) { $c['BACKUP_HOST_TAG'] } else { 'standalone' }) -Time (Get-Date)
     New-Item -ItemType Directory -Path $paths.Backups -Force | Out-Null
     $out = [IO.Path]::Combine($paths.Backups, $name)
@@ -1047,7 +1052,8 @@ function Invoke-AroomoSABackup {
     $pgEnv = @{ PGPASSWORD = $c['POSTGRES_PASSWORD']; PGCLIENTENCODING = 'UTF8' }
     $conn = @('-h', '127.0.0.1', '-p', $c['PG_PORT'], '-U', 'postgres')
     try {
-        New-Item -ItemType Directory -Path ([IO.Path]::Combine($stage, 'backup-stage', 'db')), ([IO.Path]::Combine($stage, 'secrets')) -Force | Out-Null
+        # 目录结构和服务器 scripts/backup.sh 相同：backup-stage/（清单、角色、每库一个 dump）、data/secrets/aroomo.env、data/rustfs
+        New-Item -ItemType Directory -Path ([IO.Path]::Combine($stage, 'backup-stage', 'db')), ([IO.Path]::Combine($stage, 'data', 'secrets')) -Force | Out-Null
         $r = Invoke-AroomoSAHidden -Exe ([IO.Path]::Combine($paths.PgBin, 'pg_dumpall.exe')) -Arguments ($conn + @('--globals-only', '--no-role-passwords', '-f', [IO.Path]::Combine($stage, 'backup-stage', 'globals.sql'))) -Env $pgEnv
         if ($r.ExitCode -ne 0) { return (& $fail '导出数据库账号') }
         $r = Invoke-AroomoSAPsql -Context $Context -Sql "select datname from pg_database where not datistemplate and datallowconn and datname <> 'postgres' order by 1;" -Extra @('-At')
@@ -1058,13 +1064,14 @@ function Invoke-AroomoSABackup {
             $r = Invoke-AroomoSAHidden -Exe ([IO.Path]::Combine($paths.PgBin, 'pg_dump.exe')) -Arguments ($conn + @('-Fc', '-d', $db, '-f', [IO.Path]::Combine($stage, 'backup-stage', 'db', "$db.dump"))) -Env $pgEnv -TimeoutSec 3600
             if ($r.ExitCode -ne 0) { return (& $fail "导出数据库 $db") }
         }
-        $manifest = [ordered]@{ format = 'standalone-1'; created_at = (Get-Date).ToString('o'); host_tag = $c['BACKUP_HOST_TAG']; edition = 'standalone'; databases = $dbs }
+        $manifest = [ordered]@{ format = $script:BackupFormat; created_at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); host_tag = $c['BACKUP_HOST_TAG']; edition = 'standalone'; databases = $dbs }
         [IO.File]::WriteAllText([IO.Path]::Combine($stage, 'backup-stage', 'manifest.json'), ($manifest | ConvertTo-Json -Compress))
-        Copy-Item -LiteralPath $paths.EnvFile -Destination ([IO.Path]::Combine($stage, 'secrets', 'aroomo.env'))
+        Copy-Item -LiteralPath $paths.EnvFile -Destination ([IO.Path]::Combine($stage, 'data', 'secrets', 'aroomo.env'))
 
         # 打包：先在运行中直接读对象存储；读不了（文件被占用）就暂停对象存储几秒再读
         $tar = Get-AroomoSATar
-        $tarArgs = @('-czf', $tarFile, '-C', $stage, 'backup-stage', 'secrets')
+        # 对象存储和收藏资料在压缩包里放到 data/ 下（-s 改名，不复制）
+        $tarArgs = @('-s', ',^rustfs,data/rustfs,', '-s', ',^karakeep,data/karakeep,', '-cf', $plainTar, '-C', $stage, 'backup-stage', 'data')
         if (Test-Path -LiteralPath $paths.RustFSData) { $tarArgs += @('-C', $paths.DataDir, 'rustfs') }
         # 收藏（Karakeep）：SQLite 用在线备份接口拷一份一致的副本放进备份；正在用的库文件不直接打包
         $kdb = [IO.Path]::Combine($paths.KarakeepData, 'db.db')
@@ -1072,18 +1079,21 @@ function Invoke-AroomoSABackup {
             $kdst = [IO.Path]::Combine($stage, 'backup-stage', 'karakeep-db.db')
             $r = Invoke-AroomoSAHidden -Exe $paths.Node -Arguments @(([IO.Path]::Combine($paths.Runtime, 'karakeep-start.cjs')), 'backup', $kdb, $kdst) -Env @{ KARAKEEP_DIR = $paths.KarakeepDir } -TimeoutSec 1800
             if ($r.ExitCode -ne 0) { return (& $fail '导出收藏数据库') }
-            $tarArgs = @('--exclude', 'karakeep/db.db*') + $tarArgs + @('-C', $paths.DataDir, 'karakeep')
+            $tarArgs = @('--exclude', 'karakeep/db.db*', '--exclude', 'data/karakeep/db.db*') + $tarArgs + @('-C', $paths.DataDir, 'karakeep')
         }
         $r = Invoke-AroomoSAHidden -Exe $tar -Arguments $tarArgs -TimeoutSec 3600
         if ($r.ExitCode -ne 0) {
             $rs = Get-AroomoSASpec $Context 'rustfs'
             $wasUp = Test-AroomoSAServiceHealthy -Spec $rs -Paths $paths
             if ($wasUp) { Stop-AroomoSAService -Context $Context -Spec $rs }
-            Remove-Item -LiteralPath $tarFile -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $plainTar -Force -ErrorAction SilentlyContinue
             $r = Invoke-AroomoSAHidden -Exe $tar -Arguments $tarArgs -TimeoutSec 3600
             if ($wasUp) { [void](Start-AroomoSAService -Context $Context -Spec $rs -Quiet) }
             if ($r.ExitCode -ne 0) { return (& $fail '打包') }
         }
+        if (-not (Test-Path -LiteralPath $paths.Zstd)) { return (& $fail '找不到 zstd.exe，请重新运行安装包') }
+        $r = Invoke-AroomoSAHidden -Exe $paths.Zstd -Arguments @('-q', '-f', '-T0', '-3', '--rm', $plainTar, '-o', $tarFile) -TimeoutSec 3600
+        if ($r.ExitCode -ne 0) { return (& $fail '压缩（zstd）') }
         $r = Invoke-AroomoSAHidden -Exe $paths.Age -Arguments @('-r', $c['BACKUP_AGE_RECIPIENT'], '-o', $partial, $tarFile) -TimeoutSec 3600
         if ($r.ExitCode -ne 0) { return (& $fail '用主密钥的公钥加密') }
         $head = New-Object byte[] 21
@@ -1093,22 +1103,22 @@ function Invoke-AroomoSABackup {
         Move-Item -LiteralPath $partial -Destination $out -Force
         $sha = (Get-FileHash -Algorithm SHA256 -LiteralPath $out).Hash.ToLowerInvariant()
         $meta = [ordered]@{
-            format = 'standalone-1'; file = $name; created_at = $started.ToString('o'); host_tag = $c['BACKUP_HOST_TAG']
+            format = $script:BackupFormat; file = $name; created_at = $started.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); stamp_utc = ($name -replace '^.*-(\d{8}T\d{6}Z)\.tar\.zst\.age$', '$1'); host_tag = $c['BACKUP_HOST_TAG']
             encryption = 'age-x25519'; cipher = 'X25519 + ChaCha20-Poly1305 (age v1)'; kdf = 'none (public-key)'
-            recipient = $c['BACKUP_AGE_RECIPIENT']; compression = 'gzip'; sha256 = $sha; size_bytes = (Get-Item -LiteralPath $out).Length
+            recipient = $c['BACKUP_AGE_RECIPIENT']; compression = 'zstd'; sha256 = $sha; size_bytes = (Get-Item -LiteralPath $out).Length
             env_included = $true; databases = $dbs.Count
         }
-        $metaPath = $out -replace '\.tar\.gz\.age$', '.meta.json'
+        $metaPath = $out -replace '\.tar\.(zst|gz)\.age$', '.meta.json'
         [IO.File]::WriteAllText($metaPath, ($meta | ConvertTo-Json -Compress))
         $res.File = $out
 
         # 本机只留最近 N 份（D65：3 份）
         $keepN = 3
         if ($c['BACKUP_LOCAL_KEEP'] -match '^\d+$' -and [int]$c['BACKUP_LOCAL_KEEP'] -ge 1) { $keepN = [int]$c['BACKUP_LOCAL_KEEP'] }
-        $local = @(Get-ChildItem -LiteralPath $paths.Backups -Filter 'aroomo-*.tar.gz.age' | Sort-Object Name -Descending)
+        $local = @(Get-ChildItem -LiteralPath $paths.Backups -Filter 'aroomo-*.age' | Where-Object { $_.Name -match $script:BackupRegex } | Sort-Object Name -Descending)
         foreach ($old in ($local | Select-Object -Skip $keepN)) {
             Remove-Item -LiteralPath $old.FullName -Force
-            Remove-Item -LiteralPath ($old.FullName -replace '\.tar\.gz\.age$', '.meta.json') -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath ($old.FullName -replace '\.tar\.(zst|gz)\.age$', '.meta.json') -Force -ErrorAction SilentlyContinue
         }
         $res.LocalCount = [Math]::Min($local.Count, $keepN)
 
@@ -1128,7 +1138,7 @@ function Invoke-AroomoSABackup {
                 foreach ($n in $names) {
                     if ($keep -contains $n -or $n -eq $name) { continue }
                     [void](Invoke-AroomoSAHidden -Exe $paths.Rclone -Arguments @('deletefile', "$remote/$n") -Env $renv -TimeoutSec 300)
-                    [void](Invoke-AroomoSAHidden -Exe $paths.Rclone -Arguments @('deletefile', "$remote/$($n -replace '\.tar\.gz\.age$', '.meta.json')") -Env $renv -TimeoutSec 300)
+                    [void](Invoke-AroomoSAHidden -Exe $paths.Rclone -Arguments @('deletefile', "$remote/$($n -replace '\.tar\.(zst|gz)\.age$', '.meta.json')") -Env $renv -TimeoutSec 300)
                 }
             }
             $res.Offsite = $true
@@ -1138,7 +1148,7 @@ function Invoke-AroomoSABackup {
         return $res
     } finally {
         Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $tarFile, $partial -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $tarFile, $plainTar, $partial -Force -ErrorAction SilentlyContinue
         $lobe = Get-AroomoSASpec $Context 'lobe'
         if (-not $pgWasRunning -and -not (Test-AroomoSAServiceHealthy -Spec $lobe -Paths $paths)) { Stop-AroomoSAService -Context $Context -Spec $pgSpec }
     }
@@ -1154,32 +1164,54 @@ function Restore-AroomoSABackup {
     $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
     $stage = Join-Path ([IO.Path]::GetTempPath()) ('aroomo-restore-{0}' -f [Guid]::NewGuid().ToString('N'))
     $idFile = [IO.Path]::Combine($paths.Config, ('restore-{0}.tmp' -f [Guid]::NewGuid().ToString('N')))
-    $tarFile = "$stage.tar.gz"
+    $tarFile = "$stage.tar.packed"
+    $plainTar = "$stage.tar"
     try {
         New-Item -ItemType Directory -Path $stage -Force | Out-Null
         Write-AroomoPrivateFile -Path $idFile -Content ($Identity.Trim() + "`n")
         $r = Invoke-AroomoSAHidden -Exe $paths.Age -Arguments @('-d', '-i', $idFile, '-o', $tarFile, $File) -TimeoutSec 3600
         Remove-Item -LiteralPath $idFile -Force -ErrorAction SilentlyContinue
         if ($r.ExitCode -ne 0) { $res.Step = '解密（主密钥不对，或备份文件损坏）'; return $res }
-        $r = Invoke-AroomoSAHidden -Exe (Get-AroomoSATar) -Arguments @('-xzf', $tarFile, '-C', $stage) -TimeoutSec 3600
+        if ($File -match '\.tar\.zst\.age$') {
+            # format 2（服务器和本机相同）：zstd
+            $r = Invoke-AroomoSAHidden -Exe $paths.Zstd -Arguments @('-q', '-d', '-f', $tarFile, '-o', $plainTar) -TimeoutSec 3600
+            if ($r.ExitCode -ne 0) { $res.Step = '解压备份（zstd）'; return $res }
+            $r = Invoke-AroomoSAHidden -Exe (Get-AroomoSATar) -Arguments @('-xf', $plainTar, '-C', $stage) -TimeoutSec 3600
+        } else {
+            $r = Invoke-AroomoSAHidden -Exe (Get-AroomoSATar) -Arguments @('-xzf', $tarFile, '-C', $stage) -TimeoutSec 3600
+        }
         if ($r.ExitCode -ne 0) { $res.Step = '解开备份'; return $res }
         $manifestPath = [IO.Path]::Combine($stage, 'backup-stage', 'manifest.json')
-        if (-not (Test-Path -LiteralPath $manifestPath)) { $res.Step = '备份里没有清单（可能是 Docker 版的备份，独立版不能直接恢复）'; return $res }
+        if (-not (Test-Path -LiteralPath $manifestPath)) { $res.Step = '备份里没有清单'; return $res }
         $manifest = [IO.File]::ReadAllText($manifestPath) | ConvertFrom-Json
-        if ($manifest.format -ne 'standalone-1') { $res.Step = "备份格式 $($manifest.format) 不认识"; return $res }
+        $fmt = [string]$manifest.format
+        if ($fmt -ne 'standalone-1' -and $fmt -ne [string]$script:BackupFormat) { $res.Step = "备份格式 $fmt 不认识"; return $res }
+        # 服务器的备份（D79：服务器为主、本机热备，单向恢复）：没有 edition 字段
+        $fromServer = ($fmt -ne 'standalone-1') -and (-not ($manifest.PSObject.Properties['edition']) -or $manifest.edition -ne 'standalone')
+        $dataRoot = if ($fmt -eq 'standalone-1') { $stage } else { [IO.Path]::Combine($stage, 'data') }
 
         # 停掉除数据库以外的服务
         Stop-AroomoSAAll -Context $Context -Only @('shell', 'rsshub', 'karakeep-workers', 'karakeep', 'browser', 'meilisearch', 'lobe', 'core', 'litellm', 'rustfs', 'redis')
         # 配置：密钥用备份里的（数据库里的加密数据要靠它们打开）；端口、地址、备份设置保留这台电脑现在的
-        $restoredEnv = [IO.Path]::Combine($stage, 'secrets', 'aroomo.env')
+        $restoredEnv = [IO.Path]::Combine($dataRoot, 'secrets', 'aroomo.env')
         $current = $Context.Config
         $keepLocal = @{}
-        foreach ($k in @($current.Keys)) {
-            if ($k -match '_PORT$' -or $k -in @('APP_URL', 'S3_ENDPOINT', 'BACKUP_AGE_RECIPIENT', 'BACKUP_HOST_TAG', 'BACKUP_LOCAL_KEEP') -or $k -like 'BACKUP_S3_*' -or $k -like 'RETENTION_*') { $keepLocal[$k] = $current[$k] }
+        if ($fromServer) {
+            # 服务器的配置是 Docker 版的：只取「打开数据要用的密钥」，其余（端口、数据库密码、本机主人等）都用这台电脑现在的
+            $dataKeys = @('KEY_VAULTS_SECRET', 'AUTH_SECRET', 'JWKS_KEY', 'LITELLM_SALT_KEY', 'LITELLM_MASTER_KEY', 'CORE_TOKEN_SECRET', 'CORE_OWNER_TOKEN', 'LOBE_LITELLM_VIRTUAL_KEY')
+            $srv = if (Test-Path -LiteralPath $restoredEnv) { Read-AroomoEnv -Path $restoredEnv } else { @{} }
+            foreach ($k in @($current.Keys)) { if ($dataKeys -notcontains $k -or -not $srv[$k]) { $keepLocal[$k] = $current[$k] } }
+            foreach ($k in $dataKeys) { if ($srv[$k]) { $keepLocal[$k] = $srv[$k] } }
+        } else {
+            foreach ($k in @($current.Keys)) {
+                if ($k -match '_PORT$' -or $k -in @('APP_URL', 'S3_ENDPOINT', 'BACKUP_AGE_RECIPIENT', 'BACKUP_HOST_TAG', 'BACKUP_LOCAL_KEEP') -or $k -like 'BACKUP_S3_*' -or $k -like 'RETENTION_*') { $keepLocal[$k] = $current[$k] }
+            }
         }
         Copy-Item -LiteralPath $paths.EnvFile -Destination "$($paths.EnvFile).before-restore-$stamp"
         & icacls.exe "$($paths.EnvFile).before-restore-$stamp" /inheritance:r /grant:r "$env:USERDOMAIN\${env:USERNAME}:(F)" /grant:r 'SYSTEM:(F)' | Out-Null
-        if (Test-Path -LiteralPath $restoredEnv) {
+        if ($fromServer) {
+            Write-AroomoPrivateFile -Path $paths.EnvFile -Content (Set-AroomoEnvValues -Content ([IO.File]::ReadAllText($paths.EnvFile)) -Values $keepLocal)
+        } elseif (Test-Path -LiteralPath $restoredEnv) {
             Write-AroomoPrivateFile -Path $paths.EnvFile -Content (Set-AroomoEnvValues -Content ([IO.File]::ReadAllText($restoredEnv)) -Values $keepLocal)
         }
         $newCfg = Read-AroomoEnv -Path $paths.EnvFile
@@ -1205,6 +1237,13 @@ function Restore-AroomoSABackup {
             if ($r.ExitCode -ne 0) { $res.Step = "重建数据库 $db"; return $res }
             $restoreArgs = $conn + @('-d', $db, '--no-owner', '--exit-on-error')
             if ($owner -ne 'postgres') { $restoreArgs += @("--role=$owner") }
+            # 服务器用 ParadeDB（pg_search、pg_cron），Windows 版 PostgreSQL 没有：从目录里去掉这些扩展和 bm25 索引（LobeHub 改用 pg_like，结果相同）
+            $r = Invoke-AroomoSAHidden -Exe ([IO.Path]::Combine($paths.PgBin, 'pg_restore.exe')) -Arguments @('-l', $dump) -TimeoutSec 600
+            if ($r.ExitCode -ne 0) { $res.Step = "读取数据库 $db 的目录"; return $res }
+            $toc = @($r.Output -split "`r?`n" | Where-Object { $_ -notmatch '(?i)\b(pg_search|pg_cron|pg_stat_statements|bm25|paradedb)\b' })
+            $listFile = [IO.Path]::Combine($stage, "$db.list")
+            [IO.File]::WriteAllLines($listFile, $toc)
+            $restoreArgs += @('-L', $listFile)
             $r = Invoke-AroomoSAHidden -Exe ([IO.Path]::Combine($paths.PgBin, 'pg_restore.exe')) -Arguments ($restoreArgs + @($dump)) -Env $pgEnv -TimeoutSec 7200
             if ($r.ExitCode -ne 0) {
                 [IO.File]::WriteAllText([IO.Path]::Combine($paths.Logs, "restore-$db.log"), $r.Output)
@@ -1215,7 +1254,7 @@ function Restore-AroomoSABackup {
         $r = Invoke-AroomoSAPsql -Context $Context -Sql (Get-AroomoSAPasswordResetSql -Config $newCfg)
         if ($r.ExitCode -ne 0) { $res.Step = '更新数据库账号密码'; return $res }
         # 对象存储：现在的另存一份，再换成备份里的
-        $restoredFiles = [IO.Path]::Combine($stage, 'rustfs')
+        $restoredFiles = [IO.Path]::Combine($dataRoot, 'rustfs')
         if (Test-Path -LiteralPath $restoredFiles) {
             if (Test-Path -LiteralPath $paths.RustFSData) {
                 $res.Kept = "$($paths.RustFSData).before-restore-$stamp"
@@ -1224,7 +1263,7 @@ function Restore-AroomoSABackup {
             Move-Item -LiteralPath $restoredFiles -Destination $paths.RustFSData
         }
         # 收藏（Karakeep）：资料文件夹 + 一致的数据库副本；搜索索引（Meilisearch）不备份，清掉后由收藏重新建立
-        $restoredK = [IO.Path]::Combine($stage, 'karakeep')
+        $restoredK = [IO.Path]::Combine($dataRoot, 'karakeep')
         $restoredKdb = [IO.Path]::Combine($stage, 'backup-stage', 'karakeep-db.db')
         if ((Test-Path -LiteralPath $restoredK) -or (Test-Path -LiteralPath $restoredKdb)) {
             if (Test-Path -LiteralPath $paths.KarakeepData) { Move-Item -LiteralPath $paths.KarakeepData -Destination "$($paths.KarakeepData).before-restore-$stamp" }
@@ -1237,7 +1276,7 @@ function Restore-AroomoSABackup {
     } finally {
         Remove-Item -LiteralPath $idFile -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $tarFile -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $tarFile, $plainTar -Force -ErrorAction SilentlyContinue
     }
 }
 
