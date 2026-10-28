@@ -5,7 +5,8 @@
 .DESCRIPTION
   依次：检查 Windows 版本 → 检查内存和磁盘 → 检查虚拟化 → 启用 WSL2（需要时重启，重启后自动继续）
   → 安装并启动 Docker Desktop → 选择数据文件夹 → 按内存选档位 → 在本机生成 .env（随机密钥，不显示）
-  → 创建开始菜单和桌面快捷方式 → 第一次启动并打开浏览器。
+  → 离线生成主密钥（D64：一次性显示，用户点「已保存」后才继续；只把公钥写进配置）
+  → 创建快捷方式和「登录后备份」（D65）→ 第一次启动并打开浏览器。
   和服务器使用同一套 Compose 文件（另加 deploy/local.yml、deploy/local-backup.yml）。
   文件必须保存为 UTF-8 带 BOM。
 
@@ -15,6 +16,7 @@
 .PARAMETER Speak       用 Windows 语音朗读每一步（已使用读屏软件时不需要）。
 .PARAMETER NoBrowser   完成后不打开浏览器。
 .PARAMETER NoStart     只安装，不启动。
+.PARAMETER NewMasterKey 重新生成主密钥（已有主密钥时默认不动）。
 .PARAMETER Resume      重启或重新登录后由系统自动传入。
 .PARAMETER ElevatedTask 内部使用：以管理员身份执行单个步骤（InstallWsl / InstallDocker）。
 #>
@@ -26,6 +28,7 @@ param(
     [switch]$Speak,
     [switch]$NoBrowser,
     [switch]$NoStart,
+    [switch]$NewMasterKey,
     [switch]$Resume,
     [ValidateSet('', 'InstallWsl', 'InstallDocker')][string]$ElevatedTask = ''
 )
@@ -38,7 +41,7 @@ Set-AroomoSpeech -Enabled $Speak.IsPresent
 if (-not $AppDir) { $AppDir = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path }
 $deploy = Join-Path $AppDir 'deploy'
 $self = $MyInvocation.MyCommand.Path
-$total = 9
+$total = 10
 $dockerInstallerUrl = 'https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe'
 
 function Test-IsAdmin {
@@ -107,7 +110,7 @@ if ($Resume) {
     Unregister-AroomoResume
     Write-AroomoSay '欢迎回来。Aroomo 安装继续进行。'
 } else {
-    Write-AroomoSay "开始安装 Aroomo 本地版。`n整个过程大约 9 步。每一步开始时都会说明正在做什么。`n需要你操作时，会弹出对话框。"
+    Write-AroomoSay "开始安装 Aroomo 本地版（测试版）。`n整个过程大约 10 步。每一步开始时都会说明正在做什么。`n需要你操作时，会弹出对话框。"
 }
 
 # 1. Windows 版本
@@ -197,13 +200,14 @@ $canonical = Join-Path $DataDir 'config\aroomo.env'
 $envPath = Join-Path $deploy '.env'
 if (Test-Path -LiteralPath $canonical) {
     Write-AroomoSay '找到了之前的配置，继续使用（密钥保持不变，数据才能打开）。'
-    $content = [IO.File]::ReadAllText($canonical)
+    # 升级旧配置：去掉 restic 的键，补上本地版固定值（D63、D65）；已填的异地存储和主密钥公钥保持不变
+    $content = Set-AroomoEnvValues -Content ([IO.File]::ReadAllText($canonical)) -Values (Get-AroomoLocalEnvDefaults) -Remove (Get-AroomoObsoleteEnvKeys)
+    Write-AroomoPrivateFile -Path $canonical -Content $content
 } else {
     $lobePort = Find-AroomoFreePort -Preferred 3210
     $s3Port = Find-AroomoFreePort -Preferred 9000 -Exclude @($lobePort)
     $values = @{
         TZ                = 'Asia/Shanghai'
-        COMPOSE_PROFILES  = 'backup'
         APP_URL           = "http://localhost:$lobePort"
         S3_ENDPOINT       = "http://localhost:$s3Port"
         LOBE_PORT         = "$lobePort"
@@ -211,25 +215,48 @@ if (Test-Path -LiteralPath $canonical) {
         AROOMO_TIER       = $tier
         JWKS_KEY          = (New-AroomoJwks)
         LOCAL_BACKUP_DIR  = (ConvertTo-AroomoDockerPath (Join-Path $DataDir 'backups'))
-        BACKUP_CRON       = '0 12,20 * * *'
     }
+    foreach ($kv in (Get-AroomoLocalEnvDefaults).GetEnumerator()) { $values[$kv.Key] = $kv.Value }
     $template = [IO.File]::ReadAllText((Join-Path $deploy '.env.example'))
-    $content = ConvertTo-AroomoEnv -Template $template -Values $values
+    $content = Set-AroomoEnvValues -Content (ConvertTo-AroomoEnv -Template $template -Values $values) -Remove (Get-AroomoObsoleteEnvKeys)
     Write-AroomoPrivateFile -Path $canonical -Content $content
 }
 Write-AroomoPrivateFile -Path $envPath -Content $content
-Write-AroomoSay "配置文件在：$canonical`n里面有恢复数据必需的密钥。请找时间把这个文件复制一份到 U 盘或密码管理器里保存。"
+Write-AroomoSay "配置文件在：$canonical"
 
-# 8. 快捷方式
-Write-AroomoSay -Step 8 -Total $total -Text '正在创建快捷方式。'
+# 8. 主密钥（D64）：离线生成，窗口里一次性显示；用户点「已保存」后只把公钥写进配置
+Write-AroomoSay -Step 8 -Total $total -Text '主密钥。'
+$mk = Invoke-AroomoMasterKeySetup -AppDir $AppDir -EnvPaths @($canonical, $envPath) -DataDir $DataDir -Force:$NewMasterKey -Unattended:$Unattended
+switch ($mk) {
+    'exists' { Write-AroomoSay '已经有主密钥了，保持不变。（要更换，请从开始菜单运行「Aroomo 重新生成主密钥」。）' }
+    'created' {
+        Write-AroomoSay "主密钥已保存。公钥已写进配置。`n公钥也存在：$(Join-Path $DataDir 'config\master-key-public.txt')`n服务器和这台电脑用同一个主密钥：请把这个文件里的公钥发给主程序员。公钥不是秘密，可以发。"
+    }
+    'cancelled' {
+        Stop-WithMessage "主密钥还没有保存，安装停在这一步。`n没有主密钥，备份就没法加密，Aroomo 不会在没有备份的情况下继续安装。`n重新运行安装即可继续，会生成一个新的主密钥。" 5
+    }
+    default {
+        Write-AroomoSay "这次没有生成主密钥（无人值守安装，或找不到 age-keygen.exe）。`n在生成主密钥之前，备份不会运行。可以稍后从开始菜单运行「Aroomo 重新生成主密钥」。"
+    }
+}
+
+# 9. 快捷方式和登录后备份（D65）
+Write-AroomoSay -Step 9 -Total $total -Text '正在创建快捷方式和自动备份。'
 New-AroomoShortcuts -AppDir $AppDir
-Write-AroomoSay "桌面上已经有：Aroomo 启动、Aroomo 停止、Aroomo 更新、Aroomo 备份。`n开始菜单的 Aroomo 文件夹里还有：Aroomo 打开、Aroomo 状态。"
+Write-AroomoSay "桌面上已经有：Aroomo 启动、Aroomo 停止、Aroomo 更新、Aroomo 备份。`n开始菜单的 Aroomo 文件夹里还有：Aroomo 打开、Aroomo 状态、Aroomo 设置异地备份、Aroomo 重新生成主密钥。"
+$boot = Register-AroomoBootBackup -AppDir $AppDir
+$bootText = if ($boot -eq 'task') { '已设置：每次登录 Windows 后约 2 分钟，自动备份一次。' } else { '已设置：每次登录 Windows 后自动备份一次（放在「启动」文件夹里）。' }
+Write-AroomoSay "$bootText`n关机前请用桌面上的「Aroomo 停止」：它会先备份再停止。直接关机时来不及备份，下次登录后会补一份。`n本机只保留最近 3 份备份。"
+$cfgNow = Read-AroomoEnv -Path $envPath
+if (-not ($cfgNow['BACKUP_S3_ENDPOINT'] -and $cfgNow['BACKUP_S3_BUCKET'])) {
+    Write-AroomoSay "注意：还没有设置异地备份。现在备份只存在这台电脑上，硬盘坏了会一起丢。`n拿到异地存储的信息后，从开始菜单运行「Aroomo 设置异地备份」。"
+}
 
-# 9. 第一次启动
+# 10. 第一次启动
 if ($NoStart) {
-    Write-AroomoSay -Step 9 -Total $total -Text '已按要求跳过启动。以后双击桌面上的「Aroomo 启动」即可。'
+    Write-AroomoSay -Step 10 -Total $total -Text '已按要求跳过启动。以后双击桌面上的「Aroomo 启动」即可。'
 } else {
-    Write-AroomoSay -Step 9 -Total $total -Text "第一次启动。需要下载几 GB 的程序，通常 10 到 30 分钟。`n期间每分钟会报告一次进度。完成后会自动打开浏览器。"
+    Write-AroomoSay -Step 10 -Total $total -Text "第一次启动。需要下载几 GB 的程序，通常 10 到 30 分钟。`n期间每分钟会报告一次进度。完成后会自动打开浏览器。"
     $startArgs = @('start', '-NoPause')
     if ($NoBrowser) { $startArgs += '-NoBrowser' }
     & (Join-Path $PSScriptRoot 'aroomo.ps1') @startArgs

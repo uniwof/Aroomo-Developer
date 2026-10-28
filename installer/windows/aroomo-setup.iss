@@ -13,7 +13,7 @@
 AppId={{6B0F3C1E-9A4D-4B7E-8C2A-A2D0F5E1A001}
 AppName=Aroomo
 AppVersion={#AppVersion}
-AppVerName=Aroomo 本地版 {#AppVersion}
+AppVerName=Aroomo 本地版 {#AppVersion}（测试版）
 AppPublisher=Aroomo
 DefaultDirName={localappdata}\Aroomo\app
 DisableDirPage=yes
@@ -38,11 +38,14 @@ CloseApplications=no
 Name: "zh"; MessagesFile: "installer\windows\languages\ChineseSimplified.isl"
 
 [Files]
-Source: "deploy\*"; DestDir: "{app}\deploy"; Excludes: ".env,data,local-backups,test,drill-reports,*.log"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "deploy\*"; DestDir: "{app}\deploy"; Excludes: ".env,.restore,data,local-backups,test,drill-reports,*.log"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "scripts\*"; DestDir: "{app}\scripts"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "core\*"; DestDir: "{app}\core"; Excludes: "node_modules,dist,coverage,*.log,.env*"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "installer\windows\*.ps1"; DestDir: "{app}\installer\windows"; Flags: ignoreversion
 Source: "installer\windows\*.psm1"; DestDir: "{app}\installer\windows"; Flags: ignoreversion
+; 主密钥离线生成（D64）：官方 age-keygen，构建前由 installer\windows\Get-AgeKeygen.ps1 下载并核对 SHA-256
+Source: "installer\windows\bin\age-keygen.exe"; DestDir: "{app}\installer\windows\bin"; Flags: ignoreversion
+Source: "installer\windows\bin\age-LICENSE.txt"; DestDir: "{app}\installer\windows\bin"; Flags: ignoreversion
 Source: "docs\ops\WINDOWS.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "docs\ops\BACKUP.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 

@@ -46,6 +46,7 @@ if ((Test-Path -LiteralPath $envPath) -and (Test-AroomoDockerReady)) {
 
 Remove-AroomoShortcuts
 Unregister-AroomoResume
+Unregister-AroomoBootBackup
 
 if ($RemoveData) {
     if ($info.DataDir -and (Test-Path -LiteralPath $info.DataDir)) {

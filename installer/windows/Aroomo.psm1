@@ -457,9 +457,11 @@ function Get-AroomoShortcutSpecs {
     param()
     return @(
         [pscustomobject]@{ Name = 'Aroomo 启动'; Command = 'start'; Desktop = $true; Description = '启动 Aroomo 并打开浏览器' },
-        [pscustomobject]@{ Name = 'Aroomo 停止'; Command = 'stop'; Desktop = $true; Description = '停止 Aroomo（数据保留）' },
+        [pscustomobject]@{ Name = 'Aroomo 停止'; Command = 'stop'; Desktop = $true; Description = '先备份，再停止 Aroomo（关机前请用它）' },
         [pscustomobject]@{ Name = 'Aroomo 更新'; Command = 'update'; Desktop = $true; Description = '先备份，再更新 Aroomo' },
-        [pscustomobject]@{ Name = 'Aroomo 备份'; Command = 'backup'; Desktop = $true; Description = '立即备份到数据文件夹' },
+        [pscustomobject]@{ Name = 'Aroomo 备份'; Command = 'backup'; Desktop = $true; Description = '立即备份（本机留 3 份；设置了异地备份时同时上传）' },
+        [pscustomobject]@{ Name = 'Aroomo 设置异地备份'; Command = 'offsite'; Desktop = $false; Description = '填写异地备份存储（与服务器同一个桶，独立目录）' },
+        [pscustomobject]@{ Name = 'Aroomo 重新生成主密钥'; Command = 'masterkey'; Desktop = $false; Description = '更换主密钥（旧备份仍需旧主密钥打开）' },
         [pscustomobject]@{ Name = 'Aroomo 打开'; Command = 'open'; Desktop = $false; Description = '在浏览器里打开 Aroomo' },
         [pscustomobject]@{ Name = 'Aroomo 状态'; Command = 'status'; Desktop = $false; Description = '查看 Aroomo 是否在运行' }
     )
@@ -556,6 +558,379 @@ function Select-AroomoFolder {
     if ($Initial) { $dlg.SelectedPath = $Initial }
     if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { return $dlg.SelectedPath }
     return $null
+}
+
+# ---------------------------------------------------------------------------
+# 主密钥（DECISIONS D64）：在本机离线生成 age X25519 密钥对；私钥只显示一次给用户保存，只把公钥写进配置。
+# ---------------------------------------------------------------------------
+$script:AgeRecipientPattern = '^age1[02-9ac-hj-np-z]{58}$'
+$script:AgeIdentityPattern = '^AGE-SECRET-KEY-1[02-9AC-HJ-NP-Z]{58}$'
+
+function Test-AroomoAgeRecipient {
+    [OutputType([bool])]
+    param([string]$Value)
+    return ([bool]$Value -and ($Value -cmatch $script:AgeRecipientPattern))
+}
+
+function ConvertFrom-AroomoAgeKeygenOutput {
+    # 解析 age-keygen 的标准输出（"# created: …" / "# public key: age1…" / "AGE-SECRET-KEY-1…"）
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+    $identity = $null; $public = $null
+    foreach ($line in ($Text -split "`r?`n")) {
+        $t = $line.Trim()
+        if ($t -cmatch $script:AgeIdentityPattern) { $identity = $t }
+        elseif ($t -match '^#\s*public key:\s*(age1\S+)$') { $public = $Matches[1] }
+    }
+    if (-not $identity -or -not (Test-AroomoAgeRecipient $public)) { throw 'age-keygen 的输出不完整，无法生成主密钥' }
+    return [pscustomobject]@{ Identity = $identity; PublicKey = $public }
+}
+
+function Format-AroomoKeyGroups {
+    # 把主密钥分组，方便抄写和逐组朗读：AGE-SECRET-KEY-1 之后每 4 个字符一组
+    [OutputType([string[]])]
+    param([Parameter(Mandatory)][string]$Key, [int]$Size = 4, [int]$PerLine = 6)
+    $prefix = 'AGE-SECRET-KEY-1'
+    $body = if ($Key.StartsWith($prefix)) { $Key.Substring($prefix.Length) } else { $Key }
+    $groups = for ($i = 0; $i -lt $body.Length; $i += $Size) { $body.Substring($i, [Math]::Min($Size, $body.Length - $i)) }
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add($prefix)
+    for ($i = 0; $i -lt @($groups).Count; $i += $PerLine) {
+        $lines.Add((@($groups)[$i..([Math]::Min($i + $PerLine, @($groups).Count) - 1)] -join ' '))
+    }
+    return $lines.ToArray()
+}
+
+function Get-AroomoAgeKeygenPath {
+    param([Parameter(Mandatory)][string]$AppDir)
+    return (Join-Path $AppDir 'installer\windows\bin\age-keygen.exe')
+}
+
+function New-AroomoMasterKey {
+    # 运行随安装包附带的官方 age-keygen（不联网）。私钥只在内存里，不写盘、不进日志。
+    [CmdletBinding(SupportsShouldProcess)]
+    [OutputType([pscustomobject])]
+    param([Parameter(Mandatory)][string]$AgeKeygenPath)
+    if (-not (Test-Path -LiteralPath $AgeKeygenPath)) { throw "找不到 $AgeKeygenPath" }
+    if (-not $PSCmdlet.ShouldProcess($AgeKeygenPath, '生成主密钥')) { return $null }
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $AgeKeygenPath
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $out = $p.StandardOutput.ReadToEnd()
+    [void]$p.StandardError.ReadToEnd()
+    $p.WaitForExit()
+    if ($p.ExitCode -ne 0) { throw "age-keygen 退出码 $($p.ExitCode)" }
+    return (ConvertFrom-AroomoAgeKeygenOutput -Text $out)
+}
+
+function Set-AroomoEnvValues {
+    # 在已有 .env 内容里设置 / 追加键值，并删除指定的键（返回新内容；不打印）
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Content,
+        [hashtable]$Values = @{},
+        [string[]]$Remove = @()
+    )
+    $seen = @{}
+    $out = New-Object System.Collections.Generic.List[string]
+    foreach ($line in ($Content -split "`r?`n")) {
+        if ($line -match '^([A-Z][A-Z0-9_]*)=') {
+            $key = $Matches[1]
+            if ($Remove -contains $key) { continue }
+            if ($Values.ContainsKey($key)) {
+                if ($seen.ContainsKey($key)) { continue }
+                $seen[$key] = $true
+                $out.Add("$key=$(Format-AroomoEnvValue ([string]$Values[$key]))")
+                continue
+            }
+        }
+        $out.Add($line)
+    }
+    $extra = @($Values.Keys | Where-Object { -not $seen.ContainsKey($_) } | Sort-Object)
+    foreach ($k in $extra) { $out.Add("$k=$(Format-AroomoEnvValue ([string]$Values[$k]))") }
+    return (($out -join "`n").TrimEnd() + "`n")
+}
+
+function Get-AroomoPcBackupPrefix {
+    # D65：电脑版在异地存储里用独立目录 pc/<电脑名>（小写，只留字母数字和连字符）
+    [OutputType([string])]
+    param([string]$HostName = $env:COMPUTERNAME)
+    $n = ([string]$HostName).ToLowerInvariant() -replace '[^a-z0-9-]', '-'
+    $n = ($n -replace '-+', '-').Trim('-')
+    if (-not $n) { $n = 'pc' }
+    return "pc/$n"
+}
+
+function Get-AroomoLocalEnvDefaults {
+    # Windows 本地版在 .env 里固定的值（D63 本地没有 Cloudflare Access；D65 备份触发方式）
+    [OutputType([hashtable])]
+    param([string]$HostName = $env:COMPUTERNAME)
+    return @{
+        # 不常驻备份进程：备份只在开机（登录）后、停止 / 更新前由 aroomo.ps1 触发（D65）
+        COMPOSE_PROFILES   = ''
+        BACKUP_S3_PREFIX   = (Get-AroomoPcBackupPrefix -HostName $HostName)
+        BACKUP_LOCAL_KEEP  = '3'
+        # 异地除了每天 / 周 / 月各一份，再保留最近 3 份（电脑一天可能备份好几次）
+        RETENTION_KEEP_LAST = '3'
+        CORE_ACCESS_REAUTH = 'off'
+    }
+}
+
+# 旧版（restic）留下、现在不再使用的键
+$script:ObsoleteEnvKeys = @('RESTIC_REPOSITORY', 'RESTIC_PASSWORD', 'BACKUP_CRON')
+function Get-AroomoObsoleteEnvKeys { return $script:ObsoleteEnvKeys }
+
+function Show-AroomoMasterKeyWindow {
+    # 一次性显示主密钥：大字号、读屏软件能读；「复制主密钥」「打印」「已保存」。点「已保存」并确认后返回 $true；
+    # 不保存就关闭窗口返回 $false（调用方不会写入公钥，下次重新生成）。
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory)][string]$Identity,
+        [Parameter(Mandatory)][string]$PublicKey
+    )
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    [System.Windows.Forms.Application]::EnableVisualStyles()
+    $ui = New-Object System.Drawing.Font('Microsoft YaHei UI', 15)
+    $mono = New-Object System.Drawing.Font('Consolas', 22, [System.Drawing.FontStyle]::Bold)
+    $groups = Format-AroomoKeyGroups -Key $Identity
+    $state = @{ Saved = $false }
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = '保存你的 Aroomo 主密钥'
+    $form.AccessibleName = '保存你的 Aroomo 主密钥'
+    $form.StartPosition = 'CenterScreen'
+    $form.Size = New-Object System.Drawing.Size(1100, 860)
+    $form.MinimumSize = New-Object System.Drawing.Size(900, 700)
+    $form.Font = $ui
+    $form.TopMost = $true
+    $form.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Dpi
+    $form.KeyPreview = $true
+
+    $layout = New-Object System.Windows.Forms.TableLayoutPanel
+    $layout.Dock = 'Fill'
+    $layout.Padding = New-Object System.Windows.Forms.Padding(24)
+    $layout.ColumnCount = 1
+    $layout.RowCount = 6
+    $form.Controls.Add($layout)
+
+    $intro = New-Object System.Windows.Forms.Label
+    $intro.AutoSize = $true
+    $intro.MaximumSize = New-Object System.Drawing.Size(1020, 0)
+    $intro.Text = "这是你的主密钥，只显示这一次。`r`n打开 Aroomo 的备份必须用它。丢了它，备份就再也打不开。`r`n请做两件事：`r`n1. 点「复制主密钥」，粘贴到密码管理器里保存。`r`n2. 点「打印」，打印一份纸质副本，放在安全的地方。`r`n不要发给任何人，也不要发到任何聊天里。做完后点「已保存」。"
+    $intro.TabIndex = 0
+    $layout.Controls.Add($intro)
+
+    $box = New-Object System.Windows.Forms.TextBox
+    $box.ReadOnly = $true
+    $box.Multiline = $true
+    $box.WordWrap = $true
+    $box.Font = $mono
+    $box.Height = 150
+    $box.Dock = 'Fill'
+    $box.Text = $Identity
+    $box.AccessibleName = '主密钥'
+    $box.AccessibleDescription = '主密钥，只显示这一次。可以用方向键逐个字符朗读。'
+    $box.TabIndex = 1
+    $layout.Controls.Add($box)
+
+    $grouped = New-Object System.Windows.Forms.Label
+    $grouped.AutoSize = $true
+    $grouped.Font = New-Object System.Drawing.Font('Consolas', 16)
+    $grouped.Text = "分组显示（方便抄写；密钥里没有字母 B、I、O，除了开头的 KEY-1 也没有数字 1）：`r`n" + ($groups -join "`r`n")
+    $grouped.TabIndex = 2
+    $layout.Controls.Add($grouped)
+
+    $pubLabel = New-Object System.Windows.Forms.Label
+    $pubLabel.AutoSize = $true
+    $pubLabel.MaximumSize = New-Object System.Drawing.Size(1020, 0)
+    $pubLabel.Text = "对应的公钥（不是秘密，安装后会写进配置，也要发给主程序员用于服务器）：`r`n$PublicKey"
+    $layout.Controls.Add($pubLabel)
+
+    $buttons = New-Object System.Windows.Forms.FlowLayoutPanel
+    $buttons.AutoSize = $true
+    $buttons.FlowDirection = 'LeftToRight'
+    $buttons.Padding = New-Object System.Windows.Forms.Padding(0, 16, 0, 0)
+    $layout.Controls.Add($buttons)
+
+    $status = New-Object System.Windows.Forms.Label
+    $status.AutoSize = $true
+    $status.AccessibleRole = [System.Windows.Forms.AccessibleRole]::StatusBar
+    $layout.Controls.Add($status)
+
+    function New-Btn([string]$text, [int]$tab) {
+        $b = New-Object System.Windows.Forms.Button
+        $b.Text = $text
+        $b.AccessibleName = $text
+        $b.AutoSize = $true
+        $b.Padding = New-Object System.Windows.Forms.Padding(16, 8, 16, 8)
+        $b.Margin = New-Object System.Windows.Forms.Padding(0, 0, 40, 0)
+        $b.TabIndex = $tab
+        return $b
+    }
+    $copy = New-Btn -text '复制主密钥' -tab 3
+    $print = New-Btn -text '打印' -tab 4
+    $saved = New-Btn -text '已保存' -tab 5
+    $buttons.Controls.AddRange(@($copy, $print, $saved))
+
+    $copy.Add_Click({
+            [System.Windows.Forms.Clipboard]::SetText($Identity)
+            $status.Text = '已复制。请粘贴到密码管理器里保存。'
+            $status.AccessibilityNotifyClients([System.Windows.Forms.AccessibleEvents]::NameChange, -1)
+        })
+
+    $print.Add_Click({
+            $doc = New-Object System.Drawing.Printing.PrintDocument
+            $doc.DocumentName = 'Aroomo 主密钥'
+            $doc.Add_PrintPage({
+                    param($s, $e)
+                    $null = $s
+                    $g = $e.Graphics
+                    $x = $e.MarginBounds.Left; $y = $e.MarginBounds.Top
+                    $h1 = New-Object System.Drawing.Font('Microsoft YaHei UI', 18, [System.Drawing.FontStyle]::Bold)
+                    $body = New-Object System.Drawing.Font('Microsoft YaHei UI', 11)
+                    $big = New-Object System.Drawing.Font('Consolas', 20, [System.Drawing.FontStyle]::Bold)
+                    $small = New-Object System.Drawing.Font('Consolas', 9)
+                    $g.DrawString('Aroomo 主密钥（请妥善保管，不要拍照发给任何人）', $h1, [System.Drawing.Brushes]::Black, $x, $y); $y += 50
+                    $g.DrawString(('生成时间：{0}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm')), $body, [System.Drawing.Brushes]::Black, $x, $y); $y += 40
+                    foreach ($l in $groups) { $g.DrawString($l, $big, [System.Drawing.Brushes]::Black, $x, $y); $y += 42 }
+                    $y += 16
+                    $g.DrawString('完整一行（与上面相同）：', $body, [System.Drawing.Brushes]::Black, $x, $y); $y += 28
+                    $g.DrawString($Identity, $small, [System.Drawing.Brushes]::Black, $x, $y); $y += 40
+                    $g.DrawString('对应的公钥（不是秘密，用于服务器和电脑加密备份）：', $body, [System.Drawing.Brushes]::Black, $x, $y); $y += 28
+                    $g.DrawString($PublicKey, $small, [System.Drawing.Brushes]::Black, $x, $y); $y += 40
+                    $g.DrawString("恢复备份时需要输入主密钥。密钥里没有字母 B、I、O，除了开头的 KEY-1 也没有数字 1。", $body, [System.Drawing.Brushes]::Black, $x, $y)
+                    $e.HasMorePages = $false
+                })
+            $dlg = New-Object System.Windows.Forms.PrintDialog
+            $dlg.Document = $doc
+            $dlg.UseEXDialog = $true
+            if ($dlg.ShowDialog($form) -eq [System.Windows.Forms.DialogResult]::OK) {
+                try { $doc.Print(); $status.Text = '已发送到打印机。请确认打印出来的内容清楚完整。' }
+                catch { $status.Text = '打印没有成功。可以换一台打印机，或者把分组显示的内容抄在纸上。' }
+                $status.AccessibilityNotifyClients([System.Windows.Forms.AccessibleEvents]::NameChange, -1)
+            }
+        })
+
+    $saved.Add_Click({
+            $q = "请确认：`r`n1. 主密钥已经存进密码管理器；`r`n2. 有一份纸质副本。`r`n确认后窗口会关闭，主密钥不会再显示。"
+            $r = [System.Windows.Forms.MessageBox]::Show($form, $q, '确认已保存', [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question, [System.Windows.Forms.MessageBoxDefaultButton]::Button2)
+            if ($r -eq [System.Windows.Forms.DialogResult]::Yes) {
+                $state.Saved = $true
+                $form.Close()
+            }
+        })
+
+    $form.Add_FormClosing({
+            param($s, $e)
+            $null = $s
+            if ($state.Saved) { return }
+            $q = "主密钥还没有保存。`r`n现在关闭的话，这个主密钥作废，安装会停在这一步；下次运行安装会重新生成一个新的。`r`n确定要关闭吗？"
+            $r = [System.Windows.Forms.MessageBox]::Show($form, $q, '还没保存', [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Warning, [System.Windows.Forms.MessageBoxDefaultButton]::Button2)
+            if ($r -ne [System.Windows.Forms.DialogResult]::Yes) { $e.Cancel = $true }
+        })
+
+    $form.Add_Shown({ $form.Activate(); $box.Focus(); $box.Select(0, 0) })
+    [void]$form.ShowDialog()
+    # 剪贴板里如果还是主密钥，清掉
+    try { if ([System.Windows.Forms.Clipboard]::GetText() -eq $Identity) { [System.Windows.Forms.Clipboard]::Clear() } } catch { Write-Verbose '无法清理剪贴板' }
+    $box.Text = ''
+    $form.Dispose()
+    return [bool]$state.Saved
+}
+
+function Invoke-AroomoMasterKeySetup {
+    # 生成主密钥 → 窗口里给用户保存 → 用户点「已保存」后，只把公钥写进配置。
+    # 返回：created（新生成并已保存）| exists（已有公钥，未改动）| cancelled（用户没保存）| unavailable（缺 age-keygen / 无人值守）
+    [CmdletBinding(SupportsShouldProcess)]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][string]$AppDir,
+        [Parameter(Mandatory)][string[]]$EnvPaths,
+        [string]$DataDir,
+        [switch]$Force,
+        [switch]$Unattended
+    )
+    $cfg = Read-AroomoEnv -Path $EnvPaths[0]
+    if (-not $Force -and $cfg.ContainsKey('BACKUP_AGE_RECIPIENT') -and (Test-AroomoAgeRecipient $cfg['BACKUP_AGE_RECIPIENT'])) { return 'exists' }
+    if ($Unattended) { return 'unavailable' }
+    $exe = Get-AroomoAgeKeygenPath -AppDir $AppDir
+    if (-not (Test-Path -LiteralPath $exe)) { return 'unavailable' }
+    if (-not $PSCmdlet.ShouldProcess(($EnvPaths -join ', '), '生成主密钥并写入公钥')) { return 'cancelled' }
+    $k = New-AroomoMasterKey -AgeKeygenPath $exe
+    $ok = Show-AroomoMasterKeyWindow -Identity $k.Identity -PublicKey $k.PublicKey
+    $pub = $k.PublicKey
+    Remove-Variable -Name k
+    if (-not $ok) { return 'cancelled' }
+    foreach ($p in $EnvPaths) {
+        $content = if (Test-Path -LiteralPath $p) { [IO.File]::ReadAllText($p) } else { '' }
+        Write-AroomoPrivateFile -Path $p -Content (Set-AroomoEnvValues -Content $content -Values @{ BACKUP_AGE_RECIPIENT = $pub })
+    }
+    if ($DataDir) {
+        $note = "Aroomo 主密钥的公钥（不是秘密）：`r`n$pub`r`n`r`n服务器和这台电脑用同一个主密钥（D65）。请把上面这行公钥发给主程序员，填进服务器的 BACKUP_AGE_RECIPIENT。`r`n主密钥本身（AGE-SECRET-KEY-1 开头）只在你的密码管理器和纸质副本里，不要发给任何人。`r`n"
+        [IO.File]::WriteAllText((Join-Path $DataDir 'config\master-key-public.txt'), $note, (New-Object System.Text.UTF8Encoding $true))
+    }
+    return 'created'
+}
+
+# ---------------------------------------------------------------------------
+# 开机（登录）后备份（D65）：计划任务「登录时」运行 aroomo.ps1 boot-backup；不能建计划任务时退回「启动」文件夹快捷方式
+# ---------------------------------------------------------------------------
+$script:BootTaskName = 'Aroomo 开机备份'
+$script:BootTaskPath = '\Aroomo\'
+
+function Get-AroomoBootBackupShortcutPath {
+    return (Join-Path ([Environment]::GetFolderPath('Startup')) "$($script:BootTaskName).lnk")
+}
+
+function Register-AroomoBootBackup {
+    # 返回 task（计划任务）| startup（启动文件夹快捷方式）
+    [CmdletBinding(SupportsShouldProcess)]
+    [OutputType([string])]
+    param([Parameter(Mandatory)][string]$AppDir)
+    $script = Join-Path $AppDir 'installer\windows\aroomo.ps1'
+    $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Minimized -File `"$script`" boot-backup -NoPause"
+    if (-not $PSCmdlet.ShouldProcess($script:BootTaskName, '登录后自动备份')) { return 'none' }
+    try {
+        $user = "$env:USERDOMAIN\$env:USERNAME"
+        $action = New-ScheduledTaskAction -Execute $psExe -Argument $arguments -WorkingDirectory $AppDir
+        $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+        $trigger.Delay = 'PT2M'
+        $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 2)
+        Register-ScheduledTask -TaskName $script:BootTaskName -TaskPath $script:BootTaskPath -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'D65：每次登录 Windows 后备份一次 Aroomo' -Force -ErrorAction Stop | Out-Null
+        $lnkPath = Get-AroomoBootBackupShortcutPath
+        if (Test-Path -LiteralPath $lnkPath) { Remove-Item -LiteralPath $lnkPath -Force }
+        return 'task'
+    } catch {
+        Write-Verbose "无法创建计划任务，改用启动文件夹：$($_.Exception.Message)"
+        $shell = New-Object -ComObject WScript.Shell
+        $lnk = $shell.CreateShortcut((Get-AroomoBootBackupShortcutPath))
+        $lnk.TargetPath = $psExe
+        $lnk.Arguments = $arguments
+        $lnk.WorkingDirectory = $AppDir
+        $lnk.WindowStyle = 7
+        $lnk.Description = '每次登录 Windows 后备份一次 Aroomo'
+        $lnk.Save()
+        return 'startup'
+    }
+}
+
+function Unregister-AroomoBootBackup {
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+    if (-not $PSCmdlet.ShouldProcess($script:BootTaskName, '取消登录后自动备份')) { return }
+    try { Unregister-ScheduledTask -TaskName $script:BootTaskName -TaskPath $script:BootTaskPath -Confirm:$false -ErrorAction Stop } catch { Write-Verbose '没有计划任务' }
+    $lnkPath = Get-AroomoBootBackupShortcutPath
+    if (Test-Path -LiteralPath $lnkPath) { Remove-Item -LiteralPath $lnkPath -Force }
 }
 
 Export-ModuleMember -Function *-Aroomo*
