@@ -821,7 +821,10 @@ function Initialize-AroomoSADatabase {
         if ($r.ExitCode -ne 0) { throw '检查数据库账号没有成功' }
         return 'exists'
     }
-    New-Item -ItemType Directory -Path $paths.PgData -Force | Out-Null
+    # 不要预先建 pgdata：initdb 会用「受限令牌」运行（管理员账户下去掉管理员权限），
+    # 管理员进程建的目录它改不了权限（2026-10-28 CI 上遇到）。让 initdb 自己建；空目录先删掉。
+    if ((Test-Path -LiteralPath $paths.PgData) -and -not (Get-ChildItem -LiteralPath $paths.PgData -Force | Select-Object -First 1)) { Remove-Item -LiteralPath $paths.PgData -Force }
+    New-Item -ItemType Directory -Path $paths.Config, $paths.Logs -Force | Out-Null
     $pw = [IO.Path]::Combine($paths.Config, ('pg-init-{0}.tmp' -f [Guid]::NewGuid().ToString('N')))
     try {
         Write-AroomoPrivateFile -Path $pw -Content $Context.Config['POSTGRES_PASSWORD']
