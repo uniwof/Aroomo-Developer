@@ -11,8 +11,11 @@ tmp_env="$(mktemp)"
 trap 'rm -f "$tmp_env"' EXIT
 # 用模板生成占位 env，并补上 data-dir.yml 需要的 DATA_DIR
 sed 's/CHANGE_ME/placeholder/g' "$deploy/.env.example" > "$tmp_env"
-echo "DATA_DIR=/tmp/aroomo-ci-data" >> "$tmp_env"
-echo "LOCAL_BACKUP_DIR=/tmp/aroomo-ci-backups" >> "$tmp_env"
+{
+  echo "DATA_DIR=/tmp/aroomo-ci-data"
+  echo "LOCAL_BACKUP_DIR=/tmp/aroomo-ci-backups"
+  echo "AROOMO_ENV_FILE=$tmp_env"
+} >> "$tmp_env"
 
 status=0
 for tier in demo-2g standard full; do

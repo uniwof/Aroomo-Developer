@@ -1,10 +1,15 @@
-# 本机（Windows 本地版）备份：把 restic 仓库放在用户数据文件夹里的 backups 子文件夹。
-# 与 local.yml 一起叠加；.env 里 RESTIC_REPOSITORY=/repo，LOCAL_BACKUP_DIR=<数据文件夹>/backups（正斜杠写法，如 D:/AroomoData/backups）。
-# 这是「本机快照」，防误删和升级失败；不替代异地备份（硬盘坏了会一起丢）。需要异地时把 RESTIC_REPOSITORY 改成 R2/B2，见 docs/ops/BACKUP.md。
+# 本机（Windows 本地版）备份：加密后的备份文件存到用户数据文件夹里的 backups 子文件夹，只留最近 3 份（D65）。
+# 与 local.yml 一起叠加；.env 里 LOCAL_BACKUP_DIR=<数据文件夹>/backups（正斜杠写法，如 D:/AroomoData/backups）。
+# 配置了异地存储（BACKUP_S3_*）时同时上传到 pc/<电脑名>/（安装器写入 BACKUP_S3_PREFIX）；没配置时只在本机，硬盘坏了会一起丢。
 services:
   backup:
+    environment:
+      BACKUP_LOCAL_DIR: /local
+      BACKUP_LOCAL_KEEP: ${BACKUP_LOCAL_KEEP:-3}
     volumes:
-      - ${LOCAL_BACKUP_DIR:?使用 local-backup.yml 时必须设置 LOCAL_BACKUP_DIR}:/repo
+      - ${LOCAL_BACKUP_DIR:?使用 local-backup.yml 时必须设置 LOCAL_BACKUP_DIR}:/local
   restore:
+    environment:
+      BACKUP_LOCAL_DIR: /local
     volumes:
-      - ${LOCAL_BACKUP_DIR:?使用 local-backup.yml 时必须设置 LOCAL_BACKUP_DIR}:/repo
+      - ${LOCAL_BACKUP_DIR:?使用 local-backup.yml 时必须设置 LOCAL_BACKUP_DIR}:/local

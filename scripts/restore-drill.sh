@@ -5,13 +5,16 @@
 # 逐表核对行数，检查对象存储能启动，记录每个阶段的耗时，写一份 Markdown 报告，最后清理。
 # 不会碰正在运行的正式服务和它们的数据。
 #
+# 需要主密钥（D64）：演练就是在验证「用户手里的主密钥真的能打开备份」。
+#   交互运行时脚本会提示输入（不显示）；也可以先 read -rs AROOMO_BACKUP_IDENTITY; export AROOMO_BACKUP_IDENTITY
+#
 # 用法（在服务器或本机的仓库根目录）：
-#   scripts/restore-drill.sh                      # 最新快照
-#   scripts/restore-drill.sh --snapshot 3f0d08c9  # 指定快照
-#   scripts/restore-drill.sh --keep               # 演练后保留临时项目（排查用；记得手动 down -v）
+#   scripts/restore-drill.sh                                  # 最新一份
+#   scripts/restore-drill.sh --snapshot 20261028T033000Z      # 指定备份（文件名里的时间或完整名字）
+#   scripts/restore-drill.sh --keep                           # 演练后保留临时项目（排查用；记得手动 down -v）
 #
 # 环境变量：
-#   DRILL_ENV_FILE       默认 deploy/.env（读取备份仓库地址、口令、数据库密码）
+#   DRILL_ENV_FILE       默认 deploy/.env（读取备份位置、公钥、数据库密码）
 #   DRILL_TIER           默认 demo-2g（演练只起 postgres / rustfs，占用最少内存）
 #   DRILL_REPORT_DIR     默认 drill-reports/
 #   DRILL_PROJECT        默认 aroomo-drill-<时间>
@@ -28,7 +31,7 @@ snapshot="latest"
 keep=0
 while (( $# )); do
   case "$1" in
-    --snapshot) snapshot="${2:?--snapshot 需要快照 id}"; shift 2 ;;
+    --snapshot) snapshot="${2:?--snapshot 需要备份名}"; shift 2 ;;
     --keep) keep=1; shift ;;
     -h|--help) sed -n '2,25p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "restore-drill: 未知参数 $1" >&2; exit 64 ;;
@@ -45,6 +48,18 @@ report="$report_dir/restore-drill-$stamp.md"
 [[ -f "$env_file" ]] || { echo "restore-drill: 找不到 $env_file" >&2; exit 2; }
 [[ -f "$deploy/tiers/$tier.yml" ]] || { echo "restore-drill: 未知档位 $tier" >&2; exit 2; }
 [[ "$project" != "aroomo" ]] || { echo "restore-drill: 演练项目名不能是 aroomo（会碰到正式数据）" >&2; exit 2; }
+
+if [[ -z "${AROOMO_BACKUP_IDENTITY:-}" ]]; then
+  if [[ -t 0 ]]; then
+    printf '请输入主密钥（AGE-SECRET-KEY-1 开头；输入时不显示，输完按回车）：' >&2
+    IFS= read -rs AROOMO_BACKUP_IDENTITY
+    printf '\n' >&2
+  else
+    echo "restore-drill: 需要主密钥：export AROOMO_BACKUP_IDENTITY，或在终端里交互运行" >&2
+    exit 2
+  fi
+fi
+export AROOMO_BACKUP_IDENTITY
 
 # 只用基础文件 + 档位文件；绝不叠加 data-dir.yml（会绑定到正式数据目录）和 local.yml（端口冲突）
 files=(-f "$deploy/docker-compose.yml" -f "$deploy/tiers/$tier.yml")
@@ -65,6 +80,7 @@ failed_step=""
 restore_json=""
 restore_snapshot=""
 object_files="未检查"
+secrets_in_backup="未检查"
 litellm_check="未检查（DRILL_CHECK_LITELLM=0）"
 
 log() { printf 'restore-drill: %s\n' "$*" >&2; }
@@ -90,6 +106,8 @@ write_report() {
     echo "| 快照 | ${restore_snapshot:-$snapshot} |"
     echo "| 档位 | $tier（临时项目 \`$project\`） |"
     echo "| 总耗时 | ${total} 秒 |"
+    echo "| 主密钥 | 能解开备份（解密成功即证明用户保存的主密钥可用） |"
+    echo "| 备份里有 .env（含 LITELLM_SALT_KEY） | $secrets_in_backup |"
     echo "| 对象存储文件数 | $object_files |"
     echo "| LiteLLM 启动检查 | $litellm_check |"
     echo
@@ -111,8 +129,8 @@ write_report() {
     echo
     echo "## 需要人工确认"
     echo
-    echo "- [ ] 离线另存的 \`LITELLM_SALT_KEY\` 还在，且与 .env 一致（用 \`DRILL_CHECK_LITELLM=1\` 重跑，或在恢复后的界面里确认各成员 Key 状态正常）"
-    echo "- [ ] \`RESTIC_PASSWORD\` 离线另存的副本可用"
+    echo "- [ ] 用的是用户离线保存的那份主密钥（密码管理器或纸质副本），不是临时生成的"
+    echo "- [ ] 备份里的 \`LITELLM_SALT_KEY\` 能解开成员 Key（用 \`DRILL_CHECK_LITELLM=1\` 重跑，或在恢复后的界面里确认各成员 Key 状态正常）"
     echo "- [ ] 把本报告的结论和总耗时写进简报 / 周报（PRODUCT §15.3）"
   } >"$report"
   log "报告：$report"
@@ -148,14 +166,15 @@ dc up -d --wait postgres >&2
 end
 
 begin "从快照恢复（数据库 + 对象存储 + 行数核对）"
-if ! dc --profile restore run --rm -T restore --yes-overwrite-database "$snapshot" \
+if ! dc --profile restore run --rm -T -e AROOMO_BACKUP_IDENTITY restore --yes-overwrite-database --no-secrets "$snapshot" \
     >"$workdir/restore.out" 2>"$workdir/restore.err"; then
   tail -20 "$workdir/restore.err" >&2
   restore_json="$(tail -1 "$workdir/restore.out" 2>/dev/null || true)"
   false
 fi
 restore_json="$(tail -1 "$workdir/restore.out")"
-restore_snapshot="$(json_get "$restore_json" 'd["snapshot_id"][:8]')"
+restore_snapshot="$(json_get "$restore_json" 'd["snapshot_id"]')"
+secrets_in_backup="$(json_get "$restore_json" '"是" if d.get("secrets_in_backup") else "否"')"
 end
 
 begin "启动对象存储并检查"
