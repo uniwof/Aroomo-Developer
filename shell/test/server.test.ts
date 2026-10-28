@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
-import { createShellServer } from '../src/server.js';
+import { brandAsset, createShellServer } from '../src/server.js';
 import { HIDDEN_PREFIXES, REDIRECTS, decideNavigation } from '../src/rules.js';
 import { transformHtml } from '../src/html.js';
 import type { SessionChecker } from '../src/session.js';
@@ -151,8 +151,48 @@ describe('LobeHub 页面', () => {
       expect(r.status, p).toBe(200);
       await r.arrayBuffer();
     }
-    const m = (await (await fetch(`${base}/manifest.json`)).json()) as { name: string };
+    const m = (await (await fetch(`${base}/manifest.json`)).json()) as { name: string; theme_color: string; icons: Array<{ src: string; sizes: string; purpose: string }> };
     expect(m.name).toBe('Aroomo');
+    expect(m.theme_color).toBe('#ff7f50');
+    for (const ic of m.icons) {
+      const r = await fetch(`${base}${ic.src}`);
+      expect(r.status, ic.src).toBe(200);
+      await r.arrayBuffer();
+    }
+    expect(m.icons.some((i) => i.purpose === 'maskable' && i.sizes === '512x512')).toBe(true);
+  });
+
+  it('上游的 PWA 图标、Lobe AI 默认头像换成 Aroomo 的（不转发给 LobeHub）', async () => {
+    const own = async (u: string) => Buffer.from(await (await fetch(`${base}${u}`)).arrayBuffer());
+    const n = lobeSeen.length;
+    expect((await own('/avatars/lobe-ai.png')).equals(await own('/aroomo/static/avatar.png'))).toBe(true);
+    expect((await own('/app-icons/icon-192x192.png')).equals(await own('/aroomo/static/icon-192.png'))).toBe(true);
+    expect((await own('/app-icons/icon-512x512.maskable.png')).equals(await own('/aroomo/static/icon-maskable-512.png'))).toBe(true);
+    expect(lobeSeen.length).toBe(n);
+    expect(brandAsset('/avatars/agent-default.png')).toBeNull();
+  });
+
+  it('HTML 里的主题色是珊瑚色，上游的 theme-color 去掉', () => {
+    const out = transformHtml('<html><head><meta name="theme-color" content="#000"></head><body></body></html>');
+    expect(out).toContain('<meta name="theme-color" content="#ff7f50">');
+    expect(out).not.toContain('content="#000"');
+    expect(out).toContain('/aroomo/static/favicon.svg');
+  });
+
+  it('LobeHub 没起来时：网页显示 Aroomo「正在准备」页（自动刷新），接口仍是 502 文本', async () => {
+    const dead = createShellServer(loadConfig({ LOBE_UPSTREAM: 'http://127.0.0.1:1', CORE_UPSTREAM: 'http://127.0.0.1:1' }), { session });
+    const u = await listen(dead);
+    const r = await fetch(`${u}/`, { headers: html });
+    expect(r.status).toBe(503);
+    const body = await r.text();
+    expect(body).toContain('Aroomo 正在准备');
+    expect(body).toContain('/aroomo/static/logo.svg');
+    expect(body).toContain('http-equiv="refresh"');
+    const api = await fetch(`${u}/api/x`);
+    expect(api.status).toBe(502);
+    await api.text();
+    dead.closeAllConnections?.();
+    await new Promise((res) => dead.close(res));
   });
 
   it('WebSocket 升级透传给 LobeHub', async () => {

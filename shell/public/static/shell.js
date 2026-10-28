@@ -1,7 +1,8 @@
 /*
  * Aroomo Shell：注入到官方 LobeHub 页面里的薄层（D69：不改上游代码，只在浏览器里覆盖）。
  * 1. 朗读（TTS）禁用（D68）  2. 隐藏 PRODUCT §8 没列的页面和入口（D68，隐藏不删除）
- * 3. 品牌替换为 Aroomo       4. 侧栏底部图标：收藏、成员、收件箱（红点）、设置（§8.2、§8.3）
+ * 3. 品牌替换为 Aroomo（主人设计的 Logo）  4. 侧栏底部图标：Aroomo 标志、收藏、成员、收件箱（未读点）、设置（§8.2、§8.3）
+ * 5. 主题色：珊瑚色 #ff7f50（覆盖页面上的主色变量；填充上的字用深色，保证对比度）
  * 规则与 shell/src/rules.ts 保持一致（测试会核对）。
  */
 (function () {
@@ -37,6 +38,9 @@
   var HIDE_ROW_PREFIXES = ['一起让 Aroomo 变得更好', '我们使用匿名数据持续优化体验', '我们仅收集匿名数据', 'Help us improve Aroomo', 'We use anonymous data'];
   var HIDE_SET = {};
   HIDE_LABELS.forEach(function (l) { HIDE_SET[l] = true; });
+
+  /* 主人设计的 Aroomo 标志（单色，跟随文字颜色，深浅模式都清楚）。源文件：assets/brand/logo-web-black.svg */
+  var LOGO_SVG = '<svg viewBox="162 162 700 700" aria-hidden="true" focusable="false"><path d="M181.5 397.9 A349.6 349.6 0 1 1 181.5 626.1 H514.6 A114.1 114.1 0 0 0 514.6 397.9 Z" fill="currentColor" /><g transform="translate(-32.1437245262 0)"><circle cx="260.7" cy="512.0" r="66.2" fill="currentColor" /><rect x="326.9" y="445.8" width="132.5" height="132.5" rx="23.8" fill="currentColor" /><path d="M591.9 512.0 L591.8 513.7 L591.5 515.5 L591.0 517.1 L590.4 518.8 L589.5 520.4 L588.6 522.0 L587.5 523.5 L586.3 524.9 L585.1 526.3 L583.8 527.6 L582.5 528.8 L581.1 530.0 L579.8 531.2 L578.5 532.3 L577.3 533.4 L576.2 534.5 L575.1 535.6 L574.2 536.7 L573.3 537.9 L572.6 539.1 L571.9 540.4 L571.3 541.7 L570.8 543.1 L570.4 544.5 L570.0 546.1 L569.7 547.7 L569.3 549.3 L569.0 551.0 L568.6 552.8 L568.2 554.6 L567.7 556.4 L567.2 558.1 L566.5 559.9 L565.7 561.5 L564.9 563.2 L563.9 564.7 L562.8 566.0 L561.5 567.3 L560.2 568.4 L558.7 569.4 L557.2 570.1 L555.6 570.8 L553.9 571.2 L552.1 571.5 L550.3 571.6 L548.5 571.5 L546.6 571.3 L544.8 571.0 L543.0 570.6 L541.2 570.2 L539.5 569.6 L537.7 569.1 L536.1 568.5 L534.5 568.0 L532.9 567.5 L531.4 567.0 L529.9 566.7 L528.5 566.4 L527.0 566.3 L525.6 566.2 L524.2 566.3 L522.8 566.4 L521.3 566.7 L519.8 567.0 L518.3 567.5 L516.8 568.0 L515.1 568.5 L513.5 569.1 L511.8 569.6 L510.0 570.2 L508.2 570.6 L506.4 571.0 L504.6 571.3 L502.8 571.5 L500.9 571.6 L499.1 571.5 L497.4 571.2 L495.7 570.8 L494.0 570.1 L492.5 569.4 L491.0 568.4 L489.7 567.3 L488.5 566.0 L487.4 564.7 L486.4 563.2 L485.5 561.5 L484.7 559.9 L484.1 558.1 L483.5 556.4 L483.0 554.6 L482.6 552.8 L482.2 551.0 L481.9 549.3 L481.6 547.7 L481.2 546.1 L480.8 544.5 L480.4 543.1 L479.9 541.7 L479.3 540.4 L478.7 539.1 L477.9 537.9 L477.1 536.7 L476.1 535.6 L475.1 534.5 L473.9 533.4 L472.7 532.3 L471.4 531.2 L470.1 530.0 L468.8 528.8 L467.5 527.6 L466.1 526.3 L464.9 524.9 L463.7 523.5 L462.6 522.0 L461.7 520.4 L460.9 518.8 L460.2 517.1 L459.8 515.5 L459.5 513.7 L459.4 512.0 L459.5 510.3 L459.8 508.5 L460.2 506.9 L460.9 505.2 L461.7 503.6 L462.6 502.0 L463.7 500.5 L464.9 499.1 L466.1 497.7 L467.5 496.4 L468.8 495.2 L470.1 494.0 L471.4 492.8 L472.7 491.7 L473.9 490.6 L475.1 489.5 L476.1 488.4 L477.1 487.3 L477.9 486.1 L478.7 484.9 L479.3 483.6 L479.9 482.3 L480.4 480.9 L480.8 479.5 L481.2 477.9 L481.6 476.3 L481.9 474.7 L482.2 473.0 L482.6 471.2 L483.0 469.4 L483.5 467.6 L484.1 465.9 L484.7 464.1 L485.5 462.5 L486.4 460.8 L487.4 459.3 L488.5 458.0 L489.7 456.7 L491.0 455.6 L492.5 454.6 L494.0 453.9 L495.7 453.2 L497.4 452.8 L499.1 452.5 L500.9 452.4 L502.8 452.5 L504.6 452.7 L506.4 453.0 L508.2 453.4 L510.0 453.8 L511.8 454.4 L513.5 454.9 L515.1 455.5 L516.8 456.0 L518.3 456.5 L519.8 457.0 L521.3 457.3 L522.8 457.6 L524.2 457.7 L525.6 457.8 L527.0 457.7 L528.5 457.6 L529.9 457.3 L531.4 457.0 L532.9 456.5 L534.5 456.0 L536.1 455.5 L537.7 454.9 L539.5 454.4 L541.2 453.8 L543.0 453.4 L544.8 453.0 L546.6 452.7 L548.5 452.5 L550.3 452.4 L552.1 452.5 L553.9 452.8 L555.6 453.2 L557.2 453.9 L558.7 454.6 L560.2 455.6 L561.5 456.7 L562.8 458.0 L563.9 459.3 L564.9 460.8 L565.7 462.5 L566.5 464.1 L567.2 465.9 L567.7 467.6 L568.2 469.4 L568.6 471.2 L569.0 473.0 L569.3 474.7 L569.7 476.3 L570.0 477.9 L570.4 479.5 L570.8 480.9 L571.3 482.3 L571.9 483.6 L572.6 484.9 L573.3 486.1 L574.2 487.3 L575.1 488.4 L576.2 489.5 L577.3 490.6 L578.5 491.7 L579.8 492.8 L581.1 494.0 L582.5 495.2 L583.8 496.4 L585.1 497.7 L586.3 499.1 L587.5 500.5 L588.6 502.0 L589.5 503.6 L590.4 505.2 L591.0 506.9 L591.5 508.5 L591.8 510.3Z" fill="currentColor" /></g></svg>';
 
   /* ---------- 1. 朗读禁用（D68：隐藏且禁用） ---------- */
   try {
@@ -190,6 +194,13 @@
     var nav = document.createElement('nav');
     nav.id = 'aroomo-dock';
     nav.setAttribute('aria-label', 'Aroomo');
+    var brand = document.createElement('a');
+    brand.href = '/';
+    brand.className = 'aroomo-dock-item aroomo-dock-brand';
+    brand.setAttribute('aria-label', 'Aroomo 首页');
+    brand.title = 'Aroomo';
+    brand.innerHTML = LOGO_SVG + '<span class="aroomo-dock-label">Aroomo 首页</span>';
+    nav.appendChild(brand);
     DOCK_ITEMS.forEach(function (it) {
       var a = document.createElement('a');
       a.href = it.href;
@@ -291,25 +302,142 @@
     }
   }
 
-  /* 上游的文字 Logo（宽扁的 SVG，在页面顶部）换成 Aroomo 字标 */
+  /* 上游 Logo 换成 Aroomo 的：
+   *  a) 宽扁的文字 Logo（页面顶部）→ Aroomo 标志 + 字
+   *  b) 带 <title>LobeHub</title> 的品牌 SVG（登录页等）→ Aroomo 标志
+   *  c) 上游品牌图片（3D Logo、Lobe AI 吉祥物、PWA 图标）→ Aroomo 图标 */
+  var BRAND_IMG = /assets-logo|logo-3d|lobe-ai\.png|\/app-icons\/|lobehub[^/]*\/(?:.*\/)?(?:logo|icon)/i;
+  function makeMark(h, withText) {
+    var mark = document.createElement('span');
+    mark.className = 'aroomo-wordmark';
+    mark.setAttribute('role', 'img');
+    mark.setAttribute('aria-label', 'Aroomo');
+    if (h) mark.style.height = Math.round(h) + 'px';
+    if (!withText && h) mark.style.fontSize = Math.round(h / 1.3) + 'px';
+    mark.innerHTML = LOGO_SVG + (withText ? '<span aria-hidden="true">Aroomo</span>' : '');
+    return mark;
+  }
   function fixLogos() {
     var svgs = document.querySelectorAll('svg:not(.lucide):not([data-aroomo-logo])');
     for (var i = 0; i < svgs.length; i++) {
       var svg = svgs[i];
-      if (svg.closest('#aroomo-dock,.markdown,article,[data-message-id]')) continue;
+      if (svg.closest('#aroomo-dock,.aroomo-wordmark,.markdown,article,[data-message-id]')) continue;
       var r = svg.getBoundingClientRect();
-      if (!r.width || !r.height || r.top > 140 || r.width < 50 || r.width > 220) continue;
-      if (r.width / r.height < 2.2) continue;
+      if (!r.width || !r.height) continue;
+      var t = svg.querySelector('title');
+      var branded = t && /Lobe/i.test(t.textContent || '');
+      var wide = r.top <= 140 && r.width >= 50 && r.width <= 220 && r.width / r.height >= 2.2;
+      if (!branded && !wide) continue;
       svg.setAttribute('data-aroomo-logo', '');
       svg.style.display = 'none';
-      var mark = document.createElement('span');
-      mark.className = 'aroomo-wordmark';
-      mark.setAttribute('role', 'img');
-      mark.setAttribute('aria-label', 'Aroomo');
-      mark.style.height = Math.round(r.height) + 'px';
-      mark.innerHTML = '<img src="/aroomo/static/logo.svg" alt="">Aroomo';
-      svg.parentNode.insertBefore(mark, svg);
+      svg.parentNode.insertBefore(makeMark(r.height, wide), svg);
     }
+    var imgs = document.querySelectorAll('img:not([data-aroomo-logo-img])');
+    for (var j = 0; j < imgs.length; j++) {
+      var img = imgs[j];
+      var src = img.getAttribute('src') || '';
+      if (!BRAND_IMG.test(src) || img.closest('.markdown,article,[data-message-id]')) continue;
+      img.setAttribute('data-aroomo-logo-img', '');
+      img.removeAttribute('srcset');
+      img.src = '/aroomo/static/avatar.png';
+    }
+  }
+
+  /* ---------- 5. 主题色（珊瑚色）：扫描页面样式表里实际定义的主色变量，按名字覆盖（!important，原选择器不变） ---------- */
+  var THEME = {
+    light: { base: '#ff7f50', hover: '#ff936b', active: '#e8693c', bg: '#fff3ee', bghover: '#ffe6dc', border: '#ffcdb8', borderhover: '#ffb293', text: '#b4441b', texthover: '#c2532a', textactive: '#9a3a17' },
+    dark: { base: '#ff7f50', hover: '#ff9a73', active: '#e5673b', bg: 'rgba(255,127,80,0.16)', bghover: 'rgba(255,127,80,0.24)', border: 'rgba(255,127,80,0.45)', borderhover: 'rgba(255,127,80,0.6)', text: '#ff9a73', texthover: '#ffad8f', textactive: '#ff7f50' },
+  };
+  function themeValue(name, dark) {
+    var n = name.toLowerCase().replace(/-/g, '');
+    var link = n.indexOf('colorlink') >= 0;
+    var i = link ? n.indexOf('colorlink') + 9 : n.indexOf('primary') + 7;
+    var rest = n.slice(i);
+    if (/solid|textlight|^s?\d|shadow|outline/.test(rest)) return null; // 填充上的字色、数字色阶（色板）不动
+    var t = dark ? THEME.dark : THEME.light;
+    if (link) return rest === 'hover' ? t.texthover : rest === 'active' ? t.textactive : rest === '' ? t.text : null;
+    if (rest in t) return t[rest];
+    if (rest === '') return t.base;
+    if (rest.indexOf('text') === 0) return t.text;
+    if (rest.indexOf('bg') === 0 || rest.indexOf('fill') === 0) return t.bg;
+    if (rest.indexOf('border') === 0) return t.border;
+    return null;
+  }
+  function isDark() {
+    var h = document.documentElement;
+    var a = (h.getAttribute('data-theme') || '') + ' ' + h.className;
+    if (/\bdark\b/.test(a)) return true;
+    if (/\blight\b/.test(a)) return false;
+    var m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(getComputedStyle(document.body).backgroundColor || '');
+    if (m && !/rgba\(0,\s*0,\s*0,\s*0\)/.test(getComputedStyle(document.body).backgroundColor)) return (+m[1] + +m[2] + +m[3]) / 3 < 100;
+    return window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+  var themeFound = {};
+  window.__aroomoThemeVars = themeFound;
+  function collect(rules, out) {
+    for (var i = 0; i < rules.length; i++) {
+      var r = rules[i];
+      if (r.cssRules && !r.style) { collect(r.cssRules, out); continue; }
+      if (!r.style || !r.selectorText || r.selectorText.indexOf('aroomo') >= 0) continue;
+      for (var k = 0; k < r.style.length; k++) {
+        var prop = r.style[k];
+        if (prop.charCodeAt(0) !== 45 || prop.charCodeAt(1) !== 45) continue;
+        var low = prop.toLowerCase();
+        if (low.indexOf('primary') < 0 && !/color-?link/.test(low)) continue;
+        if (low.indexOf('color') < 0) continue;
+        (out[r.selectorText] = out[r.selectorText] || {})[prop] = true;
+      }
+      if (r.cssRules) collect(r.cssRules, out);
+    }
+  }
+  var lastThemeCss = '';
+  function applyTheme() {
+    var found = {};
+    for (var i = 0; i < document.styleSheets.length; i++) {
+      var sh = document.styleSheets[i];
+      if (sh.ownerNode && sh.ownerNode.id === 'aroomo-theme') continue;
+      try { collect(sh.cssRules || [], found); } catch (e) { /* 跨域样式表读不了，跳过 */ }
+    }
+    var dark = isDark();
+    var css = '';
+    for (var sel in found) {
+      var decl = '';
+      for (var prop in found[sel]) {
+        var v = themeValue(prop, dark);
+        if (v) { decl += prop + ':' + v + ' !important;'; themeFound[prop] = v; }
+      }
+      if (decl) css += sel + '{' + decl + '}\n';
+    }
+    if (css === lastThemeCss) return;
+    lastThemeCss = css;
+    var st = document.getElementById('aroomo-theme');
+    if (!st) {
+      st = document.createElement('style');
+      st.id = 'aroomo-theme';
+    }
+    st.textContent = css;
+    // 放在 <head> 最后，顺序也压过前面的样式
+    document.head.appendChild(st);
+    markOnCoral(document.body);
+  }
+  /* 珊瑚色填充的按钮上如果是白字（对比度 2.5:1 不合格）→ 标记，CSS 改成深色字 */
+  var CORAL = /rgb\((255, 127, 80|255, 147, 107|232, 105, 60|255, 154, 115|229, 103, 59)\)/;
+  function markOnCoral(root) {
+    if (!root || !root.querySelectorAll) return;
+    var els = root.querySelectorAll('button,[role="button"],a.ant-btn');
+    for (var i = 0; i < els.length && i < 300; i++) {
+      var el = els[i];
+      if (el.closest('#aroomo-dock')) continue;
+      var cs = getComputedStyle(el);
+      var on = CORAL.test(cs.backgroundColor);
+      if (on && /rgb\(255, 255, 255\)/.test(cs.color)) el.setAttribute('data-aroomo-oncoral', '');
+      else if (!on && el.hasAttribute('data-aroomo-oncoral') && !CORAL.test(cs.backgroundColor)) el.removeAttribute('data-aroomo-oncoral');
+    }
+  }
+  var themeTimer = null;
+  function scheduleTheme() {
+    if (themeTimer) return;
+    themeTimer = setTimeout(function () { themeTimer = null; applyTheme(); }, 250);
   }
 
   var pending = false;
@@ -321,6 +449,7 @@
     for (var i = 0; i < nodes.length; i++) {
       processNode(nodes[i]);
       fixSplitText(nodes[i].nodeType === 1 ? nodes[i] : nodes[i].parentElement);
+      if (nodes[i].nodeType === 1) markOnCoral(nodes[i]);
     }
     fixLogos();
     fixTitle();
@@ -350,6 +479,24 @@
         else for (var j = 0; j < m.addedNodes.length; j++) schedule(m.addedNodes[j]);
       }
     }).observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ATTRS });
+    // 主题：页面加载后几次（CSS-in-JS 的样式是陆续插入的），<head> 里加样式、深浅模式切换时再算
+    applyTheme();
+    [800, 2500, 6000].forEach(function (ms) { setTimeout(applyTheme, ms); });
+    new MutationObserver(function (muts) {
+      for (var i = 0; i < muts.length; i++) {
+        var m = muts[i];
+        if (m.type === 'attributes') return scheduleTheme();
+        for (var j = 0; j < m.addedNodes.length; j++) {
+          var n = m.addedNodes[j];
+          if (n.id !== 'aroomo-theme' && (n.tagName === 'STYLE' || n.tagName === 'LINK')) return scheduleTheme();
+        }
+      }
+    }).observe(document.head, { childList: true });
+    new MutationObserver(scheduleTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class'] });
+    if (window.matchMedia) {
+      var mq = matchMedia('(prefers-color-scheme: dark)');
+      if (mq.addEventListener) mq.addEventListener('change', scheduleTheme);
+    }
     var titleEl = document.querySelector('title');
     if (titleEl) new MutationObserver(fixTitle).observe(titleEl, { childList: true, characterData: true, subtree: true });
     window.addEventListener('resize', placeDock);

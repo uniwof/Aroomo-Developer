@@ -30,6 +30,9 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayName=Aroomo 本地版
+; 主人设计的 Aroomo 图标（assets\brand，独立版共用）
+SetupIconFile=assets\brand\aroomo.ico
+UninstallDisplayIcon={app}\aroomo.ico
 CloseApplications=no
 
 [Languages]
@@ -48,11 +51,12 @@ Source: "installer\windows\*.psm1"; DestDir: "{app}\installer\windows"; Flags: i
 ; 主密钥离线生成（D64）：官方 age-keygen，构建前由 installer\windows\Get-AgeKeygen.ps1 下载并核对 SHA-256
 Source: "installer\windows\bin\age-keygen.exe"; DestDir: "{app}\installer\windows\bin"; Flags: ignoreversion
 Source: "installer\windows\bin\age-LICENSE.txt"; DestDir: "{app}\installer\windows\bin"; Flags: ignoreversion
+Source: "assets\brand\aroomo.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "docs\ops\WINDOWS.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "docs\ops\BACKUP.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\Aroomo 安装与修复"; Filename: "{#PS}"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\installer\windows\Install-Aroomo.ps1"" -AppDir ""{app}"""; WorkingDir: "{app}"; Comment: "重新运行 Aroomo 安装（不会删除数据）"
+Name: "{group}\Aroomo 安装与修复"; Filename: "{#PS}"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\installer\windows\Install-Aroomo.ps1"" -AppDir ""{app}"""; WorkingDir: "{app}"; IconFilename: "{app}\aroomo.ico"; Comment: "重新运行 Aroomo 安装（不会删除数据）"
 
 [Run]
 Filename: "{#PS}"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\installer\windows\Install-Aroomo.ps1"" -AppDir ""{app}"""; WorkingDir: "{app}"; Description: "继续完成 Aroomo 安装（检查环境、安装 Docker Desktop、第一次启动）"; Flags: postinstall nowait
