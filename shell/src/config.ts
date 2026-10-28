@@ -4,6 +4,7 @@
  */
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { isLoopbackHost } from './autologin.js';
 
 export type AuthMode = 'lobe-session' | 'off';
 
@@ -27,6 +28,10 @@ export interface ShellConfig {
   publicDir: string;
   /** 会话校验结果缓存时长 */
   sessionCacheMs: number;
+  /**
+   * Windows 独立版：本机主人自动登录（D78）。只在 SHELL_HOST 是本机回环地址时允许；Docker / 服务器版不设置。
+   */
+  localOwner: { email: string; password: string; origin?: string } | undefined;
 }
 
 export class ConfigError extends Error {}
@@ -57,8 +62,19 @@ export function loadConfig(env: Env = process.env): ShellConfig {
   const auth = (str(env, 'SHELL_AUTH') ?? 'lobe-session') as AuthMode;
   if (auth !== 'lobe-session' && auth !== 'off') throw new ConfigError('SHELL_AUTH 只能是 lobe-session 或 off');
   const token = str(env, 'CORE_OWNER_TOKEN');
+  const host = str(env, 'SHELL_HOST') ?? '0.0.0.0';
+  const ownerEmail = str(env, 'SHELL_LOCAL_OWNER_EMAIL');
+  const ownerPassword = str(env, 'SHELL_LOCAL_OWNER_PASSWORD');
+  let localOwner: ShellConfig['localOwner'];
+  if (ownerEmail || ownerPassword) {
+    if (!ownerEmail || !ownerPassword) throw new ConfigError('SHELL_LOCAL_OWNER_EMAIL 和 SHELL_LOCAL_OWNER_PASSWORD 必须同时设置');
+    if (!isLoopbackHost(host)) throw new ConfigError('本机主人自动登录只能在 SHELL_HOST 为 127.0.0.1 / ::1 / localhost 时开启');
+    if (ownerPassword.length < 8 || ownerPassword.length > 64) throw new ConfigError('SHELL_LOCAL_OWNER_PASSWORD 长度必须是 8–64');
+    const pub = str(env, 'SHELL_PUBLIC_URL');
+    localOwner = { email: ownerEmail, password: ownerPassword, origin: pub ? url(pub, 'SHELL_PUBLIC_URL').origin : undefined };
+  }
   return {
-    host: str(env, 'SHELL_HOST') ?? '0.0.0.0',
+    host,
     port: Number(portRaw),
     lobeUpstream: url(str(env, 'LOBE_UPSTREAM') ?? 'http://lobe:3210', 'LOBE_UPSTREAM'),
     coreUpstream: url(str(env, 'CORE_UPSTREAM') ?? 'http://core:8080', 'CORE_UPSTREAM'),
@@ -67,5 +83,6 @@ export function loadConfig(env: Env = process.env): ShellConfig {
     defaultLocale: str(env, 'SHELL_DEFAULT_LOCALE') ?? 'zh-CN',
     publicDir: str(env, 'SHELL_PUBLIC_DIR') ?? defaultPublicDir(),
     sessionCacheMs: 30_000,
+    localOwner,
   };
 }

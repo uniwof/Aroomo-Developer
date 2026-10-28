@@ -16,6 +16,7 @@ import type { ShellConfig } from './config.js';
 import { transformHtml } from './html.js';
 import { decideNavigation, isBlockedApi } from './rules.js';
 import { allowAll, LobeSessionChecker, type SessionChecker } from './session.js';
+import { AUTOLOGIN_MARK, LobeLocalAutoLogin, safeCallback, type AutoLogin } from './autologin.js';
 
 const HOP_BY_HOP = new Set([
   'connection',
@@ -42,6 +43,7 @@ const MAX_HTML_BYTES = 8 * 1024 * 1024;
 
 export interface ShellDeps {
   session?: SessionChecker;
+  autoLogin?: AutoLogin;
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) {
@@ -119,6 +121,8 @@ function csrfOk(req: IncomingMessage): boolean {
 export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
   const session: SessionChecker =
     deps.session ?? (cfg.auth === 'off' ? allowAll : new LobeSessionChecker(cfg.lobeUpstream, cfg.sessionCacheMs));
+  const autoLogin: AutoLogin | undefined =
+    deps.autoLogin ?? (cfg.localOwner ? new LobeLocalAutoLogin(cfg.lobeUpstream, cfg.localOwner) : undefined);
   const staticRoot = path.resolve(cfg.publicDir, 'static');
   const appHtml = path.resolve(cfg.publicDir, 'app.html');
 
@@ -242,6 +246,21 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
     if (/^\/favicon[^/]*\.ico$/.test(p)) return serveFile(res, path.join(staticRoot, 'favicon.ico'), 'public, max-age=86400', req.method);
     if (p === '/apple-touch-icon.png') return serveFile(res, path.join(staticRoot, 'apple-touch-icon.png'), 'public, max-age=86400', req.method);
     if (p === '/manifest.json' || p === '/manifest.webmanifest') return serveFile(res, path.join(staticRoot, 'manifest.json'), 'public, max-age=300', req.method);
+
+    // Windows 独立版（D78）：没登录的页面请求，替本机主人登录后跳回原页面（登录页 / 注册页跳到 callbackUrl）
+    if (autoLogin && wantsHtml(req) && !hasCookie(req.headers.cookie, AUTOLOGIN_MARK) && !(await session.check(req.headers.cookie))) {
+      const cookies = await autoLogin.login();
+      if (cookies) {
+        const onAuthPage = /^\/(signin|signup)(\/|$)/.test(p);
+        const location = onAuthPage ? safeCallback(url.searchParams.get('callbackUrl')) : p + url.search;
+        res.writeHead(302, {
+          location,
+          'set-cookie': [...cookies, `${AUTOLOGIN_MARK}=1; Path=/; Max-Age=30; HttpOnly; SameSite=Lax`],
+          'cache-control': 'no-store',
+        });
+        return res.end();
+      }
+    }
 
     if (p === '/aroomo/api' || p.startsWith('/aroomo/api/')) {
       if (!csrfOk(req)) return sendJson(res, 403, { error: { code: 'CSRF', message: '请求来源不对' } });
