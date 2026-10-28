@@ -1,0 +1,98 @@
+/* Aroomo Shell：注入到 LobeHub 页面里的样式（D68 隐藏不删除；PRODUCT §8.4 视觉规范） */
+:root {
+  --aroomo-accent: #5b5bd6;
+  --aroomo-dock-h: 52px;
+}
+
+/* 隐藏的入口（shell.js 标记） */
+[data-aroomo-hidden] {
+  display: none !important;
+}
+
+/* 侧栏底部图标：收藏、成员、收件箱、设置 */
+#aroomo-dock {
+  position: fixed;
+  left: 0;
+  bottom: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  gap: 4px;
+  box-sizing: border-box;
+  min-width: 56px;
+  height: 52px;
+  padding: 6px 8px;
+  background: var(--aroomo-dock-bg, rgba(250, 250, 250, 0.96));
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  font: 12px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+@media (prefers-color-scheme: dark) {
+  #aroomo-dock {
+    --aroomo-dock-bg: rgba(24, 24, 24, 0.96);
+    border-top-color: rgba(255, 255, 255, 0.08);
+  }
+}
+html[data-theme='dark'] #aroomo-dock,
+html.dark #aroomo-dock {
+  --aroomo-dock-bg: rgba(24, 24, 24, 0.96);
+  border-top-color: rgba(255, 255, 255, 0.08);
+}
+.aroomo-dock-item {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  color: inherit;
+  opacity: 0.72;
+  text-decoration: none;
+}
+.aroomo-dock-item:hover,
+.aroomo-dock-item:focus-visible {
+  opacity: 1;
+  background: rgba(127, 127, 127, 0.12);
+  outline: none;
+}
+.aroomo-dock-item svg {
+  width: 20px;
+  height: 20px;
+}
+.aroomo-dock-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.aroomo-dot {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e5484d;
+  box-shadow: 0 0 0 2px var(--aroomo-dock-bg, #fafafa);
+}
+.aroomo-dot[hidden] {
+  display: none;
+}
+
+/* 手机：底部一排（点击区 ≥44px，§8.4） */
+#aroomo-dock.aroomo-dock-mobile {
+  left: 0 !important;
+  right: 0;
+  width: auto !important;
+  height: calc(56px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+#aroomo-dock.aroomo-dock-mobile .aroomo-dock-item {
+  width: 48px;
+  height: 48px;
+}

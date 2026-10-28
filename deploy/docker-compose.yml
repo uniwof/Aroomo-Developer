@@ -205,6 +205,9 @@ services:
       # `:-` 同时覆盖「未设置」和「设为空」两种情况（Windows 安装器按模板写出的 .env 里是空值）
       AGENT_GATEWAY_URL: ${AGENT_GATEWAY_URL:-http://gateway:8787}
       AGENT_GATEWAY_SERVICE_TOKEN: ${GATEWAY_SERVICE_TOKEN:-}
+      # LobeHub 官方功能开关（运行时生效，不改镜像）：隐藏 PRODUCT §8 没有的功能（D68 隐藏不删除；清单见 DECISIONS 提议 H2）
+      # 市场 / 更新日志 / 检查更新 / 欢迎页推荐 / 画图 / 知识库 / 服务商设置与 Key 输入（Key 只在 Aroomo「Key 与接入」里填，写入 LiteLLM）
+      FEATURE_FLAGS: '-market,-changelog,-check_updates,-welcome_suggest,-ai_image,-knowledge_base,-rag_eval,-provider_settings,-openai_api_key,-openai_proxy_url,-api_key_manage,-agent_share,-dashboard,-cloud_promotion'
       TZ: ${TZ:-Asia/Shanghai}
     healthcheck:
       test: ['CMD', '/bin/node', '-e', "fetch('http://127.0.0.1:3210/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
@@ -212,6 +215,37 @@ services:
       timeout: 10s
       retries: 10
       start_period: 120s
+    networks: [aroomo]
+
+  # ---------------------------------------------------------------------------
+  # Aroomo Shell：浏览器唯一入口（D69 薄定制层；提议 H1）。套在官方 LobeHub 外面：
+  # 品牌换成 Aroomo、按 PRODUCT §8 隐藏多余入口（D68）、朗读禁用、Aroomo 页面（成员 / Key / 收件箱 / 设置），
+  # /aroomo/api/* 同源转发到 Core 并由这里附加主人令牌（浏览器拿不到令牌）。不含、不修改任何 LobeHub 文件。
+  # Tunnel / 本机端口都指向这里（shell:3000），不再直接指向 lobe。
+  # ---------------------------------------------------------------------------
+  shell:
+    <<: *restart
+    build:
+      context: ../shell
+    image: aroomo-shell:${AROOMO_SHELL_TAG:-dev}
+    depends_on:
+      lobe:
+        condition: service_started
+      core:
+        condition: service_started
+    environment:
+      SHELL_PORT: '3000'
+      LOBE_UPSTREAM: http://lobe:3210
+      CORE_UPSTREAM: http://core:8080
+      CORE_OWNER_TOKEN: ${CORE_OWNER_TOKEN:-}
+      SHELL_AUTH: lobe-session
+      SHELL_DEFAULT_LOCALE: zh-CN
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3000/aroomo/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     networks: [aroomo]
 
   # 可选：LobeHub Agent Gateway（上游 2.2.20 compose 固定为 0.3.2）
@@ -227,7 +261,7 @@ services:
 
   # ---------------------------------------------------------------------------
   # Cloudflare Tunnel（服务器用；除 22 端口外不开放任何入站端口，DECISIONS v4.3 d）
-  # 路由在 Cloudflare 控制台配置：应用域名 → http://lobe:3210，对象存储域名 → http://rustfs:9000。
+  # 路由在 Cloudflare 控制台配置：应用域名 → http://shell:3000（Aroomo Shell），对象存储域名 → http://rustfs:9000。
   # 镜像是 distroless，没有 shell，因此不写 healthcheck（用 --metrics 的 /ready 由外部探测）。
   # ---------------------------------------------------------------------------
   cloudflared:

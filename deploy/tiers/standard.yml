@@ -6,6 +6,7 @@ services:
   rustfs: { mem_limit: 256m }
   litellm: { mem_limit: 768m }
   core: { mem_limit: 256m }
+  shell: { mem_limit: 96m }
   lobe: { mem_limit: 1024m }
   cloudflared: { mem_limit: 128m }
   backup: { mem_limit: 256m }
