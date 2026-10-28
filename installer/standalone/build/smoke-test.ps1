@@ -2,7 +2,11 @@
 .SYNOPSIS
   CI 冒烟测试（windows-latest，Windows PowerShell 5.1）：直接用打包好的程序文件夹，在临时数据文件夹里
   初始化 → 启动全部服务 → 检查各服务、LiteLLM 虚拟 Key、模型列表 → 备份（测试用主密钥）→ 停止。
-  记录冷启动时间（D77-3 目标：后台冷启动 ≤ 15 秒；第一次启动含数据库初始化和迁移，单独记录）。
+  记录冷启动时间（D77-3 目标：后台冷启动 ≤ 15 秒；第一次启动含数据库初始化和迁移，单独记录）：
+    ui_ready_s      第二次启动：从运行 start 到界面可用（Shell 替浏览器登录 LobeHub，返回 302）
+    second_start_s  第二次启动：start 结束（主界面全部就绪：Shell、LobeHub、Core、LiteLLM 及其依赖）
+    all_ready_s     第二次启动：完整档模块（收藏、RSSHub、Chromium、Meilisearch）也都就绪
+    second_start_timing  每个服务的开始 / 就绪秒数（logs\startup-timing.json）
   失败时打印各服务日志的末尾（日志本来就不含密钥）。
 #>
 [CmdletBinding()]
@@ -13,11 +17,20 @@ $launcher = Join-Path $AppDir 'installer\standalone\aroomo-standalone.ps1'
 $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $results = [ordered]@{}
 
-function Run([string]$Act) {
+function Run([string]$Act, [string[]]$Extra = @(), [scriptblock]$WhileRunning = $null) {
     # 子进程输出直接打印到控制台（不混进返回值）；最多等 25 分钟，卡住时打印日志再失败
-    $p = Start-Process -FilePath $ps -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$launcher`"", '-Action', $Act, '-AppDir', "`"$AppDir`"", '-DataDir', "`"$DataDir`"") -NoNewWindow -PassThru
+    # WhileRunning：子进程运行期间每 250 毫秒调用一次（返回 $true 后不再调用），用来测「界面什么时候能用」
+    $p = Start-Process -FilePath $ps -ArgumentList (@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$launcher`"", '-Action', $Act, '-AppDir', "`"$AppDir`"", '-DataDir', "`"$DataDir`"") + $Extra) -NoNewWindow -PassThru
     # 先取一次 Handle：否则 Windows PowerShell 的 Start-Process 结束后 ExitCode 是空的（会被当成 0）
     $null = $p.Handle
+    if ($WhileRunning) {
+        $done = $false
+        while (-not $p.HasExited) {
+            if (-not $done) { $done = [bool](& $WhileRunning) }
+            Start-Sleep -Milliseconds 250
+        }
+        if (-not $done) { [void](& $WhileRunning) }
+    }
     if (-not $p.WaitForExit(25 * 60 * 1000)) {
         & taskkill.exe /T /F /PID $p.Id | Out-Null
         throw "$Act 25 分钟没有结束"
@@ -39,7 +52,7 @@ try {
     Import-Module (Join-Path $AppDir 'installer\standalone\AroomoStandalone.psm1') -Force -DisableNameChecking
 
     $t = [Diagnostics.Stopwatch]::StartNew()
-    if ((Run 'start') -ne 0) { throw '第一次启动失败' }
+    if ((Run 'start' @('-WaitAll')) -ne 0) { throw '第一次启动失败' }
     $results.first_start_s = [int]$t.Elapsed.TotalSeconds
     if ((Run 'status') -ne 0) { throw '有服务不正常' }
 
@@ -143,19 +156,41 @@ try {
     $results.restore_drill = 'ok'
 
     if ((Run 'stop') -ne 0) { throw '停止失败' }
-    # 第二次（热数据）冷启动时间：D77-3 目标 ≤ 15 秒
+    # 恢复后的第一次启动：恢复让启动标记作废，LiteLLM / LobeHub 会重新检查并迁移数据库（备份可能来自别的版本）
     $t = [Diagnostics.Stopwatch]::StartNew()
-    if ((Run 'start') -ne 0) { throw '第二次启动失败' }
-    $results.second_start_s = [int]$t.Elapsed.TotalSeconds
+    if ((Run 'start' @('-WaitAll')) -ne 0) { throw '恢复后启动失败' }
+    $results.restore_start_s = [math]::Round($t.Elapsed.TotalSeconds, 1)
     # 恢复后的数据：备份前加的模型还在（LiteLLM 库）
     $ctx = Get-AroomoSAContext -AppDir $AppDir -DataDir $DataDir
     $mi = Invoke-RestMethod -Uri "http://127.0.0.1:$($ctx.Config['LITELLM_PORT'])/model/info" -Headers @{ Authorization = "Bearer $($ctx.Config['LITELLM_MASTER_KEY'])" } -UseBasicParsing
     if (-not (@($mi.data) | Where-Object { $_.model_name -eq 'smoke-test' })) { throw '恢复后找不到备份前加的模型' }
     $results.restore_data_check = 'ok'
+    if ((Run 'stop') -ne 0) { throw '恢复后停止失败' }
+    # 第二次（热数据）冷启动时间：D77-3 目标 ≤ 15 秒。界面可用 = Shell 替浏览器登录 LobeHub 成功（302 + 会话 Cookie）
+    $script:uiReady = $null
+    $probe = {
+        $q = [System.Net.HttpWebRequest]::Create("$pub/")
+        $q.Accept = 'text/html'; $q.AllowAutoRedirect = $false; $q.Proxy = $null; $q.Timeout = 3000
+        try { $rs = $q.GetResponse() } catch [System.Net.WebException] { $rs = $_.Exception.Response } catch { $rs = $null }
+        if (-not $rs) { return $false }
+        $code = [int]$rs.StatusCode; $rs.Close()
+        if ($code -eq 302 -or $code -eq 200) { $script:uiReady = [math]::Round($t.Elapsed.TotalSeconds, 1); return $true }
+        return $false
+    }
+    $t = [Diagnostics.Stopwatch]::StartNew()
+    if ((Run 'start' @() $probe) -ne 0) { throw '第二次启动失败' }
+    $results.second_start_s = [math]::Round($t.Elapsed.TotalSeconds, 1)
+    $results.ui_ready_s = $script:uiReady
+    $timingFile = Join-Path $DataDir 'logs\startup-timing.json'
+    if (Test-Path $timingFile) { $results.second_start_timing = (Get-Content -Raw $timingFile | ConvertFrom-Json) }
+    # 完整档模块随后启动：再等它们也都就绪（start -WaitAll 不会重复启动已在运行的服务）
+    if ((Run 'start' @('-WaitAll')) -ne 0) { throw '第二次启动后完整档模块没有全部就绪' }
+    $results.all_ready_s = [math]::Round($t.Elapsed.TotalSeconds, 1)
+    if ($results.second_start_s -gt 15) { Write-Host "::warning::第二次启动 $($results.second_start_s) 秒，超过 D77-3 目标 15 秒（界面可用 $($results.ui_ready_s) 秒）" }
     [void](Run 'stop')
     $results.data_dir_mb = [int]((Get-ChildItem -Recurse -File $DataDir | Measure-Object Length -Sum).Sum / 1MB)
     $results.installed_mb = [int]((Get-ChildItem -Recurse -File $AppDir -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum / 1MB)
-    $results | ConvertTo-Json | Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'smoke-results.json')
+    $results | ConvertTo-Json -Depth 5 | Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'smoke-results.json')
 } catch {
     Write-Host "冒烟测试失败：$($_.Exception.Message)"
     Dump-Logs
