@@ -109,7 +109,7 @@
 4. 安装包未做代码签名（SmartScreen 会提示「仍要运行」）。
 5. Redis 用的是社区 Windows 构建（redis-windows），不是 Redis 官方发布。
 6. 不能用 Docker 的功能：ParadeDB `pg_search`（用 `pg_like` 代替）、LobeHub Agent Gateway（只有 Linux 镜像）。
-7. 一键卸载 Docker + WSL 的脚本（D78）尚未提供；按 D78 只在独立版验收并迁移数据后使用。
+7. 一键卸载 Docker + WSL：`installer\standalone\Remove-DockerAndWSL.ps1`（随包，不建快捷方式、不自动运行；两次确认 + 管理员）。按 D78 只在独立版验收并迁移数据后使用。
 
 ## 9. 构建与发布
 
