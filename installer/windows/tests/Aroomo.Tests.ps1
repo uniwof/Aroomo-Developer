@@ -243,10 +243,10 @@ Describe '主密钥（D64）' {
         $p = Join-Path ([IO.Path]::GetTempPath()) ("aroomo-mk-{0}.env" -f (New-AroomoSecret -Bytes 16))
         try {
             [IO.File]::WriteAllText($p, "BACKUP_AGE_RECIPIENT=$($script:FakePub)`n")
-            Invoke-AroomoMasterKeySetup -AppDir 'X:\nowhere' -EnvPaths @($p) | Should -Be 'exists'
+            Invoke-AroomoMasterKeySetup -AppDir ([IO.Path]::GetTempPath()) -EnvPaths @($p) | Should -Be 'exists'
             [IO.File]::WriteAllText($p, "BACKUP_AGE_RECIPIENT=`n")
-            Invoke-AroomoMasterKeySetup -AppDir 'X:\nowhere' -EnvPaths @($p) -Unattended | Should -Be 'unavailable'
-            Invoke-AroomoMasterKeySetup -AppDir 'X:\nowhere' -EnvPaths @($p) | Should -Be 'unavailable'
+            Invoke-AroomoMasterKeySetup -AppDir ([IO.Path]::GetTempPath()) -EnvPaths @($p) -Unattended | Should -Be 'unavailable'
+            Invoke-AroomoMasterKeySetup -AppDir ([IO.Path]::GetTempPath()) -EnvPaths @($p) | Should -Be 'unavailable'
         } finally { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
     }
 }

@@ -604,7 +604,8 @@ function Format-AroomoKeyGroups {
 
 function Get-AroomoAgeKeygenPath {
     param([Parameter(Mandatory)][string]$AppDir)
-    return (Join-Path $AppDir 'installer\windows\bin\age-keygen.exe')
+    # 用 [IO.Path]::Combine：不解析盘符（目录不存在时也不报错）
+    return [IO.Path]::Combine($AppDir, 'installer', 'windows', 'bin', 'age-keygen.exe')
 }
 
 function New-AroomoMasterKey {
