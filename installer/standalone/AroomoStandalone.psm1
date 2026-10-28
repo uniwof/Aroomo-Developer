@@ -75,6 +75,13 @@ function Get-AroomoSAPaths {
         LobeDir     = (& $c $AppDir 'lobe')
         LobeArchive = (& $c $AppDir 'lobe.tar.gz')
         LobeSha     = (& $c $AppDir 'lobe.tar.gz.sha256')
+        Meili       = (& $c $AppDir 'meilisearch\meilisearch.exe')
+        Chrome      = (& $c $AppDir 'chromium\chrome.exe')
+        KarakeepDir = (& $c $AppDir 'karakeep')
+        RsshubDir   = (& $c $AppDir 'rsshub')
+        MeiliData   = (& $c $DataDir 'meilisearch')
+        KarakeepData = (& $c $DataDir 'karakeep')
+        BrowserProfile = (& $c $DataDir 'browser-profile')
         Runtime     = (& $c $AppDir 'installer\standalone\runtime')
         Config      = (& $c $DataDir 'config')
         EnvFile     = (& $c $DataDir 'config\aroomo.env')
@@ -121,7 +128,9 @@ function Get-AroomoSAPortDefaults {
     [OutputType([System.Collections.Specialized.OrderedDictionary])]
     param()
     # 和 Docker 版（3210、9000…）错开，两个版本可以同时装在一台电脑上
-    return [ordered]@{ SHELL_PORT = 3280; LOBE_PORT = 3281; RUSTFS_PORT = 9280; PG_PORT = 54329; REDIS_PORT = 63799; LITELLM_PORT = 40280; CORE_PORT = 38280 }
+    # 完整档模块：Meilisearch 7780、无界面浏览器 9282、收藏 Karakeep 3283（后台任务 3284）、RSSHub 1280
+    return [ordered]@{ SHELL_PORT = 3280; LOBE_PORT = 3281; RUSTFS_PORT = 9280; PG_PORT = 54329; REDIS_PORT = 63799; LITELLM_PORT = 40280; CORE_PORT = 38280
+        MEILI_PORT = 7780; BROWSER_PORT = 9282; KARAKEEP_PORT = 3283; KARAKEEP_WORKERS_PORT = 3284; RSSHUB_PORT = 1280 }
 }
 
 function New-AroomoSABase64Secret {
@@ -251,6 +260,81 @@ function Get-AroomoSAPrismaEnv {
     return $e
 }
 
+function Get-AroomoSAModuleSpecs {
+    # 完整档模块（所有者 2026-10-28：全部功能离线可用）。都只听 127.0.0.1；没带的模块不出现
+    [OutputType([object[]])]
+    param([Parameter(Mandatory)][hashtable]$Paths, [Parameter(Mandatory)][hashtable]$Config, [string]$LiteLLMUrl, [string]$Tz, [string]$SysPath)
+    $c = $Config
+    $out = @()
+    $hasKarakeep = (Test-AroomoSAModule -Paths $Paths -Name 'karakeep') -and $c['MEILI_MASTER_KEY'] -and $c['KARAKEEP_PORT']
+    $hasRsshub = (Test-AroomoSAModule -Paths $Paths -Name 'rsshub') -and $c['RSSHUB_PORT']
+    $browserUrl = "http://127.0.0.1:$($c['BROWSER_PORT'])"
+    if ($hasKarakeep -and (Test-Path -LiteralPath $Paths.Meili)) {
+        $out += [pscustomobject]@{
+            Name = 'meilisearch'; Label = '全文搜索（Meilisearch）'; Kind = 'process'; Port = [int]$c['MEILI_PORT']; TimeoutSec = 90
+            Exe = $Paths.Meili
+            Arguments = @('--http-addr', "127.0.0.1:$($c['MEILI_PORT'])", '--db-path', $Paths.MeiliData, '--dump-dir', ([IO.Path]::Combine($Paths.MeiliData, 'dumps')),
+                '--env', 'production', '--no-analytics')
+            # 主密钥走环境变量，不出现在命令行（别的程序能看到命令行）
+            WorkingDir = $Paths.DataDir; Env = @{ MEILI_MASTER_KEY = $c['MEILI_MASTER_KEY'] }; Health = 'http'; HealthUrl = "http://127.0.0.1:$($c['MEILI_PORT'])/health"
+        }
+    }
+    if (($hasKarakeep -or $hasRsshub) -and (Test-Path -LiteralPath $Paths.Chrome) -and $c['BROWSER_PORT']) {
+        # 无界面浏览器（Karakeep 抓网页、截图）：随包的 Chromium，只开本机调试端口，单独的配置文件夹
+        $out += [pscustomobject]@{
+            Name = 'browser'; Label = '网页抓取浏览器（Chromium）'; Kind = 'process'; Port = [int]$c['BROWSER_PORT']; TimeoutSec = 60
+            Exe = $Paths.Chrome
+            Arguments = @('--headless=new', "--remote-debugging-port=$($c['BROWSER_PORT'])", '--remote-debugging-address=127.0.0.1', "--user-data-dir=$($Paths.BrowserProfile)",
+                '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--disable-sync', '--disable-component-update', '--disable-background-networking',
+                '--metrics-recording-only', '--mute-audio', '--hide-scrollbars', 'about:blank')
+            WorkingDir = $Paths.DataDir; Env = @{}; Health = 'http'; HealthUrl = "$browserUrl/json/version"
+        }
+    }
+    if ($hasKarakeep) {
+        $kEnv = @{
+            NODE_ENV = 'production'; NODE_OPTIONS = ''; TZ = $Tz; PATH = "$($Paths.NodeDir);$SysPath"
+            KARAKEEP_DIR = $Paths.KarakeepDir; DATA_DIR = $Paths.KarakeepData
+            PORT = $c['KARAKEEP_PORT']; HOSTNAME = '127.0.0.1'
+            NEXTAUTH_URL = "http://localhost:$($c['KARAKEEP_PORT'])"; NEXTAUTH_URL_INTERNAL = "http://127.0.0.1:$($c['KARAKEEP_PORT'])"
+            NEXTAUTH_SECRET = $c['KARAKEEP_NEXTAUTH_SECRET']; NEXT_TELEMETRY_DISABLED = '1'; DISABLE_NEW_RELEASE_CHECK = 'true'
+            MEILI_ADDR = "http://127.0.0.1:$($c['MEILI_PORT'])"; MEILI_MASTER_KEY = $c['MEILI_MASTER_KEY']
+            BROWSER_WEB_URL = $browserUrl
+            # 抓网页本身要联网；广告过滤规则要从网上下载，离线启动时关掉；视频下载需要 yt-dlp（没带）
+            CRAWLER_ENABLE_ADBLOCKER = 'false'; CRAWLER_VIDEO_DOWNLOAD = 'false'
+            OCR_CACHE_DIR = [IO.Path]::Combine($Paths.KarakeepDir, 'tessdata'); OCR_LANGS = 'eng,chi_sim'
+            # AI 打标签 / 摘要：走本机 LiteLLM（与 LobeHub 同一个只能调模型的虚拟 Key）
+            OPENAI_BASE_URL = "$LiteLLMUrl/v1"; OPENAI_API_KEY = $c['LOBE_LITELLM_VIRTUAL_KEY']
+            WORKERS_HOST = '127.0.0.1'; WORKERS_PORT = $c['KARAKEEP_WORKERS_PORT']
+        }
+        $out += [pscustomobject]@{
+            Name = 'karakeep'; Label = '收藏（Karakeep）'; Kind = 'process'; Port = [int]$c['KARAKEEP_PORT']; TimeoutSec = 300
+            Exe = $Paths.Node; Arguments = @(([IO.Path]::Combine($Paths.Runtime, 'karakeep-start.cjs')), 'web')
+            WorkingDir = [IO.Path]::Combine($Paths.KarakeepDir, 'apps', 'web'); Env = $kEnv
+            Health = 'http'; HealthUrl = "http://127.0.0.1:$($c['KARAKEEP_PORT'])/api/health"
+        }
+        $out += [pscustomobject]@{
+            Name = 'karakeep-workers'; Label = '收藏后台任务（抓取、搜索索引、OCR）'; Kind = 'process'; Port = [int]$c['KARAKEEP_WORKERS_PORT']; TimeoutSec = 180
+            Exe = $Paths.Node; Arguments = @(([IO.Path]::Combine($Paths.Runtime, 'karakeep-start.cjs')), 'workers')
+            WorkingDir = [IO.Path]::Combine($Paths.KarakeepDir, 'apps', 'workers'); Env = $kEnv
+            Health = 'tcp'; HealthUrl = $null
+        }
+    }
+    if ($hasRsshub) {
+        $out += [pscustomobject]@{
+            Name = 'rsshub'; Label = '订阅源（RSSHub）'; Kind = 'process'; Port = [int]$c['RSSHUB_PORT']; TimeoutSec = 240
+            Exe = $Paths.Node; Arguments = @('--max-http-header-size=32768', ([IO.Path]::Combine($Paths.RsshubDir, 'dist', 'index.mjs')))
+            WorkingDir = $Paths.RsshubDir
+            Env = @{
+                NODE_ENV = 'production'; NODE_OPTIONS = ''; TZ = $Tz; PORT = $c['RSSHUB_PORT']; LISTEN_INADDR_ANY = '0'
+                CACHE_TYPE = 'memory'; NO_LOGFILES = 'true'; CHROMIUM_EXECUTABLE_PATH = $Paths.Chrome
+                WS_NO_BUFFER_UTIL = '1'; WS_NO_UTF_8_VALIDATE = '1'
+            }
+            Health = 'http'; HealthUrl = "http://127.0.0.1:$($c['RSSHUB_PORT'])/"
+        }
+    }
+    return $out
+}
+
 function Get-AroomoSAServiceSpecs {
     # 启动顺序：postgres → redis → rustfs → litellm → core → lobe → shell（停止时倒过来）
     # 每个服务只拿到自己需要的环境变量（和 docker-compose.yml 相同的原则）
@@ -334,6 +418,7 @@ function Get-AroomoSAServiceSpecs {
             Health = 'http'; HealthUrl = "http://127.0.0.1:$($c['LOBE_PORT'])/"
         }
     )
+    $list += @(Get-AroomoSAModuleSpecs -Paths $Paths -Config $c -LiteLLMUrl $litellmUrl -Tz $tz -SysPath $sysPath)
     if (Test-AroomoSAShell -Paths $Paths) {
         $list += [pscustomobject]@{
             Name = 'shell'; Label = 'Aroomo 界面层（Shell）'; Kind = 'process'; Port = [int]$c['SHELL_PORT']; TimeoutSec = 60
@@ -716,25 +801,53 @@ function Get-AroomoSASpec {
     return ($Context.Specs | Where-Object { $_.Name -eq $Name } | Select-Object -First 1)
 }
 
+function Expand-AroomoSAPackage {
+    # 解开随包的程序包（<名字>.tar.gz，第一次安装或升级后）。返回 current（已是这个版本）| unpacked | absent（这个版本没带）
+    [OutputType([string])]
+    param([Parameter(Mandatory)][hashtable]$Paths, [Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$Label, [switch]$Optional)
+    $dir = [IO.Path]::Combine($Paths.AppDir, $Name)
+    $archive = "$dir.tar.gz"
+    $shaFile = "$archive.sha256"
+    $marker = [IO.Path]::Combine($dir, ".aroomo-$Name-sha256")
+    $sha = if (Test-Path -LiteralPath $shaFile) { ([IO.File]::ReadAllText($shaFile)).Trim() } else { '' }
+    if ((Test-Path -LiteralPath $marker) -and (-not $sha -or ([IO.File]::ReadAllText($marker)).Trim() -eq $sha)) { return 'current' }
+    if (-not $sha -or -not (Test-Path -LiteralPath $archive)) {
+        if ($Optional) { return 'absent' }
+        throw "找不到$Label的程序包（$Name.tar.gz）。请重新运行 Aroomo 独立版安装包。"
+    }
+    $unpack = [IO.Path]::Combine($Paths.Runtime, 'unpack-lobe.cjs')
+    if (Test-Path -LiteralPath $dir) {
+        & $Paths.Node $unpack --remove $dir | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "删除旧版本的$Label没有成功。请先运行「Aroomo 独立版 停止」再试。" }
+    }
+    & $Paths.Node $unpack $archive $dir $sha | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "解开$Label的程序包没有成功。日志在数据文件夹的 logs 里。" }
+    [IO.File]::WriteAllText($marker, $sha)
+    # 程序包解开后就不需要了；重新安装时会再带上
+    Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
+    return 'unpacked'
+}
+
 function Expand-AroomoSALobe {
-    # 解开 LobeHub（第一次安装或升级后）。返回 current（已是这个版本）| unpacked
+    # 解开 LobeHub（第一次安装或升级后）。返回 current | unpacked
     [OutputType([string])]
     param([Parameter(Mandatory)][hashtable]$Paths)
-    $marker = [IO.Path]::Combine($Paths.LobeDir, '.aroomo-lobe-sha256')
-    $sha = if (Test-Path -LiteralPath $Paths.LobeSha) { ([IO.File]::ReadAllText($Paths.LobeSha)).Trim() } else { '' }
-    if ((Test-Path -LiteralPath $marker) -and (-not $sha -or ([IO.File]::ReadAllText($marker)).Trim() -eq $sha)) { return 'current' }
-    if (-not $sha -or -not (Test-Path -LiteralPath $Paths.LobeArchive)) { throw '找不到对话界面的程序包（lobe.tar.gz）。请重新运行 Aroomo 独立版安装包。' }
-    $unpack = [IO.Path]::Combine($Paths.Runtime, 'unpack-lobe.cjs')
-    if (Test-Path -LiteralPath $Paths.LobeDir) {
-        & $Paths.Node $unpack --remove $Paths.LobeDir | Out-Host
-        if ($LASTEXITCODE -ne 0) { throw '删除旧版本的对话界面没有成功。请先运行「Aroomo 独立版 停止」再试。' }
-    }
-    & $Paths.Node $unpack $Paths.LobeArchive $Paths.LobeDir $sha | Out-Host
-    if ($LASTEXITCODE -ne 0) { throw '解开对话界面的程序包没有成功。日志在数据文件夹的 logs 里。' }
-    [IO.File]::WriteAllText($marker, $sha)
-    # 程序包解开后就不需要了（约 250 MB）；重新安装时会再带上
-    Remove-Item -LiteralPath $Paths.LobeArchive -Force -ErrorAction SilentlyContinue
-    return 'unpacked'
+    return (Expand-AroomoSAPackage -Paths $Paths -Name 'lobe' -Label '对话界面')
+}
+
+function Expand-AroomoSAModules {
+    # 完整档模块（收藏 Karakeep、RSSHub）：这个版本带了就解开
+    param([Parameter(Mandatory)][hashtable]$Paths)
+    [void](Expand-AroomoSAPackage -Paths $Paths -Name 'karakeep' -Label '收藏（Karakeep）' -Optional)
+    [void](Expand-AroomoSAPackage -Paths $Paths -Name 'rsshub' -Label '订阅源（RSSHub）' -Optional)
+}
+
+function Test-AroomoSAModule {
+    # 完整档模块在不在（已解开，或程序包还没解开）
+    [OutputType([bool])]
+    param([Parameter(Mandatory)][hashtable]$Paths, [Parameter(Mandatory)][ValidateSet('karakeep', 'rsshub')][string]$Name)
+    $dir = [IO.Path]::Combine($Paths.AppDir, $Name)
+    return ((Test-Path -LiteralPath "$dir.tar.gz") -or (Test-Path -LiteralPath ([IO.Path]::Combine($dir, ".aroomo-$Name-sha256"))))
 }
 
 function Write-AroomoSARedisConf {
@@ -775,6 +888,8 @@ function Start-AroomoSAService {
     } else {
         if ($Spec.Name -eq 'redis') { Write-AroomoSARedisConf -Context $Context }
         if ($Spec.Name -eq 'rustfs') { New-Item -ItemType Directory -Path $paths.RustFSData -Force | Out-Null }
+        if ($Spec.Name -eq 'meilisearch') { New-Item -ItemType Directory -Path $paths.MeiliData -Force | Out-Null }
+        if ($Spec.Name -eq 'karakeep') { New-Item -ItemType Directory -Path $paths.KarakeepData -Force | Out-Null }
         $procId = Start-AroomoSAProcess -Spec $Spec -Paths $paths
     }
     $deadline = (Get-Date).AddSeconds($Spec.TimeoutSec)
@@ -951,6 +1066,14 @@ function Invoke-AroomoSABackup {
         $tar = Get-AroomoSATar
         $tarArgs = @('-czf', $tarFile, '-C', $stage, 'backup-stage', 'secrets')
         if (Test-Path -LiteralPath $paths.RustFSData) { $tarArgs += @('-C', $paths.DataDir, 'rustfs') }
+        # 收藏（Karakeep）：SQLite 用在线备份接口拷一份一致的副本放进备份；正在用的库文件不直接打包
+        $kdb = [IO.Path]::Combine($paths.KarakeepData, 'db.db')
+        if (Test-Path -LiteralPath $kdb) {
+            $kdst = [IO.Path]::Combine($stage, 'backup-stage', 'karakeep-db.db')
+            $r = Invoke-AroomoSAHidden -Exe $paths.Node -Arguments @(([IO.Path]::Combine($paths.Runtime, 'karakeep-start.cjs')), 'backup', $kdb, $kdst) -Env @{ KARAKEEP_DIR = $paths.KarakeepDir } -TimeoutSec 1800
+            if ($r.ExitCode -ne 0) { return (& $fail '导出收藏数据库') }
+            $tarArgs = @('--exclude', 'karakeep/db.db*') + $tarArgs + @('-C', $paths.DataDir, 'karakeep')
+        }
         $r = Invoke-AroomoSAHidden -Exe $tar -Arguments $tarArgs -TimeoutSec 3600
         if ($r.ExitCode -ne 0) {
             $rs = Get-AroomoSASpec $Context 'rustfs'
@@ -1046,7 +1169,7 @@ function Restore-AroomoSABackup {
         if ($manifest.format -ne 'standalone-1') { $res.Step = "备份格式 $($manifest.format) 不认识"; return $res }
 
         # 停掉除数据库以外的服务
-        Stop-AroomoSAAll -Context $Context -Only @('shell', 'lobe', 'core', 'litellm', 'rustfs', 'redis')
+        Stop-AroomoSAAll -Context $Context -Only @('shell', 'rsshub', 'karakeep-workers', 'karakeep', 'browser', 'meilisearch', 'lobe', 'core', 'litellm', 'rustfs', 'redis')
         # 配置：密钥用备份里的（数据库里的加密数据要靠它们打开）；端口、地址、备份设置保留这台电脑现在的
         $restoredEnv = [IO.Path]::Combine($stage, 'secrets', 'aroomo.env')
         $current = $Context.Config
@@ -1099,6 +1222,15 @@ function Restore-AroomoSABackup {
                 Move-Item -LiteralPath $paths.RustFSData -Destination $res.Kept
             }
             Move-Item -LiteralPath $restoredFiles -Destination $paths.RustFSData
+        }
+        # 收藏（Karakeep）：资料文件夹 + 一致的数据库副本；搜索索引（Meilisearch）不备份，清掉后由收藏重新建立
+        $restoredK = [IO.Path]::Combine($stage, 'karakeep')
+        $restoredKdb = [IO.Path]::Combine($stage, 'backup-stage', 'karakeep-db.db')
+        if ((Test-Path -LiteralPath $restoredK) -or (Test-Path -LiteralPath $restoredKdb)) {
+            if (Test-Path -LiteralPath $paths.KarakeepData) { Move-Item -LiteralPath $paths.KarakeepData -Destination "$($paths.KarakeepData).before-restore-$stamp" }
+            if (Test-Path -LiteralPath $restoredK) { Move-Item -LiteralPath $restoredK -Destination $paths.KarakeepData } else { New-Item -ItemType Directory -Path $paths.KarakeepData -Force | Out-Null }
+            if (Test-Path -LiteralPath $restoredKdb) { Copy-Item -LiteralPath $restoredKdb -Destination ([IO.Path]::Combine($paths.KarakeepData, 'db.db')) -Force }
+            if (Test-Path -LiteralPath $paths.MeiliData) { Move-Item -LiteralPath $paths.MeiliData -Destination "$($paths.MeiliData).before-restore-$stamp" }
         }
         $res.Ok = $true
         return $res

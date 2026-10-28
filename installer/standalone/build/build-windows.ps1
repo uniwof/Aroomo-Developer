@@ -221,6 +221,16 @@ $h = (Get-FileHash -Algorithm SHA256 (Join-Path $LobeDir 'lobe.tar.gz')).Hash.To
 if ($h -ne $sha) { throw 'lobe.tar.gz 校验失败' }
 Copy-Item (Join-Path $LobeDir 'lobe.tar.gz'), (Join-Path $LobeDir 'lobe.tar.gz.sha256') $app
 $bom.lobehub = $v.lobehub.version
+# 完整档模块（prepare-apps.sh 的输出，和 lobe.tar.gz 放在同一个文件夹）：收藏 Karakeep、RSSHub
+foreach ($m in 'karakeep', 'rsshub') {
+    $f = Join-Path $LobeDir "$m.tar.gz"
+    if (-not (Test-Path $f)) { Write-Host "（这个版本不带 $m）"; continue }
+    $msha = (Get-Content -Raw "$f.sha256").Trim()
+    if ((Get-FileHash -Algorithm SHA256 $f).Hash.ToLowerInvariant() -ne $msha) { throw "$m.tar.gz 校验失败" }
+    Copy-Item $f, "$f.sha256" $app
+}
+if (Test-Path (Join-Path $LobeDir 'karakeep.tar.gz')) { $bom.karakeep = $v.karakeep.version }
+if (Test-Path (Join-Path $LobeDir 'rsshub.tar.gz')) { $bom.rsshub = $v.rsshub.revision }
 
 # ---------------------------------------------------------------------------
 Step '8/9 Aroomo 启动器、托盘、安装脚本、许可证'
@@ -234,6 +244,7 @@ $lic = Join-Path $app 'licenses'
 New-Item -ItemType Directory -Path $lic -Force | Out-Null
 Copy-Item (Join-Path $repo 'installer\standalone\NOTICE.txt') $lic
 Copy-Item (Join-Path $LobeDir 'LICENSE-LobeHub.txt') (Join-Path $lic 'LobeHub-LICENSE.txt')
+foreach ($n in 'Karakeep', 'RSSHub') { $f = Join-Path $LobeDir "LICENSE-$n.txt"; if (Test-Path $f) { Copy-Item $f (Join-Path $lic "$n-LICENSE.txt") } }
 if (Test-Path (Join-Path $app 'node\LICENSE')) { Copy-Item (Join-Path $app 'node\LICENSE') (Join-Path $lic 'nodejs-LICENSE.txt') }
 $litLic = Get-ChildItem $site -Directory -Filter 'litellm-*.dist-info' | Select-Object -First 1
 if ($litLic) { Get-ChildItem $litLic.FullName -Recurse -Filter LICENSE* | Select-Object -First 1 | Copy-Item -Destination (Join-Path $lic 'litellm-LICENSE.txt') }

@@ -22,6 +22,8 @@ on:
     branches: [dev]
     paths:
       - 'installer/standalone/**'
+      - 'installer/windows/Aroomo.psm1'
+      - 'shell/**'
       - '.github/workflows/release-standalone-test.yml'
 
 permissions:
@@ -40,6 +42,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - run: installer/standalone/build/prepare-lobe.sh out
+      - name: 完整档模块（收藏 Karakeep、RSSHub）
+        run: installer/standalone/build/prepare-apps.sh out
       - uses: actions/upload-artifact@v4
         with:
           name: lobe-${{ github.run_id }}
@@ -76,8 +80,12 @@ jobs:
         run: |
           $app = "$env:RUNNER_TEMP\stage\app"
           $lobe = Join-Path $app 'lobe'
-          if (Test-Path $lobe) { & "$app\node\node.exe" "$app\installer\standalone\runtime\unpack-lobe.cjs" --remove $lobe }
-          if (-not (Test-Path "$app\lobe.tar.gz")) { Copy-Item "$env:RUNNER_TEMP\lobe\lobe.tar.gz" $app }
+          foreach ($m in 'lobe', 'karakeep', 'rsshub') {
+            $d = Join-Path $app $m
+            if (Test-Path $d) { & "$app\node\node.exe" "$app\installer\standalone\runtime\unpack-lobe.cjs" --remove $d }
+            $src = "$env:RUNNER_TEMP\lobe\$m.tar.gz"
+            if ((Test-Path $src) -and -not (Test-Path "$app\$m.tar.gz")) { Copy-Item $src $app }
+          }
           Remove-Item -Recurse -Force "$env:RUNNER_TEMP\SmokeData" -ErrorAction SilentlyContinue
       - name: 编译安装包（Inno Setup）
         shell: pwsh

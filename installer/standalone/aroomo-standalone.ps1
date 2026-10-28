@@ -18,7 +18,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('firstrun', 'init', 'open', 'start', 'stop', 'backup', 'repair', 'status', 'masterkey', 'uninstall', 'tray')]
+    [ValidateSet('firstrun', 'init', 'open', 'bookmarks', 'start', 'stop', 'backup', 'repair', 'status', 'masterkey', 'uninstall', 'tray')]
     [string]$Action = 'open',
     [int]$Delay = 0,
     [string]$AppDir = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path,
@@ -65,7 +65,7 @@ function Initialize-Config([string]$Data) {
         # 旧版本没有的键补上（不改已有的值）
         $add = @{}
         foreach ($kv in (Get-AroomoSAPortDefaults).GetEnumerator()) { if (-not $cfg[$kv.Key]) { $add[$kv.Key] = [string]$kv.Value } }
-        foreach ($k in 'LITELLM_DB_PASSWORD', 'LOCAL_OWNER_PASSWORD') { if (-not $cfg[$k]) { $add[$k] = New-AroomoSecret } }
+        foreach ($k in 'LITELLM_DB_PASSWORD', 'LOCAL_OWNER_PASSWORD', 'MEILI_MASTER_KEY', 'KARAKEEP_NEXTAUTH_SECRET') { if (-not $cfg[$k]) { $add[$k] = New-AroomoSecret } }
         if (-not $cfg['LOCAL_OWNER_EMAIL']) { $add['LOCAL_OWNER_EMAIL'] = 'owner@aroomo.local' }
         # 早期测试版把 KEY_VAULTS_SECRET 生成成了十六进制（LobeHub 不接受，用它什么也加密不了），换成合法值
         if ($cfg['KEY_VAULTS_SECRET'] -match '^[0-9a-f]{64}$') { $add['KEY_VAULTS_SECRET'] = New-AroomoSABase64Secret }
@@ -119,6 +119,7 @@ function Start-Backend {
     if (-not $ctx -or $ctx.Config.Count -eq 0) { throw '还没有完成安装。请重新运行 Aroomo 安装包。' }
     if (Resolve-BusyPorts $ctx) { $ctx = Get-Ctx }
     [void](Expand-AroomoSALobe -Paths $ctx.Paths)
+    Expand-AroomoSAModules -Paths $ctx.Paths
     [void](Initialize-AroomoSADatabase -Context $ctx)
     foreach ($spec in $ctx.Specs) {
         if ($spec.Name -eq 'lobe' -and -not (Initialize-AroomoSABucket -Context $ctx)) { return $false }
@@ -131,9 +132,9 @@ function Start-Backend {
 # ---------------------------------------------------------------------------
 # 窗口：立刻出现（D77-4）。后台没就绪时先显示本地的「正在准备」页，就绪后自动跳转
 # ---------------------------------------------------------------------------
-function Open-Window {
+function Open-Window([string]$Url) {
     $ctx = Get-Ctx
-    $url = if ($ctx) { Get-AroomoSAPublicUrl -Paths $ctx.Paths -Config $ctx.Config } else { 'http://localhost:3280' }
+    $url = if ($Url) { $Url } elseif ($ctx) { Get-AroomoSAPublicUrl -Paths $ctx.Paths -Config $ctx.Config } else { 'http://localhost:3280' }
     $target = $url
     $ready = $ctx -and (Get-AroomoSAHttpStatus -Url "$url/" -TimeoutMs 800) -gt 0
     if (-not $ready) {
@@ -251,6 +252,7 @@ function New-Shortcuts {
     $items = @(
         @{ Path = (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Aroomo.lnk'); Arg = 'open'; Desc = '打开 Aroomo' },
         @{ Path = (Join-Path $startDir 'Aroomo.lnk'); Arg = 'open'; Desc = '打开 Aroomo' },
+        @{ Path = (Join-Path $startDir 'Aroomo 收藏.lnk'); Arg = 'bookmarks'; Desc = '打开 Aroomo 收藏（Karakeep）' },
         @{ Path = (Join-Path $startDir 'Aroomo 修复.lnk'); Arg = 'repair'; Desc = '停止、检查、修复并重新启动 Aroomo' },
         @{ Path = (Join-Path $startDir 'Aroomo 立即备份.lnk'); Arg = 'backup'; Desc = '立即备份 Aroomo' },
         @{ Path = (Join-Path $startDir 'Aroomo 主密钥.lnk'); Arg = 'masterkey'; Desc = '粘贴或生成主密钥' }
@@ -346,6 +348,13 @@ switch ($Action) {
         Open-Window
         Start-TrayDetached
     }
+    'bookmarks' {
+        # 收藏（Karakeep）在自己的窗口里打开
+        $ctx = Get-Ctx
+        $kp = if ($ctx -and $ctx.Config['KARAKEEP_PORT']) { $ctx.Config['KARAKEEP_PORT'] } else { '3283' }
+        Open-Window "http://localhost:$kp"
+        Start-TrayDetached
+    }
     'start' {
         if (-not (Start-Backend)) { Write-Host '有服务没能启动。请运行「Aroomo 修复」。'; exit 1 }
         Write-Host 'Aroomo 已启动。'
@@ -387,7 +396,9 @@ switch ($Action) {
         if ($ctx) {
             Stop-AroomoSAAll -Context $ctx
             # 对话界面是安装后解开的（有目录联接），安装包自己删不干净
-            if (Test-Path $ctx.Paths.LobeDir) { & $ctx.Paths.Node (Join-Path $ctx.Paths.Runtime 'unpack-lobe.cjs') --remove $ctx.Paths.LobeDir | Out-Null }
+            foreach ($d in $ctx.Paths.LobeDir, $ctx.Paths.KarakeepDir, $ctx.Paths.RsshubDir) {
+                if (Test-Path $d) { & $ctx.Paths.Node (Join-Path $ctx.Paths.Runtime 'unpack-lobe.cjs') --remove $d | Out-Null }
+            }
         }
         Remove-Shortcuts
         # 数据文件夹保留（D78：卸载默认保留数据）

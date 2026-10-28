@@ -76,6 +76,18 @@ try {
         $results.aroomo_api_via_shell = (Invoke-WebRequest -Uri "$pub/aroomo/api/inbox/unread-count" -Headers @{ Cookie = $cookie } -UseBasicParsing).StatusCode
     }
 
+    # 完整档模块（这个版本带了就必须正常）：收藏 Karakeep（+ Meilisearch、无界面浏览器）、RSSHub
+    foreach ($m in @(
+            @{ Name = 'karakeep'; Url = "http://127.0.0.1:$($c['KARAKEEP_PORT'])/api/health" },
+            @{ Name = 'meilisearch'; Url = "http://127.0.0.1:$($c['MEILI_PORT'])/health" },
+            @{ Name = 'browser'; Url = "http://127.0.0.1:$($c['BROWSER_PORT'])/json/version" },
+            @{ Name = 'rsshub'; Url = "http://127.0.0.1:$($c['RSSHUB_PORT'])/" })) {
+        if (-not (Get-AroomoSASpec $ctx $m.Name)) { $results["$($m.Name)_http"] = 'not in this build'; continue }
+        $code = Get-AroomoSAHttpStatus -Url $m.Url -TimeoutMs 30000
+        $results["$($m.Name)_http"] = $code
+        if ($code -lt 200 -or $code -ge 400) { throw "$($m.Name) 返回 $code" }
+    }
+
     # 备份：测试用主密钥（只在这台 CI 机器上，用完即弃）
     $k = New-AroomoMasterKey -AgeKeygenPath (Get-AroomoAgeKeygenPath -AppDir $AppDir)
     Write-AroomoPrivateFile -Path $ctx.Paths.EnvFile -Content (Set-AroomoEnvValues -Content ([IO.File]::ReadAllText($ctx.Paths.EnvFile)) -Values @{ BACKUP_AGE_RECIPIENT = $k.PublicKey })

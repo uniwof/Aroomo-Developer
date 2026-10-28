@@ -92,5 +92,47 @@
     "sha256": "916591c45ca5be5eeb6981f68d987032f90a557a182fc7bdfdb011b869b90578",
     "license_url": "https://raw.githubusercontent.com/meilisearch/meilisearch/v1.56.0/LICENSE",
     "_note": "完整档：Karakeep（收藏）的全文搜索引擎，官方 Windows 构建"
+  },
+  "karakeep": {
+    "version": "0.34.1",
+    "image": "ghcr.io/karakeep-app/karakeep",
+    "digest_linux_amd64": "sha256:7d7ae59b924b6b58e018f2a67aa7207519ef0625ead5306a2491f982b6f89886",
+    "sharp": "0.35.5",
+    "re2": {
+      "version": "1.26.1",
+      "url": "https://github.com/uhop/node-re2/releases/download/1.26.1/win32-x64-127.br",
+      "sha256": "fc83e17f72cbad11c524d99dcfc73431293a67432a0368c1ab64a379bc62c5d1",
+      "_note": "node-re2 官方发布的 Windows 预编译，Node 22（ABI 127）"
+    },
+    "license_url": "https://raw.githubusercontent.com/karakeep-app/karakeep/v0.34.1/LICENSE",
+    "license_sha256": "8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef",
+    "_note": "完整档：收藏（Karakeep，AGPL-3.0）。官方镜像里的 /app + /db_migrations 原样使用，只换 Windows 版原生模块；搜索用随包的 Meilisearch，抓网页用随包的 Chromium（无界面，只听 127.0.0.1）",
+    "tessdata": [
+      {
+        "package": "@tesseract.js-data/eng",
+        "version": "1.0.0",
+        "lang": "eng",
+        "integrity": "sha512-mbTumm6KQPUHyzTPQaF3ObXYnx0SqqfV2nabqFVQBwD6Kl7PhGSLSzOlfFTWy0P3BjghaSKA2W9GB19Jk+ZcTg=="
+      },
+      {
+        "package": "@tesseract.js-data/chi_sim",
+        "version": "1.0.0",
+        "lang": "chi_sim",
+        "integrity": "sha512-iuErURkPbECDUazgsLn/r3c+tU2y5o5S/w14d0A/YiagfsjYyZKgTo75RUpsGJ311qtu0dIX4hqnXAAjmqf2CA=="
+      }
+    ],
+    "_note_tessdata": "OCR 语言数据（tesseract.js 默认从网上下载）：随包放进 OCR_CACHE_DIR，离线可用"
+  },
+  "rsshub": {
+    "revision": "1d73c7c6158e0fe2bfab06300f41b040716127ab",
+    "image": "diygod/rsshub",
+    "digest_linux_amd64": "sha256:09e17360f86f50e35955702293fc3eb47b6c83aefb793d04df05527a0acae210",
+    "oxc_parser": {
+      "version": "0.155.0",
+      "integrity": "sha512-8heq6jGq+rfpTDRDjoQiBHw0maQZf3IXkS99pdHQZPoTL5kyF5qyPS0RidUlSdnWDIqxXb5nux7GBD9cT+imUw=="
+    },
+    "license_url": "https://raw.githubusercontent.com/DIYgod/RSSHub/1d73c7c6158e0fe2bfab06300f41b040716127ab/LICENSE",
+    "license_sha256": "8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef",
+    "_note": "完整档：RSS 订阅源（RSSHub，AGPL-3.0），官方镜像 2026-10-27 构建（按摘要固定）。上游只发 latest / 提交号标签"
   }
 }
