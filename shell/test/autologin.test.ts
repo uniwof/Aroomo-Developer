@@ -126,3 +126,19 @@ describe('配置', () => {
     expect(await al.login()).toBeNull();
   });
 });
+
+import { hostAllowed } from '../src/server.js';
+describe('D80-2 Host 白名单', () => {
+  it('本机自动登录时默认只认 localhost / 127.0.0.1', () => {
+    const c = loadConfig({ SHELL_HOST: '127.0.0.1', SHELL_LOCAL_OWNER_EMAIL: 'o@aroomo.local', SHELL_LOCAL_OWNER_PASSWORD: 'p'.repeat(16) });
+    expect(c.allowedHosts).toEqual(['localhost', '127.0.0.1']);
+    expect(hostAllowed('127.0.0.1:3000', c.allowedHosts!)).toBe(true);
+    expect(hostAllowed('localhost:3000', c.allowedHosts!)).toBe(true);
+    expect(hostAllowed('evil.example.com:3000', c.allowedHosts!)).toBe(false);
+    expect(hostAllowed('127.0.0.1.evil.com', c.allowedHosts!)).toBe(false);
+    expect(hostAllowed(undefined, c.allowedHosts!)).toBe(false);
+  });
+  it('服务器版不限制', () => {
+    expect(loadConfig({}).allowedHosts).toBeUndefined();
+  });
+});

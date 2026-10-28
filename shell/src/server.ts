@@ -140,6 +140,14 @@ function csrfOk(req: IncomingMessage): boolean {
   return host === req.headers.host || (Boolean(xfh) && host === xfh);
 }
 
+/** Host 头去掉端口后是否在白名单里（IPv6 字面量带方括号，如 [::1]:3000）。 */
+export function hostAllowed(hostHeader: string | undefined, allowed: string[]): boolean {
+  if (!hostHeader) return false;
+  const h = hostHeader.trim().toLowerCase();
+  const name = h.startsWith('[') ? h.slice(0, h.indexOf(']') + 1) : h.replace(/:\d+$/, '');
+  return allowed.includes(name);
+}
+
 export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
   const session: SessionChecker =
     deps.session ?? (cfg.auth === 'off' ? allowAll : new LobeSessionChecker(cfg.lobeUpstream, cfg.sessionCacheMs));
@@ -266,6 +274,10 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
     const url = new URL(req.url ?? '/', 'http://shell.local');
     const p = url.pathname;
 
+    // D80-2：独立版只认本机 Host（DNS 重绑定的网页带的是它自己的域名，进不来）
+    if (cfg.allowedHosts && !hostAllowed(req.headers.host, cfg.allowedHosts)) {
+      return sendJson(res, 421, { error: { code: 'HOST_NOT_ALLOWED', message: '只能从本机地址访问 Aroomo' } });
+    }
     if (p === '/aroomo/healthz') return sendJson(res, 200, { status: 'ok', service: 'aroomo-shell' });
     if (p.startsWith('/aroomo/static/')) return serveStatic(req, res, p.slice('/aroomo/static/'.length));
     // 退出登录（§8.3 账号）：只接受同源 POST

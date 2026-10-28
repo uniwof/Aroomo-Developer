@@ -32,6 +32,11 @@ export interface ShellConfig {
    * Windows 独立版：本机主人自动登录（D78）。只在 SHELL_HOST 是本机回环地址时允许；Docker / 服务器版不设置。
    */
   localOwner: { email: string; password: string; origin?: string } | undefined;
+  /**
+   * 允许的 Host 头（小写主机名，不含端口）。独立版开了本机自动登录时默认只认 localhost / 127.0.0.1（D80-2：防 DNS 重绑定冒充本机）；
+   * 服务器版不限制（undefined）。可用 SHELL_ALLOWED_HOSTS（逗号分隔）覆盖。
+   */
+  allowedHosts: string[] | undefined;
 }
 
 export class ConfigError extends Error {}
@@ -73,6 +78,12 @@ export function loadConfig(env: Env = process.env): ShellConfig {
     const pub = str(env, 'SHELL_PUBLIC_URL');
     localOwner = { email: ownerEmail, password: ownerPassword, origin: pub ? url(pub, 'SHELL_PUBLIC_URL').origin : undefined };
   }
+  const hostsRaw = str(env, 'SHELL_ALLOWED_HOSTS');
+  const allowedHosts = hostsRaw
+    ? hostsRaw.split(',').map((h) => h.trim().toLowerCase()).filter(Boolean)
+    : localOwner
+      ? ['localhost', '127.0.0.1']
+      : undefined;
   return {
     host,
     port: Number(portRaw),
@@ -84,5 +95,6 @@ export function loadConfig(env: Env = process.env): ShellConfig {
     publicDir: str(env, 'SHELL_PUBLIC_DIR') ?? defaultPublicDir(),
     sessionCacheMs: 30_000,
     localOwner,
+    allowedHosts,
   };
 }
