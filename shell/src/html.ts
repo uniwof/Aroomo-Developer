@@ -4,7 +4,7 @@
  */
 import { BRAND_FROM, BRAND_TO } from './rules.js';
 
-export const ASSET_VERSION = '3';
+export const ASSET_VERSION = '4';
 
 /** 主人定的主题色（珊瑚色）：PWA / 浏览器地址栏颜色 */
 export const THEME_COLOR = '#ff7f50';
