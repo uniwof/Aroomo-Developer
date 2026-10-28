@@ -241,6 +241,12 @@
       dock.hidden = location.pathname !== '/';
       return;
     }
+    // 登录 / 注册页不显示（会挡住上游的语言切换）
+    var first = location.pathname.split('/').filter(Boolean)[0] || '';
+    if (/^(signin|signup|login|auth|verify-email|reset-password|forgot-password)$/.test(first)) {
+      dock.hidden = true;
+      return;
+    }
     var side = findSidebar();
     if (side) {
       var r = side.getBoundingClientRect();
@@ -306,7 +312,7 @@
    *  a) 宽扁的文字 Logo（页面顶部）→ Aroomo 标志 + 字
    *  b) 带 <title>LobeHub</title> 的品牌 SVG（登录页等）→ Aroomo 标志
    *  c) 上游品牌图片（3D Logo、Lobe AI 吉祥物、PWA 图标）→ Aroomo 图标 */
-  var BRAND_IMG = /assets-logo|logo-3d|lobe-ai\.png|\/app-icons\/|lobehub[^/]*\/(?:.*\/)?(?:logo|icon)/i;
+  var BRAND_IMG = /assets-logo|logo-3d|overview-cao|lobe-ai\.png|\/app-icons\/|lobehub[^/]*\/(?:.*\/)?(?:logo|icon)/i;
   function makeMark(h, withText) {
     var mark = document.createElement('span');
     mark.className = 'aroomo-wordmark';
@@ -339,7 +345,8 @@
       if (!BRAND_IMG.test(src) || img.closest('.markdown,article,[data-message-id]')) continue;
       img.setAttribute('data-aroomo-logo-img', '');
       img.removeAttribute('srcset');
-      img.src = '/aroomo/static/avatar.png';
+      // 首页的大吉祥物插画 → Aroomo 标志（透明底、跟随深浅色）；其余 → Aroomo 图标
+      img.src = /overview-cao/i.test(src) ? '/aroomo/static/logo.svg' : '/aroomo/static/avatar.png';
     }
   }
 
@@ -420,18 +427,30 @@
     document.head.appendChild(st);
     markOnCoral(document.body);
   }
-  /* 珊瑚色填充的按钮上如果是白字（对比度 2.5:1 不合格）→ 标记，CSS 改成深色字 */
+  /* 对比度（主人低视力）：
+   *  珊瑚色填充上的浅色字（对比度约 2.5:1，不合格）→ data-aroomo-oncoral，CSS 改成深色字
+   *  白底上的珊瑚色文字（#ff7f50 只有 2.5:1）→ data-aroomo-coraltext，CSS 改成深珊瑚 #b4441b */
   var CORAL = /rgb\((255, 127, 80|255, 147, 107|232, 105, 60|255, 154, 115|229, 103, 59)\)/;
+  function isLight(c) {
+    var m = /rgba?\((\d+), (\d+), (\d+)/.exec(c);
+    return Boolean(m && +m[1] >= 200 && +m[2] >= 200 && +m[3] >= 200);
+  }
   function markOnCoral(root) {
     if (!root || !root.querySelectorAll) return;
-    var els = root.querySelectorAll('button,[role="button"],a.ant-btn');
-    for (var i = 0; i < els.length && i < 300; i++) {
+    var els = root.querySelectorAll('button,[role="button"],a,label,span');
+    var dark = null;
+    for (var i = 0, n = 0; i < els.length && n < 400; i++) {
       var el = els[i];
-      if (el.closest('#aroomo-dock')) continue;
+      if (el.closest('#aroomo-dock,.markdown,article,[data-message-id]')) continue;
+      n++;
       var cs = getComputedStyle(el);
-      var on = CORAL.test(cs.backgroundColor);
-      if (on && /rgb\(255, 255, 255\)/.test(cs.color)) el.setAttribute('data-aroomo-oncoral', '');
-      else if (!on && el.hasAttribute('data-aroomo-oncoral') && !CORAL.test(cs.backgroundColor)) el.removeAttribute('data-aroomo-oncoral');
+      var onFill = CORAL.test(cs.backgroundColor);
+      if (onFill && isLight(cs.color)) el.setAttribute('data-aroomo-oncoral', '');
+      else if (!onFill && el.hasAttribute('data-aroomo-oncoral')) el.removeAttribute('data-aroomo-oncoral');
+      if (!onFill && !el.hasAttribute('data-aroomo-coraltext') && /rgb\(255, 127, 80\)/.test(cs.color)) {
+        if (dark === null) dark = isDark();
+        if (!dark) el.setAttribute('data-aroomo-coraltext', '');
+      }
     }
   }
   var themeTimer = null;

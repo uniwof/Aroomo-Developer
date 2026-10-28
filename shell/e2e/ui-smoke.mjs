@@ -153,11 +153,17 @@ for (const [label, viewport, isMobile] of [
       lobeAvatar: await size('/avatars/lobe-ai.png'), aroomoAvatar: await size('/aroomo/static/avatar.png'),
       appIcon: await size('/app-icons/icon-192x192.png'), aroomoIcon: await size('/aroomo/static/icon-192.png'),
       font: getComputedStyle(document.body).fontFamily,
+      imgs: [...document.querySelectorAll('img')].filter((i) => i.offsetParent !== null).map((i) => i.getAttribute('src')).slice(0, 40),
+      coralText: [...document.querySelectorAll('a,span,label,p,div')]
+        .filter((e) => e.offsetParent !== null && !e.closest('#aroomo-dock') && [...e.childNodes].some((n) => n.nodeType === 3 && n.nodeValue.trim()) && getComputedStyle(e).color === 'rgb(255, 127, 80)')
+        .map((e) => e.innerText.slice(0, 20)),
     };
   });
   writeFileSync(path.join(out, `${label}-theme.json`), JSON.stringify(theme, null, 1));
   check(`${label} 主题色变量已覆盖为珊瑚色`, Object.keys(theme.vars).length > 0, Object.keys(theme.vars).slice(0, 8).join(','));
-  check(`${label} 珊瑚色按钮上的字是深色`, theme.coralButtons.every((b) => !/rgb\(255, 255, 255\)/.test(b.color)), JSON.stringify(theme.coralButtons.slice(0, 3)));
+  const light = (c) => { const m = /rgba?\((\d+), (\d+), (\d+)/.exec(c); return Boolean(m && +m[1] >= 200 && +m[2] >= 200 && +m[3] >= 200); };
+  check(`${label} 珊瑚色按钮上的字是深色`, theme.coralButtons.every((b) => !light(b.color)), JSON.stringify(theme.coralButtons.slice(0, 3)));
+  check(`${label} 白底上没有浅珊瑚色文字`, theme.coralText.length === 0, JSON.stringify(theme.coralText.slice(0, 3)));
   check(`${label} PWA theme_color 是珊瑚色`, theme.themeColor === '#ff7f50', theme.themeColor);
   check(`${label} 默认助理头像 / PWA 图标是 Aroomo 的`, theme.lobeAvatar === theme.aroomoAvatar && theme.appIcon === theme.aroomoIcon, `${theme.lobeAvatar}/${theme.aroomoAvatar} ${theme.appIcon}/${theme.aroomoIcon}`);
   check(`${label} 苹果式系统字体`, /apple-system|PingFang|Microsoft YaHei UI/.test(theme.font), theme.font);
