@@ -2,7 +2,7 @@
 
 > 对应决策：DECISIONS **D63**（统一用一个确认卡组件，分两级）、D62（操作员不能完成重要确认）、D50（审计）。
 > 服务端实现：`core/src/confirm/`（`confirm.ts` 确认服务、`access.ts` Cloudflare Access 校验、`routes.ts` 接口）。
-> 本仓库目前没有前端包；组件本身随 LobeHub 界面改造实现，**必须**按本文的接口做。手机和电脑共用这一个组件，界面上不允许出现任何其他确认方式（浏览器 `confirm()`、自制弹窗、「输入 DELETE 确认」等都不行）。
+> 前端实现：`shell/public/static/app.js` 的 `withConfirm()` / `runChallenge()`（Aroomo 页面，经 Shell 同源调用 `/aroomo/api/*`；`stepUrl` 的 `/api/` 前缀换成 `/aroomo/api/`）。手机和电脑共用这一个组件，界面上不允许出现任何其他确认方式（浏览器 `confirm()`、自制弹窗、「输入 DELETE 确认」等都不行）。
 
 ## 1. 两级
 
@@ -17,7 +17,8 @@
 |------|------|
 | `POST /api/members/:id/purge` | irreversible |
 | `POST /api/inbox/:id/actions/:actionId`（动作的 `confirm.kind` 不是 `normal` 时） | 按动作 |
-| `POST /api/keys`、`PATCH /api/keys/:id`（带 `apiKey`）、`DELETE /api/keys/:id` | credential |
+| `POST /api/keys`、`PATCH /api/keys/:id`（带 `apiKey`）——**只在发起方不是主人本人时**（智能体 / 操作员，D73）；主人在界面上手动保存 = 普通保存 | credential |
+| `DELETE /api/keys/:id`（任何人，D73） | credential |
 
 ## 2. 流程
 

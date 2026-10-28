@@ -17,6 +17,8 @@ import { KeysService } from './keys/service.js';
 import { registerMemberRoutes } from './members/routes.js';
 import { MembersService } from './members/service.js';
 import { route } from './router/route.js';
+import { LeadService } from './settings/lead.js';
+import { registerSettingsRoutes } from './settings/routes.js';
 import type { RoutableMember } from './router/types.js';
 
 export const VERSION = '0.0.1';
@@ -142,13 +144,24 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps(), opts
   registerConfirmRoutes(app, confirm);
 
   registerAuditRoutes(app, deps.auditLog);
-  registerMemberRoutes(app, new MembersService(deps.members, deps.now, confirm));
+  const members = new MembersService(deps.members, deps.now, confirm);
+  registerMemberRoutes(app, members);
+  registerSettingsRoutes(app, new LeadService(deps.settings, deps.members, deps.now));
   const inbox = new InboxService(deps.inbox, confirm, deps.now);
   // 供其他模块调用 createInboxItem()
   app.decorate('inbox', inbox);
   registerInboxRoutes(app, inbox);
   const litellm = deps.litellm ?? new LiteLLMAdmin({ baseUrl: cfg.litellmBaseUrl, masterKey: cfg.litellmMasterKey });
-  registerKeyRoutes(app, new KeysService(deps.keys, litellm, deps.now, confirm));
+  registerKeyRoutes(
+    app,
+    new KeysService(deps.keys, litellm, deps.now, confirm, {
+      // 新 Key 的模型自动成为成员（名字 = LiteLLM 里对外的模型名；对话时 Core 按这个名字调用 LiteLLM）
+      afterCreate: async (rec, audit) => {
+        const exists = (await members.list()).some((m) => m.name.toLowerCase() === rec.modelName.toLowerCase());
+        if (!exists) await members.create({ name: rec.modelName }, audit);
+      },
+    }),
+  );
 
   return app;
 }
