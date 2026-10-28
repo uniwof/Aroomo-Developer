@@ -263,8 +263,10 @@ function Write-AroomoPrivateFile {
     if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     [IO.File]::WriteAllText($Path, $Content, (New-Object System.Text.UTF8Encoding $false))
     if ($env:OS -eq 'Windows_NT') {
-        $who = "$env:USERDOMAIN\$env:USERNAME"
-        & icacls.exe $Path /inheritance:r /grant:r "${who}:(F)" /grant:r 'SYSTEM:(F)' | Out-Null
+        # 用 SID，不用「域\用户名」：远程 / 工作组环境下 USERDOMAIN 可能是 WORKGROUP，icacls 找不到账户却已去掉继承，文件谁都读不了
+        $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        & icacls.exe $Path /inheritance:r /grant:r "*${sid}:(F)" /grant:r '*S-1-5-18:(F)' | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "设置文件权限失败：$Path" }
     }
 }
 
