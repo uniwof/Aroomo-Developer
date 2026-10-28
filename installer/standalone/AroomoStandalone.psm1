@@ -1039,14 +1039,16 @@ function Start-AroomoSAParallel {
         [switch]$WaitAll,
         [switch]$EnsureDbAccounts,
         [switch]$Quiet,
-        [System.Collections.IDictionary]$Timing
+        [System.Collections.IDictionary]$Timing,
+        # 之前的 start 起的主界面服务，现在不健康时最多再等多少秒就重启（测试里调小）
+        [int]$AdoptGraceSec = 90
     )
     $paths = $Context.Paths
     $sw = [Diagnostics.Stopwatch]::StartNew()
     $specs = @($Context.Specs | Where-Object { $Only.Count -eq 0 -or $Only -contains $_.Name })
     $names = @($specs | ForEach-Object { $_.Name })
     $isDeferred = { param($sp) [bool]($sp.PSObject.Properties['Deferred'] -and $sp.Deferred) }
-    $state = @{}; $until = @{}; $procIds = @{}; $migrating = @{}
+    $state = @{}; $until = @{}; $procIds = @{}; $migrating = @{}; $adopted = @{}; $restarted = @{}
     foreach ($sp in $specs) { $state[$sp.Name] = 'pending' }
     # PostgreSQL 用 pg_ctl -w 启动（会等它就绪），放在每一轮最后，不耽误别的服务先起
     $order = @($specs | Where-Object { $_.Kind -ne 'pgctl' }) + @($specs | Where-Object { $_.Kind -eq 'pgctl' })
@@ -1139,7 +1141,17 @@ function Start-AroomoSAParallel {
                 continue
             }
             $until[$n] = (Get-Date).AddSeconds($sp.TimeoutSec)
-            if (Test-AroomoSAServiceAlive -Spec $sp -Paths $paths) { $state[$n] = 'starting'; continue }
+            if (Test-AroomoSAServiceAlive -Spec $sp -Paths $paths) {
+                # 进程是之前的 start 起的。主界面服务：之前那次 start 已等它就绪过，现在却不健康 = 卡住了
+                # （CI 实测：LiteLLM 收到关闭后 Python 不退出，外层 cmd 还在，端口已关，原来会白等 15 分钟）。
+                # 只给 AdoptGraceSec（默认 90）秒，仍不健康就结束它的进程树、重新启动一次。完整档模块可能还在首次启动中，照常等满。
+                $state[$n] = 'starting'
+                if (-not (& $isDeferred $sp) -and -not $restarted[$n]) {
+                    $adopted[$n] = $true
+                    $until[$n] = (Get-Date).AddSeconds([math]::Min([int]$sp.TimeoutSec, $AdoptGraceSec))
+                }
+                continue
+            }
             if (-not (Test-Path -LiteralPath $sp.Exe)) { & $fail $sp "找不到 $($sp.Label) 的程序。请重新运行 Aroomo 独立版安装包。"; if (& $isDeferred $sp) { continue } else { return $false } }
             if (-not $Quiet) { Write-AroomoSay "正在启动 $($sp.Label)。" }
             & $mark $n 'start'
@@ -1169,6 +1181,13 @@ function Start-AroomoSAParallel {
             if ($procIds[$n] -and -not (Get-Process -Id $procIds[$n] -ErrorAction SilentlyContinue)) {
                 & $fail $sp "$($sp.Label) 启动后马上退出了。详细原因在数据文件夹的 logs\$n.log。"
                 if ($deferred) { continue } else { return $false }
+            }
+            if ((Get-Date) -gt $until[$n] -and $adopted[$n] -and -not $restarted[$n]) {
+                if (-not $Quiet) { Write-AroomoSay "$($sp.Label) 没有响应，正在重新启动。" }
+                Stop-AroomoSAService -Context $Context -Spec $sp
+                $adopted.Remove($n); $restarted[$n] = $true; $state[$n] = 'pending'
+                & $mark $n 'restart'
+                continue
             }
             if ((Get-Date) -gt $until[$n]) {
                 & $fail $sp "$($sp.Label) 等了 $([int]($sp.TimeoutSec / 60)) 分钟还没就绪。详细原因在数据文件夹的 logs\$n.log。"

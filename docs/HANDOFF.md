@@ -16,7 +16,7 @@ P0（MVP）进行中。dev 上已有：仓库骨架 / Compose / CI（#4）、v4.
 
 ## 3. 仓库与环境
 - 仓库：github.com/uniwof/Aroomo-Developer（D30）。
-- 分支：`main`（只在阶段验收后由用户合并）← `dev`（CI 通过后主程序员可合并，D53）← `docs/*`、`p{期号}/{模块}`、`fix/*`。CI 尚未建立，在此之前所有 PR 都不自行合并。
+- 分支：`main`（只在阶段验收后由用户合并）← `dev`（CI 通过后主程序员可合并，D53）← `docs/*`、`p{期号}/{模块}`、`fix/*`。CI 已建立（.github/workflows/ci.yml），CI 通过后主程序员可合并到 dev。
 - 旧仓库 uniwof/Aroomo（用户告知已改私有）与旧站 chat.pcmanai.com：冻结，不得触碰、不得重新部署（D30）。
 - 服务器：AWS EC2 t4g.medium（ARM64），us-east-2 俄亥俄（原计划法兰克福 m7i-flex.large，负责人 D66 已接受改为此机），Ubuntu 24.04，58 GB，4 GB swap，用户名 ubuntu；只开 22，仅密钥登录、禁 root，fail2ban，自动安全更新；对外经 Cloudflare Tunnel `aroomo-app` + Access（团队 aroomo.cloudflareaccess.com，只允许用户本人邮箱，会话 30 天，D57、D58、D67）。部署目录 `/opt/aroomo`，`AROOMO_TIER=standard scripts/compose.sh up -d`；`.env` 只在服务器（600）。SSH 私钥只在主程序员工作区。主程序员不持有 AWS 凭据。额度约 $80/月，用到一半前交迁移方案（D59）。
 
@@ -32,7 +32,7 @@ P0（MVP）进行中。dev 上已有：仓库骨架 / Compose / CI（#4）、v4.
 ## 5. 阻塞 / 未决问题
 - R2 备份令牌、测试模型 Key 未交付；服务器 .env 里的 LITELLM_SALT_KEY 等需用户离线备份；主密钥公钥未到（用户装测试版时生成）；用户电脑配置（Windows 版本、内存、剩余硬盘）未填。
 - PR #1、#2 仍为 open、未合并到 main（2026-10-27 经 GitHub API 核实；用户消息中说已合并，两者不一致，需用户确认）。
-- Muse 1–15 清单与负责人裁决表未提供：D36–D39、D46、D50 的细节标为待补充。
+- Muse 1–15 原文与负责人裁决表已补齐（DECISIONS 第 7.5 节，2026-10-28）。
 - 值班哨兵排期未定（不在 P0 MVP）。
 - Jules 对 #11/#5/#6/#8 已开了重复 PR（#13/#15/#16/#14），已留言建议关闭；需要用户（或 Jules）关闭，**不要合并**，否则会覆盖 dev 上的实现。
 - 已由 D62/D63 解决：操作员白名单按 D62 列出（`inbox:read`/`inbox:act` 已移出）；`confirm: true` 和收件箱一次性令牌已统一为确认服务。

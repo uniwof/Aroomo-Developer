@@ -239,13 +239,27 @@
       return;
     }
     if (document.activeElement !== el) el.focus();
-    // 筛选词是名字的开头（最常见）：只在光标处补上剩下的部分，和用户继续打字完全一样
-    if (text.toLowerCase().indexOf(query.toLowerCase()) === 0 && text.slice(0, query.length) === query) {
+    // 筛选词是名字的开头（大小写也一致）：只在光标处补上剩下的部分，和用户继续打字完全一样
+    if (text.slice(0, query.length) === query) {
       document.execCommand('insertText', false, text.slice(query.length));
       return;
     }
-    // 否则删掉已经输入的筛选词（保留 @），再插入完整名字：都是普通编辑操作，编辑器会同步自己的状态
-    for (var i = 0; i < query.length; i++) document.execCommand('delete', false);
+    // 否则先把已经输入的筛选词（不含 @）选中，再用插入文字替换掉选区。
+    // 不用逐个 execCommand('delete')：LobeHub 的编辑器（Lexical）不一定响应它，会留下「@opena"名字"」这样的残字（2026-10-28 真机发现）。
+    var sel = window.getSelection();
+    if (query.length && sel && sel.rangeCount && sel.modify) {
+      for (var i = 0; i < query.length; i++) sel.modify('extend', 'backward', 'character');
+    } else if (query.length && sel && sel.rangeCount) {
+      var r = sel.getRangeAt(0);
+      var node = r.startContainer;
+      if (node.nodeType === 3 && r.startOffset >= query.length) {
+        var rr = document.createRange();
+        rr.setStart(node, r.startOffset - query.length);
+        rr.setEnd(node, r.startOffset);
+        sel.removeAllRanges();
+        sel.addRange(rr);
+      }
+    }
     document.execCommand('insertText', false, text);
   }
 
@@ -253,8 +267,8 @@
     if (!state || !state.items[i]) return;
     var m = state.items[i];
     var el = state.el;
-    // 名字里有 @ 解析器认不出的字符时加引号（解析规则见 core/src/router/mentions.ts）
-    var name = /^[\p{L}\p{N}\p{M}_+\-. ]+$/u.test(m.name) && !/[.\s]$/.test(m.name) ? m.name : '"' + m.name.replace(/"/g, '') + '"';
+    // 名字里有空格等字符时加引号；「/」「:」不加（模型名常见，如 openai/gpt-oss-20b；Core 按成员名最长匹配，见 core/src/router/mentions.ts）
+    var name = /^[\p{L}\p{N}\p{M}_+\-. \/:]+$/u.test(m.name) && !/[.\s]$/.test(m.name) ? m.name : '"' + m.name.replace(/"/g, '') + '"';
     var text = name + ' ';
     var query = state.query;
     close();
