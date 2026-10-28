@@ -40,6 +40,7 @@ export function confirmCleanupJob(store: ChallengeStore, now: () => Date): Job {
 }
 
 export function keyReconcileJob(keys: KeyStore, litellm: LiteLLMAdmin, inbox: InboxService, now: () => Date): Job {
+  let lastOrphanKey = '';
   return {
     name: 'key-reconcile',
     intervalMs: HOUR,
@@ -54,7 +55,9 @@ export function keyReconcileJob(keys: KeyStore, litellm: LiteLLMAdmin, inbox: In
       for (const k of local) {
         if (!ids.has(k.litellmModelId)) {
           missing++;
-          if (k.status !== 'sync_failed') await keys.update({ ...k, status: 'sync_failed', updatedAt: now() });
+          // 只在刚发现时发一张卡（每小时对账一次，已标记 sync_failed 的不再重复提醒）
+          if (k.status === 'sync_failed') continue;
+          await keys.update({ ...k, status: 'sync_failed', updatedAt: now() });
           await audit('keys.reconcile.missing', { type: 'key', id: k.id }, 'failed');
           await inbox.createInboxItem(
             {
@@ -74,7 +77,11 @@ export function keyReconcileJob(keys: KeyStore, litellm: LiteLLMAdmin, inbox: In
         }
       }
       const orphans = deployments.filter((d) => d.id.startsWith('aroomo-') && !localIds.has(d.id));
-      if (orphans.length) {
+      // 多余部署：同一批只提醒一次（进程内记住上次提醒的集合）
+      const orphanKey = orphans.map((d) => d.id).sort().join(',');
+      const notifyOrphans = orphans.length > 0 && orphanKey !== lastOrphanKey;
+      lastOrphanKey = orphanKey;
+      if (notifyOrphans) {
         await inbox.createInboxItem(
           {
             group: 'decision',

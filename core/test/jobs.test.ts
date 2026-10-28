@@ -84,6 +84,9 @@ describe('定时任务', () => {
     mock.deployments.set('aroomo-orphan', { model_name: 'x', litellm_params: { model: 'openai/x', api_key: 'placeholder-x' }, model_info: { id: 'aroomo-orphan' } } as never);
     expect(await app.jobs.runOnce('key-reconcile')).toBe('orphans=1');
     expect(mock.deployments.has('aroomo-orphan')).toBe(true);
+    await app.jobs.runOnce('key-reconcile');
+    const orphanCards = (await req('GET', '/api/inbox?group=decision')).json().items.filter((c: { kind: string }) => c.kind === 'litellm-orphans');
+    expect(orphanCards).toHaveLength(1);
     expect(k.id).toBeTruthy();
   });
 
