@@ -1,0 +1,139 @@
+# Windows 独立版（不需要 Docker / WSL）离线安装包：构建 → 静默安装 → 冒烟测试 → 发布到 GitHub「草稿」预发布 standalone-test。
+# D76–D79，设计见 docs/architecture/STANDALONE.md。
+#
+# 许可证：安装包内含 LobeHub（LobeHub Community License 第 1b 条：分发衍生作品需商业授权）。
+# 仓库公开期间只发「草稿」发布（只有仓库所有者和协作者能看到和下载），不发公开发布、不上传 Actions 构件。
+# LobeHub 程序包在两个 job 之间用构件传递，下载后立即删除（保留期 1 天兜底）。
+#
+# 触发：p0/standalone* 分支和 dev 上相关文件有改动时，或 PR（只构建 + 测试，不发布）。
+name: 独立版测试包（standalone-test，草稿）
+
+on:
+  push:
+    branches: [dev, 'p0/standalone*']
+    paths:
+      - 'installer/standalone/**'
+      - 'installer/windows/Aroomo.psm1'
+      - 'core/**'
+      - 'shell/**'
+      - 'deploy/litellm/**'
+      - '.github/workflows/release-standalone-test.yml'
+  pull_request:
+    branches: [dev]
+    paths:
+      - 'installer/standalone/**'
+      - '.github/workflows/release-standalone-test.yml'
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: standalone-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lobe:
+    name: 取出官方 LobeHub 程序（换 Windows 版 sharp / ffmpeg）
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - run: installer/standalone/build/prepare-lobe.sh out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lobe-${{ github.run_id }}
+          path: out/
+          retention-days: 1
+          compression-level: 0
+
+  windows:
+    name: 构建离线安装包 + 静默安装 + 冒烟测试
+    needs: lobe
+    runs-on: windows-latest
+    timeout-minutes: 150
+    env:
+      TAG: standalone-test
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: lobe-${{ github.run_id }}
+          path: ${{ runner.temp }}/lobe
+      - name: 删除中转构件（不留含 LobeHub 的构件）
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: lobe-${{ github.run_id }}
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: 组装程序文件夹（全部组件固定版本 + 校验）
+        shell: pwsh
+        run: installer/standalone/build/build-windows.ps1 -Stage "$env:RUNNER_TEMP\stage" -LobeDir "$env:RUNNER_TEMP\lobe"
+      - name: 编译安装包（Inno Setup）
+        shell: pwsh
+        run: |
+          $iscc = Get-Command iscc.exe -ErrorAction SilentlyContinue
+          if (-not $iscc) {
+            $default = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+            if (-not (Test-Path $default)) { choco install innosetup -y --no-progress | Out-Host }
+            $iscc = $default
+          } else { $iscc = $iscc.Source }
+          $ver = "0.2.0-test.${{ github.run_number }}"
+          & $iscc /Q "/DAppVersion=$ver" "/DStageDir=$env:RUNNER_TEMP\stage\app" installer\standalone\aroomo-standalone.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $exe = Get-Item "installer\standalone\Output\AroomoStandalone-Setup-$ver.exe"
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Copy-Item $exe.FullName dist\AroomoStandalone-Setup.exe
+          $h = (Get-FileHash -Algorithm SHA256 dist\AroomoStandalone-Setup.exe).Hash.ToLowerInvariant()
+          "$h  AroomoStandalone-Setup.exe" | Set-Content -Encoding ascii dist\SHA256SUMS.txt
+          "version=$ver" >> $env:GITHUB_ENV
+          "installer_mb=$([int]($exe.Length / 1MB))" >> $env:GITHUB_ENV
+          Write-Output "安装包 $([int]($exe.Length / 1MB)) MB，sha256 $h"
+      - name: 静默安装（和用户双击一样装到 %LOCALAPPDATA%\Programs\AroomoStandalone）
+        shell: pwsh
+        env:
+          AROOMO_CI_NO_FIRSTRUN: '1'
+        run: |
+          $t = [Diagnostics.Stopwatch]::StartNew()
+          $p = Start-Process dist\AroomoStandalone-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$env:RUNNER_TEMP\setup.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\setup.log" -Tail 50; exit $p.ExitCode }
+          "install_s=$([int]$t.Elapsed.TotalSeconds)" >> $env:GITHUB_ENV
+          Write-Output "安装用时 $([int]$t.Elapsed.TotalSeconds) 秒"
+      - name: 冒烟测试（初始化 → 启动 → 检查 → 备份 → 停止 → 再启动计时）
+        shell: powershell
+        run: installer\standalone\build\smoke-test.ps1 -AppDir "$env:LOCALAPPDATA\Programs\AroomoStandalone"
+      - name: 卸载测试（数据文件夹必须保留）
+        shell: pwsh
+        run: |
+          $u = Get-ChildItem "$env:LOCALAPPDATA\Programs\AroomoStandalone" -Filter 'unins*.exe' | Select-Object -First 1
+          $p = Start-Process $u.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+          Start-Sleep -Seconds 5
+          if (-not (Test-Path "$env:RUNNER_TEMP\AroomoData\config\aroomo.env")) { throw '卸载把数据删了' }
+          Write-Output "卸载退出码 $($p.ExitCode)；数据文件夹保留"
+      - name: 发布到草稿预发布 standalone-test（不公开）
+        if: github.event_name == 'push'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $smoke = Get-Content "$env:RUNNER_TEMP\smoke-results.json" -Raw -ErrorAction SilentlyContinue
+          $notes = @"
+          Aroomo Windows **独立版** 测试包 $env:version（分支 ${{ github.ref_name }}，提交 ${{ github.sha }}）。**草稿，不公开**（内含 LobeHub，见 licenses\NOTICE.txt）。
+
+          - 一个离线安装包：双击即装，不需要 Docker / WSL / 管理员，安装和第一次启动都不联网下载。
+          - 装到 %LOCALAPPDATA%\Programs\AroomoStandalone；装完自动打开；登录 Windows 30 秒后自动在后台启动（托盘图标）。
+          - 端口和 Docker 版错开（界面 http://localhost:3280），两个版本可以同时装。
+          - 卸载默认保留数据。安装包没有数字签名：出现「Windows 已保护你的电脑」时选「更多信息」→「仍要运行」。
+          - 安装包大小：$env:installer_mb MB；CI 静默安装用时 $env:install_s 秒。
+
+          CI 冒烟测试结果：
+          ``````
+          $smoke
+          ``````
+          "@
+          Set-Content -Path notes.md -Value $notes -Encoding utf8
+          # 删掉旧的同名草稿（草稿不建标签，按 tag_name 找）
+          $ids = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.draft and .tag_name == \"$env:TAG\") | .id"
+          foreach ($id in $ids) { if ($id) { gh api -X DELETE "repos/$env:GITHUB_REPOSITORY/releases/$id" | Out-Null } }
+          gh release create $env:TAG --draft --prerelease --target $env:GITHUB_SHA --title "Aroomo 独立版测试包（standalone-test，草稿）$env:version" --notes-file notes.md dist/AroomoStandalone-Setup.exe dist/SHA256SUMS.txt
+          gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=20" --jq ".[] | select(.draft and .tag_name == \"$env:TAG\") | .html_url"

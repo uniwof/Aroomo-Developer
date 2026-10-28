@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Aroomo 正在准备</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html, body { height: 100%; margin: 0; }
+  body { display: flex; align-items: center; justify-content: center; background: #f6f7f9; color: #1f2329;
+         font: 20px/1.6 "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; }
+  @media (prefers-color-scheme: dark) { body { background: #17181a; color: #e8e9eb; } }
+  main { text-align: center; max-width: 36em; padding: 2em; }
+  h1 { font-size: 32px; margin: 0 0 .5em; }
+  .dot { display: inline-block; width: .6em; height: .6em; border-radius: 50%; background: currentColor; opacity: .3;
+         animation: b 1.2s infinite; margin: 0 .2em; }
+  .dot:nth-child(2) { animation-delay: .2s; } .dot:nth-child(3) { animation-delay: .4s; }
+  @keyframes b { 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .dot { animation: none; opacity: .7; } }
+</style>
+</head>
+<body>
+<main role="status" aria-live="polite">
+  <h1>Aroomo 正在准备</h1>
+  <p id="msg">后台正在启动，好了会自动打开。第一次启动要准备数据库，可能需要几分钟。</p>
+  <p aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span></p>
+</main>
+<script>
+  // D77-4：窗口立刻出现，后台就绪后自动跳转（不显示黑屏）
+  var to = new URLSearchParams(location.search).get('to') || 'http://localhost:3280';
+  if (!/^http:\/\/(localhost|127\.0\.0\.1):\d+\/?$/.test(to)) to = 'http://localhost:3280';
+  var started = Date.now();
+  function tick() {
+    fetch(to + '/', { mode: 'no-cors', cache: 'no-store' })
+      .then(function () { location.replace(to); })
+      .catch(function () {
+        if (Date.now() - started > 15 * 60 * 1000) {
+          document.getElementById('msg').textContent = '后台很久没有启动好。请在开始菜单里运行「Aroomo 修复」。';
+        }
+        setTimeout(tick, 1500);
+      });
+  }
+  tick();
+</script>
+</body>
+</html>
