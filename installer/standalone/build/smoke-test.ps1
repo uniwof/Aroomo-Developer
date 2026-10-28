@@ -16,10 +16,14 @@ $results = [ordered]@{}
 function Run([string]$Act) {
     # 子进程输出直接打印到控制台（不混进返回值）；最多等 25 分钟，卡住时打印日志再失败
     $p = Start-Process -FilePath $ps -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$launcher`"", '-Action', $Act, '-AppDir', "`"$AppDir`"", '-DataDir', "`"$DataDir`"") -NoNewWindow -PassThru
+    # 先取一次 Handle：否则 Windows PowerShell 的 Start-Process 结束后 ExitCode 是空的（会被当成 0）
+    $null = $p.Handle
     if (-not $p.WaitForExit(25 * 60 * 1000)) {
         & taskkill.exe /T /F /PID $p.Id | Out-Null
         throw "$Act 25 分钟没有结束"
     }
+    $p.WaitForExit()
+    if ($null -eq $p.ExitCode) { return 99 }
     return [int]$p.ExitCode
 }
 function Dump-Logs {

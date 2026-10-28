@@ -193,7 +193,9 @@ function Get-AroomoSARedisConf {
     # 与 Docker 版 redis 一致：60 秒内 1000 次修改存盘、开启 AOF；另加密码，只听 127.0.0.1
     [OutputType([string])]
     param([Parameter(Mandatory)][int]$Port, [Parameter(Mandatory)][string]$DataDir, [Parameter(Mandatory)][string]$Secret)
-    $dir = ConvertTo-AroomoSAForwardSlash $DataDir
+    # redis-windows 是 MSYS2 编译的：D:/… 这种 Windows 路径会被当成相对路径（2026-10-28 CI：
+    # "/app/redis/D:/a/…/redis.conf"）。所以 Redis 以 <数据文件夹>\config 为工作目录启动，配置和数据目录都用相对路径。
+    $dir = '../' + (Split-Path -Leaf $DataDir)
     return @"
 # Aroomo 独立版 Redis 配置（安装程序生成；含密码，只有当前用户能读）
 bind 127.0.0.1
@@ -271,7 +273,7 @@ function Get-AroomoSAServiceSpecs {
         },
         [pscustomobject]@{
             Name = 'redis'; Label = '缓存（Redis）'; Kind = 'process'; Port = [int]$c['REDIS_PORT']; TimeoutSec = 60
-            Exe = $Paths.Redis; Arguments = @((ConvertTo-AroomoSAForwardSlash $Paths.RedisConf)); Env = @{}; Health = 'tcp'; HealthUrl = $null
+            Exe = $Paths.Redis; Arguments = @((Split-Path -Leaf $Paths.RedisConf)); WorkingDir = (Split-Path -Parent $Paths.RedisConf); Env = @{}; Health = 'tcp'; HealthUrl = $null
         },
         [pscustomobject]@{
             Name = 'rustfs'; Label = '文件存储（RustFS）'; Kind = 'process'; Port = [int]$c['RUSTFS_PORT']; TimeoutSec = 120
@@ -478,6 +480,14 @@ function Get-AroomoSACmdLine {
     return '/d /s /c "' + ($parts -join ' ') + ' >> "' + $LogFile + '" 2>&1"'
 }
 
+function Clear-AroomoSAInheritedEnv {
+    # 不继承电脑上别的 PostgreSQL / Redis 留下的环境变量（PGUSER、PGPASSWORD、PGDATA…）：
+    # 用户电脑或 CI 上装了别的 PostgreSQL 时，这些变量会让我们的工具连错账号或目录（2026-10-28 CI：PGUSER=postgres、PGPASSWORD 导致认证失败日志）
+    param([Parameter(Mandatory)][System.Diagnostics.ProcessStartInfo]$Psi)
+    $drop = @($Psi.EnvironmentVariables.Keys | Where-Object { $_ -match '^(PG[A-Z]+|REDISCLI_AUTH|NODE_OPTIONS|PYTHONHOME|PYTHONPATH)$' })
+    foreach ($k in $drop) { $Psi.EnvironmentVariables.Remove($k) }
+}
+
 function Invoke-AroomoSAHidden {
     # 隐藏窗口运行一个程序并等它结束；可以传额外环境变量和标准输入。返回 @{ ExitCode; Output }（输出不会打印）
     [OutputType([hashtable])]
@@ -497,6 +507,7 @@ function Invoke-AroomoSAHidden {
         $psi0.Arguments = (@($Arguments | ForEach-Object { Format-AroomoSAArg $_ }) -join ' ')
         $psi0.UseShellExecute = $false
         $psi0.CreateNoWindow = $true
+        Clear-AroomoSAInheritedEnv -Psi $psi0
         foreach ($k in $Env.Keys) { $psi0.EnvironmentVariables[$k] = [string]$Env[$k] }
         $p0 = [System.Diagnostics.Process]::Start($psi0)
         if (-not $p0.WaitForExit($TimeoutSec * 1000)) {
@@ -513,6 +524,7 @@ function Invoke-AroomoSAHidden {
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     $psi.RedirectStandardInput = ($null -ne $StdIn)
+    Clear-AroomoSAInheritedEnv -Psi $psi
     foreach ($k in $Env.Keys) { $psi.EnvironmentVariables[$k] = [string]$Env[$k] }
     $p = [System.Diagnostics.Process]::Start($psi)
     $outTask = $p.StandardOutput.ReadToEndAsync()
@@ -540,7 +552,9 @@ function Start-AroomoSAProcess {
     $psi.Arguments = Get-AroomoSACmdLine -Exe $Spec.Exe -Arguments $Spec.Arguments -LogFile $log
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
-    $psi.WorkingDirectory = Split-Path -Parent $Spec.Exe
+    $wd = if ($Spec.PSObject.Properties['WorkingDir'] -and $Spec.WorkingDir) { $Spec.WorkingDir } else { Split-Path -Parent $Spec.Exe }
+    $psi.WorkingDirectory = $wd
+    Clear-AroomoSAInheritedEnv -Psi $psi
     foreach ($k in $Spec.Env.Keys) { $psi.EnvironmentVariables[$k] = [string]$Spec.Env[$k] }
     $p = [System.Diagnostics.Process]::Start($psi)
     [IO.File]::WriteAllText([IO.Path]::Combine($Paths.Run, "$($Spec.Name).pid"), [string]$p.Id)
