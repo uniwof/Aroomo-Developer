@@ -188,7 +188,7 @@ ok "数据已全部删除"
 step="用错的主密钥恢复：拒绝，且不动数据库"
 dc up -d --wait postgres
 set +e
-out=$(AROOMO_BACKUP_IDENTITY="$wrong_identity" dc --profile restore run --rm -T -e AROOMO_BACKUP_IDENTITY restore --yes-overwrite-database 2>&1)
+out=$(export AROOMO_BACKUP_IDENTITY="$wrong_identity"; dc --profile restore run --rm -T -e AROOMO_BACKUP_IDENTITY restore --yes-overwrite-database 2>&1)
 code=$?
 set -e
 if (( code == 0 )) || ! grep -q '主密钥不对' <<<"$out"; then die "错的主密钥应被拒绝：$out"; fi
