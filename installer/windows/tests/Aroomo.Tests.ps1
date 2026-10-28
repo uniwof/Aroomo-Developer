@@ -123,9 +123,12 @@ Describe 'ConvertTo-AroomoEnv（以 deploy/.env.example 为模板）' {
 
     It '不留任何 CHANGE_ME' { $script:Out | Should -Not -Match 'CHANGE_ME' }
     It '模板里的 CHANGE_ME 都换成了随机值' {
-        foreach ($k in 'POSTGRES_PASSWORD', 'LITELLM_DB_PASSWORD', 'CORE_DB_PASSWORD', 'RUSTFS_ACCESS_KEY', 'RUSTFS_SECRET_KEY', 'KEY_VAULTS_SECRET', 'AUTH_SECRET') {
+        foreach ($k in 'POSTGRES_PASSWORD', 'LITELLM_DB_PASSWORD', 'CORE_DB_PASSWORD', 'RUSTFS_ACCESS_KEY', 'RUSTFS_SECRET_KEY', 'AUTH_SECRET') {
             $script:Parsed[$k] | Should -Match '^[0-9a-f]{64}$' -Because $k
         }
+    }
+    It 'KEY_VAULTS_SECRET 是 base64、解码后正好 32 字节（LobeHub 要求，十六进制会被拒绝）' {
+        [Convert]::FromBase64String($script:Parsed['KEY_VAULTS_SECRET']).Length | Should -Be 32
     }
     It 'LiteLLM 的两个密钥以 sk- 开头且互不相同' {
         $script:Parsed['LITELLM_MASTER_KEY'] | Should -Match '^sk-[0-9a-f]{64}$'
