@@ -14,9 +14,13 @@ $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $results = [ordered]@{}
 
 function Run([string]$Act) {
-    # 子进程的输出直接打印，不能混进返回值（否则返回的是数组，比较结果不对）
-    & $ps -NoProfile -ExecutionPolicy Bypass -File $launcher -Action $Act -AppDir $AppDir -DataDir $DataDir | Out-Host
-    return [int]$LASTEXITCODE
+    # 子进程输出直接打印到控制台（不混进返回值）；最多等 25 分钟，卡住时打印日志再失败
+    $p = Start-Process -FilePath $ps -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$launcher`"", '-Action', $Act, '-AppDir', "`"$AppDir`"", '-DataDir', "`"$DataDir`"") -NoNewWindow -PassThru
+    if (-not $p.WaitForExit(25 * 60 * 1000)) {
+        & taskkill.exe /T /F /PID $p.Id | Out-Null
+        throw "$Act 25 分钟没有结束"
+    }
+    return [int]$p.ExitCode
 }
 function Dump-Logs {
     foreach ($f in Get-ChildItem (Join-Path $DataDir 'logs') -File -ErrorAction SilentlyContinue) {

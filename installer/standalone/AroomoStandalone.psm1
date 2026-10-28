@@ -486,8 +486,25 @@ function Invoke-AroomoSAHidden {
         [string[]]$Arguments = @(),
         [hashtable]$Env = @{},
         [string]$StdIn = $null,
-        [int]$TimeoutSec = 600
+        [int]$TimeoutSec = 600,
+        # 不接管输出：用于会留下常驻子进程的程序（pg_ctl start）。子进程继承了输出管道时，
+        # 读输出会一直等到子进程退出（2026-10-28 CI 上卡死的原因）
+        [switch]$NoCapture
     )
+    if ($NoCapture) {
+        $psi0 = New-Object System.Diagnostics.ProcessStartInfo
+        $psi0.FileName = $Exe
+        $psi0.Arguments = (@($Arguments | ForEach-Object { Format-AroomoSAArg $_ }) -join ' ')
+        $psi0.UseShellExecute = $false
+        $psi0.CreateNoWindow = $true
+        foreach ($k in $Env.Keys) { $psi0.EnvironmentVariables[$k] = [string]$Env[$k] }
+        $p0 = [System.Diagnostics.Process]::Start($psi0)
+        if (-not $p0.WaitForExit($TimeoutSec * 1000)) {
+            try { $p0.Kill() } catch { Write-Verbose '进程已结束' }
+            return @{ ExitCode = -1; Output = '超时' }
+        }
+        return @{ ExitCode = $p0.ExitCode; Output = '' }
+    }
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $Exe
     $psi.Arguments = (@($Arguments | ForEach-Object { Format-AroomoSAArg $_ }) -join ' ')
@@ -722,7 +739,7 @@ function Start-AroomoSAService {
     $procId = 0
     if ($Spec.Kind -eq 'pgctl') {
         New-Item -ItemType Directory -Path $paths.Logs -Force | Out-Null
-        $r = Invoke-AroomoSAHidden -Exe $Spec.Exe -Arguments @('start', '-D', $paths.PgData, '-l', ([IO.Path]::Combine($paths.Logs, 'postgres.log')), '-w', '-t', '120', '-s') -TimeoutSec 150
+        $r = Invoke-AroomoSAHidden -Exe $Spec.Exe -Arguments @('start', '-D', $paths.PgData, '-l', ([IO.Path]::Combine($paths.Logs, 'postgres.log')), '-w', '-t', '120', '-s') -TimeoutSec 150 -NoCapture
         if ($r.ExitCode -ne 0) {
             Write-AroomoSay "$($Spec.Label) 没能启动。详细原因在数据文件夹的 logs\postgres.log。"
             return $false
