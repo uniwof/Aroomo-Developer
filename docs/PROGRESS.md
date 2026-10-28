@@ -24,10 +24,10 @@ P0 范围与验收见 PRODUCT 16.1。分支规则：CI 通过后主程序员可�
 | a | 仓库骨架、Docker Compose、CI | 主程序员 + Jules | ✅ 已合并到 dev（#4） | Jules 任务 Issue #5–#11 |
 | a | 生成 ed25519 SSH 密钥，把公钥发给用户 | 主程序员 | ⏳/待确认 | 私钥不进仓库 |
 | a | 经安全表单一次性要齐 P0 凭据（Cloudflare 限定令牌、测试模型 Key、AWS 之外的备份存储密钥） | 主程序员 | ⏳ | D60 |
-| b | 服务器全模块部署 + 2 个浏览器任务 + 逐容器内存峰值 → 内存实测报告 → 定档位 + 长期主机建议 | 主程序员 | ⛔ 等服务器 IP | D40、D59 |
+| b | 服务器全模块部署 + 2 个浏览器任务 + 逐容器内存峰值 → 内存实测报告 → 定档位 + 长期主机建议 | 主程序员 | 🟡 已部署标准版并完成空闲 + 2 并发页面负载实测（PR #34，docs/ops/MEMORY-REPORT.md）；**真实对话负载待测试模型 Key** | D40、D59、D66 |
 | c | 三张时序图 | 主程序员 | 🟡 待审查 | docs/architecture/SEQUENCES.md |
-| d | Cloudflare Tunnel + Access；只开 22；仅密钥登录；fail2ban | 主程序员 | ⛔ 等服务器、Cloudflare 令牌 | D57 |
-| e | AWS 之外备份 + 恢复演练（记录耗时） | 主程序员 | 🟡 改为主密钥公钥加密（age，D64）并通过 CI 端到端（#28）；真实环境演练 ⛔ 等服务器、备份存储凭据和主密钥公钥 | D49、D64、D65；KEY-STORAGE 2.3；docs/ops/BACKUP.md |
+| d | Cloudflare Tunnel + Access；只开 22；仅密钥登录；fail2ban | 主程序员 | ✅ 2026-10-28：只开 22（安全组 + ufw）、仅密钥登录、禁 root、fail2ban、自动安全更新、4 GB swap；Tunnel `aroomo-app` → app.pcmanai.com → `http://lobe:3210`；Access 只允许用户本人邮箱（邮箱一次性验证码，会话 30 天，D67） | D57、D66、D67 |
+| e | AWS 之外备份 + 恢复演练（记录耗时） | 主程序员 | 🟡 改为主密钥公钥加密（age，D64）并通过 CI 端到端（#28）；真实环境演练 ⛔ 等 R2 桶 + 只限该桶的独立令牌（D72，现有 Cloudflare 令牌无 R2 权限，需用户在控制台创建）和主密钥公钥 | D49、D64、D65；KEY-STORAGE 2.3；docs/ops/BACKUP.md |
 | f | 本地完整版（Windows 一键安装包等） | 主程序员 | 🟡 安装器已合并（#23）；D64 主密钥窗口 + D65 电脑版备份已合并（#29）；测试版发布到预发布 `local-test`（#30）；**尚未在真实电脑上跑过** | D56 f；docs/ops/WINDOWS.md |
 | — | Key 加密存储方案 | 主程序员 | 🟡 待审查 | docs/architecture/KEY-STORAGE.md |
 
@@ -67,12 +67,18 @@ P0 范围与验收见 PRODUCT 16.1。分支规则：CI 通过后主程序员可�
 | P0 | 🟡 已开始 |
 | P1–P7 | ⏳（P1 加入 Key 迁移维护窗口和审查/辩论/并行对比） |
 
+## 服务器（2026-10-28）
+
+- AWS EC2 **t4g.medium（ARM64/Graviton）**，**us-east-2 俄亥俄**，2 vCPU / 3.7 GiB + 4 GB swap，Ubuntu 24.04，58 GB。原计划的法兰克福 m7i-flex.large 已由负责人 D66 改为此机（不再换更大的机器；完整版内存以后在用户电脑上实测）。
+- 代码在 `/opt/aroomo`（dev），`AROOMO_TIER=standard`，`COMPOSE_PROFILES=tunnel`（backup 等 R2）。服务器 `.env` 只在服务器上（chmod 600），含 `LITELLM_SALT_KEY` 等，**用户需离线另存一份**。
+- 访问：https://app.pcmanai.com（Cloudflare Access 团队 `aroomo.cloudflareaccess.com`）。
+
 ## 阻塞
 
 | 阻塞项 | 卡住什么 | 需要谁 |
 |--------|----------|--------|
-| 服务器 IP（AWS 法兰克福 m7i-flex.large） | P0 b、d、e | 用户（先收到 SSH 公钥） |
-| P0 凭据（Cloudflare 限定令牌、测试模型 Key、备份存储密钥） | P0 b、d、e | 用户（安全表单） |
+| R2 备份桶 + 只限该桶的令牌（D72） | P0 e | 用户（Cloudflare 控制台） |
+| 测试模型 Key | P0 b 真实对话负载、验收「能和模型对话」 | 用户（安全表单） |
 | 本地测试版在用户电脑上的第一次真实安装（Windows 版本、内存、剩余硬盘仍未知） | P0 f 验收 | 用户 |
 | 主密钥公钥（用户在电脑上生成后发来 `age1…`） | 服务器备份（D64/D65 共用主密钥） | 用户 |
 | D64 实现注 a/b、D65 实现注 a、「新增 Key 也算涉及凭据」 | 确认实现方向 | 负责人 |

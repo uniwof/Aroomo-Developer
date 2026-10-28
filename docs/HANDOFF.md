@@ -5,7 +5,7 @@
 > 最后更新：2026-10-28，主程序员（Hark）。
 
 ## 1. 一句话现状
-P0（MVP）进行中。dev 上已有：仓库骨架 / Compose / CI（#4）、v4.3 裁决文档（#3）、Core 的审计日志（#18）、成员（#20）、收件箱（#22）、Key 管理（#24）、点名解析（#25）、Windows 安装器（#23）；2026-10-28 负责人裁决 D62–D65 已入档（#26）并实现：操作员白名单 + 统一确认服务（#27）、备份改为主密钥公钥加密（#28）、安装器主密钥窗口 + 电脑版备份（#29）、测试版发布流程（#30，预发布 `local-test`）。Core 有 HTTP API 和 PostgreSQL 存储，但还没有前端接入、还没真正经 LiteLLM 调模型。尚无服务器、尚无线上部署；Windows 测试版尚未在真实电脑上跑过。
+P0（MVP）进行中。dev 上已有：仓库骨架 / Compose / CI（#4）、v4.3 裁决文档（#3）、Core 的审计日志（#18）、成员（#20）、收件箱（#22）、Key 管理（#24）、点名解析（#25）、Windows 安装器（#23）；2026-10-28 负责人裁决 D62–D65 已入档（#26）并实现：操作员白名单 + 统一确认服务（#27）、备份改为主密钥公钥加密（#28）、安装器主密钥窗口 + 电脑版备份（#29）、测试版发布流程（#30，预发布 `local-test`）。Core 有 HTTP API 和 PostgreSQL 存储，但还没有前端接入、还没真正经 LiteLLM 调模型。试用服务器已上线（AWS 俄亥俄 t4g.medium ARM64，标准版，https://app.pcmanai.com 经 Cloudflare Tunnel + Access，2026-10-28）；Windows 测试版尚未在真实电脑上跑过。
 
 ## 2. 必读
 1. docs/PRODUCT.md（优先级 v4.3 ＞ v4.2 ＞ v4.1 ＞ v4；P0 范围见 16.1；讨论模式见 9.4.1；改动清单见文末「附录：v4.3 修订记录」）
@@ -18,19 +18,19 @@ P0（MVP）进行中。dev 上已有：仓库骨架 / Compose / CI（#4）、v4.
 - 仓库：github.com/uniwof/Aroomo-Developer（D30）。
 - 分支：`main`（只在阶段验收后由用户合并）← `dev`（CI 通过后主程序员可合并，D53）← `docs/*`、`p{期号}/{模块}`、`fix/*`。CI 尚未建立，在此之前所有 PR 都不自行合并。
 - 旧仓库 uniwof/Aroomo（用户告知已改私有）与旧站 chat.pcmanai.com：冻结，不得触碰、不得重新部署（D30）。
-- 服务器（待建）：AWS 法兰克福 m7i-flex.large，Ubuntu 24.04，60 GB，固定 IP，用户名 ubuntu；只开 22，仅密钥登录，fail2ban；对外经 Cloudflare Tunnel + Access（D57、D58）。主程序员不持有 AWS 凭据。额度约 $80/月，用到一半前交迁移方案（D59）。
+- 服务器：AWS EC2 t4g.medium（ARM64），us-east-2 俄亥俄（原计划法兰克福 m7i-flex.large，负责人 D66 已接受改为此机），Ubuntu 24.04，58 GB，4 GB swap，用户名 ubuntu；只开 22，仅密钥登录、禁 root，fail2ban，自动安全更新；对外经 Cloudflare Tunnel `aroomo-app` + Access（团队 aroomo.cloudflareaccess.com，只允许用户本人邮箱，会话 30 天，D57、D58、D67）。部署目录 `/opt/aroomo`，`AROOMO_TIER=standard scripts/compose.sh up -d`；`.env` 只在服务器（600）。SSH 私钥只在主程序员工作区。主程序员不持有 AWS 凭据。额度约 $80/月，用到一半前交迁移方案（D59）。
 
 ## 4. 进行中 / 下一步
 1. Core 代码地图（`core/src/`）：`db/`（pg 连接池 + 迁移器，迁移在 `core/migrations/NNNN_*.sql`，合并后只增不改）、`auth/`（主人令牌 `CORE_OWNER_TOKEN`、操作员令牌只存 HMAC；`capabilities.ts` = D62 白名单 + 禁止清单；每个路由用 `guard(cap)` 声明能力，操作员调用未声明 / 不在白名单的接口一律 403 + 审计）、`audit/`（只追加；`req.audit(action, target, result, note?)`）、`members/`、`inbox/`（含 `POST /api/inbox` 发卡片）、`confirm/`（**统一确认服务，D63**：`ConfirmService.require(spec, confirmCtx(...), audit)`，普通直接放行，重要 → 428 challenge → `/api/confirm/:id/steps` 两步 + 3 秒 + 凭据操作 Access 重新验证 → 一次性令牌；新增需要确认的操作一律用它，不要另造确认方式）、`keys/`（LiteLLM 管理 API；完整 Key 只在 LiteLLM）、`router/`（D31 点名 / 交给负责人）。依赖装配在 `deps.ts`，路由注册在 `server.ts`。
 2. 测试约定：每个存储都有内存 + PostgreSQL 实现，跑同一套契约测试（`test/helpers/db.ts`：PGlite 总是跑，设置 `CORE_TEST_DATABASE_URL` 时再跑真 PG；CI 已配 postgres:17 服务容器）。测试里的假密钥在运行时拼接（避免 gitleaks 误报），前缀 `placeholder-`。
 3. 下一步（Core）：对话链路——LobeHub 发一句话 → Core 路由（`route()` / `executeMentionPlan()`）→ LiteLLM，见 SEQUENCES.md「发一句话」；前端接入成员 / Key / 收件箱 API；定时任务（回收站 30 天清理、确认令牌清理、LiteLLM 部署对账）；操作员令牌签发 / 吊销与落库（负责人体系）。
 4. 生成 ed25519 SSH 密钥并把公钥发给用户（若尚未完成）；经安全表单一次性要齐 P0 凭据（D60）。
-5. 拿到服务器后：全模块部署 → 内存实测报告 → 定档位（D40）；Cloudflare Tunnel + Access（同时配 `CF_ACCESS_TEAM_DOMAIN`/`CF_ACCESS_AUD`，否则凭据操作 503）；填用户发来的主密钥公钥 `BACKUP_AGE_RECIPIENT` + 备份存储凭据 → AWS 之外备份 + 真实恢复演练（需要用户临时输入主密钥）；对真实 LiteLLM v1.106.4 联调 Key 管理（见 #24「未验证事项」）。
+5. 服务器已完成：全模块部署、标准版内存实测（PR #34）、Tunnel + Access（`CF_ACCESS_TEAM_DOMAIN`/`CF_ACCESS_AUD` 已写入服务器 .env）。还要做：拿到测试模型 Key 后补测真实对话内存；R2 桶 + 只限该桶的独立令牌（D72，用户在控制台建）到位后启用 backup profile；填用户发来的主密钥公钥 `BACKUP_AGE_RECIPIENT` + 备份存储凭据 → AWS 之外备份 + 真实恢复演练（需要用户临时输入主密钥）；对真实 LiteLLM v1.106.4 联调 Key 管理（见 #24「未验证事项」）。
 6. Windows 本地版：测试版在预发布 `local-test`（`.github/workflows/release-local-test.yml`，dev 上 installer/ 改动自动重发）。等用户在真实电脑上装一次，按反馈修。
 7. 沟通：每天日报 ≤5 行，末行「需要你做」（D61）。用户 48 小时未回复：不卡脖子的继续，卡脖子的暂停并记录（D54）。
 
 ## 5. 阻塞 / 未决问题
-- 服务器 IP 未到；P0 凭据未交付；主密钥公钥未到（用户装测试版时生成）；用户电脑配置（Windows 版本、内存、剩余硬盘）未填。
+- R2 备份令牌、测试模型 Key 未交付；服务器 .env 里的 LITELLM_SALT_KEY 等需用户离线备份；主密钥公钥未到（用户装测试版时生成）；用户电脑配置（Windows 版本、内存、剩余硬盘）未填。
 - PR #1、#2 仍为 open、未合并到 main（2026-10-27 经 GitHub API 核实；用户消息中说已合并，两者不一致，需用户确认）。
 - Muse 1–15 清单与负责人裁决表未提供：D36–D39、D46、D50 的细节标为待补充。
 - 值班哨兵排期未定（不在 P0 MVP）。
