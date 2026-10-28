@@ -8,6 +8,8 @@ import { LiteLLMAdmin, LiteLLMRejectedError, LiteLLMUnavailableError } from '../
 import { MemoryKeyStore, PgKeyStore } from '../src/keys/stores.js';
 import type { KeyRecord, KeyStore } from '../src/keys/types.js';
 import { buildServer } from '../src/server.js';
+import { KeysService } from '../src/keys/service.js';
+import { ConfirmService, MemoryChallengeStore } from '../src/confirm/confirm.js';
 import { dbTargets, fakeClock, OWNER_TOKEN, ownerAuth, TOKEN_SECRET } from './helpers/db.js';
 import { MOCK_MASTER_KEY, type MockLiteLLM, startMockLiteLLM } from './helpers/mock-litellm.js';
 
@@ -166,10 +168,30 @@ describe('Key 管理（/api/keys，mock LiteLLM）', () => {
     expect((await call('DELETE', `/api/keys/${id2}`)).statusCode).toBe(404);
   });
 
-  it('凭据操作的第二次点击必须带「刚刚」的 Cloudflare Access 令牌（D63）', async () => {
+  it('D73：主人手动新增 / 换 Key 是普通保存（不弹重要确认，记 confirm.normal）', async () => {
     const first = await raw('POST', '/api/keys', { name: 'n', sourceUrl: 'https://x.example/k', apiKey: KEY_A, model: 'openai/gpt-4o-mini' });
-    expect(first.statusCode).toBe(428);
+    expect(first.statusCode).toBe(201);
+    const id = first.json().key.id;
+    expect((await raw('PATCH', `/api/keys/${id}`, { apiKey: KEY_B })).statusCode).toBe(200);
+    const actions = (await deps.auditLog.query({ limit: 50 })).entries.map((e) => e.action);
+    expect(actions.filter((a) => a === 'confirm.normal').length).toBe(2);
+    expect(actions).not.toContain('confirm.requested');
+  });
+
+  it('D73：智能体 / 操作员发起的新增是重要确认，操作员完成不了（403，D62），Key 不写入', async () => {
+    const litellm = new LiteLLMAdmin({ baseUrl: mock.url, masterKey: MOCK_MASTER_KEY });
+    const svc = new KeysService(new MemoryKeyStore(), litellm, clock.now, new ConfirmService(new MemoryChallengeStore(), { now: clock.now, reauth: 'off' }));
+    const audit = async () => undefined;
+    await expect(
+      svc.create({ name: 'n', sourceUrl: 'https://x.example/k', apiKey: KEY_A, model: 'openai/gpt-4o-mini' }, { actor: 'operator:op', canConfirmImportant: false }, audit),
+    ).rejects.toMatchObject({ statusCode: 403 });
     expect(mock.deployments.size).toBe(0);
+  });
+
+  it('删除的第二次点击必须带「刚刚」的 Cloudflare Access 令牌（D63）；令牌绑定请求', async () => {
+    const id = (await create()).json().key.id;
+    const first = await raw('DELETE', `/api/keys/${id}`);
+    expect(first.statusCode).toBe(428);
     const ch = first.json().error.confirm;
     await raw('POST', ch.stepUrl, { step: 1 });
     clock.advance(3000);
@@ -178,26 +200,28 @@ describe('Key 管理（/api/keys，mock LiteLLM）', () => {
     expect((await raw('POST', ch.stepUrl, { step: 2 }, { ...ownerAuth, 'cf-access-jwt-assertion': 'forged' })).statusCode).toBe(401);
     const ok = await raw('POST', ch.stepUrl, { step: 2 }, { ...ownerAuth, 'cf-access-jwt-assertion': 'fresh' });
     const token = ok.json().confirmToken;
-    // 令牌绑定请求体：换成另一个 Key 提交 → 409
-    const swapped = await raw('POST', '/api/keys', { name: 'n', sourceUrl: 'https://x.example/k', apiKey: KEY_B, model: 'openai/gpt-4o-mini', confirmToken: token });
-    expect(swapped.statusCode).toBe(409);
-    expect(mock.deployments.size).toBe(0);
+    // 令牌绑定操作范围：拿去删另一个 Key → 409
+    const id2 = (await create({ apiKey: KEY_B })).json().key.id;
+    expect((await raw('DELETE', `/api/keys/${id2}`, { confirmToken: token })).statusCode).toBe(409);
+    expect(mock.deployments.size).toBe(2);
   });
 
-  it('只改名称 / 获取网址不需要确认；没有配置 Cloudflare Access 时凭据操作 503（不悄悄放行）', async () => {
+  it('只改名称 / 获取网址不需要确认；没有配置 Cloudflare Access 时删除 Key 503（不悄悄放行）', async () => {
     const id = (await create()).json().key.id;
     expect((await raw('PATCH', `/api/keys/${id}`, { name: 'x', sourceUrl: 'https://y.example/' })).statusCode).toBe(200);
     deps = memoryDeps(clock.now);
     deps.litellm = new LiteLLMAdmin({ baseUrl: mock.url, masterKey: MOCK_MASTER_KEY });
     app = buildServer(loadConfig({ CORE_LOG_LEVEL: 'silent', CORE_OWNER_TOKEN: OWNER_TOKEN }), deps);
     apps.push(app);
-    const r = await raw('POST', '/api/keys', { name: 'n', sourceUrl: 'https://x.example/k', apiKey: KEY_A, model: 'openai/gpt-4o-mini' });
+    const created = await raw('POST', '/api/keys', { name: 'n', sourceUrl: 'https://x.example/k', apiKey: KEY_A, model: 'openai/gpt-4o-mini' });
+    expect(created.statusCode).toBe(201);
+    const r = await raw('DELETE', `/api/keys/${created.json().key.id}`);
     expect(r.statusCode).toBe(503);
     expect(r.json().error.code).toBe('ACCESS_REAUTH_NOT_CONFIGURED');
-    // 本地版：CORE_ACCESS_REAUTH=off → 仍要两次点击和 3 秒，但不要求 Access
+    // 本地版：CORE_ACCESS_REAUTH=off → 删除仍要两次点击和 3 秒，但不要求 Access
     const app2 = buildServer(loadConfig({ CORE_LOG_LEVEL: 'silent', CORE_OWNER_TOKEN: OWNER_TOKEN, CORE_ACCESS_REAUTH: 'off' }), deps);
     apps.push(app2);
-    const r2 = await app2.inject({ method: 'POST', url: '/api/keys', headers: ownerAuth, payload: { name: 'n', sourceUrl: 'https://x.example/k', apiKey: KEY_A, model: 'openai/gpt-4o-mini' } });
+    const r2 = await app2.inject({ method: 'DELETE', url: `/api/keys/${created.json().key.id}`, headers: ownerAuth });
     expect(r2.statusCode).toBe(428);
     expect(r2.json().error.confirm.requiresAccessReauth).toBe(false);
   });

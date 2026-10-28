@@ -27,6 +27,8 @@ export const CAPABILITIES = [
   'inbox:act',
   'keys:read',
   'keys:write',
+  /** 修改普通设置（P0：负责人） */
+  'settings:write',
 
   // —— D62 禁止项（操作员永远不能拥有）——
   /** 读取 Key 明文（Core 本身没有这样的接口；能力名占位，保证将来也不能授予操作员） */
