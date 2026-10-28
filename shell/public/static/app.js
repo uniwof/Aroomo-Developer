@@ -375,7 +375,7 @@
         '<form class="addbar" id="add-key" autocomplete="off">' +
         '<input name="sourceUrl" type="url" required placeholder="获取网址（在哪里申请的）" aria-label="获取网址">' +
         '<input name="name" required maxlength="64" placeholder="名称，例如 OpenAI 主号" aria-label="名称">' +
-        '<input name="model" required placeholder="模型，例如 openai/gpt-4o-mini" aria-label="模型" pattern="[A-Za-z0-9._:/@+\\-]+">' +
+        '<input name="model" required placeholder="服务商/模型，例如 groq/openai/gpt-oss-20b" aria-label="模型" pattern="[A-Za-z0-9._:/@+\\-]+">' +
         '<input name="apiKey" type="password" required minlength="12" placeholder="Key" aria-label="Key" autocomplete="new-password">' +
         '<button class="btn primary">保存</button>' +
         '<details style="flex-basis:100%"><summary class="muted">高级</summary><div class="addbar" style="margin:8px 0 0;padding:0">' +
