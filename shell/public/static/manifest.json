@@ -1,0 +1,32 @@
+{
+  "name": "Aroomo",
+  "short_name": "Aroomo",
+  "description": "Aroomo：你的 AI 公司",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#5B5BD6",
+  "icons": [
+    {
+      "src": "/aroomo/static/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/aroomo/static/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/aroomo/static/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "id": "/"
+}

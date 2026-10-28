@@ -3,8 +3,12 @@
  * - 新增：先写 LiteLLM（POST /model/new），成功后再存本地元数据；本地失败则回滚删除 LiteLLM 部署。
  * - 换 Key（整条替换）：先新增新部署，成功后切换本地记录，再删除旧部署——新 Key 写入失败时旧 Key 不受影响。
  * - 只改名称 / 获取网址：只改本地元数据，不碰 LiteLLM。
- * - 确认（D63）：新增 Key、换 Key（含改接口地址 / 模型）、删除都「涉及凭据」→ 重要确认（两次点击、3 秒、重新验证 Cloudflare Access）；
- *   新增 / 换 Key 的令牌绑定请求体的加盐摘要，确认 A 不能拿去提交 B。只改名称 / 获取网址不需要确认。
+ * - 确认（D73，修订 D63 的实现）：
+ *   - 主人本人在界面上手动新增 / 换 Key（含改接口地址 / 模型）= 普通保存，不额外确认（只记 confirm.normal 审计）；
+ *   - 智能体 / 操作员发起的新增 / 换 Key、任何人删除 Key = 重要确认（两次点击、3 秒、重新验证 Cloudflare Access），
+ *     操作员不能完成重要确认（D62）→ 403；令牌绑定请求体的加盐摘要，确认 A 不能拿去提交 B；
+ *   - 查看明文 / 导出：Core 没有这类接口（完整 Key 只在 LiteLLM，永不返回），将来要加必须走重要确认。
+ *   只改名称 / 获取网址不需要确认。
  * - 删除：先删 LiteLLM 部署（已不存在视为成功），再删本地。
  * - 保存后同步一次模型列表（/v1/models）：失败只把状态记为 sync_failed，不报错。
  * - 完整 Key 只在本函数调用栈里短暂存在，不写本地库、不进响应、不进日志、不进审计、不进错误信息。
@@ -59,16 +63,33 @@ function validateKey(apiKey: string): string {
   return k;
 }
 
+export interface KeysHooks {
+  /** 新增 Key 成功之后（例如：自动把这个模型加成成员，PRODUCT 16.1「填入一个 Key 后能和模型对话」）。失败不影响新增。 */
+  afterCreate?: (rec: KeyRecord, audit: AuditFn) => Promise<void>;
+  /** 删除 Key 成功之后（例如：这个模型已经没有 Key 了 → 停用对应成员，避免负责人指向一个调不通的模型）。失败不影响删除。 */
+  afterDelete?: (rec: KeyRecord, audit: AuditFn) => Promise<void>;
+}
+
 export class KeysService {
   constructor(
     private readonly store: KeyStore,
     private readonly litellm: LiteLLMAdmin,
     private readonly now: () => Date,
     private readonly confirm: ConfirmService = new ConfirmService(new MemoryChallengeStore(), { now }),
+    private readonly hooks: KeysHooks = {},
   ) {}
 
   async #confirmCredential(scope: string, title: string, consequences: string[], payload: unknown, ctx: ConfirmCtx, audit: AuditFn): Promise<void> {
     await this.confirm.require({ scope, kind: 'credential', title, consequences, confirmLabel: '确认', payload }, ctx, audit);
+  }
+
+  /** D73：主人手动新增 / 编辑 = 普通保存；其他发起方 = 涉及凭据的重要确认 */
+  async #confirmSave(scope: string, title: string, consequences: string[], payload: unknown, ctx: ConfirmCtx, audit: AuditFn): Promise<void> {
+    if (ctx.actor === 'owner') {
+      await this.confirm.require({ scope, kind: 'normal', title }, ctx, audit);
+      return;
+    }
+    await this.#confirmCredential(scope, title, consequences, payload, ctx, audit);
   }
 
   list(): Promise<KeyRecord[]> {
@@ -79,7 +100,7 @@ export class KeysService {
     const name = input.name.trim();
     if (!name) throw badRequest('名称不能为空', 'INVALID_NAME');
     const apiKey = validateKey(input.apiKey);
-    await this.#confirmCredential(
+    await this.#confirmSave(
       'keys:create',
       `新增 Key「${name}」（末 4 位 ${last4(apiKey)}）`,
       ['这个 Key 会保存到模型网关，成员调用模型时会用它产生费用。', `调用会发往：${input.apiBase ?? '服务商默认地址'}`],
@@ -127,7 +148,13 @@ export class KeysService {
       throw err;
     }
     await audit('keys.create', { type: 'key', id }, 'ok', `last4=${rec.last4}`);
-    return this.#syncAfterSave(rec);
+    const synced = await this.#syncAfterSave(rec);
+    if (this.hooks.afterCreate) {
+      await this.hooks.afterCreate(synced, audit).catch(async (err: unknown) => {
+        await audit('keys.create.hook', { type: 'key', id }, 'failed', (err as Error).name);
+      });
+    }
+    return synced;
   }
 
   async update(id: string, patch: UpdateKeyInput, ctx: ConfirmCtx, audit: AuditFn): Promise<KeyRecord> {
@@ -153,7 +180,7 @@ export class KeysService {
     const apiKey = validateKey(patch.apiKey);
     const model = patch.model ?? cur.model;
     const apiBase = patch.apiBase === undefined ? cur.apiBase : patch.apiBase;
-    await this.#confirmCredential(
+    await this.#confirmSave(
       `keys:replace:${id}`,
       `替换 Key「${next.name}」（末 4 位 ${cur.last4} → ${last4(apiKey)}）`,
       ['旧 Key 会从模型网关里删除，之后的调用改用新 Key。', `调用会发往：${apiBase ?? '服务商默认地址'}`],
@@ -206,6 +233,11 @@ export class KeysService {
     }
     await this.store.delete(id);
     await audit('keys.delete', { type: 'key', id }, 'ok', `last4=${cur.last4}`);
+    if (this.hooks.afterDelete) {
+      await this.hooks.afterDelete(cur, audit).catch(async (err: unknown) => {
+        await audit('keys.delete.hook', { type: 'key', id }, 'failed', (err as Error).name);
+      });
+    }
   }
 
   async #syncAfterSave(rec: KeyRecord): Promise<KeyRecord> {

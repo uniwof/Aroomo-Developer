@@ -41,6 +41,8 @@ Name: "zh"; MessagesFile: "installer\windows\languages\ChineseSimplified.isl"
 Source: "deploy\*"; DestDir: "{app}\deploy"; Excludes: ".env,.restore,data,local-backups,test,drill-reports,*.log"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "scripts\*"; DestDir: "{app}\scripts"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "core\*"; DestDir: "{app}\core"; Excludes: "node_modules,dist,coverage,*.log,.env*"; Flags: recursesubdirs createallsubdirs ignoreversion
+; Aroomo Shell（界面薄层；在本机构建，不含 LobeHub 代码，D71）
+Source: "shell\*"; DestDir: "{app}\shell"; Excludes: "node_modules,dist,coverage,*.log,.env*"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "installer\windows\*.ps1"; DestDir: "{app}\installer\windows"; Flags: ignoreversion
 Source: "installer\windows\*.psm1"; DestDir: "{app}\installer\windows"; Flags: ignoreversion
 ; 主密钥离线生成（D64）：官方 age-keygen，构建前由 installer\windows\Get-AgeKeygen.ps1 下载并核对 SHA-256

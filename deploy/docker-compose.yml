@@ -142,6 +142,8 @@ services:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
       CORE_DATABASE_URL: postgresql://aroomo_core:${CORE_DB_PASSWORD}@postgres:5432/aroomo_core
       CORE_OWNER_TOKEN: ${CORE_OWNER_TOKEN:-}
+      # 对话入口 /v1 的令牌（LobeHub 用它调 Core；提议 H5）
+      CORE_CHAT_TOKEN: ${CORE_CHAT_TOKEN:-}
       CORE_TOKEN_SECRET: ${CORE_TOKEN_SECRET:-}
       # 统一确认（D63）：涉及凭据的重要确认要重新验证 Cloudflare Access。本地版设 CORE_ACCESS_REAUTH=off
       CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
@@ -195,9 +197,15 @@ services:
       REDIS_URL: redis://redis:6379
       REDIS_PREFIX: lobechat
       REDIS_TLS: '0'
-      # 所有模型调用经 LiteLLM（PRODUCT §5.2）；Key 由 Core 写入 LiteLLM，不存在 LobeHub
-      OPENAI_PROXY_URL: http://litellm:4000/v1
-      OPENAI_API_KEY: ${LOBE_LITELLM_VIRTUAL_KEY:-}
+      # 对话：LobeHub 的 OpenAI 兼容服务商 → Core /v1（D31 点名 / 交给负责人）→ LiteLLM → 供应商（提议 H5）。
+      # Key 只在 LiteLLM（Core 写入），LobeHub 里没有任何供应商 Key。
+      # 撤回 H5：LOBE_OPENAI_PROXY_URL=http://litellm:4000/v1 且 LOBE_OPENAI_API_KEY=<LiteLLM 虚拟 Key>
+      OPENAI_PROXY_URL: ${LOBE_OPENAI_PROXY_URL:-http://core:8080/v1}
+      OPENAI_API_KEY: ${LOBE_OPENAI_API_KEY:-${CORE_CHAT_TOKEN:-}}
+      # 只露出一个模型「Aroomo」：谁来回答由 Core 按 @ 决定；默认助理和系统任务（起标题等）都用它
+      OPENAI_MODEL_LIST: '-all,+aroomo=Aroomo<128000:vision:fc>'
+      DEFAULT_AGENT_CONFIG: 'provider=openai;model=aroomo'
+      SYSTEM_AGENT: 'default=openai/aroomo-system'
       # Agent Gateway 默认关闭（P0 只需对话）；需要时启用 profile agent-gateway 并设为 1
       ENABLE_AGENT_GATEWAY: ${LOBE_ENABLE_AGENT_GATEWAY:-0}
       AGENT_GATEWAY_INTERNAL_URL: http://gateway:8787
@@ -205,6 +213,9 @@ services:
       # `:-` 同时覆盖「未设置」和「设为空」两种情况（Windows 安装器按模板写出的 .env 里是空值）
       AGENT_GATEWAY_URL: ${AGENT_GATEWAY_URL:-http://gateway:8787}
       AGENT_GATEWAY_SERVICE_TOKEN: ${GATEWAY_SERVICE_TOKEN:-}
+      # LobeHub 官方功能开关（运行时生效，不改镜像）：隐藏 PRODUCT §8 没有的功能（D68 隐藏不删除；清单见 DECISIONS 提议 H2）
+      # 市场 / 更新日志 / 检查更新 / 欢迎页推荐 / 画图 / 知识库 / 服务商设置与 Key 输入（Key 只在 Aroomo「Key 与接入」里填，写入 LiteLLM）
+      FEATURE_FLAGS: '-market,-changelog,-check_updates,-welcome_suggest,-ai_image,-knowledge_base,-rag_eval,-provider_settings,-openai_api_key,-openai_proxy_url,-api_key_manage,-agent_share,-dashboard,-cloud_promotion'
       TZ: ${TZ:-Asia/Shanghai}
     healthcheck:
       test: ['CMD', '/bin/node', '-e', "fetch('http://127.0.0.1:3210/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
@@ -212,6 +223,37 @@ services:
       timeout: 10s
       retries: 10
       start_period: 120s
+    networks: [aroomo]
+
+  # ---------------------------------------------------------------------------
+  # Aroomo Shell：浏览器唯一入口（D69 薄定制层；提议 H1）。套在官方 LobeHub 外面：
+  # 品牌换成 Aroomo、按 PRODUCT §8 隐藏多余入口（D68）、朗读禁用、Aroomo 页面（成员 / Key / 收件箱 / 设置），
+  # /aroomo/api/* 同源转发到 Core 并由这里附加主人令牌（浏览器拿不到令牌）。不含、不修改任何 LobeHub 文件。
+  # Tunnel / 本机端口都指向这里（shell:3000），不再直接指向 lobe。
+  # ---------------------------------------------------------------------------
+  shell:
+    <<: *restart
+    build:
+      context: ../shell
+    image: aroomo-shell:${AROOMO_SHELL_TAG:-dev}
+    depends_on:
+      lobe:
+        condition: service_started
+      core:
+        condition: service_started
+    environment:
+      SHELL_PORT: '3000'
+      LOBE_UPSTREAM: http://lobe:3210
+      CORE_UPSTREAM: http://core:8080
+      CORE_OWNER_TOKEN: ${CORE_OWNER_TOKEN:-}
+      SHELL_AUTH: lobe-session
+      SHELL_DEFAULT_LOCALE: zh-CN
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3000/aroomo/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     networks: [aroomo]
 
   # 可选：LobeHub Agent Gateway（上游 2.2.20 compose 固定为 0.3.2）
@@ -227,7 +269,7 @@ services:
 
   # ---------------------------------------------------------------------------
   # Cloudflare Tunnel（服务器用；除 22 端口外不开放任何入站端口，DECISIONS v4.3 d）
-  # 路由在 Cloudflare 控制台配置：应用域名 → http://lobe:3210，对象存储域名 → http://rustfs:9000。
+  # 路由在 Cloudflare 控制台配置：应用域名 → http://shell:3000（Aroomo Shell），对象存储域名 → http://rustfs:9000。
   # 镜像是 distroless，没有 shell，因此不写 healthcheck（用 --metrics 的 /ready 由外部探测）。
   # ---------------------------------------------------------------------------
   cloudflared:

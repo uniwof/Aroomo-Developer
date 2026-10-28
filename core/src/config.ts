@@ -24,6 +24,8 @@ export interface CoreConfig {
   autoMigrate: boolean;
   /** 主人（P0 单用户）访问令牌；未设置时 /api/* 一律 503 */
   ownerToken: string | undefined;
+  /** 对话入口 /v1/*（LobeHub 的 OpenAI 兼容服务商指向这里）用的令牌；未设置时 /v1 一律 503 */
+  chatToken: string | undefined;
   /** 操作员令牌 HMAC 用的服务端密钥；未设置时操作员令牌不可用 */
   tokenSecret: string | undefined;
   /** Cloudflare Access 团队域名（例如 myteam.cloudflareaccess.com），用于凭据操作的重新验证（D63） */
@@ -100,6 +102,8 @@ export function loadConfig(env: Env = process.env): CoreConfig {
 
   const ownerToken = str(env, 'CORE_OWNER_TOKEN');
   if (ownerToken !== undefined && ownerToken.length < 32) throw new ConfigError('CORE_OWNER_TOKEN 至少 32 个字符');
+  const chatToken = str(env, 'CORE_CHAT_TOKEN');
+  if (chatToken !== undefined && chatToken.length < 32) throw new ConfigError('CORE_CHAT_TOKEN 至少 32 个字符');
   const tokenSecret = str(env, 'CORE_TOKEN_SECRET');
   if (tokenSecret !== undefined && tokenSecret.length < 32) throw new ConfigError('CORE_TOKEN_SECRET 至少 32 个字符');
   const autoMigrateRaw = (str(env, 'CORE_AUTO_MIGRATE') ?? 'true').toLowerCase();
@@ -130,6 +134,7 @@ export function loadConfig(env: Env = process.env): CoreConfig {
     databaseUrl,
     autoMigrate: autoMigrateRaw === 'true' || autoMigrateRaw === '1',
     ownerToken,
+    chatToken,
     tokenSecret,
     cfAccessTeamDomain,
     cfAccessAud,
@@ -150,6 +155,7 @@ export function toSafeJSON(cfg: CoreConfig): Record<string, unknown> {
     databaseUrl: cfg.databaseUrl ? '(set)' : '(unset)',
     autoMigrate: cfg.autoMigrate,
     ownerToken: cfg.ownerToken ? '(set)' : '(unset)',
+    chatToken: cfg.chatToken ? '(set)' : '(unset)',
     tokenSecret: cfg.tokenSecret ? '(set)' : '(unset)',
     cfAccessTeamDomain: cfg.cfAccessTeamDomain ?? '(unset)',
     cfAccessAud: cfg.cfAccessAud ? '(set)' : '(unset)',

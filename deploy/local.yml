@@ -1,9 +1,10 @@
 # 本机 / Windows（WSL2 + Docker Desktop）访问：只绑定 127.0.0.1，不暴露给局域网。
 # 服务器不要叠加本文件（服务器经 cloudflared 访问，除 22 外不开端口）。
 services:
-  lobe:
+  # 浏览器入口是 Aroomo Shell（它再转发给 LobeHub）；变量名沿用 LOBE_PORT，安装器不用改
+  shell:
     ports:
-      - '127.0.0.1:${LOBE_PORT:-3210}:3210'
+      - '127.0.0.1:${LOBE_PORT:-3210}:3000'
   # 浏览器直接访问对象存储（会话里上传图片需要），与 .env 的 S3_ENDPOINT 对应
   rustfs:
     ports:

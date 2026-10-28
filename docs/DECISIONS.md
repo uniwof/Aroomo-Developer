@@ -365,3 +365,67 @@
 ### D75 今天的范围
 - **原文：** 今天：服务器上线 + 本地 Docker 版的界面和 P0 功能。独立测试包取消。P1 等 P0 验收之后。
 - **状态：** 有效。
+
+### D76 必须做 Windows 独立版（项目所有者推翻 D70 与 D75 中「独立测试包取消」）
+- **原文（2026-10-28，项目所有者）：** 必须构建并发布 Windows 独立版。实现（由另一个智能体负责，见 docs/architecture/STANDALONE.md）保留负责人的顾虑：内置 LiteLLM（Core 里不重新实现模型路由），安装时下载官方 LobeHub（不再分发 LobeHub，D71 不变）。主程序员的品牌 / 精简层要能作为独立版的一个「套用步骤」复用（脚本或补丁集），让独立版安装程序也能套用。
+- **修订对象：** D70（独立版部分）、D75（「独立测试包取消」）。
+- **实现对应：** 品牌 / 精简层做成一个**不依赖 Docker、零运行时依赖的 Node 程序**（`shell/`，见提议 H1）：独立版只要 `node shell/dist/index.js` 并用环境变量指向本机的 LobeHub 和 Core，即可得到与 Docker 版完全相同的界面层；不修改、不打包 LobeHub 的任何文件。
+- **状态：** 有效。
+- **负责人确认：** 2026-10-28 负责人接受 D76。
+
+### D77 独立版：体积、启动、升级
+- **原文（摘要）：** 先评估官方 LobeHub Desktop；只用一套 PostgreSQL / Node；Python 用 python-build-standalone；安装包 < 300 MB；登录 Windows 30 秒后静默启动；分层 A/B 更新；签名的更新清单放在 R2 / app.pcmanai.com，不放 GitHub。细节见 docs/architecture/STANDALONE.md（独立版智能体负责）。
+- **D77-2：** 服务器上线后，用户把 app.pcmanai.com 安装成 Edge 应用（PWA）——Aroomo 品牌层要带完整的 PWA 清单（名称、图标）。
+- **实现对应（D77-2）：** Aroomo Shell 提供 `/aroomo/static/manifest.json`（name / short_name「Aroomo」、zh-CN、standalone、192 / 512 图标与 maskable 图标），并把 LobeHub 页面里的 manifest、favicon、apple-touch-icon 链接换成它。
+- **状态：** 有效。
+
+### D78 独立版：操作最少
+- **原文（摘要）：** 装在 %LOCALAPPDATA%，不要管理员权限、不给选项；主密钥只显示一次并用 DPAPI 保存；托盘三种颜色；自动修复；不用语音；验收后一键卸载 Docker / WSL。细节见 docs/architecture/STANDALONE.md。
+- **状态：** 有效。
+
+### D79 不做双向同步
+- **原文（摘要）：** 不做双向同步；服务器为主，本地为备用，经 R2 单向恢复。
+- **状态：** 有效。
+
+### D80 （待补）
+- 原文在转达时被截断，等负责人重发。
+
+## 八、主程序员提议（2026-10-28，待负责人确认）
+
+> 编号用 H（Hark）开头，避免与负责人的 D 编号冲突。都按「最安全、可撤回」实现，负责人否决时按各条「撤回方法」改回。
+
+### H1 界面薄层 = 独立的 Aroomo Shell 反向代理（不 fork、不改 LobeHub 镜像）
+- **做法：** 新增 `shell/`（Node 22，零运行时依赖）。浏览器只访问 Shell；Shell 把请求转发给**官方** `lobehub/lobehub` 镜像，只在 HTML 文档里注入 `/aroomo/static/shell.css`、`shell.js`，并把品牌名 / 图标 / manifest 换成 Aroomo；JS / 接口 / 流式输出 / WebSocket 原样透传。Aroomo 自己的页面（成员、Key 与接入、收件箱、收藏、设置）由 Shell 在 `/aroomo/*` 提供；`/aroomo/api/*` 同源转发到 Core `/api/*`，由 Shell 附加主人令牌（浏览器永远拿不到令牌），要求已登录 LobeHub（经 LobeHub 的 Better Auth `get-session` 校验），改动类请求要求 `X-Aroomo-Request: 1` 且同源（防 CSRF）。
+- **为什么：** D69（薄层、不 fork）、D71（不分发 LobeHub：Shell 不含任何 LobeHub 代码，可以照常构建和发布）、D76（独立版直接 `node shell/dist/index.js` 复用同一层）、升级 LobeHub 只改镜像版本号。
+- **代价 / 风险：** 品牌替换与隐藏靠浏览器端按文字和位置识别，LobeHub 升级改了界面文字或结构时要跟着调（CI 的界面冒烟会截图并检查「看不到 LobeHub」「隐藏入口不可见」）。LobeHub 的 Logo 若是纯图形（SVG 路径），只能隐藏或覆盖，不能「改字」。
+- **许可证：** 运行时在浏览器里替换上游品牌，是否算 LobeHub 许可证所说的「修改」有灰色地带；在 D71「只自用、不商用」前提下实施。将来若商用，需向 LobeHub 购买商业许可（PRODUCT §22）。
+- **撤回方法：** compose 里把 Tunnel / 本机端口改回 `lobe:3210`，删掉 shell 服务。
+
+### H2 隐藏清单（PRODUCT §8 没有明确决定的部分）
+§8 明确要隐藏的：发现页、市场、朗读（D68 加「禁用」）、5 种模式弹层（LobeHub 本来没有）。以下是主程序员按「§8 没列 = 隐藏」（D68）额外隐藏的，**请负责人确认**：
+- LobeHub 功能开关（官方 `FEATURE_FLAGS`，运行时生效）：`-market -changelog -check_updates -welcome_suggest -ai_image -knowledge_base -rag_eval -provider_settings -openai_api_key -openai_proxy_url -api_key_manage -agent_share -dashboard -cloud_promotion`。保留：语音输入（§8 输入框有 🎤）、Token 计数、编辑助理。
+- 整页打开会跳走的页面：社区 / 发现、图片、视频、文稿、资源库、记忆、任务、评测、目标、看板、实验室、设备、渠道、连接器、技能、MCP、更新日志 → 首页；LobeHub 设置、「我」→ Aroomo 设置（§8.3 的 6 个 Tab）。
+- 隐藏的入口文字：上游的帮助 / 文档 / Discord / 计费 / 积分 / 邀请；LobeHub 自带的设置入口（统一到侧栏底部「设置」图标）；「Lobe 答疑助手」。
+- 服务商设置整页隐藏：Key 只能在 Aroomo「Key 与接入」里填，写入 LiteLLM（D34、D45）。
+- LobeHub 的默认助理「Lobe AI」在界面上显示为「资源管家」（§8.3 资源管家私聊固定置顶），并保留在会话列表顶部。
+- **撤回方法：** 改 compose 里的 `FEATURE_FLAGS` 和 `shell/src/rules.ts` + `shell/public/static/shell.js` 的列表。
+
+### H3 前端接 Core 的方式：Aroomo 页面由 Shell 在同源 `/aroomo/*` 提供
+- **选项：** ① LobeHub 插件 / 工具（只能出现在对话里，做不了成员页、Key 页、设置页；插件市场本身要隐藏）；② fork LobeHub 加页面（D69 不允许）；③ **Shell 在同源提供独立的 Aroomo 页面**（零依赖原生 JS，§8.4 视觉规范），`/aroomo/api/*` 由 Shell 转发 Core。
+- **选择：③。** 页面：成员（增删改、启用 / 停用、置顶、拖拽排序 + 上下移、批量删除、回收站恢复 / 彻底删除）、Key 与接入（成员页的第二个 Tab：获取网址、名称、模型、Key、保存；末 4 位、状态、改名、换 Key、删除）、收件箱（三组 + 动作按钮）、收藏（P0 不在范围，空状态）、设置（6 个 Tab；负责人可选；安全里显示最近审计）。确认一律用同一个确认卡（CONFIRM-CARD.md）。
+- **与 §8 的差异（请确认）：** a. 「Key 与接入」放在成员页的 Tab 里（§8.3 只列了这个界面，没说入口），设置「通用 / 高级」里也有入口；b. 成员页的「能力 Tab」「候选（N）」、成员卡「参与过的项目」P0 没有数据，暂不显示；c. 头像圆环暂时只表示启用 / 停用（额度圆环 §9.2 不在 P0）；d. 设置「账号」「通知」P0 只有空状态。
+- **点名（D31）在对话里怎么用：** P0 直接在输入框里打「@成员名」（例如 `@GPT-4o mini 你好`），由 Core 解析（见 H5）。LobeHub 输入框自带的 @ 弹出列表列的是 LobeHub 的助理，不是 Aroomo 成员；要让 @ 联想 Aroomo 成员需要改 LobeHub 输入框，薄层做不到 → **最小改动方案（待负责人决定）**：给 LobeHub 上游提 PR，让 @ 联想支持外部数据源；或 P1 在 Shell 里给输入框加一个 Aroomo 自己的联想浮层。
+- **撤回方法：** 删除 `shell/public/app.html`、`app.js`、`app.css`，`/aroomo/*` 不再提供页面。
+
+### H4 D73 的实现
+- 主人令牌（只有 Shell 持有，只在用户登录后的界面操作里用）发起的新增 / 换 Key = 普通确认（记 `confirm.normal` 审计）；操作员令牌发起 = 重要确认，操作员完成不了（D62）→ 403。删除 Key 不论谁发起都是重要确认（服务器还要重新验证 Cloudflare Access）。Core 没有「查看明文」「导出」接口，`keys:read-plaintext`、`keys:export` 仍在禁止清单里。
+- **注意：** 主程序员 / 运维脚本若直接用主人令牌调 Core，会被当成「用户手动」。因此主人令牌只放在 Shell 的环境变量里，不给任何智能体；智能体一律用操作员令牌。
+
+### H5 对话链路：LobeHub → Core /v1 → LiteLLM（不是 LobeHub 直连 LiteLLM）
+- **做法：** LobeHub 的 OpenAI 兼容服务商指向 Core 的 `/v1`（只露出一个模型「Aroomo」，令牌 `CORE_CHAT_TOKEN`，与主人令牌分开）。Core 只决定「交给谁」（D31）：有 @ → 被点名的成员直接回答（多人各自回答，P0 按顺序分段显示）；没有 @ → 负责人；被点名成员出错只回一行提示，不自动换人。然后把请求**原样**转给 LiteLLM（只换 `model` 为成员在 LiteLLM 里的模型名、去掉正文里的 @），流式输出原样回传，只在开头插提示、在结尾插署名（「— 名字（负责人）」）。LobeHub 的系统任务（起标题等，模型名不是 `aroomo`）直接交给负责人，不加任何东西。
+- **为什么不让 LobeHub 直连 LiteLLM：** ① P0 范围写明「Core 路由（最小可用：点名 + 交给负责人后的单人完成，D31）」，直连就没有 Core 路由；② LobeHub 要在启动时写死模型列表，用户新填的 Key 不重启就看不到；③ SEQUENCES.md「发一句话」本来就是 LobeHub → Core → LiteLLM。
+- **与 D70 / D76 不冲突：** Core 不碰供应商 Key、不调用供应商、不做重试 / 回退 / 负载均衡 / 计费——这些仍全在 LiteLLM（单一权威来源 D45）。Core 只是在 LiteLLM 前面选成员。
+- **P0 限制：** 多人点名不是并排显示（要改 LobeHub 消息组件，薄层做不到；最小改动方案：P1 由 Shell 识别 Core 输出的分段标记，渲染成左右并排）；「交给负责人」按钮暂用文字说明代替（「去掉 @ 再发一次」）；输入框 @ 联想见 H3。
+- **撤回方法：** `.env` 设 `LOBE_OPENAI_PROXY_URL=http://litellm:4000/v1`、`LOBE_OPENAI_API_KEY=<LiteLLM 虚拟 Key>`，并改 `OPENAI_MODEL_LIST`。
+- 删掉某个模型的最后一个 Key 时，对应成员自动停用（可以重新启用），避免负责人指向调不通的模型。
+
