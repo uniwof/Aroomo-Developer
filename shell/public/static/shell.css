@@ -218,7 +218,7 @@ img[data-aroomo-logo-img] {
 /* 首页：上游吉祥物换成的 Aroomo 标志（单色 SVG，按原图框居中缩小，不变形） */
 html[data-aroomo] img[data-aroomo-mascot] {
   object-fit: contain;
-  padding: 18%;
+  padding: 26%;
   box-sizing: border-box;
 }
 /* 深浅色：logo.svg 自带 prefers-color-scheme 配色 */

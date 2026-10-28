@@ -383,14 +383,21 @@
   }
   function promoBox(label, kind) {
     var el = label.parentElement;
+    var strip = null;
     for (var d = 0; el && el !== document.body && d < 8; d++, el = el.parentElement) {
-      if (el.querySelector(FORM_SEL)) return null; // 到了输入框那一层还没找到：不动
+      // 到了输入框那一层就停（输入框本身不动）
+      if (el.querySelector(FORM_SEL)) return strip;
       var r = el.getBoundingClientRect();
-      if (r.height > 480) return null;
-      if (kind === 'strip' && el.querySelectorAll('button,[role="button"]').length >= 2) return el;
-      if (kind === 'card' && r.height >= 80 && r.width >= 160 && el.querySelectorAll('*').length >= 6) return el;
+      if (r.height > 480) return strip;
+      // 「上新」条：取不含输入框的最外层（模型按钮和右边的 × 一起藏，连同那一圈底框）
+      if (kind === 'strip') {
+        if (r.height > 120) return strip;
+        if (el.querySelectorAll('button,[role="button"]').length >= 2) strip = el;
+        continue;
+      }
+      if (r.height >= 80 && r.width >= 160 && el.querySelectorAll('*').length >= 6) return el;
     }
-    return null;
+    return strip;
   }
   function hidePromos() {
     if (!isHome()) return;
