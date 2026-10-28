@@ -41,6 +41,27 @@ const MIME: Record<string, string> = {
 
 const MAX_HTML_BYTES = 8 * 1024 * 1024;
 
+/** 上游品牌图片路径 → Aroomo 静态文件名（没有就返回 null） */
+export function brandAsset(p: string): string | null {
+  if (p === '/avatars/lobe-ai.png') return 'avatar.png';
+  const m = /^\/app-icons\/icon-(192x192|512x512)(\.maskable)?\.png$/.exec(p);
+  if (m) return `icon-${m[2] ? 'maskable-' : ''}${m[1] === '192x192' ? '192' : '512'}.png`;
+  if (p === '/icons/icon-192x192.png') return 'icon-192.png';
+  if (p === '/icons/icon-512x512.png') return 'icon-512.png';
+  return null;
+}
+
+/** LobeHub 还没起来时的「正在准备」页：Aroomo Logo + 珊瑚色，自动刷新（不靠 JS 也能用） */
+export const PREPARING_HTML = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="refresh" content="5">
+<meta name="theme-color" content="#ff7f50"><title>Aroomo 正在准备</title>
+<link rel="icon" href="/aroomo/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/aroomo/static/preparing.css">
+</head><body><main role="status" aria-live="polite">
+<img class="logo" src="/aroomo/static/logo.svg" alt="Aroomo" width="72" height="72">
+<h1>Aroomo 正在准备</h1><p>后台正在启动，好了会自动打开。第一次可能需要几分钟。</p>
+<div class="bar" aria-hidden="true"><span></span></div></main></body></html>`;
+
 export interface ShellDeps {
   session?: SessionChecker;
   autoLogin?: AutoLogin;
@@ -228,8 +249,13 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
     });
     up.on('error', () => {
       if (!res.headersSent) {
-        res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
-        res.end('Aroomo 正在启动，请稍后刷新');
+        if (html) {
+          res.writeHead(503, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'retry-after': '5' });
+          res.end(PREPARING_HTML);
+        } else {
+          res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
+          res.end('Aroomo 正在启动，请稍后刷新');
+        }
       } else res.destroy();
     });
     req.pipe(up);
@@ -246,6 +272,9 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
     if (/^\/favicon[^/]*\.ico$/.test(p)) return serveFile(res, path.join(staticRoot, 'favicon.ico'), 'public, max-age=86400', req.method);
     if (p === '/apple-touch-icon.png') return serveFile(res, path.join(staticRoot, 'apple-touch-icon.png'), 'public, max-age=86400', req.method);
     if (p === '/manifest.json' || p === '/manifest.webmanifest') return serveFile(res, path.join(staticRoot, 'manifest.json'), 'public, max-age=300', req.method);
+    // 上游的 PWA 图标、默认助理头像（Lobe AI 吉祥物）→ Aroomo 图标（文件是官方镜像里的，不改，只在入口拦下）
+    const brandFile = brandAsset(p);
+    if (brandFile) return serveFile(res, path.join(staticRoot, brandFile), 'public, max-age=86400', req.method);
 
     // Windows 独立版（D78）：没登录的页面请求，替本机主人登录后跳回原页面（登录页 / 注册页跳到 callbackUrl）
     if (autoLogin && wantsHtml(req) && !hasCookie(req.headers.cookie, AUTOLOGIN_MARK) && !(await session.check(req.headers.cookie))) {
