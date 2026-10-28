@@ -25,6 +25,9 @@ DisableWelcomePage=yes
 DisableReadyPage=yes
 DisableFinishedPage=yes
 PrivilegesRequired=lowest
+; 文件时间按 UTC 保存和还原：默认按「本地时间」，在 UTC+8 的电脑上会让所有文件的时间差 8 小时，
+; Python 认为预编译的 .pyc 过期，每次启动都重新编译 LiteLLM（D77-3）
+TimeStampsInUTC=yes
 MinVersion=10.0.17763
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible

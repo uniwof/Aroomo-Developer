@@ -1070,7 +1070,12 @@ function Start-AroomoSAParallel {
         switch ($sp.Name) {
             'litellm' {
                 $stamp = Get-AroomoSALiteLLMStamp -Paths $paths
-                if ($stamp -and (Get-AroomoSAMarker -Paths $paths -Name 'litellm-schema') -eq $stamp) { $run.Env['DISABLE_SCHEMA_UPDATE'] = 'true' }
+                if ($stamp -and (Get-AroomoSAMarker -Paths $paths -Name 'litellm-schema') -eq $stamp) {
+                    $run.Env['DISABLE_SCHEMA_UPDATE'] = 'true'
+                    # 不迁移时 LiteLLM 仍会跑一次只读的结构比对（prisma migrate diff，要再起一个 Python + Node，只打印提示）。
+                    # 这个超时只管 Prisma 命令行（迁移这次不跑）：比对超时按「没有差异」继续启动（LiteLLM 的既定行为），不影响数据
+                    $run.Env['LITELLM_PRISMA_COMMAND_TIMEOUT'] = '2'
+                }
                 else { $migrating['litellm'] = $stamp }
             }
             'lobe' {

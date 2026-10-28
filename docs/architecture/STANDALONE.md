@@ -89,7 +89,9 @@
 
 - **健康检查先看系统监听表**（`Get-AroomoSAListeningPorts`）：Windows 上连一个没人听的本机端口要等 1～2 秒（系统重试 SYN），以前每个还没起来的服务都要空等这一下（启动前检查、换端口检查、托盘巡检各一次）。现在端口没在听就直接算「没就绪」。就绪轮询间隔 2 秒 → 0.25 秒。
 - **启动标记**（`<数据文件夹>\state\`）：`litellm-schema`（随包 LiteLLM 的版本）、`lobe-schema`（LobeHub 程序包的 SHA-256）、`lobe-bucket`。版本对得上时第二次启动跳过 LiteLLM 的 Prisma 迁移（`DISABLE_SCHEMA_UPDATE=true`，LiteLLM 仍会做一次只读的结构比对）、LobeHub 的数据库迁移（`AROOMO_LOBE_SKIP_MIGRATION=1`，`runtime/lobe-start.cjs`）和建桶。换版本、新建数据库（initdb）、从备份恢复后标记作废，下次启动照常迁移（备份可能来自别的版本）。
+- 不迁移时 LiteLLM 仍会跑一次只读的结构比对（`prisma migrate diff`，再起一个 Python + Node，只打印提示）：这次启动把 Prisma 命令行超时设为 2 秒（`LITELLM_PRISMA_COMMAND_TIMEOUT`，迁移不跑时只管这次比对），超时按「没有差异」继续（LiteLLM 的既定行为），不影响数据。
 - LiteLLM 用随包的模型价格表（`LITELLM_LOCAL_MODEL_COST_MAP=True`）：启动时不去 GitHub 下载，断网时不用等超时。
+- **.pyc 在用户电脑上真正有效**：构建时 `compileall --invalidation-mode unchecked-hash`（不拿源文件时间比）；安装包 `TimeStampsInUTC=yes`（默认按本地时间还原文件时间，UTC+8 的电脑上全部差 8 小时）。以前这两点会让用户电脑上的 .pyc 全部「过期」，运行时又不写缓存，每次启动都重新编译 LiteLLM——CI（构建和安装都在 UTC）测不出来。
 - 每次启动把每个服务「开始 / 就绪」的秒数写进 `logs\startup-timing.json`，`launcher.log` 里一行摘要；冒烟测试打印第二次启动的 `ui_ready_s`（界面可用：Shell 替浏览器登录 LobeHub 成功）、`second_start_s`（`start` 结束：主界面全部就绪）、`all_ready_s`（完整档模块也就绪）和每个服务的计时，超过 15 秒时在 CI 里给出警告（不判失败：CI 机器的速度和用户电脑不同）。
 
 ## 5. 备份（D64、D65、D79：和服务器同一格式）

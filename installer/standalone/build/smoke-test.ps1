@@ -183,6 +183,15 @@ try {
     $results.ui_ready_s = $script:uiReady
     $timingFile = Join-Path $DataDir 'logs\startup-timing.json'
     if (Test-Path $timingFile) { $results.second_start_timing = (Get-Content -Raw $timingFile | ConvertFrom-Json) }
+    # 诊断（D77-3）：LiteLLM / LobeHub 这次启动的输出末尾（日志不含密钥）；单独 import LiteLLM 代理要多久
+    foreach ($n in 'litellm', 'lobe') {
+        $lf = Join-Path $DataDir "logs\$n.log"
+        if (Test-Path $lf) { Write-Host "----- 第二次启动后 $n.log（末尾）-----"; Get-Content $lf -Tail 40 | ForEach-Object { Write-Host $_ } }
+    }
+    $env:LITELLM_LOCAL_MODEL_COST_MAP = 'True'; $env:PYTHONDONTWRITEBYTECODE = '1'
+    $pyw = [Diagnostics.Stopwatch]::StartNew()
+    & $ctx.Paths.Python -c 'import litellm.proxy.proxy_server' *> $null
+    $results.litellm_import_s = [math]::Round($pyw.Elapsed.TotalSeconds, 1)
     # 完整档模块随后启动：再等它们也都就绪（start -WaitAll 不会重复启动已在运行的服务）
     if ((Run 'start' @('-WaitAll')) -ne 0) { throw '第二次启动后完整档模块没有全部就绪' }
     $results.all_ready_s = [math]::Round($t.Elapsed.TotalSeconds, 1)
