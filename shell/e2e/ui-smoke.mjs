@@ -91,10 +91,18 @@ for (const [label, viewport, isMobile] of [
       // 没有文字的「下一步」图标按钮：页面中部、不在顶栏、不是「上一步」，取面积最大的那个
       const idx = await page.evaluate(() => {
         const bs = [...document.querySelectorAll('button')];
+        const ok = (b) => {
+          const r = b.getBoundingClientRect();
+          return r.top >= 100 && r.width && !/上一步|Back/.test(b.innerText) && !b.closest('#aroomo-dock')
+            && b.getAttribute('role') !== 'combobox' && !b.hasAttribute('aria-haspopup') && !b.hasAttribute('aria-expanded');
+        };
+        // 先找带「→」图标的按钮（语言选择那一步：下拉框旁边的圆形箭头）
+        const arrow = bs.findIndex((b) => ok(b) && b.querySelector('svg.lucide-arrow-right,svg.lucide-chevron-right,svg.lucide-send,svg.lucide-check'));
+        if (arrow >= 0) return arrow;
         let best = -1, area = 0;
         bs.forEach((b, i) => {
+          if (!ok(b)) return;
           const r = b.getBoundingClientRect();
-          if (r.top < 100 || !r.width || /上一步|Back/.test(b.innerText) || b.closest('#aroomo-dock')) return;
           if (r.width * r.height > area) { area = r.width * r.height; best = i; }
         });
         return best;
