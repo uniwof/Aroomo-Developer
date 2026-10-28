@@ -227,10 +227,10 @@
     });
   }
 
-  function insertText(el, text) {
+  function insertText(el, text, query) {
     if (el.tagName === 'TEXTAREA') {
       var end = el.selectionStart;
-      var start = end - state.query.length;
+      var start = end - query.length;
       var setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
       setter.call(el, el.value.slice(0, start) + text + el.value.slice(end));
       el.selectionStart = el.selectionEnd = start + text.length;
@@ -239,7 +239,7 @@
     }
     el.focus();
     // 删掉已经输入的筛选词（保留 @），再插入完整名字：都是普通编辑操作，编辑器会同步自己的状态
-    for (var i = 0; i < state.query.length; i++) document.execCommand('delete', false);
+    for (var i = 0; i < query.length; i++) document.execCommand('delete', false);
     document.execCommand('insertText', false, text);
   }
 
@@ -250,8 +250,9 @@
     // 名字里有 @ 解析器认不出的字符时加引号（解析规则见 core/src/router/mentions.ts）
     var name = /^[\p{L}\p{N}\p{M}_+\-. ]+$/u.test(m.name) && !/[.\s]$/.test(m.name) ? m.name : '"' + m.name.replace(/"/g, '') + '"';
     var text = name + ' ';
+    var query = state.query;
     close();
-    insertText(el, text);
+    insertText(el, text, query);
     announce('已点名 ' + m.name);
   }
 
