@@ -124,6 +124,15 @@ function Get-AroomoSAPortDefaults {
     return [ordered]@{ SHELL_PORT = 3280; LOBE_PORT = 3281; RUSTFS_PORT = 9280; PG_PORT = 54329; REDIS_PORT = 63799; LITELLM_PORT = 40280; CORE_PORT = 38280 }
 }
 
+function New-AroomoSABase64Secret {
+    [OutputType([string])]
+    param([ValidateSet(16, 24, 32)][int]$Bytes = 32)
+    $buf = New-Object byte[] $Bytes
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng.GetBytes($buf) } finally { $rng.Dispose() }
+    return [Convert]::ToBase64String($buf)
+}
+
 function Get-AroomoSAInitialValues {
     # 第一次安装时写进 aroomo.env 的非随机值（端口由调用方找好空闲的传进来）
     [OutputType([hashtable])]
@@ -137,6 +146,8 @@ function Get-AroomoSAInitialValues {
     $v['S3_ENDPOINT'] = "http://localhost:$($Ports['RUSTFS_PORT'])"
     $v['BACKUP_S3_PREFIX'] = (Get-AroomoPcBackupPrefix -HostName $HostName)
     if ($Jwks) { $v['JWKS_KEY'] = $Jwks }
+    # LobeHub 的 KEY_VAULTS_SECRET 必须是 base64 编码的 32 字节（不能用十六进制随机串，2026-10-28 CI：「got 48 bytes」）
+    $v['KEY_VAULTS_SECRET'] = New-AroomoSABase64Secret
     return $v
 }
 
@@ -158,7 +169,7 @@ function Get-AroomoSAEnvProblems {
         if ($Config.ContainsKey($k) -and $Config[$k] -and ($Config[$k] -notmatch '^\d+$' -or [int]$Config[$k] -lt 1 -or [int]$Config[$k] -gt 65535)) { $problems.Add("$k 不是合法端口") }
     }
     foreach ($line in $Config.Values) {
-        if ([string]$line -cmatch 'AGE-SECRET-KEY-1') { $problems.Add('配置里出现了主密钥（AGE-SECRET-KEY-1…），必须删掉') ; break }
+        if ([string]$line -cmatch 'AGE-SECRET-KEY-1[02-9AC-HJ-NP-Z]{50,}') { $problems.Add('配置里出现了主密钥（AGE-SECRET-KEY-1…），必须删掉') ; break }
     }
     return $problems.ToArray()
 }
@@ -901,7 +912,8 @@ function Invoke-AroomoSABackup {
     $fail = { param($step) $res.Step = $step; $res.DurationS = [int]((Get-Date) - $started).TotalSeconds; return $res }
     if (-not (Test-AroomoAgeRecipient $c['BACKUP_AGE_RECIPIENT'])) { return (& $fail '还没有主密钥（配置里没有 BACKUP_AGE_RECIPIENT），备份不能加密') }
     $raw = [IO.File]::ReadAllText($paths.EnvFile)
-    if ($raw -cmatch 'AGE-SECRET-KEY-1') { return (& $fail '配置文件里出现了主密钥，拒绝备份。请从配置里删除它') }
+    # 只认真正的私钥（AGE-SECRET-KEY-1 + bech32 字符），配置模板的注释里也写着这个前缀（2026-10-28 CI 误报）
+    if ($raw -cmatch 'AGE-SECRET-KEY-1[02-9AC-HJ-NP-Z]{50,}') { return (& $fail '配置文件里出现了主密钥，拒绝备份。请从配置里删除它') }
     if ($env:AROOMO_BACKUP_IDENTITY) { return (& $fail '环境里出现了主密钥（AROOMO_BACKUP_IDENTITY），拒绝备份') }
     if (-not (Test-Path -LiteralPath $paths.Age)) { return (& $fail '找不到 age.exe，请重新运行安装包') }
 
