@@ -27,8 +27,8 @@ P0 范围与验收见 PRODUCT 16.1。分支规则：CI 通过后主程序员可�
 | b | 服务器全模块部署 + 2 个浏览器任务 + 逐容器内存峰值 → 内存实测报告 → 定档位 + 长期主机建议 | 主程序员 | ⛔ 等服务器 IP | D40、D59 |
 | c | 三张时序图 | 主程序员 | 🟡 待审查 | docs/architecture/SEQUENCES.md |
 | d | Cloudflare Tunnel + Access；只开 22；仅密钥登录；fail2ban | 主程序员 | ⛔ 等服务器、Cloudflare 令牌 | D57 |
-| e | AWS 之外备份 + 恢复演练（记录耗时） | 主程序员 | 🟡 脚本与 CI 端到端测试已合并（#17）；真实环境演练 ⛔ 等服务器与备份存储凭据 | D49；KEY-STORAGE 2.3；docs/ops/BACKUP.md |
-| f | 本地完整版（Windows 一键安装包等） | 主程序员 | ⛔ 等用户电脑配置 | D56 f |
+| e | AWS 之外备份 + 恢复演练（记录耗时） | 主程序员 | 🟡 改为主密钥公钥加密（age，D64）并通过 CI 端到端（#28）；真实环境演练 ⛔ 等服务器、备份存储凭据和主密钥公钥 | D49、D64、D65；KEY-STORAGE 2.3；docs/ops/BACKUP.md |
+| f | 本地完整版（Windows 一键安装包等） | 主程序员 | 🟡 安装器已合并（#23）；D64 主密钥窗口 + D65 电脑版备份已合并（#29）；测试版发布到预发布 `local-test`（#30）；**尚未在真实电脑上跑过** | D56 f；docs/ops/WINDOWS.md |
 | — | Key 加密存储方案 | 主程序员 | 🟡 待审查 | docs/architecture/KEY-STORAGE.md |
 
 ### P0 Core 模块（2026-10-27，主程序员 Hark；顺序按依赖）
@@ -39,11 +39,16 @@ P0 范围与验收见 PRODUCT 16.1。分支规则：CI 通过后主程序员可�
 | #5 | 成员管理 API（增删改、排序、置顶、回收站 30 天） | ✅ 已合并到 dev | #20 | `core/src/members`；迁移 0002；彻底删除需 confirm |
 | #7 | 收件箱数据模型 + API（不可逆动作二次确认） | ✅ 已合并到 dev | #22 | `core/src/inbox`、`confirm`；迁移 0003；只执行一次（CAS）、一次性确认令牌 5 分钟 |
 | #6 | Key 管理 API（写入 LiteLLM，Key 永不返回客户端） | ✅ 已合并到 dev | #24 | `core/src/keys`；迁移 0004（表里没有存 Key 的列）；泄露测试 |
-| #8 | 点名解析与执行（D31） | 🟡 PR 已提交（p0/mention-parser） | p0/mention-parser | 引号名、代码/URL 排除、Unicode 索引、120 秒超时 + AbortSignal、delegateFromHint、敏感项目不发外部成员 |
+| #8 | 点名解析与执行（D31） | ✅ 已合并到 dev | #25 | 引号名、代码/URL 排除、Unicode 索引、120 秒超时 + AbortSignal、delegateFromHint、敏感项目不发外部成员 |
+| — | Windows 一键安装（PowerShell 安装器 + Inno Setup .exe + 启停/更新/备份快捷方式） | ✅ 已合并到 dev | #23 | installer/windows；D64/D65 改造见 #29 |
+| D62 | 操作员白名单 / 禁止清单；白名单外请求拒绝并审计 | ✅ 已合并到 dev | #27 | `core/src/auth/capabilities.ts`；新增 `POST /api/inbox`（发卡片） |
+| D63 | 统一确认服务（普通 / 重要两级；3 秒服务端强制；凭据操作重新验证 Cloudflare Access） | ✅ 已合并到 dev | #27 | `core/src/confirm/`；迁移 0005；前端约定 docs/architecture/CONFIRM-CARD.md |
+| D64 | 备份改为主密钥公钥加密（age）；`.env` 进加密包 | ✅ 已合并到 dev | #28 | scripts/backup.sh、restore.sh；待负责人确认实现注 a |
+| D64/D65 | 安装器：主密钥离线生成窗口；开机后 / 停止前 / 更新前备份；本机 3 份；异地 pc/<电脑名> | ✅ 已合并到 dev | #29 | 待负责人确认实现注 b、D65 实现注 a |
 
 - 存储：有 `CORE_DATABASE_URL` 用 PostgreSQL（启动自动迁移），否则内存（只适合开发 / 演示）。测试：PGlite 每次跑 + CI 的 PostgreSQL 17 服务容器再跑一遍。
 - 访问：`/api/*` 需要 `Authorization: Bearer <CORE_OWNER_TOKEN>`（P0 单用户）；未配置时一律 503。
-- 尚未接入：前端（LobeHub 界面）调用这些 API、对话真正经 LiteLLM 调模型、定时任务（回收站清理、确认令牌清理、Key 对账）。
+- 尚未接入：前端（LobeHub 界面）调用这些 API（含确认卡组件，按 CONFIRM-CARD.md）、对话真正经 LiteLLM 调模型、定时任务（回收站清理、过期确认清理、Key 对账）。
 
 ### P0 验收标准
 
@@ -68,11 +73,14 @@ P0 范围与验收见 PRODUCT 16.1。分支规则：CI 通过后主程序员可�
 |--------|----------|--------|
 | 服务器 IP（AWS 法兰克福 m7i-flex.large） | P0 b、d、e | 用户（先收到 SSH 公钥） |
 | P0 凭据（Cloudflare 限定令牌、测试模型 Key、备份存储密钥） | P0 b、d、e | 用户（安全表单） |
-| 用户电脑配置（Windows 版本、内存、剩余硬盘，裁决消息中为空白） | P0 f | 用户 |
+| 本地测试版在用户电脑上的第一次真实安装（Windows 版本、内存、剩余硬盘仍未知） | P0 f 验收 | 用户 |
+| 主密钥公钥（用户在电脑上生成后发来 `age1…`） | 服务器备份（D64/D65 共用主密钥） | 用户 |
+| D64 实现注 a/b、D65 实现注 a、「新增 Key 也算涉及凭据」 | 确认实现方向 | 负责人 |
 | PR #1、#2 未合并到 main（2026-10-27 22:57 经 GitHub API 核实为 open） | main 与 dev 不一致；不影响在 dev 上工作 | 用户 |
 | Muse 1–15 清单与负责人裁决表 | D39 细节 | 用户转达 |
 
 ## 变更
+- 2026-10-28：负责人裁决 D62–D65 入档（#26）并实现：操作员白名单 + 统一确认服务（#27）、备份公钥加密（#28）、安装器主密钥窗口与电脑版备份（#29）、测试版发布流程（#30）。
 - 2026-10-27：建立本文件。
 - 2026-10-27：完成旧项目审计（docs/AUDIT.md）。
 - 2026-10-27：负责人 v4.3 裁决入档（D30–D61）；P0 开始；新增 KEY-STORAGE.md、SEQUENCES.md。
