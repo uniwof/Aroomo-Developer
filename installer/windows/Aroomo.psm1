@@ -322,6 +322,14 @@ function Find-AroomoFreePort {
         if ($Exclude -contains $p) { continue }
         if (& $IsFree $p) { return $p }
     }
+    # 装了 Hyper-V / WSL / Docker 的电脑会整段保留端口（netsh int ipv4 show excludedportrange，用户实机 1055–5340 多段被占），
+    # 默认端口附近全不可用时改到 20000–29999 再找（避开 49152 以上的动态端口）
+    $base = 20000 + ($Preferred % 10000)
+    for ($i = 0; $i -lt 10000; $i++) {
+        $p = 20000 + (($base - 20000 + $i) % 10000)
+        if ($Exclude -contains $p) { continue }
+        if (& $IsFree $p) { return $p }
+    }
     throw "从 $Preferred 开始找不到空闲端口"
 }
 
