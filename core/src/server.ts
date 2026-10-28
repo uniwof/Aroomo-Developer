@@ -18,6 +18,8 @@ import { registerMemberRoutes } from './members/routes.js';
 import { MembersService } from './members/service.js';
 import { route } from './router/route.js';
 import { LeadService } from './settings/lead.js';
+import { ChatService } from './chat/service.js';
+import { registerChatRoutes } from './chat/routes.js';
 import { registerSettingsRoutes } from './settings/routes.js';
 import type { RoutableMember } from './router/types.js';
 
@@ -146,7 +148,20 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps(), opts
   registerAuditRoutes(app, deps.auditLog);
   const members = new MembersService(deps.members, deps.now, confirm);
   registerMemberRoutes(app, members);
-  registerSettingsRoutes(app, new LeadService(deps.settings, deps.members, deps.now));
+  const lead = new LeadService(deps.settings, deps.members, deps.now);
+  registerSettingsRoutes(app, lead);
+  // 对话入口（提议 H5）：LobeHub → Core /v1（D31 点名 / 交给负责人）→ LiteLLM
+  registerChatRoutes(
+    app,
+    new ChatService({
+      litellmBaseUrl: cfg.litellmBaseUrl,
+      litellmKey: cfg.litellmMasterKey,
+      listMembers: () => deps.members.listAll(),
+      lead,
+      ...(deps.chatFetch ? { fetchImpl: deps.chatFetch } : {}),
+    }),
+    cfg.chatToken,
+  );
   const inbox = new InboxService(deps.inbox, confirm, deps.now);
   // 供其他模块调用 createInboxItem()
   app.decorate('inbox', inbox);
@@ -159,6 +174,13 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps(), opts
       afterCreate: async (rec, audit) => {
         const exists = (await members.list()).some((m) => m.name.toLowerCase() === rec.modelName.toLowerCase());
         if (!exists) await members.create({ name: rec.modelName }, audit);
+      },
+      // 这个模型已经没有任何 Key：停用对应成员（可以在成员页重新启用）
+      afterDelete: async (rec, audit) => {
+        const same = (n: string) => n.toLowerCase() === rec.modelName.toLowerCase();
+        if ((await deps.keys.list()).some((k) => same(k.modelName))) return;
+        const m = (await members.list()).find((x) => same(x.name) && x.enabled);
+        if (m) await members.update(m.id, { enabled: false }, audit);
       },
     }),
   );

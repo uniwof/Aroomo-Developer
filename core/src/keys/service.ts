@@ -66,6 +66,8 @@ function validateKey(apiKey: string): string {
 export interface KeysHooks {
   /** 新增 Key 成功之后（例如：自动把这个模型加成成员，PRODUCT 16.1「填入一个 Key 后能和模型对话」）。失败不影响新增。 */
   afterCreate?: (rec: KeyRecord, audit: AuditFn) => Promise<void>;
+  /** 删除 Key 成功之后（例如：这个模型已经没有 Key 了 → 停用对应成员，避免负责人指向一个调不通的模型）。失败不影响删除。 */
+  afterDelete?: (rec: KeyRecord, audit: AuditFn) => Promise<void>;
 }
 
 export class KeysService {
@@ -231,6 +233,11 @@ export class KeysService {
     }
     await this.store.delete(id);
     await audit('keys.delete', { type: 'key', id }, 'ok', `last4=${cur.last4}`);
+    if (this.hooks.afterDelete) {
+      await this.hooks.afterDelete(cur, audit).catch(async (err: unknown) => {
+        await audit('keys.delete.hook', { type: 'key', id }, 'failed', (err as Error).name);
+      });
+    }
   }
 
   async #syncAfterSave(rec: KeyRecord): Promise<KeyRecord> {

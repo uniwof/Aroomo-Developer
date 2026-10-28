@@ -81,14 +81,28 @@ for (const [label, viewport, isMobile] of [
   await page.goto(base + '/', { waitUntil: 'domcontentloaded' });
   await page.waitForLoadState('networkidle', { timeout: 60000 }).catch(() => {});
   await shoot(page, `${label}-first-open`);
-  // 新用户引导：依次点「开始 / 下一步 / 跳过 / 完成」，最多 10 步，每步截图
-  for (let i = 1; i <= 10; i++) {
-    const path0 = new URL(page.url()).pathname;
-    if (path0 === '/' && !(await page.getByRole('button', { name: /^(开始|下一步|跳过|继续|完成|Skip|Next|Start|Done)$/ }).count())) break;
-    const btn = page.getByRole('button', { name: /^(跳过|开始|下一步|继续|完成|稍后|Skip|Next|Start|Done|Later)$/ }).first();
-    if (!(await btn.count())) break;
-    await btn.click({ timeout: 5000 }).catch(() => {});
-    await page.waitForTimeout(1500);
+  // 新用户引导（LobeHub 自带）：依次点「开始 / 下一步 / 跳过 / 完成」或右侧的「→」图标按钮，最多 12 步，每步截图
+  for (let i = 1; i <= 12; i++) {
+    if (!new URL(page.url()).pathname.startsWith('/onboarding')) break;
+    const named = page.getByRole('button', { name: /^(跳过|开始|下一步|继续|完成|稍后|确定|Skip|Next|Start|Done|Later)$/ }).first();
+    if (await named.count()) {
+      await named.click({ timeout: 5000 }).catch(() => {});
+    } else {
+      // 没有文字的「下一步」图标按钮：页面中部、不在顶栏、不是「上一步」，取面积最大的那个
+      const idx = await page.evaluate(() => {
+        const bs = [...document.querySelectorAll('button')];
+        let best = -1, area = 0;
+        bs.forEach((b, i) => {
+          const r = b.getBoundingClientRect();
+          if (r.top < 100 || !r.width || /上一步|Back/.test(b.innerText) || b.closest('#aroomo-dock')) return;
+          if (r.width * r.height > area) { area = r.width * r.height; best = i; }
+        });
+        return best;
+      });
+      if (idx < 0) break;
+      await page.locator('button').nth(idx).click({ timeout: 5000 }).catch(() => {});
+    }
+    await page.waitForTimeout(2000);
     await shoot(page, `${label}-onboarding-${i}`);
   }
   await page.goto(base + '/', { waitUntil: 'domcontentloaded' });
@@ -97,7 +111,7 @@ for (const [label, viewport, isMobile] of [
   const title = await page.title();
   check(`${label} 标题是 Aroomo`, /Aroomo/.test(title) && !/LobeHub/.test(title), title);
   const text = await page.evaluate(() => document.body.innerText);
-  check(`${label} 页面上看不到 LobeHub / Lobe AI`, !/LobeHub|LobeChat|Lobe AI/.test(text), (text.match(/.{0,30}(LobeHub|LobeChat|Lobe AI).{0,30}/) || [''])[0]);
+  check(`${label} 页面上看不到 LobeHub / Lobe AI`, !/LobeHub|LobeChat|Lobe\s?AI/.test(text), (text.match(/.{0,30}(LobeHub|LobeChat|Lobe\s?AI).{0,30}/) || [''])[0]);
   check(`${label} 简体中文`, /[\u4e00-\u9fa5]/.test(text), text.slice(0, 80));
   check(`${label} 上游文字 Logo 已替换`, (await page.locator('svg[data-aroomo-logo]:visible').count()) === 0);
   const dockVisible = await page.locator('#aroomo-dock').isVisible().catch(() => false);
@@ -191,6 +205,37 @@ for (const [label, viewport, isMobile] of [
     check('删除 Key 走重要确认后删掉', (await page.locator('.row', { hasText: '测试 Key' }).count()) === 0);
   }
 
+  if (!isMobile) {
+    // —— 对话：填一个指向假模型的 Key，在 LobeHub 里说一句话（LobeHub → Core → LiteLLM → 模型，PRODUCT 16.1）——
+    const k = await page.evaluate((fake) =>
+      fetch('/aroomo/api/keys', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-aroomo-request': '1' },
+        body: JSON.stringify({ name: '假模型', sourceUrl: 'https://example.com/keys', model: 'openai/fake-model', modelName: 'Fake Model', apiBase: 'http://fake-llm:8000/v1', apiKey: fake }),
+      }).then((r) => r.status),
+      ['placeholder', 'sk', 'fake', 'ABCDEFGHIJKLMNOP'].join('-'),
+    );
+    check('对话：填入指向假模型的 Key', k === 201, k);
+    await page.goto(base + '/', { waitUntil: 'domcontentloaded' });
+    await page.waitForLoadState('networkidle', { timeout: 60000 }).catch(() => {});
+    const input = page.locator('[data-testid="chat-input"] [contenteditable="true"], [data-testid="chat-input"] textarea').first();
+    await input.waitFor({ timeout: 30000 }).catch(() => {});
+    const sendAndWait = async (msg, expect) => {
+      await input.click().catch(() => {});
+      await page.keyboard.type(msg);
+      await page.keyboard.press('Enter');
+      return page.getByText(expect).first().waitFor({ timeout: 90000 }).then(() => true).catch(() => false);
+    };
+    const ok1 = await sendAndWait('你好', '你好，我是测试模型（Fake Model）');
+    await shoot(page, 'desktop-chat-reply');
+    check('对话：填 Key 后能和模型对话（交给负责人）', ok1, (await page.evaluate(() => document.body.innerText)).slice(-400));
+    const bodyText = await page.evaluate(() => document.body.innerText);
+    check('对话：回答署名「（负责人）」', bodyText.includes('Fake Model（负责人）'), bodyText.slice(-300));
+    const ok2 = await sendAndWait('@Nobody 在吗', '没有叫「Nobody」的成员');
+    await shoot(page, 'desktop-chat-mention');
+    check('对话：点名不存在的成员只给提示（D31）', ok2);
+  }
+
   const tts = await page.evaluate(() => fetch('/webapi/tts/openai', { method: 'POST' }).then((r) => r.status).catch((e) => String(e)));
   check(`${label} 朗读接口禁用`, tts === 403 || /朗读功能已关闭/.test(String(tts)), tts);
   check(`${label} 首页没有脚本错误`, jsErrors.length === 0, jsErrors.slice(0, 3).join(' | '));
@@ -200,7 +245,7 @@ await browser.close();
 writeFileSync(path.join(out, 'checks.json'), JSON.stringify(checks, null, 1));
 const failed = checks.filter((c) => !c.ok);
 // 第一轮只把核心项设为必须通过；其余写进报告供核对选择器
-const required = /标题是 Aroomo|shell.js 已加载|跳回首页|跳到 Aroomo 设置|设置 6 个 Tab|朗读接口禁用|登录接口|填 Key|Key 明文|自动成为成员|发收件箱卡片|确认卡|倒计时|处理完毕|删除 Key/;
+const required = /标题是 Aroomo|shell.js 已加载|跳回首页|跳到 Aroomo 设置|设置 6 个 Tab|朗读接口禁用|登录接口|填 Key|Key 明文|对话：|自动成为成员|发收件箱卡片|确认卡|倒计时|处理完毕|删除 Key/;
 const hard = failed.filter((c) => required.test(c.name));
 console.log(`\n${checks.length - failed.length}/${checks.length} 通过；必须项失败 ${hard.length}`);
 process.exit(hard.length ? 1 : 0);

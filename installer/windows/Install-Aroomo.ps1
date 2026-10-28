@@ -201,7 +201,13 @@ $envPath = Join-Path $deploy '.env'
 if (Test-Path -LiteralPath $canonical) {
     Write-AroomoSay '找到了之前的配置，继续使用（密钥保持不变，数据才能打开）。'
     # 升级旧配置：去掉 restic 的键，补上本地版固定值（D63、D65）；已填的异地存储和主密钥公钥保持不变
-    $content = Set-AroomoEnvValues -Content ([IO.File]::ReadAllText($canonical)) -Values (Get-AroomoLocalEnvDefaults) -Remove (Get-AroomoObsoleteEnvKeys)
+    $upgrade = Get-AroomoLocalEnvDefaults
+    # 新版本新增的令牌（旧配置里没有）：补一个随机值。只补这几个，数据库密码和 LITELLM_SALT_KEY 永远不动
+    $existing = Read-AroomoEnv -Path $canonical
+    foreach ($k in @('CORE_OWNER_TOKEN', 'CORE_CHAT_TOKEN')) {
+        if (-not $existing.ContainsKey($k) -or -not $existing[$k] -or $existing[$k] -eq 'CHANGE_ME') { $upgrade[$k] = New-AroomoSecret }
+    }
+    $content = Set-AroomoEnvValues -Content ([IO.File]::ReadAllText($canonical)) -Values $upgrade -Remove (Get-AroomoObsoleteEnvKeys)
     Write-AroomoPrivateFile -Path $canonical -Content $content
 } else {
     $lobePort = Find-AroomoFreePort -Preferred 3210

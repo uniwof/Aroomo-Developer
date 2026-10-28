@@ -57,7 +57,7 @@ cleanup() {
 trap cleanup EXIT
 
 step="构建并启动"
-dc up -d --build --quiet-pull postgres redis rustfs rustfs-init litellm core lobe shell
+dc up -d --build --quiet-pull postgres redis rustfs rustfs-init litellm core lobe shell fake-llm
 
 step="等待界面就绪"
 for i in $(seq 1 120); do

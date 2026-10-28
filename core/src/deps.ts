@@ -33,6 +33,8 @@ export interface CoreDeps {
   access?: AccessVerifier;
   keys: KeyStore;
   settings: SettingsStore;
+  /** 测试时注入：对话入口调用 LiteLLM 用的 fetch */
+  chatFetch?: typeof fetch;
   /** 测试时注入；不传则按配置连接 LiteLLM */
   litellm?: LiteLLMAdmin;
   /** 有数据库时才有；关闭服务时一并关闭 */

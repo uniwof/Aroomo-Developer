@@ -14,8 +14,9 @@ describe('/api/settings/lead（负责人）', () => {
   let mock: MockLiteLLM;
   const apps: FastifyInstance[] = [];
 
+  let clock: ReturnType<typeof fakeClock>;
   beforeEach(async () => {
-    const clock = fakeClock();
+    clock = fakeClock();
     deps = memoryDeps(clock.now);
     mock ??= await startMockLiteLLM();
     mock.deployments.clear();
@@ -60,6 +61,24 @@ describe('/api/settings/lead（负责人）', () => {
     // 同一个模型再加一个 Key：不重复建成员
     await req('POST', '/api/keys', { name: '备用', sourceUrl: 'https://x.example/k', apiKey: key + 'X', model: 'openai/gpt-4o-mini', modelName: 'gpt-4o MINI' });
     expect((await req('GET', '/api/members')).json().members).toHaveLength(1);
+  });
+
+  it('删掉某个模型的最后一个 Key → 对应成员自动停用，负责人换成别人', async () => {
+    const k = (t: string) => ['placeholder', 'sk', t, 'ABCDEFGHIJKLMNOP'].join('-');
+    const a = (await req('POST', '/api/keys', { name: 'A', sourceUrl: 'https://x.example/k', apiKey: k('a'), model: 'openai/a', modelName: 'Model A' })).json().key.id;
+    await req('POST', '/api/keys', { name: 'B', sourceUrl: 'https://x.example/k', apiKey: k('b'), model: 'openai/b', modelName: 'Model B' });
+    expect((await req('GET', '/api/settings/lead')).json().effectiveLeadId).toBe('model-a');
+    // 删除是重要确认（本地版 reauth=off：两步 + 3 秒）
+    const first = await app.inject({ method: 'DELETE', url: `/api/keys/${a}`, headers: ownerAuth });
+    expect(first.statusCode).toBe(428);
+    const ch = first.json().error.confirm;
+    await app.inject({ method: 'POST', url: ch.stepUrl, headers: ownerAuth, payload: { step: 1 } });
+    clock.advance(3000);
+    const tok = (await app.inject({ method: 'POST', url: ch.stepUrl, headers: ownerAuth, payload: { step: 2 } })).json().confirmToken;
+    expect((await app.inject({ method: 'DELETE', url: `/api/keys/${a}`, headers: ownerAuth, payload: { confirmToken: tok } })).statusCode).toBe(204);
+    const ms = (await req('GET', '/api/members')).json().members;
+    expect(ms.find((m: { id: string }) => m.id === 'model-a').enabled).toBe(false);
+    expect((await req('GET', '/api/settings/lead')).json().effectiveLeadId).toBe('model-b');
   });
 });
 

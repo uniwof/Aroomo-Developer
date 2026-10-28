@@ -15,7 +15,7 @@
   /* 文案替换：品牌、默认助理 → 资源管家（§8.3 资源管家私聊固定置顶） */
   var TEXT_RULES = [
     [/LobeHub|LobeChat|Lobe Chat/g, 'Aroomo'],
-    [/Lobe AI|LobeAI/g, '资源管家'],
+    [/Lobe[\s\u00a0]?AI/g, '资源管家'],
     [/在同一工作区协作，把想法推进成结果/g, '交给我，我来安排合适的成员'],
   ];
 
@@ -261,7 +261,7 @@
   function origFetchSafe(u, o) { return (window.__aroomoOrigFetch || window.fetch)(u, o); }
 
   /* 逐字动画的标题（每个字一个 span，例如「嘿，你好，我是 Lobe AI」）：整体替换 */
-  var BRAND_TEST = /LobeHub|LobeChat|Lobe Chat|Lobe AI|LobeAI/;
+  var BRAND_TEST = /LobeHub|LobeChat|Lobe Chat|Lobe[\s\u00a0]?AI/;
   function fixSplitText(root) {
     if (!root || root.nodeType !== 1 || !root.querySelectorAll) return;
     var els = root.querySelectorAll('h1,h2,h3,h4,p,div,span');
