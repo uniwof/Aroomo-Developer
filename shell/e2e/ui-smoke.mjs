@@ -234,7 +234,8 @@ for (const [label, viewport, isMobile] of [
       await page.keyboard.press('Enter');
       return page.getByText(expect).first().waitFor({ timeout: 90000 }).then(() => true).catch(() => false);
     };
-    const ok1 = await sendAndWait('你好', '你好，我是测试模型（Fake Model）');
+    // 假模型回「你好，我是测试模型（<LiteLLM 里的底层模型名>）」，底层名是 fake-model
+    const ok1 = await sendAndWait('你好', /你好，我是测试模型（/);
     await shoot(page, 'desktop-chat-reply');
     check('对话：填 Key 后能和模型对话（交给负责人）', ok1, (await page.evaluate(() => document.body.innerText)).slice(-400));
     const bodyText = await page.evaluate(() => document.body.innerText);
