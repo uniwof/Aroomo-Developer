@@ -73,3 +73,20 @@ describe('loadConfig：令牌与迁移', () => {
     expect(() => loadConfig({ CORE_AUTO_MIGRATE: 'maybe' })).toThrow(ConfigError);
   });
 });
+
+describe('loadConfig：Cloudflare Access 重新验证（D63）', () => {
+  it('默认 required、300 秒；团队域名和 AUD 要一起设置；非法值报错；AUD 不进 toSafeJSON', () => {
+    const d = loadConfig({});
+    expect(d.accessReauth).toBe('required');
+    expect(d.accessReauthMaxAgeS).toBe(300);
+    expect(() => loadConfig({ CF_ACCESS_TEAM_DOMAIN: 'team.cloudflareaccess.com' })).toThrow(ConfigError);
+    expect(() => loadConfig({ CF_ACCESS_TEAM_DOMAIN: 'https://team.cloudflareaccess.com', CF_ACCESS_AUD: 'a' })).toThrow(ConfigError);
+    expect(() => loadConfig({ CORE_ACCESS_REAUTH: 'maybe' })).toThrow(ConfigError);
+    expect(() => loadConfig({ CORE_ACCESS_REAUTH_MAX_AGE_S: '5' })).toThrow(ConfigError);
+    // 占位值在运行时拼接（避免 gitleaks 误报）
+    const aud = ['placeholder', 'aud', '0001'].join('-');
+    const c = loadConfig({ CF_ACCESS_TEAM_DOMAIN: 'team.cloudflareaccess.com', CF_ACCESS_AUD: aud, CORE_ACCESS_REAUTH: 'OFF' });
+    expect(c.accessReauth).toBe('off');
+    expect(JSON.stringify(toSafeJSON(c))).not.toContain(aud);
+  });
+});

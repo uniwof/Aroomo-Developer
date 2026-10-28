@@ -5,6 +5,7 @@ import { hmacToken, MemoryOperatorTokenStore } from '../src/auth/tokens.js';
 import { loadConfig } from '../src/config.js';
 import { type CoreDeps, memoryDeps } from '../src/deps.js';
 import { buildServer } from '../src/server.js';
+import { confirmOverHttp } from './helpers/confirm.js';
 import { OWNER_TOKEN, TOKEN_SECRET, fakeClock, ownerAuth } from './helpers/db.js';
 
 const OP = 'placeholder-operator-token-inbox-0001';
@@ -22,7 +23,8 @@ describe('/api/inbox HTTP', () => {
     (deps.operatorTokens as MemoryOperatorTokenStore).add({
       id: 'op',
       hmac: hmacToken(TOKEN_SECRET, OP),
-      capabilities: ['inbox:read', 'inbox:act', 'inbox:confirm-irreversible'],
+      // 令牌里写了白名单外 / 禁止的能力也不生效（D62）
+      capabilities: ['inbox:post', 'inbox:read', 'inbox:act', 'confirm:important'],
       revokedAt: null,
       expiresAt: null,
     });
@@ -43,7 +45,7 @@ describe('/api/inbox HTTP', () => {
           title,
           actions: [
             { id: 'ok', label: '同意' },
-            { id: 'delete', label: '永久删除', irreversible: true },
+            { id: 'delete', label: '永久删除', confirm: { kind: 'irreversible', consequences: ['删除后无法恢复。'] } },
           ],
         },
         sys(),
@@ -75,7 +77,7 @@ describe('/api/inbox HTTP', () => {
     const a = await seed('a');
     const r = await post(`/api/inbox/${a.id}/actions/ok`);
     expect(r.statusCode).toBe(200);
-    expect(r.json()).toMatchObject({ needsConfirm: false, item: { status: 'done', resolvedAction: 'ok' } });
+    expect(r.json()).toMatchObject({ item: { status: 'done', resolvedAction: 'ok' } });
     expect((await post(`/api/inbox/${a.id}/actions/ok`)).statusCode).toBe(409);
     const b = await seed('b');
     const codes = (await Promise.all([post(`/api/inbox/${b.id}/actions/ok`), post(`/api/inbox/${b.id}/actions/ok`)])).map((x) => x.statusCode).sort();
@@ -86,30 +88,80 @@ describe('/api/inbox HTTP', () => {
     expect((await post(`/api/inbox/not-a-uuid/actions/ok`)).statusCode).toBe(400);
   });
 
-  it('不可逆动作二次确认：needsConfirm → 带 token 执行 → 重放 409；过期 409', async () => {
+  it('重要动作（不可逆）：428 + challenge → 两步确认 → 带令牌执行 → 重放 409；过期 409', async () => {
     const a = await seed('a');
     const first = await post(`/api/inbox/${a.id}/actions/delete`);
-    expect(first.statusCode).toBe(200);
-    const body = first.json();
-    expect(body).toMatchObject({ needsConfirm: true });
-    expect(typeof body.confirmToken).toBe('string');
-    const exec = await post(`/api/inbox/${a.id}/actions/delete`, { confirmToken: body.confirmToken });
-    expect(exec.json()).toMatchObject({ needsConfirm: false, item: { status: 'done', resolvedAction: 'delete' } });
-    expect((await post(`/api/inbox/${a.id}/actions/delete`, { confirmToken: body.confirmToken })).statusCode).toBe(409);
+    expect(first.statusCode).toBe(428);
+    expect(first.json().error).toMatchObject({
+      code: 'CONFIRM_REQUIRED',
+      confirm: { level: 'important', kind: 'irreversible', consequences: ['删除后无法恢复。'], steps: 2, nextStep: 1, minDelayMs: 3000 },
+    });
+    let token = '';
+    const exec = await confirmOverHttp(app, clock, ownerAuth, (t) => {
+      if (t) token = t;
+      return post(`/api/inbox/${a.id}/actions/delete`, t ? { confirmToken: t } : undefined);
+    });
+    expect(exec.json()).toMatchObject({ item: { status: 'done', resolvedAction: 'delete' } });
+    expect((await post(`/api/inbox/${a.id}/actions/delete`, { confirmToken: token })).statusCode).toBe(409);
 
     const b = await seed('b');
-    const t = (await post(`/api/inbox/${b.id}/actions/delete`)).json().confirmToken;
-    clock.advance(5 * 60 * 1000 + 1);
-    const late = await post(`/api/inbox/${b.id}/actions/delete`, { confirmToken: t });
+    const ch = (await post(`/api/inbox/${b.id}/actions/delete`)).json().error.confirm;
+    await post(ch.stepUrl, { step: 1 });
+    clock.advance(3000);
+    const t2 = (await post(ch.stepUrl, { step: 2 })).json().confirmToken;
+    clock.advance(5 * 60 * 1000);
+    const late = await post(`/api/inbox/${b.id}/actions/delete`, { confirmToken: t2 });
     expect(late.statusCode).toBe(409);
     expect(late.json().error.code).toBe('CONFIRM_EXPIRED');
   });
 
-  it('操作员：可读、可执行普通动作；不可逆动作即使令牌写了 confirm 能力也 403（白名单外）', async () => {
+  it('第二次点击不满 3 秒：服务端拒绝 425，满 3 秒后可以继续', async () => {
     const a = await seed('a');
-    expect((await app.inject({ method: 'GET', url: '/api/inbox', headers: opAuth })).statusCode).toBe(200);
+    const ch = (await post(`/api/inbox/${a.id}/actions/delete`)).json().error.confirm;
+    const s1 = await post(ch.stepUrl, { step: 1 });
+    expect(s1.json().confirm).toMatchObject({ nextStep: 2 });
+    clock.advance(2999);
+    const early = await post(ch.stepUrl, { step: 2 });
+    expect(early.statusCode).toBe(425);
+    expect(early.json().error).toMatchObject({ code: 'CONFIRM_TOO_EARLY', retryAfterMs: 1 });
+    clock.advance(1);
+    const ok = await post(ch.stepUrl, { step: 2 });
+    expect(ok.statusCode).toBe(200);
+    expect(typeof ok.json().confirmToken).toBe('string');
+    // 令牌只签发一次
+    expect((await post(ch.stepUrl, { step: 2 })).statusCode).toBe(409);
+  });
+
+  it('跳过第一步直接点第二步：409', async () => {
+    const a = await seed('a');
+    const ch = (await post(`/api/inbox/${a.id}/actions/delete`)).json().error.confirm;
+    clock.advance(10_000);
+    expect((await post(ch.stepUrl, { step: 2 })).json().error.code).toBe('CONFIRM_STEP1_REQUIRED');
+  });
+
+  it('操作员（D62）：可以发卡片；不能读收件箱、不能点动作、不能确认；每次拒绝都记审计', async () => {
+    const created = await post('/api/inbox', { group: 'decision', kind: 'op-card', title: '请拍板', actions: [{ id: 'ok', label: '好' }] }, opAuth);
+    expect(created.statusCode).toBe(201);
+    expect(created.json().item).toMatchObject({ title: '请拍板', status: 'open' });
+    const a = await seed('a');
+    expect((await app.inject({ method: 'GET', url: '/api/inbox', headers: opAuth })).statusCode).toBe(403);
+    expect((await post(`/api/inbox/${a.id}/actions/ok`, undefined, opAuth)).statusCode).toBe(403);
     expect((await post(`/api/inbox/${a.id}/actions/delete`, undefined, opAuth)).statusCode).toBe(403);
-    expect((await post(`/api/inbox/${a.id}/actions/ok`, undefined, opAuth)).statusCode).toBe(200);
+    expect((await post(`/api/confirm/00000000-0000-0000-0000-000000000000/steps`, { step: 1 }, opAuth)).statusCode).toBe(403);
+    // 不存在的接口：同样拒绝并审计（白名单以外的请求一律拒绝）
+    expect((await app.inject({ method: 'GET', url: '/api/nope', headers: opAuth })).statusCode).toBe(403);
+    const denied = (await deps.auditLog.query({ action: 'auth.denied' })).entries;
+    expect(denied).toHaveLength(5);
+    expect(denied.every((e) => e.actor.type === 'operator' && e.result === 'denied')).toBe(true);
+    expect(denied.map((e) => e.target.id)).toContain('(none)');
+  });
+
+  it('发卡片：重要动作必须写后果；主人也能发', async () => {
+    const bad = await post('/api/inbox', { group: 'decision', kind: 'x', title: 't', actions: [{ id: 'pay', label: '付', confirm: { kind: 'payment' } }] });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().error.code).toBe('CONSEQUENCES_REQUIRED');
+    const ok = await post('/api/inbox', { group: 'decision', kind: 'x', title: 't', actions: [{ id: 'pay', label: '付', confirm: { kind: 'payment', consequences: ['扣 ¥1'] } }] });
+    expect(ok.statusCode).toBe(201);
   });
 
   it('POST dismiss（单条 / 批量）', async () => {

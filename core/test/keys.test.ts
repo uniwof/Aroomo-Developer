@@ -21,7 +21,10 @@ describe('Key 管理（/api/keys，mock LiteLLM）', () => {
   let mock: MockLiteLLM;
   let app: FastifyInstance;
   let deps: CoreDeps;
+  let clock: ReturnType<typeof fakeClock>;
   let logs: string[];
+  /** 假的 Cloudflare Access：令牌 'fresh' = 刚刚重新验证；'stale' = 10 分钟前 */
+  const access = { verify: async (jwt: string) => (jwt === 'fresh' ? { iat: Math.floor(clock.now().getTime() / 1000) } : jwt === 'stale' ? { iat: Math.floor(clock.now().getTime() / 1000) - 600 } : null) };
   const responses: string[] = [];
   const apps: FastifyInstance[] = [];
 
@@ -35,11 +38,13 @@ describe('Key 管理（/api/keys，mock LiteLLM）', () => {
 
   function build(baseUrl = mock.url, masterKey: string | null = MOCK_MASTER_KEY, timeoutMs = 2000) {
     logs = [];
-    deps = memoryDeps(fakeClock().now);
+    clock = fakeClock();
+    deps = memoryDeps(clock.now);
+    deps.access = access;
     deps.litellm = new LiteLLMAdmin({ baseUrl, masterKey: masterKey ?? undefined, timeoutMs });
     (deps.operatorTokens as MemoryOperatorTokenStore).add({ id: 'op', hmac: hmacToken(TOKEN_SECRET, OP), capabilities: ['keys:read', 'members:read'], revokedAt: null, expiresAt: null });
     app = buildServer(
-      loadConfig({ CORE_LOG_LEVEL: 'trace', CORE_OWNER_TOKEN: OWNER_TOKEN, CORE_TOKEN_SECRET: TOKEN_SECRET }),
+      loadConfig({ CORE_LOG_LEVEL: 'trace', CORE_OWNER_TOKEN: OWNER_TOKEN, CORE_TOKEN_SECRET: TOKEN_SECRET, CORE_ACCESS_REAUTH: 'required' }),
       deps,
       { logStream: { write: (m: string) => void logs.push(m) } },
     );
@@ -68,10 +73,24 @@ describe('Key 管理（/api/keys，mock LiteLLM）', () => {
     responses.length = 0;
   });
 
-  async function call(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, payload?: object, headers: Record<string, string> = ownerAuth) {
+  async function raw(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, payload?: object, headers: Record<string, string> = ownerAuth) {
     const res = await app.inject({ method, url, headers, ...(payload ? { payload } : {}) });
     responses.push(res.body);
     return res;
+  }
+  /**
+   * 发请求；遇到 428（涉及凭据的重要确认，D63）自动走完：第一次点击 → 3 秒 → 重新验证 Access 后第二次点击 → 带令牌重发。
+   */
+  async function call(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, payload?: object, headers: Record<string, string> = ownerAuth) {
+    const res = await raw(method, url, payload, headers);
+    if (res.statusCode !== 428) return res;
+    const ch = res.json().error.confirm;
+    expect(ch).toMatchObject({ level: 'important', kind: 'credential', requiresAccessReauth: true });
+    expect((await raw('POST', ch.stepUrl, { step: 1 }, headers)).statusCode).toBe(200);
+    clock.advance(3000);
+    const s2 = await raw('POST', ch.stepUrl, { step: 2 }, { ...headers, 'cf-access-jwt-assertion': 'fresh' });
+    expect(s2.statusCode).toBe(200);
+    return raw(method, url, { ...(payload ?? {}), confirmToken: s2.json().confirmToken }, headers);
   }
   const create = (over: Record<string, unknown> = {}) =>
     call('POST', '/api/keys', { name: 'OpenAI 主号', sourceUrl: 'https://platform.openai.com/api-keys', apiKey: KEY_A, model: 'openai/gpt-4o-mini', ...over });
@@ -130,18 +149,57 @@ describe('Key 管理（/api/keys，mock LiteLLM）', () => {
     expect((await call('GET', '/api/keys')).json().keys[0].last4).toBe(KEY_A.slice(-4));
   });
 
-  it('删除：无 confirm 409；confirm 后删 LiteLLM 部署与本地记录；LiteLLM 已无该部署也能删', async () => {
+  it('删除：无令牌 428（凭据类重要确认），不删；确认后删 LiteLLM 部署与本地记录；LiteLLM 已无该部署也能删', async () => {
     const id = (await create()).json().key.id;
-    const r1 = await call('DELETE', `/api/keys/${id}`);
-    expect(r1.statusCode).toBe(409);
-    expect(r1.json().error.code).toBe('CONFIRM_REQUIRED');
-    expect((await call('DELETE', `/api/keys/${id}`, { confirm: true })).statusCode).toBe(204);
+    const r1 = await raw('DELETE', `/api/keys/${id}`);
+    expect(r1.statusCode).toBe(428);
+    expect(r1.json().error.confirm.consequences.length).toBeGreaterThan(0);
+    expect(mock.deployments.size).toBe(1);
+    // 旧的 confirm: true 已废止（D63）
+    expect((await raw('DELETE', `/api/keys/${id}`, { confirm: true })).statusCode).toBe(400);
+    expect((await call('DELETE', `/api/keys/${id}`)).statusCode).toBe(204);
     expect(mock.deployments.size).toBe(0);
     expect((await call('GET', '/api/keys')).json().keys).toEqual([]);
     const id2 = (await create()).json().key.id;
     mock.deployments.clear();
-    expect((await call('DELETE', `/api/keys/${id2}`, { confirm: true })).statusCode).toBe(204);
-    expect((await call('DELETE', `/api/keys/${id2}`, { confirm: true })).statusCode).toBe(404);
+    expect((await call('DELETE', `/api/keys/${id2}`)).statusCode).toBe(204);
+    expect((await call('DELETE', `/api/keys/${id2}`)).statusCode).toBe(404);
+  });
+
+  it('凭据操作的第二次点击必须带「刚刚」的 Cloudflare Access 令牌（D63）', async () => {
+    const first = await raw('POST', '/api/keys', { name: 'n', sourceUrl: 'https://x.example/k', apiKey: KEY_A, model: 'openai/gpt-4o-mini' });
+    expect(first.statusCode).toBe(428);
+    expect(mock.deployments.size).toBe(0);
+    const ch = first.json().error.confirm;
+    await raw('POST', ch.stepUrl, { step: 1 });
+    clock.advance(3000);
+    expect((await raw('POST', ch.stepUrl, { step: 2 })).json().error.code).toBe('ACCESS_REAUTH_REQUIRED');
+    expect((await raw('POST', ch.stepUrl, { step: 2 }, { ...ownerAuth, 'cf-access-jwt-assertion': 'stale' })).json().error.code).toBe('ACCESS_REAUTH_REQUIRED');
+    expect((await raw('POST', ch.stepUrl, { step: 2 }, { ...ownerAuth, 'cf-access-jwt-assertion': 'forged' })).statusCode).toBe(401);
+    const ok = await raw('POST', ch.stepUrl, { step: 2 }, { ...ownerAuth, 'cf-access-jwt-assertion': 'fresh' });
+    const token = ok.json().confirmToken;
+    // 令牌绑定请求体：换成另一个 Key 提交 → 409
+    const swapped = await raw('POST', '/api/keys', { name: 'n', sourceUrl: 'https://x.example/k', apiKey: KEY_B, model: 'openai/gpt-4o-mini', confirmToken: token });
+    expect(swapped.statusCode).toBe(409);
+    expect(mock.deployments.size).toBe(0);
+  });
+
+  it('只改名称 / 获取网址不需要确认；没有配置 Cloudflare Access 时凭据操作 503（不悄悄放行）', async () => {
+    const id = (await create()).json().key.id;
+    expect((await raw('PATCH', `/api/keys/${id}`, { name: 'x', sourceUrl: 'https://y.example/' })).statusCode).toBe(200);
+    deps = memoryDeps(clock.now);
+    deps.litellm = new LiteLLMAdmin({ baseUrl: mock.url, masterKey: MOCK_MASTER_KEY });
+    app = buildServer(loadConfig({ CORE_LOG_LEVEL: 'silent', CORE_OWNER_TOKEN: OWNER_TOKEN }), deps);
+    apps.push(app);
+    const r = await raw('POST', '/api/keys', { name: 'n', sourceUrl: 'https://x.example/k', apiKey: KEY_A, model: 'openai/gpt-4o-mini' });
+    expect(r.statusCode).toBe(503);
+    expect(r.json().error.code).toBe('ACCESS_REAUTH_NOT_CONFIGURED');
+    // 本地版：CORE_ACCESS_REAUTH=off → 仍要两次点击和 3 秒，但不要求 Access
+    const app2 = buildServer(loadConfig({ CORE_LOG_LEVEL: 'silent', CORE_OWNER_TOKEN: OWNER_TOKEN, CORE_ACCESS_REAUTH: 'off' }), deps);
+    apps.push(app2);
+    const r2 = await app2.inject({ method: 'POST', url: '/api/keys', headers: ownerAuth, payload: { name: 'n', sourceUrl: 'https://x.example/k', apiKey: KEY_A, model: 'openai/gpt-4o-mini' } });
+    expect(r2.statusCode).toBe(428);
+    expect(r2.json().error.confirm.requiresAccessReauth).toBe(false);
   });
 
   it('同步模型列表失败只记状态 sync_failed，不报错', async () => {
@@ -211,8 +269,11 @@ describe('Key 管理（/api/keys，mock LiteLLM）', () => {
   it('审计：新增 / 替换 / 删除都有记录，只带末 4 位', async () => {
     const id = (await create()).json().key.id;
     await call('PATCH', `/api/keys/${id}`, { apiKey: KEY_B });
-    await call('DELETE', `/api/keys/${id}`, { confirm: true });
-    const e = (await deps.auditLog.query({ limit: 20 })).entries.map((x) => `${x.action}:${x.result}:${x.note ?? ''}`).reverse();
+    await call('DELETE', `/api/keys/${id}`);
+    const e = (await deps.auditLog.query({ limit: 50 })).entries
+      .filter((x) => x.action.startsWith('keys.'))
+      .map((x) => `${x.action}:${x.result}:${x.note ?? ''}`)
+      .reverse();
     expect(e).toEqual([`keys.create:ok:last4=${KEY_A.slice(-4)}`, `keys.replace:ok:last4=${KEY_B.slice(-4)}`, `keys.delete:ok:last4=${KEY_B.slice(-4)}`]);
   });
 });

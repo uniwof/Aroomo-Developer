@@ -1,9 +1,10 @@
 /** 收件箱 API（前缀 /api/inbox，Issue #7）。 */
 import type { FastifyInstance } from 'fastify';
-import { requireCapability } from '../auth/plugin.js';
-import { principalCan } from '../auth/tokens.js';
-import type { InboxService } from './service.js';
-import { INBOX_GROUPS, type InboxGroup, type InboxItem, type InboxStatus } from './types.js';
+import { guard } from '../auth/plugin.js';
+import { actorKey, principalCan } from '../auth/tokens.js';
+import { CONFIRM_KINDS } from '../confirm/confirm.js';
+import type { CreateInboxInput, InboxService } from './service.js';
+import { INBOX_GROUPS, type InboxGroup, type InboxItem, type InboxStatus, URGENCIES } from './types.js';
 
 export function inboxJson(i: InboxItem) {
   return {
@@ -15,11 +16,63 @@ export function inboxJson(i: InboxItem) {
 
 const UUID = { type: 'string', pattern: '^[0-9a-fA-F-]{36}$' } as const;
 
+const actionSchema = {
+  type: 'object',
+  required: ['id', 'label'],
+  additionalProperties: false,
+  properties: {
+    id: { type: 'string', maxLength: 64 },
+    label: { type: 'string', maxLength: 64 },
+    confirm: {
+      type: 'object',
+      required: ['kind'],
+      additionalProperties: false,
+      properties: {
+        kind: { type: 'string', enum: [...CONFIRM_KINDS] },
+        consequences: { type: 'array', maxItems: 10, items: { type: 'string', maxLength: 500 } },
+      },
+    },
+  },
+} as const;
+
 export function registerInboxRoutes(app: FastifyInstance, svc: InboxService): void {
+  /** 发卡片（D62：操作员允许项「向收件箱发卡片」；主人也可用）。同 related + kind 的 open 卡片去重。 */
+  app.post<{ Body: CreateInboxInput }>(
+    '/api/inbox',
+    {
+      ...guard('inbox:post'),
+      schema: {
+        body: {
+          type: 'object',
+          required: ['group', 'kind', 'title'],
+          additionalProperties: false,
+          properties: {
+            group: { type: 'string', enum: [...INBOX_GROUPS] },
+            kind: { type: 'string', minLength: 1, maxLength: 64 },
+            urgency: { type: 'string', enum: [...URGENCIES] },
+            title: { type: 'string', minLength: 1, maxLength: 200 },
+            summary: { type: 'string', maxLength: 4000 },
+            related: {
+              type: 'object',
+              required: ['type', 'id'],
+              additionalProperties: false,
+              properties: { type: { type: 'string', maxLength: 64 }, id: { type: 'string', maxLength: 200 } },
+            },
+            actions: { type: 'array', maxItems: 5, items: actionSchema },
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      const out = await svc.createInboxItem(req.body, req.audit);
+      return reply.status(out.created ? 201 : 200).send({ item: inboxJson(out.item), created: out.created });
+    },
+  );
+
   app.get<{ Querystring: { group?: InboxGroup; status?: InboxStatus } }>(
     '/api/inbox',
     {
-      preHandler: requireCapability('inbox:read'),
+      ...guard('inbox:read'),
       schema: {
         querystring: {
           type: 'object',
@@ -40,12 +93,12 @@ export function registerInboxRoutes(app: FastifyInstance, svc: InboxService): vo
     },
   );
 
-  app.get('/api/inbox/unread-count', { preHandler: requireCapability('inbox:read') }, async () => svc.unreadCount());
+  app.get('/api/inbox/unread-count', { ...guard('inbox:read') }, async () => svc.unreadCount());
 
   app.post<{ Params: { id: string; actionId: string }; Body: { confirmToken?: string } | undefined }>(
     '/api/inbox/:id/actions/:actionId',
     {
-      preHandler: requireCapability('inbox:act'),
+      ...guard('inbox:act'),
       schema: {
         params: {
           type: 'object',
@@ -61,25 +114,24 @@ export function registerInboxRoutes(app: FastifyInstance, svc: InboxService): vo
     },
     async (req) => {
       const p = req.principal!;
-      const out = await svc.act(
+      const item = await svc.act(
         req.params.id,
         req.params.actionId,
         {
           ...(req.body?.confirmToken ? { confirmToken: req.body.confirmToken } : {}),
-          actorKey: p.type === 'owner' ? 'owner' : `operator:${p.id}`,
-          canConfirmIrreversible: principalCan(p, 'inbox:confirm-irreversible'),
+          actor: actorKey(p),
+          canConfirmImportant: principalCan(p, 'confirm:important'),
         },
         req.audit,
       );
-      if (out.needsConfirm) return { needsConfirm: true, confirmToken: out.confirmToken, expiresAt: out.expiresAt.toISOString() };
-      return { needsConfirm: false, item: inboxJson(out.item) };
+      return { item: inboxJson(item) };
     },
   );
 
   app.post<{ Params: { id: string } }>(
     '/api/inbox/:id/dismiss',
     {
-      preHandler: requireCapability('inbox:act'),
+      ...guard('inbox:act'),
       schema: { params: { type: 'object', required: ['id'], properties: { id: UUID } } },
     },
     async (req) => ({ item: inboxJson(await svc.dismiss(req.params.id, req.audit)) }),
@@ -88,7 +140,7 @@ export function registerInboxRoutes(app: FastifyInstance, svc: InboxService): vo
   app.post<{ Body: { ids: string[] } }>(
     '/api/inbox/dismiss',
     {
-      preHandler: requireCapability('inbox:act'),
+      ...guard('inbox:act'),
       schema: {
         body: {
           type: 'object',

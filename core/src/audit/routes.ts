@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { requireCapability } from '../auth/plugin.js';
+import { guard } from '../auth/plugin.js';
 import { badRequest } from '../http/errors.js';
 import { InvalidCursorError } from './common.js';
 import { AUDIT_MAX_LIMIT, type AuditLog, type AuditQuery, type ActorType } from './types.js';
@@ -21,7 +21,7 @@ export function registerAuditRoutes(app: FastifyInstance, log: AuditLog): void {
   app.get<{ Querystring: AuditQs }>(
     '/api/audit',
     {
-      preHandler: requireCapability('audit:read'),
+      ...guard('audit:read'),
       schema: {
         querystring: {
           type: 'object',

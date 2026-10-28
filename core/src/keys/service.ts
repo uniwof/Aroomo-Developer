@@ -3,13 +3,16 @@
  * - 新增：先写 LiteLLM（POST /model/new），成功后再存本地元数据；本地失败则回滚删除 LiteLLM 部署。
  * - 换 Key（整条替换）：先新增新部署，成功后切换本地记录，再删除旧部署——新 Key 写入失败时旧 Key 不受影响。
  * - 只改名称 / 获取网址：只改本地元数据，不碰 LiteLLM。
- * - 删除：需 confirm: true（否则 409），先删 LiteLLM 部署（已不存在视为成功），再删本地。
+ * - 确认（D63）：新增 Key、换 Key（含改接口地址 / 模型）、删除都「涉及凭据」→ 重要确认（两次点击、3 秒、重新验证 Cloudflare Access）；
+ *   新增 / 换 Key 的令牌绑定请求体的加盐摘要，确认 A 不能拿去提交 B。只改名称 / 获取网址不需要确认。
+ * - 删除：先删 LiteLLM 部署（已不存在视为成功），再删本地。
  * - 保存后同步一次模型列表（/v1/models）：失败只把状态记为 sync_failed，不报错。
  * - 完整 Key 只在本函数调用栈里短暂存在，不写本地库、不进响应、不进日志、不进审计、不进错误信息。
  */
 import { randomUUID } from 'node:crypto';
 import type { AuditFn } from '../audit/types.js';
-import { badRequest, conflict, HttpError, notFound } from '../http/errors.js';
+import { type ConfirmCtx, ConfirmService, MemoryChallengeStore } from '../confirm/confirm.js';
+import { badRequest, HttpError, notFound } from '../http/errors.js';
 import { type LiteLLMAdmin, LiteLLMRejectedError, LiteLLMUnavailableError } from './litellm.js';
 import type { KeyRecord, KeyStore } from './types.js';
 
@@ -61,16 +64,29 @@ export class KeysService {
     private readonly store: KeyStore,
     private readonly litellm: LiteLLMAdmin,
     private readonly now: () => Date,
+    private readonly confirm: ConfirmService = new ConfirmService(new MemoryChallengeStore(), { now }),
   ) {}
+
+  async #confirmCredential(scope: string, title: string, consequences: string[], payload: unknown, ctx: ConfirmCtx, audit: AuditFn): Promise<void> {
+    await this.confirm.require({ scope, kind: 'credential', title, consequences, confirmLabel: '确认', payload }, ctx, audit);
+  }
 
   list(): Promise<KeyRecord[]> {
     return this.store.list();
   }
 
-  async create(input: CreateKeyInput, audit: AuditFn): Promise<KeyRecord> {
+  async create(input: CreateKeyInput, ctx: ConfirmCtx, audit: AuditFn): Promise<KeyRecord> {
     const name = input.name.trim();
     if (!name) throw badRequest('名称不能为空', 'INVALID_NAME');
     const apiKey = validateKey(input.apiKey);
+    await this.#confirmCredential(
+      'keys:create',
+      `新增 Key「${name}」（末 4 位 ${last4(apiKey)}）`,
+      ['这个 Key 会保存到模型网关，成员调用模型时会用它产生费用。', `调用会发往：${input.apiBase ?? '服务商默认地址'}`],
+      input,
+      ctx,
+      audit,
+    );
     const id = randomUUID();
     const deploymentId = `aroomo-${randomUUID()}`;
     const modelName = input.modelName?.trim() || input.model;
@@ -114,7 +130,7 @@ export class KeysService {
     return this.#syncAfterSave(rec);
   }
 
-  async update(id: string, patch: UpdateKeyInput, audit: AuditFn): Promise<KeyRecord> {
+  async update(id: string, patch: UpdateKeyInput, ctx: ConfirmCtx, audit: AuditFn): Promise<KeyRecord> {
     const cur = await this.store.get(id);
     if (!cur) throw notFound('找不到这个 Key');
     if (patch.apiKey === undefined && (patch.apiBase !== undefined || patch.model !== undefined)) {
@@ -137,6 +153,14 @@ export class KeysService {
     const apiKey = validateKey(patch.apiKey);
     const model = patch.model ?? cur.model;
     const apiBase = patch.apiBase === undefined ? cur.apiBase : patch.apiBase;
+    await this.#confirmCredential(
+      `keys:replace:${id}`,
+      `替换 Key「${next.name}」（末 4 位 ${cur.last4} → ${last4(apiKey)}）`,
+      ['旧 Key 会从模型网关里删除，之后的调用改用新 Key。', `调用会发往：${apiBase ?? '服务商默认地址'}`],
+      { id, ...patch },
+      ctx,
+      audit,
+    );
     const newDeployment = `aroomo-${randomUUID()}`;
     try {
       await this.litellm.addDeployment({
@@ -163,13 +187,17 @@ export class KeysService {
     return this.#syncAfterSave(next);
   }
 
-  async delete(id: string, confirm: boolean, audit: AuditFn): Promise<void> {
-    if (confirm !== true) {
-      await audit('keys.delete', { type: 'key', id }, 'failed', 'CONFIRM_REQUIRED');
-      throw conflict('删除 Key 不可恢复，请确认后再试', 'CONFIRM_REQUIRED');
-    }
+  async delete(id: string, ctx: ConfirmCtx, audit: AuditFn): Promise<void> {
     const cur = await this.store.get(id);
     if (!cur) throw notFound('找不到这个 Key');
+    await this.#confirmCredential(
+      `keys:delete:${id}`,
+      `删除 Key「${cur.name}」（末 4 位 ${cur.last4}）`,
+      ['Key 会从模型网关里永久删除，不能恢复；要再用需要重新填写。', '正在用这个 Key 的成员会无法调用模型。'],
+      { id },
+      ctx,
+      audit,
+    );
     try {
       await this.litellm.deleteDeployment(cur.litellmModelId);
     } catch (err) {

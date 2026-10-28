@@ -2,14 +2,16 @@
  * 收件箱业务（Issue #7）：
  * - createInboxItem()：其他模块调用；同 related + kind 的 open 条目去重。
  * - 执行动作：同一条只能成功执行一次（按钮点过后整组禁用），并发重复只有一个成功，其余 409。
- * - irreversible 动作：第一次只返回 { needsConfirm, confirmToken }，带令牌的第二次才执行（D50）。
+ * - 确认（D63）：普通动作点一下即执行（记 confirm.normal 审计）；重要动作（不可逆、花钱、涉及凭据）
+ *   走统一确认服务：第一次 428 + challenge，两步确认拿到令牌后带令牌再调用才执行。
  * - 所有状态变化都写审计。
  */
 import { randomUUID } from 'node:crypto';
 import type { AuditFn } from '../audit/types.js';
-import type { ConfirmService } from '../confirm/confirm.js';
+import { CONFIRM_KINDS, type ConfirmCtx, type ConfirmService } from '../confirm/confirm.js';
 import { badRequest, conflict, HttpError, notFound } from '../http/errors.js';
 import {
+  actionKind,
   INBOX_GROUPS,
   type InboxAction,
   type InboxGroup,
@@ -30,10 +32,6 @@ export interface CreateInboxInput {
   related?: InboxRef;
   actions?: InboxAction[];
 }
-
-export type ActionOutcome =
-  | { needsConfirm: true; confirmToken: string; expiresAt: Date }
-  | { needsConfirm: false; item: InboxItem };
 
 export interface BatchDismissResult {
   dismissed: string[];
@@ -58,11 +56,23 @@ export class InboxService {
     if (!title) throw badRequest('标题不能为空', 'INVALID_TITLE');
     const kind = input.kind.trim();
     if (!kind) throw badRequest('kind 不能为空', 'INVALID_KIND');
-    const actions = (input.actions ?? []).map((a) => ({ ...a, label: a.label.trim() }));
+    const actions: InboxAction[] = [];
     const ids = new Set<string>();
-    for (const a of actions) {
-      if (!ACTION_ID_RE.test(a.id) || !a.label || ids.has(a.id)) throw badRequest('动作 id 必须唯一且只含 [a-z0-9_-]，label 不能为空', 'INVALID_ACTIONS');
-      ids.add(a.id);
+    for (const raw of input.actions ?? []) {
+      const label = raw.label.trim();
+      if (!ACTION_ID_RE.test(raw.id) || !label || ids.has(raw.id)) throw badRequest('动作 id 必须唯一且只含 [a-z0-9_-]，label 不能为空', 'INVALID_ACTIONS');
+      ids.add(raw.id);
+      const kind = actionKind(raw);
+      if (!CONFIRM_KINDS.includes(kind)) throw badRequest('未知的确认级别', 'INVALID_ACTIONS');
+      if (kind === 'normal') {
+        actions.push({ id: raw.id, label });
+        continue;
+      }
+      let consequences = (raw.confirm?.consequences ?? []).map((c) => c.trim()).filter(Boolean);
+      // 旧写法 irreversible: true 没有后果文字时给一条默认的
+      if (consequences.length === 0 && !raw.confirm && raw.irreversible) consequences = ['这个操作不可撤销。'];
+      if (consequences.length === 0) throw badRequest('重要确认的动作必须写明后果（confirm.consequences）', 'CONSEQUENCES_REQUIRED');
+      actions.push({ id: raw.id, label, confirm: { kind, consequences } });
     }
     const item: InboxItem = {
       id: randomUUID(),
@@ -72,7 +82,7 @@ export class InboxService {
       title,
       summary: input.summary?.trim() ?? '',
       ...(input.related ? { related: { ...input.related } } : {}),
-      actions: actions.map((a) => ({ id: a.id, label: a.label, ...(a.irreversible ? { irreversible: true } : {}) })),
+      actions,
       status: 'open',
       createdAt: this.now(),
     };
@@ -91,15 +101,10 @@ export class InboxService {
   }
 
   /**
-   * 执行动作。actorKey 用于把确认令牌绑定到操作者（例如 owner / operator:<id>）。
-   * canConfirmIrreversible=false 时不可逆动作直接 403（操作员不能确认，PRODUCT §9.3）。
+   * 执行动作。确认由统一确认服务处理（D63）：重要动作没有令牌时抛 428（带 challenge），
+   * 操作员不能完成重要确认（403，D62）。
    */
-  async act(
-    id: string,
-    actionId: string,
-    opts: { confirmToken?: string; actorKey: string; canConfirmIrreversible: boolean },
-    audit: AuditFn,
-  ): Promise<ActionOutcome> {
+  async act(id: string, actionId: string, ctx: ConfirmCtx, audit: AuditFn): Promise<InboxItem> {
     const target = { type: 'inbox', id };
     try {
       const item = await this.store.get(id);
@@ -108,23 +113,26 @@ export class InboxService {
       if (!action) throw badRequest('这条事项没有这个动作', 'UNKNOWN_ACTION');
       if (item.status !== 'open') throw conflict('这条事项已经处理过了', 'ALREADY_RESOLVED', { status: item.status });
 
-      if (action.irreversible) {
-        if (!opts.canConfirmIrreversible) throw new HttpError(403, 'FORBIDDEN', '不可逆操作只能由主人确认');
-        const scope = `inbox:${id}:${actionId}`;
-        if (!opts.confirmToken) {
-          const t = await this.confirm.issue(scope, opts.actorKey);
-          await audit('inbox.action.confirm_requested', target, 'ok', actionId);
-          return { needsConfirm: true, ...t };
-        }
-        await this.confirm.consume(opts.confirmToken, scope, opts.actorKey);
-      }
+      const kind = actionKind(action);
+      await this.confirm.require(
+        {
+          scope: `inbox:${id}:${actionId}`,
+          kind,
+          title: `${item.title}：${action.label}`,
+          consequences: action.confirm?.consequences ?? (action.irreversible ? ['这个操作不可撤销。'] : []),
+          confirmLabel: action.label,
+        },
+        ctx,
+        audit,
+      );
 
       const done = await this.store.resolveIfOpen(id, { status: 'done', resolvedAt: this.now(), resolvedAction: actionId });
       if (!done) throw conflict('这条事项已经处理过了', 'ALREADY_RESOLVED');
-      await audit('inbox.action.execute', target, 'ok', `${actionId}${action.irreversible ? ' (irreversible, confirmed)' : ''}`);
-      return { needsConfirm: false, item: done };
+      await audit('inbox.action.execute', target, 'ok', `${actionId}${kind !== 'normal' ? ` (${kind}, confirmed)` : ''}`);
+      return done;
     } catch (err) {
-      if (err instanceof HttpError) {
+      // 428 是「请确认」，不是失败；确认服务已经记了 confirm.requested
+      if (err instanceof HttpError && err.code !== 'CONFIRM_REQUIRED') {
         await audit('inbox.action.execute', target, err.statusCode === 403 ? 'denied' : 'failed', `${actionId}: ${err.code}`);
       }
       throw err;

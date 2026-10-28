@@ -26,6 +26,14 @@ export interface CoreConfig {
   ownerToken: string | undefined;
   /** 操作员令牌 HMAC 用的服务端密钥；未设置时操作员令牌不可用 */
   tokenSecret: string | undefined;
+  /** Cloudflare Access 团队域名（例如 myteam.cloudflareaccess.com），用于凭据操作的重新验证（D63） */
+  cfAccessTeamDomain: string | undefined;
+  /** Cloudflare Access 应用的 AUD 标签 */
+  cfAccessAud: string | undefined;
+  /** required（默认）：凭据操作必须重新验证 Access，没配置时拒绝；off：本地版（没有 Access）跳过并审计 */
+  accessReauth: 'required' | 'off';
+  /** 重新验证的有效时限（秒），默认 300 */
+  accessReauthMaxAgeS: number;
 }
 
 export class ConfigError extends Error {
@@ -97,6 +105,21 @@ export function loadConfig(env: Env = process.env): CoreConfig {
   const autoMigrateRaw = (str(env, 'CORE_AUTO_MIGRATE') ?? 'true').toLowerCase();
   if (!['true', 'false', '1', '0'].includes(autoMigrateRaw)) throw new ConfigError('CORE_AUTO_MIGRATE 必须是 true/false');
 
+  const cfAccessTeamDomain = str(env, 'CF_ACCESS_TEAM_DOMAIN');
+  if (cfAccessTeamDomain !== undefined && !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(cfAccessTeamDomain)) {
+    throw new ConfigError('CF_ACCESS_TEAM_DOMAIN 只写域名，例如 myteam.cloudflareaccess.com');
+  }
+  const cfAccessAud = str(env, 'CF_ACCESS_AUD');
+  if ((cfAccessTeamDomain === undefined) !== (cfAccessAud === undefined)) {
+    throw new ConfigError('CF_ACCESS_TEAM_DOMAIN 和 CF_ACCESS_AUD 要一起设置');
+  }
+  const accessReauth = (str(env, 'CORE_ACCESS_REAUTH') ?? 'required').toLowerCase();
+  if (accessReauth !== 'required' && accessReauth !== 'off') throw new ConfigError('CORE_ACCESS_REAUTH 只能是 required 或 off');
+  const maxAgeRaw = str(env, 'CORE_ACCESS_REAUTH_MAX_AGE_S') ?? '300';
+  if (!/^\d+$/.test(maxAgeRaw) || Number(maxAgeRaw) < 30 || Number(maxAgeRaw) > 3600) {
+    throw new ConfigError('CORE_ACCESS_REAUTH_MAX_AGE_S 必须是 30–3600 的整数（秒）');
+  }
+
   return {
     host: str(env, 'CORE_HOST') ?? '0.0.0.0',
     port: parsePort(str(env, 'CORE_PORT'), 'CORE_PORT', 8080),
@@ -108,6 +131,10 @@ export function loadConfig(env: Env = process.env): CoreConfig {
     autoMigrate: autoMigrateRaw === 'true' || autoMigrateRaw === '1',
     ownerToken,
     tokenSecret,
+    cfAccessTeamDomain,
+    cfAccessAud,
+    accessReauth,
+    accessReauthMaxAgeS: Number(maxAgeRaw),
   };
 }
 
@@ -124,5 +151,9 @@ export function toSafeJSON(cfg: CoreConfig): Record<string, unknown> {
     autoMigrate: cfg.autoMigrate,
     ownerToken: cfg.ownerToken ? '(set)' : '(unset)',
     tokenSecret: cfg.tokenSecret ? '(set)' : '(unset)',
+    cfAccessTeamDomain: cfg.cfAccessTeamDomain ?? '(unset)',
+    cfAccessAud: cfg.cfAccessAud ? '(set)' : '(unset)',
+    accessReauth: cfg.accessReauth,
+    accessReauthMaxAgeS: cfg.accessReauthMaxAgeS,
   };
 }

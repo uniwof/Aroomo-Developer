@@ -6,7 +6,7 @@
  *   令牌的签发 / 吊销 API 属于「负责人体系」（PRODUCT §9.3、§11.2 第 4 条），本期只提供校验与内存存储。
  */
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import { type Capability, OPERATOR_WHITELIST } from './capabilities.js';
+import { type Capability, operatorMayHave } from './capabilities.js';
 
 export type Principal =
   | { type: 'owner'; id: 'owner' }
@@ -61,13 +61,18 @@ export function createTokenVerifier(opts: TokenVerifierOptions) {
     const now = opts.now().getTime();
     if (rec.revokedAt && rec.revokedAt.getTime() <= now) return null;
     if (rec.expiresAt && rec.expiresAt.getTime() <= now) return null;
-    // 白名单与令牌授权取交集：令牌里写了白名单外的能力也不生效
-    const caps = new Set(rec.capabilities.filter((c) => OPERATOR_WHITELIST.has(c)));
+    // 白名单与令牌授权取交集，再去掉禁止项（D62）：令牌里写了白名单外 / 禁止的能力也不生效
+    const caps = new Set(rec.capabilities.filter((c) => operatorMayHave(c)));
     return { type: 'operator', id: rec.id, capabilities: caps };
   };
 }
 
 export function principalCan(p: Principal, cap: Capability): boolean {
   if (p.type === 'owner') return true;
-  return OPERATOR_WHITELIST.has(cap) && p.capabilities.has(cap);
+  return operatorMayHave(cap) && p.capabilities.has(cap);
+}
+
+/** 审计 / 确认令牌里用来标识操作者的字符串 */
+export function actorKey(p: Principal): string {
+  return p.type === 'owner' ? 'owner' : `operator:${p.id}`;
 }
