@@ -137,7 +137,7 @@ function Open-Window {
         $splash = Join-Path $AppDir 'installer\standalone\runtime\preparing.html'
         $target = ([Uri]$splash).AbsoluteUri + '?to=' + [Uri]::EscapeDataString($url)
     }
-    $edge = Get-AroomoSAEdgePath
+    $edge = Get-AroomoSAEdgePath -AppDir $AppDir
     if ($edge) {
         $profile = Join-Path (Get-DataDirResolved) 'window-profile'
         Start-Process -FilePath $edge -ArgumentList @("--app=$target", "--user-data-dir=$profile", '--no-first-run', '--disable-features=Translate', '--window-size=1280,860')

@@ -14,8 +14,9 @@ $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $results = [ordered]@{}
 
 function Run([string]$Act) {
-    & $ps -NoProfile -ExecutionPolicy Bypass -File $launcher -Action $Act -AppDir $AppDir -DataDir $DataDir
-    return $LASTEXITCODE
+    # 子进程的输出直接打印，不能混进返回值（否则返回的是数组，比较结果不对）
+    & $ps -NoProfile -ExecutionPolicy Bypass -File $launcher -Action $Act -AppDir $AppDir -DataDir $DataDir | Out-Host
+    return [int]$LASTEXITCODE
 }
 function Dump-Logs {
     foreach ($f in Get-ChildItem (Join-Path $DataDir 'logs') -File -ErrorAction SilentlyContinue) {

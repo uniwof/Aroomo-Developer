@@ -618,13 +618,24 @@ function Stop-AroomoSATree {
 # 打开应用：优先用 Edge 的「应用窗口」（没有地址栏，像一个独立程序）；没有 Edge 就用默认浏览器
 # ---------------------------------------------------------------------------
 function Get-AroomoSAEdgePath {
+    # 「应用窗口」用的浏览器：Edge → 已装的 Chrome → 安装包自带的 Chromium（有的电脑把 Edge 删了，2026-10-28 用户电脑就是）
     [OutputType([string])]
-    param()
+    param([string]$AppDir)
     $candidates = @()
     foreach ($base in @(${env:ProgramFiles(x86)}, $env:ProgramFiles, $env:LOCALAPPDATA)) {
         if ($base) { $candidates += [IO.Path]::Combine($base, 'Microsoft', 'Edge', 'Application', 'msedge.exe') }
     }
-    foreach ($c in $candidates) { if (Test-Path -LiteralPath $c) { return $c } }
+    foreach ($exe in 'msedge.exe', 'chrome.exe') {
+        foreach ($hive in 'HKCU:', 'HKLM:') {
+            $v = (Get-ItemProperty "$hive\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\$exe" -ErrorAction SilentlyContinue)
+            if ($v -and $v.'(default)') { $candidates += $v.'(default)'.Trim('"') }
+        }
+    }
+    foreach ($base in @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LOCALAPPDATA)) {
+        if ($base) { $candidates += [IO.Path]::Combine($base, 'Google', 'Chrome', 'Application', 'chrome.exe') }
+    }
+    if ($AppDir) { $candidates += [IO.Path]::Combine($AppDir, 'chromium', 'chrome.exe') }
+    foreach ($c in $candidates) { if ($c -and (Test-Path -LiteralPath $c)) { return $c } }
     return $null
 }
 
