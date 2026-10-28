@@ -31,3 +31,4 @@ Thumbs.db
 
 # Windows 安装包构建输出
 installer/windows/Output/
+.restore/

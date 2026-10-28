@@ -111,7 +111,7 @@ Describe 'ConvertTo-AroomoEnv（以 deploy/.env.example 为模板）' {
         $script:Template = [IO.File]::ReadAllText((Join-Path $script:Root 'deploy/.env.example'))
         $script:Values = @{
             APP_URL = 'http://localhost:3211'; S3_ENDPOINT = 'http://localhost:9001'; LOBE_PORT = '3211'; RUSTFS_PORT = '9001'
-            COMPOSE_PROFILES = 'backup'; AROOMO_TIER = 'full'; RESTIC_REPOSITORY = '/repo'; RESTIC_PASSWORD = 'placeholder-restic'
+            COMPOSE_PROFILES = 'backup'; AROOMO_TIER = 'full'; BACKUP_S3_PREFIX = 'pc/test-pc'
             LOCAL_BACKUP_DIR = 'D:/Aroomo Data/backups'; JWKS_KEY = '{"keys":[{"kty":"RSA"}]}'; BACKUP_CRON = '0 12,20 * * *'
         }
         $script:Out = ConvertTo-AroomoEnv -Template $script:Template -Values $script:Values

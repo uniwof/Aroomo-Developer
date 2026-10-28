@@ -210,8 +210,6 @@ if (Test-Path -LiteralPath $canonical) {
         RUSTFS_PORT       = "$s3Port"
         AROOMO_TIER       = $tier
         JWKS_KEY          = (New-AroomoJwks)
-        RESTIC_REPOSITORY = '/repo'
-        RESTIC_PASSWORD   = (New-AroomoSecret)
         LOCAL_BACKUP_DIR  = (ConvertTo-AroomoDockerPath (Join-Path $DataDir 'backups'))
         BACKUP_CRON       = '0 12,20 * * *'
     }

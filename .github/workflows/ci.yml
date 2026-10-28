@@ -56,7 +56,9 @@ jobs:
       - run: docker compose version
       - run: scripts/check-compose.sh
       - name: shellcheck
-        run: shellcheck -x scripts/*.sh deploy/backup/entrypoint.sh deploy/postgres/20-aroomo-dbs.sh deploy/lobe/rustfs-init.sh
+        run: shellcheck -x scripts/*.sh scripts/lib/*.sh deploy/backup/entrypoint.sh deploy/postgres/20-aroomo-dbs.sh deploy/lobe/rustfs-init.sh
+      - name: 备份保留策略单元测试
+        run: scripts/test-retention.sh
       - name: Pester（pwsh，含与 select-tier.sh 的对照）
         shell: pwsh
         run: |
@@ -85,7 +87,11 @@ jobs:
       - run: docker build -t aroomo-backup:ci deploy/backup
       - name: backup 镜像自检
         run: |
-          docker run --rm --entrypoint restic aroomo-backup:ci version
+          docker run --rm --entrypoint age aroomo-backup:ci --version
+          docker run --rm --entrypoint age-keygen aroomo-backup:ci --version
+          docker run --rm --entrypoint rclone aroomo-backup:ci version
+          docker run --rm --entrypoint zstd aroomo-backup:ci --version
+          docker run --rm --entrypoint tar aroomo-backup:ci --version
           docker run --rm --entrypoint pg_dumpall aroomo-backup:ci --version
       - name: core 镜像冒烟测试
         run: |

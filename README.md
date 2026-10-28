@@ -9,7 +9,7 @@
 | `docs/` | 产品文档、决策日志、进度、交接、审计 |
 | `core/` | Aroomo Core（TypeScript / Node 22 / Fastify）：路由、成员与 Key 管理、收件箱等 |
 | `deploy/` | Docker Compose（服务器与 Windows 本地版共用一套）、部署档位、各服务配置 |
-| `scripts/` | 档位选择、compose 封装、备份 / 恢复（restic） |
+| `scripts/` | 档位选择、compose 封装、备份 / 恢复（age 公钥加密 + rclone） |
 
 ## 快速开始（本机）
 

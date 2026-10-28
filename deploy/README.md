@@ -9,13 +9,13 @@
 | `docker-compose.yml` | 基础服务；**不发布任何宿主机端口** |
 | `tiers/demo-2g.yml`、`standard.yml`、`full.yml` | 各档位的内存上限（**暂定值**，等 P0-b 内存实测报告定稿） |
 | `local.yml` | 本机访问：只绑定 `127.0.0.1:3210`（界面）和 `127.0.0.1:9000`（对象存储） |
-| `local-backup.yml` | Windows 本地版：restic 仓库放在用户数据文件夹（`LOCAL_BACKUP_DIR` → `/repo`），见 [docs/ops/WINDOWS.md](../docs/ops/WINDOWS.md) |
+| `local-backup.yml` | Windows 本地版：加密备份也存一份到用户数据文件夹（`LOCAL_BACKUP_DIR` → `/local`，只留 3 份，D65），见 [docs/ops/WINDOWS.md](../docs/ops/WINDOWS.md) |
 | `data-dir.yml` | 把数据放到 `DATA_DIR` 指定的文件夹（绝对路径，需先建好 `postgres/ redis/ rustfs/`） |
 | `.env.example` | 环境变量模板（只有占位符）；复制成 `.env` 填写，`.env` 不入库 |
 | `postgres/20-aroomo-dbs.sh` | 首次初始化时为 LiteLLM、Core 各建一个库和账号 |
 | `litellm/config.yaml` | LiteLLM 配置（不含模型和 Key） |
 | `lobe/` | LobeHub 对象存储桶初始化 |
-| `backup/` | 备份 sidecar / 恢复镜像（PostgreSQL 17 客户端 + restic + jq） |
+| `backup/` | 备份 sidecar / 恢复镜像（PostgreSQL 17 客户端 + age + rclone + zstd + jq） |
 | `test/e2e.yml` | 仅测试用：备份端到端测试接入测试 S3 目标的网络 |
 
 ## 服务与镜像（2026-10-27 核实）
@@ -30,7 +30,7 @@
 | core | 本仓库 `core/` 构建（`node:22.23.4-alpine3.24`） | 只在容器网络内 |
 | gateway（profile `agent-gateway`） | `ghcr.io/lobehub/lobehub-gateway:0.3.2` | 可选，P0 默认关闭 |
 | cloudflared（profile `tunnel`） | `cloudflare/cloudflared:2026.10.5` | 服务器对外通道 |
-| backup（profile `backup`） | 本仓库 `deploy/backup/` 构建（`postgres:17.11-alpine3.24` + `restic/restic:0.19.1`） | 备份到 AWS 之外 |
+| backup（profile `backup`） | 本仓库 `deploy/backup/` 构建（`postgres:17.11-alpine3.24` + Alpine 的 age、rclone） | 备份到 AWS 之外 |
 
 以上镜像都有 linux/amd64 与 linux/arm64。
 
@@ -54,13 +54,13 @@ AROOMO_TIER=standard scripts/compose.sh config   # 指定档位并查看合并�
 ## Key 的存储方式
 
 - **供应商 Key（成员的 API Key）只存在 LiteLLM。** `STORE_MODEL_IN_DB=True` 时，模型和凭据写入 `litellm` 库，由 `LITELLM_SALT_KEY` 加密（LiteLLM 官方文档：production deployment → Core configuration）。Core 通过 LiteLLM 管理 API 写入，**绝不把 Key 返回给客户端**（只显示末 4 位和状态）。
-- `LITELLM_SALT_KEY` **写入第一个模型后不能更换**，否则已存的 Key 全部无法解密。它不进 restic 备份（备份仓库只靠 `RESTIC_PASSWORD` 保护），由用户离线另存一份；恢复演练时要验证用它能解开恢复后的 Key。
+- `LITELLM_SALT_KEY` **写入第一个模型后不能更换**，否则已存的 Key 全部无法解密。它随 `.env` 进入用主密钥公钥加密的备份包（D64），只有用户离线保管的主密钥能打开；恢复演练时要验证用它能解开恢复后的 Key。
 - `LITELLM_MASTER_KEY` 只给 Core 用于管理调用；LobeHub 用单独的虚拟 Key（`LOBE_LITELLM_VIRTUAL_KEY`）调用模型。
 - LobeHub 的 `KEY_VAULTS_SECRET` 只加密 LobeHub 自己的设置；Aroomo 不在 LobeHub 里存供应商 Key。
 
-## 备份与恢复（restic）
+## 备份与恢复（公钥加密）
 
-见 [docs/ops/BACKUP.md](../docs/ops/BACKUP.md)。要点：目标为 AWS 之外的 S3 兼容存储（R2 / B2）；每库 `pg_dump` + 对象存储 + 配置；`.env`（含 `LITELLM_SALT_KEY`）不进备份；恢复用 `restore` 服务并需 `--yes-overwrite-database`；演练用 `scripts/restore-drill.sh`。
+见 [docs/ops/BACKUP.md](../docs/ops/BACKUP.md)。要点：目标为 AWS 之外的 S3 兼容存储（R2 / B2）；每库 `pg_dump` + 对象存储 + 配置 + `.env`，整个包用主密钥的公钥（age）加密，服务器上没有私钥；恢复用 `restore` 服务，需 `--yes-overwrite-database` 和临时提供的主密钥；演练用 `scripts/restore-drill.sh`。
 
 ## 尚未验证
 
