@@ -69,11 +69,25 @@ try {
         $code = [int]$resp.StatusCode
         $raw = [string]$resp.Headers['Set-Cookie']
         $resp.Close()
-        $m = [regex]::Match($raw, '([A-Za-z0-9_.\-]*session_token)=([^;,\s]+)')
-        if ($code -ne 302 -or -not $m.Success) { throw "本机主人自动登录没有成功（HTTP $code）" }
+        # 多个 Set-Cookie 被合成一行（逗号分隔）：取每个 Cookie 的「名=值」（只打印名字，不打印值）
+        $pairs = @([regex]::Matches($raw, '(?:^|,)\s*([A-Za-z0-9_.\-]+)=([^;,]*)') | ForEach-Object { "$($_.Groups[1].Value)=$($_.Groups[2].Value)" })
+        $results.autologin_cookies = (@($pairs | ForEach-Object { ($_ -split '=', 2)[0] }) -join ' ')
+        if ($code -ne 302 -or -not ($pairs -match 'session_token=.')) { throw "本机主人自动登录没有成功（HTTP $code）" }
         $results.autologin = 'ok'
-        $cookie = "$($m.Groups[1].Value)=$($m.Groups[2].Value)"
-        $results.aroomo_api_via_shell = (Invoke-WebRequest -Uri "$pub/aroomo/api/inbox/unread-count" -Headers @{ Cookie = $cookie } -UseBasicParsing).StatusCode
+        $cookie = (@($pairs | Where-Object { $_ -notmatch '^(aroomo_al|LOBE_LOCALE)=' }) -join '; ')
+        function Get-WithCookie([string]$Url) {
+            $q = [System.Net.HttpWebRequest]::Create($Url)
+            $q.Proxy = $null; $q.Timeout = 60000; $q.Accept = 'application/json'; $q.Headers.Add('Cookie', $cookie)
+            try { $rs = $q.GetResponse() } catch [System.Net.WebException] { $rs = $_.Exception.Response }
+            $sr = New-Object IO.StreamReader($rs.GetResponseStream()); $body = $sr.ReadToEnd(); $sr.Close()
+            $st = [int]$rs.StatusCode; $rs.Close()
+            return @{ Status = $st; Body = $body }
+        }
+        $gs = Get-WithCookie "$pub/api/auth/get-session"
+        $results.session_via_shell = "$($gs.Status) user=$([bool]($gs.Body -match '"user"\s*:\s*\{'))"
+        $api = Get-WithCookie "$pub/aroomo/api/inbox/unread-count"
+        $results.aroomo_api_via_shell = $api.Status
+        if ($api.Status -ne 200) { throw "自动登录后经 Shell 调 Core 返回 $($api.Status)" }
     }
 
     # 完整档模块（这个版本带了就必须正常）：收藏 Karakeep（+ Meilisearch、无界面浏览器）、RSSHub

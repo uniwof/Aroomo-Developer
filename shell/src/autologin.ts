@@ -66,8 +66,11 @@ export class LobeLocalAutoLogin implements AutoLogin {
     if (!res.ok) {
       // 第一次：主人账号还不存在 → 注册（LobeHub 设置 autoSignIn: true，注册即登录）
       if (res.status !== 401 && res.status !== 400 && res.status !== 404) return null;
-      res = await this.#post('/api/auth/sign-up/email', { ...cred, name: '主人' });
-      if (!res || !res.ok) return null;
+      const up = await this.#post('/api/auth/sign-up/email', { ...cred, name: '主人' });
+      if (!up || !up.ok) return null;
+      // 注册成功后再正常登录一次，拿标准的登录会话（注册时的自动登录会话作为后备）
+      const again = await this.#post('/api/auth/sign-in/email', { ...cred, rememberMe: true });
+      res = again && again.ok && again.headers.getSetCookie().length > 0 ? again : up;
     }
     const cookies = res.headers.getSetCookie();
     return cookies.length > 0 ? cookies : null;
