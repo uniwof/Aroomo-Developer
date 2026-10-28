@@ -80,14 +80,28 @@ for (const [label, viewport, isMobile] of [
 
   await page.goto(base + '/', { waitUntil: 'domcontentloaded' });
   await page.waitForLoadState('networkidle', { timeout: 60000 }).catch(() => {});
+  await shoot(page, `${label}-first-open`);
+  // 新用户引导：依次点「开始 / 下一步 / 跳过 / 完成」，最多 10 步，每步截图
+  for (let i = 1; i <= 10; i++) {
+    const path0 = new URL(page.url()).pathname;
+    if (path0 === '/' && !(await page.getByRole('button', { name: /^(开始|下一步|跳过|继续|完成|Skip|Next|Start|Done)$/ }).count())) break;
+    const btn = page.getByRole('button', { name: /^(跳过|开始|下一步|继续|完成|稍后|Skip|Next|Start|Done|Later)$/ }).first();
+    if (!(await btn.count())) break;
+    await btn.click({ timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(1500);
+    await shoot(page, `${label}-onboarding-${i}`);
+  }
+  await page.goto(base + '/', { waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('networkidle', { timeout: 60000 }).catch(() => {});
   await shoot(page, `${label}-home`);
   const title = await page.title();
   check(`${label} 标题是 Aroomo`, /Aroomo/.test(title) && !/LobeHub/.test(title), title);
   const text = await page.evaluate(() => document.body.innerText);
-  check(`${label} 页面上看不到 LobeHub`, !/LobeHub|LobeChat/.test(text), (text.match(/.{0,30}(LobeHub|LobeChat).{0,30}/) || [''])[0]);
+  check(`${label} 页面上看不到 LobeHub / Lobe AI`, !/LobeHub|LobeChat|Lobe AI/.test(text), (text.match(/.{0,30}(LobeHub|LobeChat|Lobe AI).{0,30}/) || [''])[0]);
   check(`${label} 简体中文`, /[\u4e00-\u9fa5]/.test(text), text.slice(0, 80));
+  check(`${label} 上游文字 Logo 已替换`, (await page.locator('svg[data-aroomo-logo]:visible').count()) === 0);
   const dockVisible = await page.locator('#aroomo-dock').isVisible().catch(() => false);
-  check(`${label} 底部图标（收藏 / 成员 / 收件箱 / 设置）`, dockVisible && (await page.locator('#aroomo-dock a').count()) === 4);
+  check(`${label} 底部图标（收藏 / 成员 / 收件箱 / 设置）`, dockVisible && (await page.locator('#aroomo-dock a').count()) === 4, new URL(page.url()).pathname);
   check(`${label} shell.js 已加载`, await page.evaluate(() => Boolean(window.__aroomoShell)));
   const hiddenVisible = await page.evaluate(() => {
     const bad = ['发现', '社区', '市场', '图片', '视频', '文稿', '资源', '记忆', '朗读', '语音服务'];
@@ -97,6 +111,13 @@ for (const [label, viewport, isMobile] of [
       .filter((t) => bad.includes(t));
   });
   check(`${label} §8 之外的入口已隐藏`, hiddenVisible.length === 0, hiddenVisible.join(','));
+  // 打开一个对话（会话列表里的第一项 / 资源管家）
+  const firstChat = page.locator('a[href^="/agent/"]').first();
+  if (await firstChat.count()) {
+    await firstChat.click().catch(() => {});
+    await page.waitForTimeout(2000);
+  }
+  await shoot(page, `${label}-chat`);
 
   await page.goto(base + '/community', { waitUntil: 'domcontentloaded' });
   check(`${label} /community 跳回首页`, new URL(page.url()).pathname === '/', page.url());

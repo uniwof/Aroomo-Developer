@@ -45,10 +45,14 @@ P0 范围与验收见 PRODUCT 16.1。分支规则：CI 通过后主程序员可�
 | D63 | 统一确认服务（普通 / 重要两级；3 秒服务端强制；凭据操作重新验证 Cloudflare Access） | ✅ 已合并到 dev | #27 | `core/src/confirm/`；迁移 0005；前端约定 docs/architecture/CONFIRM-CARD.md |
 | D64 | 备份改为主密钥公钥加密（age）；`.env` 进加密包 | ✅ 已合并到 dev | #28 | scripts/backup.sh、restore.sh；待负责人确认实现注 a |
 | D64/D65 | 安装器：主密钥离线生成窗口；开机后 / 停止前 / 更新前备份；本机 3 份；异地 pc/<电脑名> | ✅ 已合并到 dev | #29 | 待负责人确认实现注 b、D65 实现注 a |
+| fix | AGENT_GATEWAY_URL 为空导致 LobeHub 崩溃（compose 默认 http://gateway:8787）+ D66–D75 入档 | ✅ 已合并到 dev | #33 | |
+| 界面 | Aroomo Shell 界面薄层：品牌 Aroomo、按 §8 隐藏（FEATURE_FLAGS + 浏览器端）、朗读禁用（D68）、侧栏底部图标、PWA 清单（D77-2）、同源转发 Core；D76–D80 入档；提议 H1/H2 | ✅ 已合并到 dev | #36 | CI 界面冒烟（官方 LobeHub + Shell，电脑 + 手机截图）通过 |
+| 界面 | 品牌第二轮：上游文字 Logo、逐字动画标题、匿名数据开关行；冒烟走完新用户引导并截对话页 | 🟡 | fix/shell-branding-2 | |
 
 - 存储：有 `CORE_DATABASE_URL` 用 PostgreSQL（启动自动迁移），否则内存（只适合开发 / 演示）。测试：PGlite 每次跑 + CI 的 PostgreSQL 17 服务容器再跑一遍。
 - 访问：`/api/*` 需要 `Authorization: Bearer <CORE_OWNER_TOKEN>`（P0 单用户）；未配置时一律 503。
-- 尚未接入：前端（LobeHub 界面）调用这些 API（含确认卡组件，按 CONFIRM-CARD.md）、对话真正经 LiteLLM 调模型、定时任务（回收站清理、过期确认清理、Key 对账）。
+- 界面入口：浏览器 → Aroomo Shell（`shell/`，H1）→ 官方 LobeHub；Aroomo 页面在 `/aroomo/*`，`/aroomo/api/*` 同源转发 Core。
+- 尚未接入：Aroomo 页面调用 Core API（成员 / Key / 收件箱 + 确认卡 / 负责人）、对话经 Core 路由到 LiteLLM、定时任务（回收站清理、过期确认清理、Key 对账）。
 
 ### P0 验收标准
 
@@ -86,6 +90,7 @@ P0 范围与验收见 PRODUCT 16.1。分支规则：CI 通过后主程序员可�
 | Muse 1–15 清单与负责人裁决表 | D39 细节 | 用户转达 |
 
 ## 变更
+- 2026-10-28：#33 修复 AGENT_GATEWAY_URL 空值 + D66–D75 入档；#36 Aroomo Shell 界面薄层 + D76–D80 入档、提议 H1/H2。
 - 2026-10-28：负责人裁决 D62–D65 入档（#26）并实现：操作员白名单 + 统一确认服务（#27）、备份公钥加密（#28）、安装器主密钥窗口与电脑版备份（#29）、测试版发布流程（#30）。
 - 2026-10-27：建立本文件。
 - 2026-10-27：完成旧项目审计（docs/AUDIT.md）。

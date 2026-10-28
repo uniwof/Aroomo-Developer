@@ -33,6 +33,8 @@
     '朗读', '语音朗读', '语音服务', '语音合成', '语音合成设置', '语音合成服务', '语音合成声源', '试听声源', '文本转语音', 'TTS', 'Read Aloud', 'Text to Speech',
     'Lobe 答疑助手',
   ];
+  /* 整行隐藏（文字所在元素的父元素一起藏）：上游的匿名数据开关、指向上游条款的说明 */
+  var HIDE_ROW_PREFIXES = ['一起让 Aroomo 变得更好', '我们使用匿名数据持续优化体验', '我们仅收集匿名数据', 'Help us improve Aroomo', 'We use anonymous data'];
   var HIDE_SET = {};
   HIDE_LABELS.forEach(function (l) { HIDE_SET[l] = true; });
 
@@ -118,6 +120,14 @@
       if (r !== v) root.nodeValue = r;
       var t = r.trim();
       if (t && HIDE_SET[t] && root.parentElement) hideEntry(root.parentElement);
+      if (t && root.parentElement) {
+        for (var h = 0; h < HIDE_ROW_PREFIXES.length; h++) {
+          if (t.indexOf(HIDE_ROW_PREFIXES[h]) === 0) {
+            var row = root.parentElement.parentElement || root.parentElement;
+            if (row !== document.body) row.setAttribute('data-aroomo-hidden', '');
+          }
+        }
+      }
       return;
     }
     if (root.nodeType !== 1) return;
@@ -241,7 +251,7 @@
     origFetchSafe('/aroomo/api/inbox/unread-count', { credentials: 'same-origin' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (j) {
-        var n = j && (typeof j.count === 'number' ? j.count : typeof j.unread === 'number' ? j.unread : 0);
+        var n = j && typeof j.total === 'number' ? j.total : 0;
         dot.hidden = !n;
         var a = dot.parentElement;
         if (a) a.setAttribute('aria-label', n ? '收件箱，' + n + ' 条未读' : '收件箱');
@@ -250,13 +260,57 @@
   }
   function origFetchSafe(u, o) { return (window.__aroomoOrigFetch || window.fetch)(u, o); }
 
+  /* 逐字动画的标题（每个字一个 span，例如「嘿，你好，我是 Lobe AI」）：整体替换 */
+  var BRAND_TEST = /LobeHub|LobeChat|Lobe Chat|Lobe AI|LobeAI/;
+  function fixSplitText(root) {
+    if (!root || root.nodeType !== 1 || !root.querySelectorAll) return;
+    var els = root.querySelectorAll('h1,h2,h3,h4,p,div,span');
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      var kids = el.children;
+      if (kids.length < 4 || el.closest('.markdown,article,[data-message-id],[contenteditable="true"]')) continue;
+      var tc = (el.textContent || '').replace(/\s+/g, ' ');
+      if (!BRAND_TEST.test(tc)) continue;
+      var allSmall = true;
+      for (var k = 0; k < kids.length; k++) {
+        if (kids[k].tagName !== 'SPAN' || (kids[k].textContent || '').length > 2) { allSmall = false; break; }
+      }
+      if (allSmall) el.textContent = replaceText(el.textContent || '');
+    }
+  }
+
+  /* 上游的文字 Logo（宽扁的 SVG，在页面顶部）换成 Aroomo 字标 */
+  function fixLogos() {
+    var svgs = document.querySelectorAll('svg:not(.lucide):not([data-aroomo-logo])');
+    for (var i = 0; i < svgs.length; i++) {
+      var svg = svgs[i];
+      if (svg.closest('#aroomo-dock,.markdown,article,[data-message-id]')) continue;
+      var r = svg.getBoundingClientRect();
+      if (!r.width || !r.height || r.top > 140 || r.width < 50 || r.width > 220) continue;
+      if (r.width / r.height < 2.2) continue;
+      svg.setAttribute('data-aroomo-logo', '');
+      svg.style.display = 'none';
+      var mark = document.createElement('span');
+      mark.className = 'aroomo-wordmark';
+      mark.setAttribute('role', 'img');
+      mark.setAttribute('aria-label', 'Aroomo');
+      mark.style.height = Math.round(r.height) + 'px';
+      mark.innerHTML = '<img src="/aroomo/static/logo.svg" alt="">Aroomo';
+      svg.parentNode.insertBefore(mark, svg);
+    }
+  }
+
   var pending = false;
   var queue = [];
   function flush() {
     pending = false;
     var nodes = queue;
     queue = [];
-    for (var i = 0; i < nodes.length; i++) processNode(nodes[i]);
+    for (var i = 0; i < nodes.length; i++) {
+      processNode(nodes[i]);
+      fixSplitText(nodes[i].nodeType === 1 ? nodes[i] : nodes[i].parentElement);
+    }
+    fixLogos();
     fixTitle();
     placeDock();
   }
@@ -272,6 +326,8 @@
     document.documentElement.setAttribute('data-aroomo', '');
     buildDock();
     processNode(document.body);
+    fixSplitText(document.body);
+    fixLogos();
     fixTitle();
     placeDock();
     new MutationObserver(function (muts) {
