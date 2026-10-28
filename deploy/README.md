@@ -1,6 +1,6 @@
 # 部署（P0）
 
-服务器（Ubuntu 24.04 x86_64）和 Windows 本地版（WSL2 + Docker Desktop）共用这一套 Compose（PRODUCT §7、§16 P0-f）。
+服务器（Ubuntu 24.04；试用服务器为 AWS t4g.medium ARM64）和 Windows 本地版（WSL2 + Docker Desktop）共用这一套 Compose（PRODUCT §7、§16 P0-f）。
 
 ## 文件
 
@@ -62,6 +62,6 @@ AROOMO_TIER=standard scripts/compose.sh config   # 指定档位并查看合并�
 
 见 [docs/ops/BACKUP.md](../docs/ops/BACKUP.md)。要点：目标为 AWS 之外的 S3 兼容存储（R2 / B2）；每库 `pg_dump` + 对象存储 + 配置 + `.env`，整个包用主密钥的公钥（age）加密，服务器上没有私钥；恢复用 `restore` 服务，需 `--yes-overwrite-database` 和临时提供的主密钥；演练用 `scripts/restore-drill.sh`。
 
-## 尚未验证
+## 已验证 / 尚未验证
 
-本骨架在没有 Docker 守护进程的环境里编写，只做了 `docker compose config` 解析校验；**整套栈尚未实际启动过**。首次在服务器上启动时需确认：LobeHub 2.2.20 在关闭 Agent Gateway 时的行为、`JWKS_KEY` 是否必填、各服务健康检查命令在镜像内可用、各档位内存上限是否够用。
+2026-10-28 已在 AWS t4g.medium（ARM64，Ubuntu 24.04）上用标准版实际启动整套栈（postgres、redis、rustfs、litellm、core、lobe、cloudflared），全部健康；`JWKS_KEY` 已生成并填写；内存实测见 [docs/ops/MEMORY-REPORT.md](../docs/ops/MEMORY-REPORT.md)。尚未验证：真实对话（缺测试模型 Key）、backup sidecar（缺 R2 凭据和主密钥公钥）、Agent Gateway profile。

@@ -79,4 +79,17 @@ for override in "" "AGENT_GATEWAY_URL="; do
   esac
 done
 
+# D66：每个档位里每个容器（含一次性的 rustfs-init、restore 和所有 profile）都必须有 mem_limit
+for tier in demo-2g standard full; do
+  # shellcheck disable=SC2086
+  if $compose --project-directory "$deploy" --env-file "$tmp_env" -f "$deploy/docker-compose.yml" -f "$deploy/tiers/$tier.yml" \
+      --profile tunnel --profile backup --profile restore --profile agent-gateway config --format json \
+      | python3 -c 'import json,sys; d=json.load(sys.stdin); bad=[n for n,s in d["services"].items() if not s.get("mem_limit")]; print("services without mem_limit:", bad) if bad else None; sys.exit(1 if bad else 0)'; then
+    echo "ok   $tier: every service has mem_limit"
+  else
+    echo "FAIL $tier: missing mem_limit" >&2
+    status=1
+  fi
+done
+
 exit $status
