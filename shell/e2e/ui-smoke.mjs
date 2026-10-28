@@ -318,7 +318,8 @@ for (const [label, viewport, isMobile] of [
     await page.keyboard.press('Enter');
     await page.waitForTimeout(800);
     await shoot(page, 'desktop-chat-mention-picked');
-    const typed = await input.innerText().catch(() => input.inputValue().catch(() => ''));
+    // 读当前获得焦点的输入框（页面里可能有多个可编辑区，locator.first() 不一定是它）
+    const typed = await page.evaluate(() => { const a = document.activeElement; return a ? (a.value !== undefined && a.tagName === 'TEXTAREA' ? a.value : a.innerText || '') : ''; });
     check('对话：回车填入「@Fake Model 」且没有直接发送', /@Fake Model\s*$/.test(typed.replace(/\u00a0/g, ' ')), JSON.stringify(typed));
     await page.keyboard.type('在吗');
     await page.keyboard.press('Enter');
@@ -327,7 +328,7 @@ for (const [label, viewport, isMobile] of [
       .then(() => true)
       .catch(() => false);
     const lastText = (await page.evaluate(() => document.body.innerText)).slice(-300);
-    check('对话：联想填入的点名能用（直接回答、不署「负责人」）', ok3 && /— Fake Model(?!（)/.test(lastText), lastText);
+    check('参考项 @ 联想填入后发送：直接回答、不署「负责人」（点名路由已由 Core 测试和上面的 @Nobody 覆盖）', ok3 && /— Fake Model(?!（)/.test(lastText), lastText);
   }
 
   const tts = await page.evaluate(() => fetch('/webapi/tts/openai', { method: 'POST' }).then((r) => r.status).catch((e) => String(e)));
