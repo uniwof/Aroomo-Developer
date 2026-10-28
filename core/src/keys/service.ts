@@ -64,10 +64,12 @@ function validateKey(apiKey: string): string {
 }
 
 export interface KeysHooks {
-  /** 新增 Key 成功之后（例如：自动把这个模型加成成员，PRODUCT 16.1「填入一个 Key 后能和模型对话」）。失败不影响新增。 */
+  /** 新增 Key 成功之后（例如：把这个模型放进候选，PRODUCT §9.1 入职流程）。失败不影响新增。 */
   afterCreate?: (rec: KeyRecord, audit: AuditFn) => Promise<void>;
   /** 删除 Key 成功之后（例如：这个模型已经没有 Key 了 → 停用对应成员，避免负责人指向一个调不通的模型）。失败不影响删除。 */
   afterDelete?: (rec: KeyRecord, audit: AuditFn) => Promise<void>;
+  /** 换 Key 成功之后（例如：模型可能变了 → 刷新成员的模型事实）。失败不影响换 Key。 */
+  afterReplace?: (rec: KeyRecord, audit: AuditFn) => Promise<void>;
 }
 
 export class KeysService {
@@ -211,7 +213,13 @@ export class KeysService {
       // 旧部署没删掉：功能不受影响（新部署已生效），但要留痕便于人工清理
       await audit('keys.replace.cleanup', { type: 'litellm_deployment', id: cur.litellmModelId }, 'failed', (err as Error).name);
     }
-    return this.#syncAfterSave(next);
+    const synced = await this.#syncAfterSave(next);
+    if (this.hooks.afterReplace) {
+      await this.hooks.afterReplace(synced, audit).catch(async (err: unknown) => {
+        await audit('keys.replace.hook', { type: 'key', id }, 'failed', (err as Error).name);
+      });
+    }
+    return synced;
   }
 
   async delete(id: string, ctx: ConfirmCtx, audit: AuditFn): Promise<void> {

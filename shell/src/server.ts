@@ -16,6 +16,7 @@ import type { ShellConfig } from './config.js';
 import { transformHtml } from './html.js';
 import { decideNavigation, isBlockedApi } from './rules.js';
 import { allowAll, LobeSessionChecker, type SessionChecker } from './session.js';
+import { handleLogout } from './logout.js';
 import { AUTOLOGIN_MARK, LobeLocalAutoLogin, safeCallback, type AutoLogin } from './autologin.js';
 
 const HOP_BY_HOP = new Set([
@@ -267,6 +268,11 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
 
     if (p === '/aroomo/healthz') return sendJson(res, 200, { status: 'ok', service: 'aroomo-shell' });
     if (p.startsWith('/aroomo/static/')) return serveStatic(req, res, p.slice('/aroomo/static/'.length));
+    // 退出登录（§8.3 账号）：只接受同源 POST
+    if (p === '/aroomo/logout') {
+      if (req.method !== 'POST' || !csrfOk(req)) return sendJson(res, 403, { error: { code: 'CSRF', message: '请求来源不对' } });
+      return handleLogout(req, res, cfg.lobeUpstream);
+    }
 
     // 品牌图标（上游路径也拦下，避免浏览器缓存的旧链接仍显示 LobeHub 图标）
     if (/^\/favicon[^/]*\.ico$/.test(p)) return serveFile(res, path.join(staticRoot, 'favicon.ico'), 'public, max-age=86400', req.method);

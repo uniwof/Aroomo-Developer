@@ -4,6 +4,7 @@ const clone = (m: Member): Member => ({
   ...m,
   aliases: [...m.aliases],
   capabilityTags: [...m.capabilityTags],
+  modelCaps: m.modelCaps ? { ...m.modelCaps } : null,
   deletedAt: m.deletedAt ? new Date(m.deletedAt) : null,
   createdAt: new Date(m.createdAt),
   updatedAt: new Date(m.updatedAt),

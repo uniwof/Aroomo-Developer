@@ -13,6 +13,8 @@ import type { InboxService } from '../inbox/service.js';
 import type { LiteLLMAdmin } from '../keys/litellm.js';
 import type { KeyStore } from '../keys/types.js';
 import type { MembersService } from '../members/service.js';
+import { refreshModelCaps } from '../members/caps.js';
+import type { MemberStore } from '../members/types.js';
 import type { Job } from './scheduler.js';
 
 const HOUR = 60 * 60 * 1000;
@@ -24,6 +26,19 @@ export function recycleBinJob(members: MembersService): Job {
     async run(audit) {
       const ids = await members.sweepExpired(audit);
       return ids.length ? `purged=${ids.length}` : '';
+    },
+  };
+}
+
+/** 模型事实刷新（负责人资格判定用，PRODUCT §9.1）：每 6 小时按 LiteLLM 的模型信息更新一次。只读，不调用任何模型。 */
+export function modelCapsJob(store: MemberStore, litellm: LiteLLMAdmin, now: () => Date): Job {
+  return {
+    name: 'model-caps',
+    intervalMs: 6 * HOUR,
+    async run() {
+      if (!litellm.configured) return 'skipped=not_configured';
+      const n = await refreshModelCaps(store, litellm, now);
+      return n ? `updated=${n}` : '';
     },
   };
 }

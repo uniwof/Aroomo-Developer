@@ -109,7 +109,8 @@ describe('Key 管理（/api/keys，mock LiteLLM）', () => {
     expect(dep?.model_info.aroomo_key_id).toBe(key.id);
     const stored = (await deps.keys.list())[0] as KeyRecord;
     expect(JSON.stringify(stored)).not.toContain(KEY_A);
-    expect(mock.calls.map((c) => `${c.method} ${c.url}`)).toEqual(['POST /model/new', 'GET /v1/models']);
+    expect(mock.calls.map((c) => `${c.method} ${c.url}`)).toEqual(['POST /model/new', 'GET /v1/models', 'GET /model/info']);
+    // GET /model/info：读模型事实（候选 / 负责人资格），不读凭据
   });
 
   it('列表只返回 id、名称、来源网址、末 4 位、状态、更新时间', async () => {
@@ -131,7 +132,7 @@ describe('Key 管理（/api/keys，mock LiteLLM）', () => {
     const r2 = await call('PATCH', `/api/keys/${id}`, { apiKey: KEY_B });
     expect(r2.statusCode).toBe(200);
     expect(r2.json().key.last4).toBe(KEY_B.slice(-4));
-    expect(mock.calls.map((c) => `${c.method} ${c.url}`)).toEqual(['POST /model/new', 'POST /model/delete', 'GET /v1/models']);
+    expect(mock.calls.map((c) => `${c.method} ${c.url}`)).toEqual(['POST /model/new', 'POST /model/delete', 'GET /v1/models', 'GET /model/info']);
     expect(mock.deployments.has(oldDep as string)).toBe(false);
     expect([...mock.deployments.values()][0]?.litellm_params.api_key).toBe(KEY_B);
 

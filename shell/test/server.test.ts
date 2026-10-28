@@ -19,6 +19,7 @@ let shellNoToken: Server;
 let base = '';
 let baseNoToken = '';
 const coreSeen: Array<{ url: string; auth?: string; cookie?: string; access?: string }> = [];
+const lobeSignOut: Array<{ cookie?: string; origin?: string }> = [];
 const lobeSeen: Array<{ url: string; cookie?: string; acceptEncoding?: string; host?: string }> = [];
 
 const sockets = new Set<net.Socket>();
@@ -44,6 +45,11 @@ beforeAll(async () => {
       res.write('data: LobeHub 1\n\n');
       setTimeout(() => res.end('data: 2\n\n'), 20);
       return;
+    }
+    if (req.url === '/api/auth/sign-out' && req.method === 'POST') {
+      lobeSignOut.push({ cookie: req.headers.cookie, origin: req.headers.origin as string | undefined });
+      res.writeHead(200, { 'content-type': 'application/json', 'set-cookie': 'better-auth.session_token=; Max-Age=0; Path=/' });
+      return res.end('{"success":true}');
     }
     if (req.url === '/api/data') {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -95,6 +101,8 @@ describe('LobeHub 页面', () => {
     expect(body).toMatch(/<head><meta name="application-name" content="Aroomo">/);
     expect(body).toContain('/aroomo/static/shell.js');
     expect(body).toContain('/aroomo/static/shell.css');
+    // 输入框 @ 联想 Aroomo 成员（H3）
+    expect(body).toMatch(/<script src="\/aroomo\/static\/mention\.js\?v=\w+"><\/script>/);
     expect(body).toContain('href="/aroomo/static/favicon.ico"');
     expect(body).toContain('href="/aroomo/static/manifest.json"');
     // HTML 向上游要不压缩的版本
@@ -270,6 +278,40 @@ describe('Aroomo 页面与 /aroomo/api', () => {
     const r = await fetch(`${base}/aroomo/static/..%2f..%2fpackage.json`);
     expect(r.status).toBe(404);
     expect((await fetch(`${base}/aroomo/static/shell.js`)).status).toBe(200);
+  });
+});
+
+describe('退出登录（§8.3 账号）', () => {
+  it('只接受同源 POST（带 X-Aroomo-Request）', async () => {
+    expect((await fetch(`${base}/aroomo/logout`)).status).toBe(403);
+    expect((await fetch(`${base}/aroomo/logout`, { method: 'POST' })).status).toBe(403);
+    expect((await fetch(`${base}/aroomo/logout`, { method: 'POST', headers: { 'x-aroomo-request': '1', origin: 'https://evil.example' } })).status).toBe(403);
+  });
+  it('替浏览器调 LobeHub 退出，带回清 Cookie；电脑版去登录页', async () => {
+    lobeSignOut.length = 0;
+    const res = await fetch(`${base}/aroomo/logout`, { method: 'POST', headers: { 'x-aroomo-request': '1', cookie: 'session=good' } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, location: '/signin' });
+    expect(res.headers.getSetCookie().join('\n')).toContain('better-auth.session_token=; Max-Age=0');
+    expect(lobeSignOut).toHaveLength(1);
+    expect(lobeSignOut[0]!.cookie).toBe('session=good');
+  });
+  it('经过 Cloudflare Access（服务器版）：下一步去 /cdn-cgi/access/logout，同时结束 Access 会话', async () => {
+    const res = await fetch(`${base}/aroomo/logout`, {
+      method: 'POST',
+      headers: { 'x-aroomo-request': '1', cookie: 'session=good', 'cf-access-jwt-assertion': 'placeholder.jwt.value' },
+    });
+    expect(((await res.json()) as { location: string }).location).toBe('/cdn-cgi/access/logout');
+  });
+  it('没有 Cookie 时也能退出（兜底把会话 Cookie 设为过期）', async () => {
+    lobeSignOut.length = 0;
+    const res = await fetch(`${base}/aroomo/logout`, { method: 'POST', headers: { 'x-aroomo-request': '1' } });
+    expect(res.status).toBe(200);
+    expect(lobeSignOut).toHaveLength(0);
+    expect(res.headers.getSetCookie().some((c) => c.startsWith('__Secure-better-auth.session_token=;'))).toBe(true);
+  });
+  it('mention.js 可以加载', async () => {
+    expect((await fetch(`${base}/aroomo/static/mention.js`)).status).toBe(200);
   });
 });
 

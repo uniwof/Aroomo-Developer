@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { executeMentionPlan, route } from '../src/router/route.js';
 import type { RoutableMember } from '../src/router/types.js';
+import { looksSensitive } from '../src/settings/security.js';
 
 const members: RoutableMember[] = [
   { id: 'groq', name: 'Groq', enabled: true },
@@ -77,5 +78,21 @@ describe('executeMentionPlan', () => {
     };
     await executeMentionPlan(['a', 'b', 'c'], 'x', call);
     expect(maxInFlight).toBe(3);
+  });
+});
+
+describe('looksSensitive（D38 最小识别）', () => {
+  it('命中：密码、API Key、银行卡号（Luhn）、身份证号', () => {
+    expect(looksSensitive('我的密码：hunter22')).toBe(true);
+    expect(looksSensitive('password = abcd1234')).toBe(true);
+    expect(looksSensitive('key 是 sk-' + 'a'.repeat(24))).toBe(true);
+    expect(looksSensitive('卡号 4111 1111 1111 1111')).toBe(true);
+    expect(looksSensitive('身份证 11010519491231002X')).toBe(true);
+  });
+  it('不误判：普通对话、订单号、电话', () => {
+    expect(looksSensitive('帮我写一首关于密码学的诗')).toBe(false);
+    expect(looksSensitive('订单号 1234567890123')).toBe(false);
+    expect(looksSensitive('电话 13800138000')).toBe(false);
+    expect(looksSensitive('')).toBe(false);
   });
 });

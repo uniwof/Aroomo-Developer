@@ -17,6 +17,7 @@ describe('/v1 对话入口（LobeHub → Core → LiteLLM，D31）', () => {
   let upstreamUrl = '';
   const seen: Seen[] = [];
   const failModels = new Set<string>();
+  const leadCapable = new Set<string>(['GPT-4o mini', 'Claude']);
   let app: FastifyInstance;
   let deps: CoreDeps;
 
@@ -25,6 +26,13 @@ describe('/v1 对话入口（LobeHub → Core → LiteLLM，D31）', () => {
       let raw = '';
       req.on('data', (c) => (raw += c));
       req.on('end', () => {
+        // 模型事实（负责人资格）：这些名字都是能对话、128k、支持工具调用的模型
+        if (req.method === 'GET' && req.url === '/model/info') {
+          const caps = { mode: 'chat', max_input_tokens: 128000, supports_function_calling: true };
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ data: [...leadCapable].map((n) => ({ model_name: n, model_info: { id: n, ...caps } })) }));
+          return;
+        }
         const body = JSON.parse(raw) as Seen;
         seen.push(body);
         if (req.headers.authorization !== 'Bearer placeholder-master-key-for-tests-0001') {
@@ -72,6 +80,8 @@ describe('/v1 对话入口（LobeHub → Core → LiteLLM，D31）', () => {
     await app?.close();
     seen.length = 0;
     failModels.clear();
+    leadCapable.clear();
+    leadCapable.add('GPT-4o mini').add('Claude');
     build();
   });
 
@@ -196,5 +206,30 @@ describe('/v1 对话入口（LobeHub → Core → LiteLLM，D31）', () => {
     expect(r.json()).toMatchObject({ object: 'response', status: 'completed' });
     expect(r.json().output_text).toContain('没有叫「Nobody」的成员');
     expect((await app.inject({ method: 'POST', url: '/v1/responses', payload: { input: 'x' } })).statusCode).toBe(401);
+  });
+
+  it('候选不能被点名、不能当负责人；没有合格负责人时不 @ 的消息只给提示（§9.1、D31）', async () => {
+    leadCapable.delete('Claude');
+    await addMember('Claude');
+    const r = await chat('你好');
+    expect(seen).toHaveLength(0);
+    expect(text(r)).toContain('还没有合格的负责人');
+    // 点名照常可用
+    const r2 = await chat('@Claude 你好');
+    expect(seen.map((x) => x.model)).toEqual(['Claude']);
+    expect(text(r2)).toContain('我是 Claude');
+    // 系统任务（起标题）在没有负责人时交给第一个在职成员
+    seen.length = 0;
+    await chat('起标题', { model: 'gpt-4o-mini' });
+    expect(seen.map((x) => x.model)).toEqual(['Claude']);
+  });
+
+  it('敏感内容保护（D38）：消息里有密码 / Key 时按敏感路由；开关读自设置', async () => {
+    await addMember('GPT-4o mini');
+    const r = await chat('我的密码：hunter22，帮我记一下');
+    expect(seen.map((x) => x.model)).toEqual(['GPT-4o mini']);
+    expect(text(r)).toContain('（负责人）');
+    expect((await app.inject({ method: 'PUT', url: '/api/settings/security', headers: ownerAuth, payload: { sensitiveProtect: false } })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/api/settings/security', headers: ownerAuth })).json().sensitiveProtect).toBe(false);
   });
 });

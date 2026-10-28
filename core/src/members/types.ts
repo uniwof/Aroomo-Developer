@@ -6,6 +6,24 @@
 export const CAPABILITY_TAGS = ['text', 'long-context', 'image', 'video', 'multimodal', 'voice', 'code', 'reasoning'] as const;
 export type CapabilityTag = (typeof CAPABILITY_TAGS)[number];
 
+/** 成员状态（PRODUCT §9.1 入职流程）：candidate = 候选，等用户一键入职；active = 在职。 */
+export const MEMBER_STATUSES = ['candidate', 'active'] as const;
+export type MemberStatus = (typeof MEMBER_STATUSES)[number];
+
+/**
+ * 后端从 LiteLLM 模型信息判定的模型事实（PRODUCT §9.1「负责人资格……由后端统一判定」）。
+ * 某项为 null 表示 LiteLLM 没有给出（未知）。
+ */
+export interface ModelCaps {
+  /** LiteLLM 的 mode：chat、responses、embedding、image_generation、audio_speech… */
+  mode: string | null;
+  /** 最大输入 token（上下文长度） */
+  maxInputTokens: number | null;
+  /** 支持工具调用（function calling） */
+  supportsTools: boolean | null;
+  checkedAt: string;
+}
+
 export interface Member {
   id: string;
   name: string;
@@ -14,6 +32,8 @@ export interface Member {
   enabled: boolean;
   pinned: boolean;
   sortOrder: number;
+  status: MemberStatus;
+  modelCaps: ModelCaps | null;
   deletedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
