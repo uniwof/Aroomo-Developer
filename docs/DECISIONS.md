@@ -421,3 +421,11 @@
 - 主人令牌（只有 Shell 持有，只在用户登录后的界面操作里用）发起的新增 / 换 Key = 普通确认（记 `confirm.normal` 审计）；操作员令牌发起 = 重要确认，操作员完成不了（D62）→ 403。删除 Key 不论谁发起都是重要确认（服务器还要重新验证 Cloudflare Access）。Core 没有「查看明文」「导出」接口，`keys:read-plaintext`、`keys:export` 仍在禁止清单里。
 - **注意：** 主程序员 / 运维脚本若直接用主人令牌调 Core，会被当成「用户手动」。因此主人令牌只放在 Shell 的环境变量里，不给任何智能体；智能体一律用操作员令牌。
 
+### H5 对话链路：LobeHub → Core /v1 → LiteLLM（不是 LobeHub 直连 LiteLLM）
+- **做法：** LobeHub 的 OpenAI 兼容服务商指向 Core 的 `/v1`（只露出一个模型「Aroomo」，令牌 `CORE_CHAT_TOKEN`，与主人令牌分开）。Core 只决定「交给谁」（D31）：有 @ → 被点名的成员直接回答（多人各自回答，P0 按顺序分段显示）；没有 @ → 负责人；被点名成员出错只回一行提示，不自动换人。然后把请求**原样**转给 LiteLLM（只换 `model` 为成员在 LiteLLM 里的模型名、去掉正文里的 @），流式输出原样回传，只在开头插提示、在结尾插署名（「— 名字（负责人）」）。LobeHub 的系统任务（起标题等，模型名不是 `aroomo`）直接交给负责人，不加任何东西。
+- **为什么不让 LobeHub 直连 LiteLLM：** ① P0 范围写明「Core 路由（最小可用：点名 + 交给负责人后的单人完成，D31）」，直连就没有 Core 路由；② LobeHub 要在启动时写死模型列表，用户新填的 Key 不重启就看不到；③ SEQUENCES.md「发一句话」本来就是 LobeHub → Core → LiteLLM。
+- **与 D70 / D76 不冲突：** Core 不碰供应商 Key、不调用供应商、不做重试 / 回退 / 负载均衡 / 计费——这些仍全在 LiteLLM（单一权威来源 D45）。Core 只是在 LiteLLM 前面选成员。
+- **P0 限制：** 多人点名不是并排显示（要改 LobeHub 消息组件，薄层做不到；最小改动方案：P1 由 Shell 识别 Core 输出的分段标记，渲染成左右并排）；「交给负责人」按钮暂用文字说明代替（「去掉 @ 再发一次」）；输入框 @ 联想见 H3。
+- **撤回方法：** `.env` 设 `LOBE_OPENAI_PROXY_URL=http://litellm:4000/v1`、`LOBE_OPENAI_API_KEY=<LiteLLM 虚拟 Key>`，并改 `OPENAI_MODEL_LIST`。
+- 删掉某个模型的最后一个 Key 时，对应成员自动停用（可以重新启用），避免负责人指向调不通的模型。
+

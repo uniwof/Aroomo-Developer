@@ -4,7 +4,7 @@
  */
 import { BRAND_FROM, BRAND_TO } from './rules.js';
 
-export const ASSET_VERSION = '1';
+export const ASSET_VERSION = '2';
 
 export function headSnippet(version = ASSET_VERSION): string {
   return [

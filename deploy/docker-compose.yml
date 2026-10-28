@@ -142,6 +142,8 @@ services:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
       CORE_DATABASE_URL: postgresql://aroomo_core:${CORE_DB_PASSWORD}@postgres:5432/aroomo_core
       CORE_OWNER_TOKEN: ${CORE_OWNER_TOKEN:-}
+      # 对话入口 /v1 的令牌（LobeHub 用它调 Core；提议 H5）
+      CORE_CHAT_TOKEN: ${CORE_CHAT_TOKEN:-}
       CORE_TOKEN_SECRET: ${CORE_TOKEN_SECRET:-}
       # 统一确认（D63）：涉及凭据的重要确认要重新验证 Cloudflare Access。本地版设 CORE_ACCESS_REAUTH=off
       CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
@@ -195,9 +197,15 @@ services:
       REDIS_URL: redis://redis:6379
       REDIS_PREFIX: lobechat
       REDIS_TLS: '0'
-      # 所有模型调用经 LiteLLM（PRODUCT §5.2）；Key 由 Core 写入 LiteLLM，不存在 LobeHub
-      OPENAI_PROXY_URL: http://litellm:4000/v1
-      OPENAI_API_KEY: ${LOBE_LITELLM_VIRTUAL_KEY:-}
+      # 对话：LobeHub 的 OpenAI 兼容服务商 → Core /v1（D31 点名 / 交给负责人）→ LiteLLM → 供应商（提议 H5）。
+      # Key 只在 LiteLLM（Core 写入），LobeHub 里没有任何供应商 Key。
+      # 撤回 H5：LOBE_OPENAI_PROXY_URL=http://litellm:4000/v1 且 LOBE_OPENAI_API_KEY=<LiteLLM 虚拟 Key>
+      OPENAI_PROXY_URL: ${LOBE_OPENAI_PROXY_URL:-http://core:8080/v1}
+      OPENAI_API_KEY: ${LOBE_OPENAI_API_KEY:-${CORE_CHAT_TOKEN:-}}
+      # 只露出一个模型「Aroomo」：谁来回答由 Core 按 @ 决定；默认助理和系统任务（起标题等）都用它
+      OPENAI_MODEL_LIST: '-all,+aroomo=Aroomo<128000:vision:fc>'
+      DEFAULT_AGENT_CONFIG: 'provider=openai;model=aroomo'
+      SYSTEM_AGENT: 'default=openai/aroomo-system'
       # Agent Gateway 默认关闭（P0 只需对话）；需要时启用 profile agent-gateway 并设为 1
       ENABLE_AGENT_GATEWAY: ${LOBE_ENABLE_AGENT_GATEWAY:-0}
       AGENT_GATEWAY_INTERNAL_URL: http://gateway:8787

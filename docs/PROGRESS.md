@@ -47,12 +47,14 @@ P0 范围与验收见 PRODUCT 16.1。分支规则：CI 通过后主程序员可�
 | D64/D65 | 安装器：主密钥离线生成窗口；开机后 / 停止前 / 更新前备份；本机 3 份；异地 pc/<电脑名> | ✅ 已合并到 dev | #29 | 待负责人确认实现注 b、D65 实现注 a |
 | fix | AGENT_GATEWAY_URL 为空导致 LobeHub 崩溃（compose 默认 http://gateway:8787）+ D66–D75 入档 | ✅ 已合并到 dev | #33 | |
 | 界面 | Aroomo Shell 界面薄层：品牌 Aroomo、按 §8 隐藏（FEATURE_FLAGS + 浏览器端）、朗读禁用（D68）、侧栏底部图标、PWA 清单（D77-2）、同源转发 Core；D76–D80 入档；提议 H1/H2 | ✅ 已合并到 dev | #36 | CI 界面冒烟（官方 LobeHub + Shell，电脑 + 手机截图）通过 |
-| 界面 | 品牌第二轮：上游文字 Logo、逐字动画标题、匿名数据开关行；冒烟走完新用户引导并截对话页 | 🟡 | fix/shell-branding-2 | |
+| 界面 | 品牌第二轮：上游文字 Logo、逐字动画标题、匿名数据开关行 | ✅ 已合并到 dev | #37 | |
+| 界面 + Core | Aroomo 页面接 Core（成员 / Key 与接入 / 收件箱 / 设置 + 确认卡）、D73、负责人、填 Key 自动建成员；提议 H3/H4 | 🟡 | #38 | |
+| 对话 | LobeHub → Core /v1（D31 点名 / 交给负责人）→ LiteLLM；界面冒烟用假模型验证「填 Key 后能对话」；提议 H5 | 🟡 | p0/chat-route | |
 
 - 存储：有 `CORE_DATABASE_URL` 用 PostgreSQL（启动自动迁移），否则内存（只适合开发 / 演示）。测试：PGlite 每次跑 + CI 的 PostgreSQL 17 服务容器再跑一遍。
 - 访问：`/api/*` 需要 `Authorization: Bearer <CORE_OWNER_TOKEN>`（P0 单用户）；未配置时一律 503。
 - 界面入口：浏览器 → Aroomo Shell（`shell/`，H1）→ 官方 LobeHub；Aroomo 页面在 `/aroomo/*`，`/aroomo/api/*` 同源转发 Core。
-- 尚未接入：Aroomo 页面调用 Core API（成员 / Key / 收件箱 + 确认卡 / 负责人）、对话经 Core 路由到 LiteLLM、定时任务（回收站清理、过期确认清理、Key 对账）。
+- 尚未接入：定时任务（回收站清理、过期确认清理、Key 对账）。
 
 ### P0 验收标准
 
