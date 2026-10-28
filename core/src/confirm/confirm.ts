@@ -84,6 +84,8 @@ export interface ChallengeStore {
   issueToken(id: string, tokenHash: string, at: Date): Promise<boolean>;
   /** 原子：只有未用过、未过期时写入 used_at；并发只有一个成功 */
   consume(id: string, at: Date): Promise<boolean>;
+  /** 定时清理：删除过期时间早于 before 的确认记录，返回删除条数（审计日志另有留痕，不受影响） */
+  deleteExpired(before: Date): Promise<number>;
 }
 
 export class MemoryChallengeStore implements ChallengeStore {
@@ -117,6 +119,16 @@ export class MemoryChallengeStore implements ChallengeStore {
     if (!r || r.usedAt || r.expiresAt.getTime() <= at.getTime()) return false;
     r.usedAt = new Date(at);
     return true;
+  }
+  async deleteExpired(before: Date): Promise<number> {
+    let n = 0;
+    for (const [id, r] of this.#rows) {
+      if (r.expiresAt.getTime() < before.getTime()) {
+        this.#rows.delete(id);
+        n++;
+      }
+    }
+    return n;
   }
 }
 
@@ -200,6 +212,10 @@ export class PgChallengeStore implements ChallengeStore {
       [id, at],
     );
     return rows.length > 0;
+  }
+  async deleteExpired(before: Date): Promise<number> {
+    const { rows } = await this.db.query('DELETE FROM confirm_challenges WHERE expires_at < $1 RETURNING id', [before]);
+    return rows.length;
   }
 }
 
