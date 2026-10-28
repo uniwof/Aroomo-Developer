@@ -60,6 +60,17 @@ check('登录接口', login.ok(), login.status());
 const storage = await api.storageState();
 
 const browser = await chromium.launch();
+// 登录页（未登录）：确认 Logo / 主题色
+{
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'en-US' });
+  const page = await ctx.newPage();
+  await page.goto(base + '/signin', { waitUntil: 'domcontentloaded' }).catch(() => {});
+  await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+  await shoot(page, 'desktop-signin');
+  const t = await page.evaluate(() => document.body.innerText);
+  check('登录页看不到 LobeHub', !/LobeHub|LobeChat/.test(t), (t.match(/.{0,30}(LobeHub|LobeChat).{0,30}/) || [''])[0]);
+  await ctx.close();
+}
 for (const [label, viewport, isMobile] of [
   ['desktop', { width: 1280, height: 800 }, false],
   ['mobile', { width: 390, height: 844 }, true],
@@ -123,7 +134,39 @@ for (const [label, viewport, isMobile] of [
   check(`${label} 简体中文`, /[\u4e00-\u9fa5]/.test(text), text.slice(0, 80));
   check(`${label} 上游文字 Logo 已替换`, (await page.locator('svg[data-aroomo-logo]:visible').count()) === 0);
   const dockVisible = await page.locator('#aroomo-dock').isVisible().catch(() => false);
-  check(`${label} 底部图标（收藏 / 成员 / 收件箱 / 设置）`, dockVisible && (await page.locator('#aroomo-dock a').count()) === 4, new URL(page.url()).pathname);
+  check(`${label} 底部图标（收藏 / 成员 / 收件箱 / 设置）`, dockVisible && (await page.locator('#aroomo-dock a[data-aroomo-dock]').count()) === 4, new URL(page.url()).pathname);
+  check(`${label} 侧栏有 Aroomo 标志`, (await page.locator('#aroomo-dock .aroomo-dock-brand svg').count()) === 1);
+  // —— 品牌与主题色（主人的 Logo + 珊瑚色 #ff7f50）：诊断写进 theme.json，供核对 ——
+  const theme = await page.evaluate(async () => {
+    const vars = window.__aroomoThemeVars || {};
+    const coral = /rgb\((255, 127, 80|255, 147, 107|232, 105, 60|255, 154, 115|229, 103, 59)\)/;
+    const buttons = [...document.querySelectorAll('button,[role="button"]')]
+      .filter((b) => b.offsetParent !== null)
+      .map((b) => { const cs = getComputedStyle(b); return { text: (b.innerText || b.getAttribute('aria-label') || '').slice(0, 20), bg: cs.backgroundColor, color: cs.color, cls: (b.className || '').toString().slice(0, 60) }; });
+    const icons = [...document.querySelectorAll('link[rel~="icon"],link[rel="apple-touch-icon"],link[rel="manifest"],meta[name="theme-color"]')].map((l) => l.outerHTML);
+    const manifest = await fetch('/manifest.json').then((r) => r.json()).catch(() => null);
+    const size = (u) => fetch(u, { cache: 'no-store' }).then((r) => r.blob()).then((b) => b.size).catch(() => -1);
+    return {
+      vars, icons, themeColor: manifest && manifest.theme_color,
+      coralButtons: buttons.filter((b) => coral.test(b.bg)),
+      buttons: buttons.slice(0, 40),
+      lobeAvatar: await size('/avatars/lobe-ai.png'), aroomoAvatar: await size('/aroomo/static/avatar.png'),
+      appIcon: await size('/app-icons/icon-192x192.png'), aroomoIcon: await size('/aroomo/static/icon-192.png'),
+      font: getComputedStyle(document.body).fontFamily,
+      imgs: [...document.querySelectorAll('img')].filter((i) => i.offsetParent !== null).map((i) => i.getAttribute('src')).slice(0, 40),
+      coralText: [...document.querySelectorAll('a,span,label,p,div')]
+        .filter((e) => e.offsetParent !== null && !e.closest('#aroomo-dock') && [...e.childNodes].some((n) => n.nodeType === 3 && n.nodeValue.trim()) && getComputedStyle(e).color === 'rgb(255, 127, 80)')
+        .map((e) => e.innerText.slice(0, 20)),
+    };
+  });
+  writeFileSync(path.join(out, `${label}-theme.json`), JSON.stringify(theme, null, 1));
+  check(`${label} 主题色变量已覆盖为珊瑚色`, Object.keys(theme.vars).length > 0, Object.keys(theme.vars).slice(0, 8).join(','));
+  const light = (c) => { const m = /rgba?\((\d+), (\d+), (\d+)/.exec(c); return Boolean(m && +m[1] >= 200 && +m[2] >= 200 && +m[3] >= 200); };
+  check(`${label} 珊瑚色按钮上的字是深色`, theme.coralButtons.every((b) => !light(b.color)), JSON.stringify(theme.coralButtons.slice(0, 3)));
+  check(`${label} 白底上没有浅珊瑚色文字`, theme.coralText.length === 0, JSON.stringify(theme.coralText.slice(0, 3)));
+  check(`${label} PWA theme_color 是珊瑚色`, theme.themeColor === '#ff7f50', theme.themeColor);
+  check(`${label} 默认助理头像 / PWA 图标是 Aroomo 的`, theme.lobeAvatar === theme.aroomoAvatar && theme.appIcon === theme.aroomoIcon, `${theme.lobeAvatar}/${theme.aroomoAvatar} ${theme.appIcon}/${theme.aroomoIcon}`);
+  check(`${label} 苹果式系统字体`, /apple-system|PingFang|Microsoft YaHei UI/.test(theme.font), theme.font);
   check(`${label} shell.js 已加载`, await page.evaluate(() => Boolean(window.__aroomoShell)));
   const hiddenVisible = await page.evaluate(() => {
     const bad = ['发现', '社区', '市场', '图片', '视频', '文稿', '资源', '记忆', '朗读', '语音服务'];

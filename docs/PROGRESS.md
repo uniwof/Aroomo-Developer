@@ -48,6 +48,7 @@ P0 范围与验收见 PRODUCT 16.1。分支规则：CI 通过后主程序员可�
 | fix | AGENT_GATEWAY_URL 为空导致 LobeHub 崩溃（compose 默认 http://gateway:8787）+ D66–D75 入档 | ✅ 已合并到 dev | #33 | |
 | 界面 | Aroomo Shell 界面薄层：品牌 Aroomo、按 §8 隐藏（FEATURE_FLAGS + 浏览器端）、朗读禁用（D68）、侧栏底部图标、PWA 清单（D77-2）、同源转发 Core；D76–D80 入档；提议 H1/H2 | ✅ 已合并到 dev | #36 | CI 界面冒烟（官方 LobeHub + Shell，电脑 + 手机截图）通过 |
 | 界面 | 品牌第二轮：上游文字 Logo、逐字动画标题、匿名数据开关行 | ✅ 已合并到 dev | #37 | |
+| 界面 | 品牌第三轮：主人设计的 Logo（侧栏、登录页、正在准备页、favicon、PWA 全尺寸、Apple 图标、默认助理头像）；主题色珊瑚色 #ff7f50（D69 薄层覆盖主色变量，填充上用深色字）；苹果式简洁动效（只用 CSS，遵守减少动态效果）；共用素材 assets/brand（独立版图标 / 托盘 / 启动页） | 🔄 PR | 本 PR | CI 界面冒烟 theme.json |
 | 界面 + Core | Aroomo 页面接 Core（成员 / Key 与接入 / 收件箱 / 设置 + 确认卡）、D73、负责人、填 Key 自动建成员；提议 H3/H4 | ✅ 已合并到 dev | #38 | |
 | 对话 | LobeHub → Core /v1（D31 点名 / 交给负责人）→ LiteLLM；界面冒烟用假模型验证「填 Key 后能对话」；提议 H5 | ✅ 已合并到 dev | #39 | 含 `/v1/responses` 转换（LobeHub 开联网 / 智能搜索时走 Responses API）；P0 不转发工具（web_search / 函数工具） |
 | Core | 定时任务：回收站 30 天彻底删除（6 小时）、过期确认清理（1 小时）、Key 与 LiteLLM 对账（1 小时，缺失只提醒一次） | ✅ 已合并到 dev | #40 | `CORE_JOBS=off` 可关；结果写审计 `job.run` |
