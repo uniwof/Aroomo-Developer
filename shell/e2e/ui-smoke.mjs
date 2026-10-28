@@ -135,6 +135,9 @@ for (const [label, viewport, isMobile] of [
   check(`${label} 上游文字 Logo 已替换`, (await page.locator('svg[data-aroomo-logo]:visible').count()) === 0);
   const dockVisible = await page.locator('#aroomo-dock').isVisible().catch(() => false);
   check(`${label} 底部图标（收藏 / 成员 / 收件箱 / 设置）`, dockVisible && (await page.locator('#aroomo-dock a[data-aroomo-dock]').count()) === 4, new URL(page.url()).pathname);
+  check(`${label} 首页没有上游吉祥物（运营素材图）`, (await page.evaluate(() => [...document.querySelectorAll('img')].filter((i) => /lobeobjects\.space\/dc\/ops-assets\//.test(i.currentSrc || i.src) && i.getBoundingClientRect().width).length)) === 0);
+  const promo = await page.evaluate(() => (document.body.innerText.match(/^(上新|推荐)$/gm) || []).join('/'));
+  check(`${label} 首页没有「上新」「推荐」推广条`, promo === '', promo);
   check(`${label} 侧栏有 Aroomo 标志`, (await page.locator('#aroomo-dock .aroomo-dock-brand svg').count()) === 1);
   // —— 品牌与主题色（主人的 Logo + 珊瑚色 #ff7f50）：诊断写进 theme.json，供核对 ——
   const theme = await page.evaluate(async () => {
