@@ -9,7 +9,7 @@ on:
   push:
     branches: [dev]
     paths:
-      - 'installer/**'
+      - 'installer/windows/**'
       - '.github/workflows/release-local-test.yml'
 
 permissions:

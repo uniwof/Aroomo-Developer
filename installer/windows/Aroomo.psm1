@@ -136,6 +136,18 @@ function Get-AroomoVirtualizationState {
 # ---------------------------------------------------------------------------
 # 密钥与 .env（只在本机生成，不打印）
 # ---------------------------------------------------------------------------
+function New-AroomoBase64Secret {
+    # base64 编码的随机字节。LobeHub 的 KEY_VAULTS_SECRET 必须 base64 解码后正好 16/24/32 字节；
+    # 十六进制串解码出来是 48 字节，会被拒绝（2026-10-28 CI：「got 48 bytes」）
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([ValidateSet(16, 24, 32)][int]$Bytes = 32)
+    $buf = New-Object byte[] $Bytes
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng.GetBytes($buf) } finally { $rng.Dispose() }
+    return [Convert]::ToBase64String($buf)
+}
+
 function New-AroomoSecret {
     [CmdletBinding()]
     [OutputType([string])]
@@ -202,6 +214,8 @@ function ConvertTo-AroomoEnv {
             $seen[$key] = $true
             if ($Values.ContainsKey($key)) {
                 $val = [string]$Values[$key]
+            } elseif ($val -eq 'CHANGE_ME' -and $key -eq 'KEY_VAULTS_SECRET') {
+                $val = New-AroomoBase64Secret
             } elseif ($val -eq 'CHANGE_ME') {
                 $val = New-AroomoSecret
             } elseif ($val -eq 'sk-CHANGE_ME') {
