@@ -69,7 +69,7 @@ step="检查环境变量"
 # 主密钥（私钥）绝不能出现在做备份的机器上（D64）
 [[ -z "${AROOMO_BACKUP_IDENTITY:-}" && -z "${AROOMO_BACKUP_IDENTITY_FILE:-}" ]] \
   || fail "备份环境里出现了主密钥（AROOMO_BACKUP_IDENTITY），拒绝备份。主密钥只在恢复时临时提供，不能放在服务器或电脑的配置里"
-if [[ -r "$ENV_FILE" ]] && grep -qE 'AGE-SECRET-KEY-1' "$ENV_FILE"; then
+if [[ -r "$ENV_FILE" ]] && grep -qE 'AGE-SECRET-KEY-1[02-9AC-HJ-NP-Z]{58}' "$ENV_FILE"; then
   fail ".env 里出现了主密钥（AGE-SECRET-KEY-1…），拒绝备份。请从 .env 删除它，只保留公钥 BACKUP_AGE_RECIPIENT"
 fi
 offsite_configured || [[ -n "${BACKUP_LOCAL_DIR:-}" ]] \
