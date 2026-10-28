@@ -9,6 +9,7 @@ services:
   rustfs-init: { mem_limit: 64m }
   litellm: { mem_limit: 512m } # 同时在 .env 保持 LITELLM_NUM_WORKERS=1
   core: { mem_limit: 128m }
+  shell: { mem_limit: 64m }
   lobe: { mem_limit: 640m }
   cloudflared: { mem_limit: 64m }
   backup: { mem_limit: 128m }

@@ -8,7 +8,7 @@
 |------|------|
 | `docker-compose.yml` | 基础服务；**不发布任何宿主机端口** |
 | `tiers/demo-2g.yml`、`standard.yml`、`full.yml` | 各档位的内存上限（**暂定值**，等 P0-b 内存实测报告定稿） |
-| `local.yml` | 本机访问：只绑定 `127.0.0.1:3210`（界面）和 `127.0.0.1:9000`（对象存储） |
+| `local.yml` | 本机访问：只绑定 `127.0.0.1:3210`（界面，Aroomo Shell）和 `127.0.0.1:9000`（对象存储） |
 | `local-backup.yml` | Windows 本地版：加密备份也存一份到用户数据文件夹（`LOCAL_BACKUP_DIR` → `/local`，只留 3 份，D65），见 [docs/ops/WINDOWS.md](../docs/ops/WINDOWS.md) |
 | `data-dir.yml` | 把数据放到 `DATA_DIR` 指定的文件夹（绝对路径，需先建好 `postgres/ redis/ rustfs/`） |
 | `.env.example` | 环境变量模板（只有占位符）；复制成 `.env` 填写，`.env` 不入库 |
@@ -48,7 +48,7 @@ AROOMO_TIER=standard scripts/compose.sh config   # 指定档位并查看合并�
 ## 访问（服务器）
 
 - 除 22 端口外不开放任何入站端口；全部经 Cloudflare Tunnel + Cloudflare Access。
-- 在 Cloudflare 控制台为 Tunnel 配置两条路由：应用域名 → `http://lobe:3210`；对象存储域名 → `http://rustfs:9000`。
+- 在 Cloudflare 控制台为 Tunnel 配置两条路由：应用域名 → `http://shell:3000`（Aroomo Shell，再转发给 LobeHub）；对象存储域名 → `http://rustfs:9000`。
 - `.env` 中 `APP_URL` 填应用域名，`S3_ENDPOINT` 填对象存储域名（浏览器要能直接访问它才能在会话里上传图片）。
 
 ## Key 的存储方式
