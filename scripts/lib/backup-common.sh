@@ -49,7 +49,12 @@ list_backups() {
   case "$where" in
     local)
       [[ -d "${BACKUP_LOCAL_DIR:-}" ]] || return 0
-      find "$BACKUP_LOCAL_DIR" -maxdepth 1 -type f -name 'aroomo-*.tar.zst.age' -printf '%f\n' | sort
+      # 不用 find -printf（容器里是 busybox find，不支持）
+      local f
+      for f in "$BACKUP_LOCAL_DIR"/aroomo-*.tar.zst.age; do
+        [[ -f "$f" ]] || continue
+        printf '%s\n' "${f##*/}"
+      done | sort
       ;;
     offsite)
       rclone lsf --files-only --include 'aroomo-*.tar.zst.age' "$(offsite_dir)" | sort

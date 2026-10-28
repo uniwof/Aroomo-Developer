@@ -49,7 +49,7 @@
 1. 服务器：`.env` 里设 `COMPOSE_PROFILES=tunnel,backup`，`scripts/compose.sh up -d`。之后每天 `BACKUP_CRON`（默认 03:30）自动备份。没填 `BACKUP_AGE_RECIPIENT` 时 sidecar 空转并在日志里说明。
 2. 手动备份一次：`scripts/compose.sh --profile backup run --rm backup now`。最后一行是 JSON：`status`、`duration_s`、`snapshot_id`（备份名）、`sha256`、`size_bytes`、`offsite`、`env_included`。失败时退出码非零，并有一行中文原因。
 3. 看有哪些备份：`scripts/compose.sh --profile backup run --rm backup snapshots`（加 `--from local` 看本机的）。
-4. 异地保留：`RETENTION_KEEP_DAILY=7`、`RETENTION_KEEP_WEEKLY=4`、`RETENTION_KEEP_MONTHLY=6`（可改；`RETENTION_KEEP_LAST` 另加保留最近 N 份）。本机（电脑版）只留最近 `BACKUP_LOCAL_KEEP=3` 份。
+4. 异地保留：`RETENTION_KEEP_DAILY=7`、`RETENTION_KEEP_WEEKLY=4`、`RETENTION_KEEP_MONTHLY=6`（可改；规则与 restic 相同：同一天多份时按天只留最新一份；`RETENTION_KEEP_LAST` 另加保留最近 N 份，电脑版安装器设为 3）。本机（电脑版）只留最近 `BACKUP_LOCAL_KEEP=3` 份。
 5. 完整性检查：`BACKUP_CHECK=weekly` 时每周日备份后重新下载刚上传的那份，核对 SHA-256 和 age 文件头。因为机器上没有主密钥，**能不能解开只能由恢复演练验证**（第 6 节）。
 6. 备份脚本会拒绝运行的情况：没有公钥；环境变量或 `.env` 里出现了主密钥（`AGE-SECRET-KEY-1…`）；异地和本机都没配置。
 

@@ -51,6 +51,8 @@ trap cleanup EXIT
 
 on_error() {
   local code=$?
+  # 子 shell（命令替换、管道）里的失败只退出子 shell，不在这里重复输出结果 JSON
+  if (( BASH_SUBSHELL > 0 )); then exit "$code"; fi
   printf 'restore: 失败——%s（退出码 %s）\n' "$step" "$code" >&2
   printf '{"event":"restore","status":"failed","step":"%s","started_at":"%s","duration_s":%s,"exit_code":%s}\n' \
     "$(json_escape "$step")" "$started_at" "$(( $(date +%s) - started_epoch ))" "$code"

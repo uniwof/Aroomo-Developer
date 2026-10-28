@@ -50,6 +50,8 @@ trap cleanup EXIT
 
 on_error() {
   local code=$?
+  # 子 shell（命令替换、管道）里的失败只退出子 shell，不在这里重复输出结果 JSON
+  if (( BASH_SUBSHELL > 0 )); then exit "$code"; fi
   local dur=$(( $(date +%s) - started_epoch ))
   printf 'backup: 失败——%s（退出码 %s）\n' "$step" "$code" >&2
   printf '{"event":"backup","status":"failed","step":"%s","started_at":"%s","duration_s":%s,"exit_code":%s}\n' \
