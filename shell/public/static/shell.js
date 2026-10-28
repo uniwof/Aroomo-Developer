@@ -3,6 +3,7 @@
  * 1. 朗读（TTS）禁用（D68）  2. 隐藏 PRODUCT §8 没列的页面和入口（D68，隐藏不删除）
  * 3. 品牌替换为 Aroomo（主人设计的 Logo）  4. 侧栏底部图标：Aroomo 标志、收藏、成员、收件箱（未读点）、设置（§8.2、§8.3）
  * 5. 主题色：珊瑚色 #ff7f50（覆盖页面上的主色变量；填充上的字用深色，保证对比度）
+ * 6. 首页：上游吉祥物（运营素材图）换成 Aroomo 标志；隐藏 §8 没有的上游推广条（「上新」模型条、「推荐」卡）（D68 隐藏不删除）
  * 规则与 shell/src/rules.ts 保持一致（测试会核对）。
  */
 (function () {
@@ -348,6 +349,70 @@
       // 首页的大吉祥物插画 → Aroomo 标志（透明底、跟随深浅色）；其余 → Aroomo 图标
       img.src = /overview-cao/i.test(src) ? '/aroomo/static/logo.svg' : '/aroomo/static/avatar.png';
     }
+    fixMascots();
+  }
+
+  /* ---------- 6. 首页：上游吉祥物、推广条（§8 没有；D68 隐藏不删除，D69 只在浏览器里覆盖） ---------- */
+  /* 上游运营素材（首页挥手吉祥物等）：按域名 + 路径前缀匹配，不按文件名（上游会换图） */
+  var OPS_ASSET = /^(?:https?:)?\/\/chat-cloud\.lobeobjects\.space\/dc\/ops-assets\//i;
+  var MASCOT_SRC = '/aroomo/static/logo.svg';
+  function fixMascots() {
+    var imgs = document.querySelectorAll('img');
+    for (var i = 0; i < imgs.length; i++) {
+      var img = imgs[i];
+      var src = img.getAttribute('src') || '';
+      if (!OPS_ASSET.test(src) && !OPS_ASSET.test(img.currentSrc || '')) continue;
+      if (img.closest('.markdown,article,[data-message-id]')) continue;
+      img.setAttribute('data-aroomo-mascot', '');
+      img.removeAttribute('srcset');
+      img.setAttribute('alt', 'Aroomo');
+      img.src = MASCOT_SRC;
+    }
+    var sources = document.querySelectorAll('picture source[srcset]');
+    for (var k = 0; k < sources.length; k++) {
+      if (OPS_ASSET.test(sources[k].getAttribute('srcset') || '')) sources[k].remove();
+    }
+  }
+
+  /* 首页推广条：「上新」模型广告条、「推荐」上游功能推荐卡。只在首页处理，避免误伤对话里的同名文字 */
+  var PROMO_LABELS = { '上新': 'strip', '推荐': 'card' };
+  var FORM_SEL = 'textarea,[contenteditable="true"],input,#aroomo-dock';
+  function isHome() {
+    var p = location.pathname.replace(/\/+$/, '');
+    return p === '' || p === '/home';
+  }
+  function promoBox(label, kind) {
+    var el = label.parentElement;
+    var strip = null;
+    for (var d = 0; el && el !== document.body && d < 8; d++, el = el.parentElement) {
+      // 到了输入框那一层就停（输入框本身不动）
+      if (el.querySelector(FORM_SEL)) return strip;
+      var r = el.getBoundingClientRect();
+      if (r.height > 480) return strip;
+      // 「上新」条：取不含输入框的最外层（模型按钮和右边的 × 一起藏，连同那一圈底框）
+      if (kind === 'strip') {
+        if (r.height > 120) return strip;
+        if (el.querySelectorAll('button,[role="button"]').length >= 2) strip = el;
+        continue;
+      }
+      if (r.height >= 80 && r.width >= 160 && el.querySelectorAll('*').length >= 6) return el;
+    }
+    return strip;
+  }
+  function hidePromos() {
+    if (!isHome()) return;
+    var main = document.querySelector('main') || document.body;
+    var walker = document.createTreeWalker(main, NodeFilter.SHOW_TEXT, null);
+    var n;
+    var found = [];
+    while ((n = walker.nextNode())) {
+      var t = (n.nodeValue || '').trim();
+      if (PROMO_LABELS[t] && n.parentElement && !n.parentElement.closest('[data-aroomo-hidden],.markdown,article,[data-message-id],#aroomo-dock')) found.push(n);
+    }
+    for (var i = 0; i < found.length; i++) {
+      var box = promoBox(found[i].parentElement, PROMO_LABELS[found[i].nodeValue.trim()]);
+      if (box) box.setAttribute('data-aroomo-hidden', '');
+    }
   }
 
   /* ---------- 5. 主题色（珊瑚色）：扫描页面样式表里实际定义的主色变量，按名字覆盖（!important，原选择器不变） ---------- */
@@ -471,6 +536,7 @@
       if (nodes[i].nodeType === 1) markOnCoral(nodes[i]);
     }
     fixLogos();
+    hidePromos();
     fixTitle();
     placeDock();
   }
@@ -488,6 +554,7 @@
     processNode(document.body);
     fixSplitText(document.body);
     fixLogos();
+    hidePromos();
     fixTitle();
     placeDock();
     new MutationObserver(function (muts) {
@@ -497,7 +564,7 @@
         else if (m.type === 'attributes') schedule(m.target);
         else for (var j = 0; j < m.addedNodes.length; j++) schedule(m.addedNodes[j]);
       }
-    }).observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ATTRS });
+    }).observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ATTRS.concat(['src', 'srcset']) });
     // 主题：页面加载后几次（CSS-in-JS 的样式是陆续插入的），<head> 里加样式、深浅模式切换时再算
     applyTheme();
     [800, 2500, 6000].forEach(function (ms) { setTimeout(applyTheme, ms); });
