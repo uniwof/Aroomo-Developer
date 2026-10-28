@@ -13,7 +13,7 @@ P0 范围与验收见 PRODUCT 16.1。分支规则：CI 通过后主程序员可�
 | 文档转换：三份 Word → docs/PRODUCT.md | 主程序员（Hark） | 🟡 PR #1 未合并到 main | docs/spec | 内容已进入 dev |
 | 建立 DECISIONS / PROGRESS / HANDOFF | 主程序员 | 🟡 PR #1 未合并到 main | docs/spec | |
 | 旧项目审计 docs/AUDIT.md | 主程序员 | 🟡 PR #2 未合并到 main | docs/audit | 内容已进入 dev |
-| v4.3 裁决入档（D30–D61）、讨论模式、KEY-STORAGE、SEQUENCES | 主程序员 | ✅ 已合并到 dev（#3，2026-10-27） | docs/v4.3 → dev | Muse 1–15 清单与负责人裁决表待补充 |
+| v4.3 裁决入档（D30–D61）、讨论模式、KEY-STORAGE、SEQUENCES | 主程序员 | ✅ 已合并到 dev（#3，2026-10-27） | docs/v4.3 → dev | Muse 1–15 原文与裁决表已于 2026-10-28 补齐（DECISIONS 第 7.5 节） |
 | 方案反对式评审 | 验收员（Muse） | ✅（据 v4.3 裁决，Muse 意见已裁决） | — | 原文未入仓库 |
 | 开工前验证 docs/VERIFY.md（PRODUCT 第 20 节） | 主程序员 | ⏳ | | 与 P0 b 合并做 |
 
@@ -66,6 +66,12 @@ P0 范围与验收见 PRODUCT 16.1。分支规则：CI 通过后主程序员可�
 - [ ] 内存实测报告完成
 - [ ] Muse 评审通过
 - [ ] 本地版在用户电脑上能跑起来
+
+## 负责人 P0 审查（2026-10-28）
+
+- 负责人判定：P0 约 70%（代码约 85%，验收 0/6），P1 约 30%，总体约 14%。逐条见 DECISIONS 第 7.5 节来源文件第二部分。
+- 主程序员补充（同日）：真实对话已跑通（Groq 测试 Key 经 Core → LiteLLM，自动选出负责人）；2 路并发长回复内存峰值 lobe 约 730 MiB、litellm 约 777 MiB，未用 swap。上传场景未测。
+- 负责人下一步 5 件事：① 用户一次交付测试 Key + R2 + 限桶令牌（已完成）；② 统一主密钥并做两次真实恢复演练；③ 真实对话 + 2 并发内存（部分完成）；④ 独立版在用户电脑实装（先修 Host 白名单 ✅ PR #50、主密钥分叉）；⑤ 文档清账（D79–D101 已入档，PRODUCT 7.3/7.5/7.6、third-party.md、VERIFY.md、HANDOFF 待做）。
 
 ## 分期总览（PRODUCT 第 16 节）
 
