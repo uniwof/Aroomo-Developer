@@ -343,6 +343,9 @@ function Get-AroomoSAServiceSpecs {
                 SHELL_HOST = '127.0.0.1'; SHELL_PORT = $c['SHELL_PORT']
                 LOBE_UPSTREAM = "http://127.0.0.1:$($c['LOBE_PORT'])"; CORE_UPSTREAM = "http://127.0.0.1:$($c['CORE_PORT'])"
                 CORE_OWNER_TOKEN = $c['CORE_OWNER_TOKEN']; SHELL_DEFAULT_LOCALE = 'zh-CN'
+                # D78：单一本机主人、不设本地登录密码——Shell 替浏览器登录 LobeHub（账号密码随机，只在本机配置里）
+                SHELL_LOCAL_OWNER_EMAIL = [string]$c['LOCAL_OWNER_EMAIL']; SHELL_LOCAL_OWNER_PASSWORD = [string]$c['LOCAL_OWNER_PASSWORD']
+                SHELL_PUBLIC_URL = $publicUrl
             }
             Health = 'http'; HealthUrl = "http://127.0.0.1:$($c['SHELL_PORT'])/"
         }

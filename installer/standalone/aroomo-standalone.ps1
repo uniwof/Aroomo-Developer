@@ -65,7 +65,8 @@ function Initialize-Config([string]$Data) {
         # 旧版本没有的键补上（不改已有的值）
         $add = @{}
         foreach ($kv in (Get-AroomoSAPortDefaults).GetEnumerator()) { if (-not $cfg[$kv.Key]) { $add[$kv.Key] = [string]$kv.Value } }
-        foreach ($k in 'LITELLM_DB_PASSWORD') { if (-not $cfg[$k]) { $add[$k] = New-AroomoSecret } }
+        foreach ($k in 'LITELLM_DB_PASSWORD', 'LOCAL_OWNER_PASSWORD') { if (-not $cfg[$k]) { $add[$k] = New-AroomoSecret } }
+        if (-not $cfg['LOCAL_OWNER_EMAIL']) { $add['LOCAL_OWNER_EMAIL'] = 'owner@aroomo.local' }
         # 早期测试版把 KEY_VAULTS_SECRET 生成成了十六进制（LobeHub 不接受，用它什么也加密不了），换成合法值
         if ($cfg['KEY_VAULTS_SECRET'] -match '^[0-9a-f]{64}$') { $add['KEY_VAULTS_SECRET'] = New-AroomoSABase64Secret }
         if ($add.Count -gt 0) { Write-AroomoPrivateFile -Path $paths.EnvFile -Content (Set-AroomoEnvValues -Content ([IO.File]::ReadAllText($paths.EnvFile)) -Values $add) }

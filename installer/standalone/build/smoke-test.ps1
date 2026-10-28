@@ -61,6 +61,21 @@ try {
     $results.public_url_http = Get-AroomoSAHttpStatus -Url "$pub/" -TimeoutMs 30000
     if ($results.lobe_http -lt 200 -or $results.lobe_http -ge 500) { throw "LobeHub 返回 $($results.lobe_http)" }
 
+    # D78：本机主人自动登录（没有 Cookie 打开界面 → Shell 替浏览器登录 → 302 带会话 Cookie）；再用这个会话经 Shell 调 Core
+    if (Test-AroomoSAShell -Paths $ctx.Paths) {
+        $req = [System.Net.HttpWebRequest]::Create("$pub/")
+        $req.Accept = 'text/html'; $req.AllowAutoRedirect = $false; $req.Proxy = $null; $req.Timeout = 120000
+        try { $resp = $req.GetResponse() } catch [System.Net.WebException] { $resp = $_.Exception.Response }
+        $code = [int]$resp.StatusCode
+        $raw = [string]$resp.Headers['Set-Cookie']
+        $resp.Close()
+        $m = [regex]::Match($raw, '([A-Za-z0-9_.\-]*session_token)=([^;,\s]+)')
+        if ($code -ne 302 -or -not $m.Success) { throw "本机主人自动登录没有成功（HTTP $code）" }
+        $results.autologin = 'ok'
+        $cookie = "$($m.Groups[1].Value)=$($m.Groups[2].Value)"
+        $results.aroomo_api_via_shell = (Invoke-WebRequest -Uri "$pub/aroomo/api/inbox/unread-count" -Headers @{ Cookie = $cookie } -UseBasicParsing).StatusCode
+    }
+
     # 备份：测试用主密钥（只在这台 CI 机器上，用完即弃）
     $k = New-AroomoMasterKey -AgeKeygenPath (Get-AroomoAgeKeygenPath -AppDir $AppDir)
     Write-AroomoPrivateFile -Path $ctx.Paths.EnvFile -Content (Set-AroomoEnvValues -Content ([IO.File]::ReadAllText($ctx.Paths.EnvFile)) -Values @{ BACKUP_AGE_RECIPIENT = $k.PublicKey })
