@@ -26,6 +26,8 @@ export interface CoreConfig {
   ownerToken: string | undefined;
   /** 对话入口 /v1/*（LobeHub 的 OpenAI 兼容服务商指向这里）用的令牌；未设置时 /v1 一律 503 */
   chatToken: string | undefined;
+  /** 进程内定时任务（默认开；CORE_JOBS=off 关闭） */
+  jobs: boolean;
   /** 操作员令牌 HMAC 用的服务端密钥；未设置时操作员令牌不可用 */
   tokenSecret: string | undefined;
   /** Cloudflare Access 团队域名（例如 myteam.cloudflareaccess.com），用于凭据操作的重新验证（D63） */
@@ -135,6 +137,7 @@ export function loadConfig(env: Env = process.env): CoreConfig {
     autoMigrate: autoMigrateRaw === 'true' || autoMigrateRaw === '1',
     ownerToken,
     chatToken,
+    jobs: (str(env, 'CORE_JOBS') ?? 'on') !== 'off',
     tokenSecret,
     cfAccessTeamDomain,
     cfAccessAud,

@@ -20,6 +20,9 @@ import { route } from './router/route.js';
 import { LeadService } from './settings/lead.js';
 import { ChatService } from './chat/service.js';
 import { registerChatRoutes } from './chat/routes.js';
+import { Scheduler } from './jobs/scheduler.js';
+import { confirmCleanupJob, keyReconcileJob, recycleBinJob } from './jobs/jobs.js';
+import { bindAudit } from './audit/common.js';
 import { registerSettingsRoutes } from './settings/routes.js';
 import type { RoutableMember } from './router/types.js';
 
@@ -28,6 +31,7 @@ export const VERSION = '0.0.1';
 declare module 'fastify' {
   interface FastifyInstance {
     inbox: InboxService;
+    jobs: Scheduler;
   }
 }
 
@@ -39,6 +43,8 @@ interface RoutePreviewBody {
 }
 
 export interface BuildOptions {
+  /** 启动定时任务（默认按 CORE_JOBS；测试里不启动，用 app.jobs.runOnce() 手动跑） */
+  startJobs?: boolean;
   /** 日志输出目标（测试用来捕获日志，检查有没有泄露 Key） */
   logStream?: { write(msg: string): void };
 }
@@ -184,6 +190,17 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps(), opts
       },
     }),
   );
+
+  // 定时任务（回收站 30 天、过期确认清理、Key 对账）
+  const jobs = new Scheduler(bindAudit(deps.auditLog, { type: 'system', id: 'jobs' }));
+  jobs.add(recycleBinJob(members));
+  jobs.add(confirmCleanupJob(deps.confirmChallenges, deps.now));
+  jobs.add(keyReconcileJob(deps.keys, litellm, inbox, deps.now));
+  app.decorate('jobs', jobs);
+  if (opts.startJobs ?? cfg.jobs) {
+    app.addHook('onReady', async () => jobs.start());
+  }
+  app.addHook('onClose', async () => jobs.stop());
 
   return app;
 }
