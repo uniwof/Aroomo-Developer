@@ -1,5 +1,6 @@
 import { ConfigError, loadConfig, toSafeJSON } from './config.js';
 import { createDeps } from './deps.js';
+import { vaultStartupCheck } from './vault/service.js';
 import { buildServer } from './server.js';
 
 async function main(): Promise<void> {
@@ -15,6 +16,12 @@ async function main(): Promise<void> {
   }
 
   const { deps, migrated, storage } = await createDeps(cfg);
+  try {
+    await vaultStartupCheck(cfg.vaultKey, deps.vault, deps.settings, deps.now);
+  } catch (err) {
+    process.stderr.write(`保险箱检查失败：${(err as Error).message}\n`);
+    process.exit(1);
+  }
   const app = buildServer(cfg, deps);
   app.log.info({ config: toSafeJSON(cfg), storage, migrated }, 'aroomo-core starting');
   if (storage === 'memory') app.log.warn('CORE_DATABASE_URL 未设置：使用内存存储，重启后数据丢失（只适合开发 / 演示）');

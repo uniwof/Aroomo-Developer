@@ -30,6 +30,8 @@ export interface CoreConfig {
   jobs: boolean;
   /** 操作员令牌 HMAC 用的服务端密钥；未设置时操作员令牌不可用 */
   tokenSecret: string | undefined;
+  /** 保险箱信封加密的主密钥（32 字节 base64）；未设置时保险箱接口 503。只在服务器 .env */
+  vaultKey: string | undefined;
   /** Cloudflare Access 团队域名（例如 myteam.cloudflareaccess.com），用于凭据操作的重新验证（D63） */
   cfAccessTeamDomain: string | undefined;
   /** Cloudflare Access 应用的 AUD 标签 */
@@ -108,6 +110,8 @@ export function loadConfig(env: Env = process.env): CoreConfig {
   if (chatToken !== undefined && chatToken.length < 32) throw new ConfigError('CORE_CHAT_TOKEN 至少 32 个字符');
   const tokenSecret = str(env, 'CORE_TOKEN_SECRET');
   if (tokenSecret !== undefined && tokenSecret.length < 32) throw new ConfigError('CORE_TOKEN_SECRET 至少 32 个字符');
+  const vaultKey = str(env, 'VAULT_KEY');
+  if (vaultKey !== undefined && !/^[A-Za-z0-9+/_-]{43}=?$/.test(vaultKey)) throw new ConfigError('VAULT_KEY 必须是 32 字节的 base64（43 个字符）');
   const autoMigrateRaw = (str(env, 'CORE_AUTO_MIGRATE') ?? 'true').toLowerCase();
   if (!['true', 'false', '1', '0'].includes(autoMigrateRaw)) throw new ConfigError('CORE_AUTO_MIGRATE 必须是 true/false');
 
@@ -139,6 +143,7 @@ export function loadConfig(env: Env = process.env): CoreConfig {
     chatToken,
     jobs: (str(env, 'CORE_JOBS') ?? 'on') !== 'off',
     tokenSecret,
+    vaultKey,
     cfAccessTeamDomain,
     cfAccessAud,
     accessReauth,
@@ -160,6 +165,7 @@ export function toSafeJSON(cfg: CoreConfig): Record<string, unknown> {
     ownerToken: cfg.ownerToken ? '(set)' : '(unset)',
     chatToken: cfg.chatToken ? '(set)' : '(unset)',
     tokenSecret: cfg.tokenSecret ? '(set)' : '(unset)',
+    vaultKey: cfg.vaultKey ? '(set)' : '(unset)',
     cfAccessTeamDomain: cfg.cfAccessTeamDomain ?? '(unset)',
     cfAccessAud: cfg.cfAccessAud ? '(set)' : '(unset)',
     accessReauth: cfg.accessReauth,

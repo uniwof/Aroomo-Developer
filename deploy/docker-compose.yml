@@ -145,6 +145,7 @@ services:
       # 对话入口 /v1 的令牌（LobeHub 用它调 Core；提议 H5）
       CORE_CHAT_TOKEN: ${CORE_CHAT_TOKEN:-}
       CORE_TOKEN_SECRET: ${CORE_TOKEN_SECRET:-}
+      VAULT_KEY: ${VAULT_KEY:-}
       # 统一确认（D63）：涉及凭据的重要确认要重新验证 Cloudflare Access。本地版设 CORE_ACCESS_REAUTH=off
       CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
       CF_ACCESS_AUD: ${CF_ACCESS_AUD:-}

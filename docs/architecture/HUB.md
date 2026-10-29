@@ -62,6 +62,12 @@
 - 列表 / 详情接口永远只返回 `name, kind, last4, 时间`，**没有任何接口返回明文**，除了「查看明文」且需要确认令牌。
 - 日志与审计走现有脱敏（audit/redact.ts）；新增 `vault.*` 动作，审计里没有值。
 
+### 2.4 实现状态（B2a）
+- 已实现：`core/src/vault/`（信封加密、store、service、routes）、迁移 0012、`GET/POST /api/vault`、`PUT /api/vault/:id`（只替换内容）、`POST /api/vault/:id/reveal`（凭据类重要确认）、`DELETE /api/vault/:id`（不可逆确认，清空密文）。
+- 仅本人（所有者令牌、账号）可用；操作员与客户端令牌 403。**账号目前不能查看明文 / 删除**（`principalCan` 对账号为 false，等 7.1 第 1 步「密码重新验证」）；账号可新增、替换、列表。
+- 启动检查在 `index.ts`：库里有记录而 `VAULT_KEY` 缺失/指纹不符 → 进程退出。
+- **待办（后续 PR）**：①独立版安装器的 `$dataKeys`（还原时保留的密钥名单，installer/standalone/AroomoStandalone.psm1）加入 `VAULT_KEY`；②备份恢复演练加「恢复后能解开一条测试记录」；③导出接口。
+
 ## 3. 工具网关（B2）
 
 - 工具 = 一条登记：`tool_id, user_id, name, base_url, auth {type: bearer|header|query, secret_id, header_name}, allowed_hosts[], risk (read|write|spend|danger), per_day_limit, enabled`。
