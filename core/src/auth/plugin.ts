@@ -16,6 +16,10 @@ declare module 'fastify' {
     capability?: Capability;
     /** 账号（多用户）可以访问这个接口。没声明的接口账号一律 403（默认拒绝，直到该模块带 user_id 隔离） */
     userRoute?: boolean;
+    /** 客户端令牌（B3）需要具备的范围；没声明的接口客户端一律 403 */
+    clientScope?: string;
+    /** 客户端可以查看自己（GET /api/clients/self） */
+    clientSelf?: boolean;
   }
   interface FastifyRequest {
     principal: Principal | null;
@@ -26,6 +30,7 @@ declare module 'fastify' {
 
 export function actorOf(p: Principal): AuditActor {
   if (p.type === 'owner') return { type: 'owner', id: 'owner' };
+  if (p.type === 'client') return { type: 'client', id: p.clientId };
   return p.type === 'user' ? { type: 'user', id: p.userId } : { type: 'operator', id: p.id };
 }
 
@@ -54,6 +59,14 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
     req.principal = principal;
     req.audit = bindAudit(opts.auditLog, actorOf(principal));
     // D62：操作员只按白名单放行。没有声明能力的接口、不存在的接口、白名单外的能力，一律拒绝并审计。
+    if (principal.type === 'client') {
+      const cfg = req.routeOptions.config;
+      const ok = cfg?.clientSelf === true || (cfg?.clientScope !== undefined && (principal.scopes as ReadonlySet<string>).has(cfg.clientScope));
+      if (!ok) {
+        await req.audit('auth.denied', { type: 'route', id: req.routeOptions.url ?? req.url.split('?')[0] ?? '' }, 'denied', `${req.method} 客户端令牌没有这个范围`);
+        throw new HttpError(403, 'FORBIDDEN', '没有权限执行这个操作');
+      }
+    }
     if (principal.type === 'user' && !req.routeOptions.config?.userRoute) {
       await req.audit('auth.denied', { type: 'route', id: req.routeOptions.url ?? req.url.split('?')[0] ?? '' }, 'denied', `${req.method} 账号不能访问这个接口`);
       throw new HttpError(403, 'FORBIDDEN', '没有权限执行这个操作');
