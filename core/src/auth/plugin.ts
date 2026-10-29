@@ -14,6 +14,8 @@ declare module 'fastify' {
   interface FastifyContextConfig {
     /** 这个接口需要的能力（D62：操作员只能调用声明了白名单能力的接口） */
     capability?: Capability;
+    /** 账号（多用户）可以访问这个接口。没声明的接口账号一律 403（默认拒绝，直到该模块带 user_id 隔离） */
+    userRoute?: boolean;
   }
   interface FastifyRequest {
     principal: Principal | null;
@@ -23,7 +25,8 @@ declare module 'fastify' {
 }
 
 export function actorOf(p: Principal): AuditActor {
-  return p.type === 'owner' ? { type: 'owner', id: 'owner' } : { type: 'operator', id: p.id };
+  if (p.type === 'owner') return { type: 'owner', id: 'owner' };
+  return p.type === 'user' ? { type: 'user', id: p.userId } : { type: 'operator', id: p.id };
 }
 
 export interface AuthOptions {
@@ -51,6 +54,10 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
     req.principal = principal;
     req.audit = bindAudit(opts.auditLog, actorOf(principal));
     // D62：操作员只按白名单放行。没有声明能力的接口、不存在的接口、白名单外的能力，一律拒绝并审计。
+    if (principal.type === 'user' && !req.routeOptions.config?.userRoute) {
+      await req.audit('auth.denied', { type: 'route', id: req.routeOptions.url ?? req.url.split('?')[0] ?? '' }, 'denied', `${req.method} 账号不能访问这个接口`);
+      throw new HttpError(403, 'FORBIDDEN', '没有权限执行这个操作');
+    }
     if (principal.type === 'operator') {
       const cap = req.routeOptions.config?.capability;
       if (!cap || !principalCan(principal, cap)) {
@@ -91,4 +98,30 @@ export const requireOwner: preHandlerAsyncHookHandler = async function (req: Fas
 /** 统一确认服务需要的操作者上下文（D63）。重要确认只能由主人完成（confirm:important，D62）。 */
 export function confirmCtx(p: Principal, confirmToken?: string): ConfirmCtx {
   return { actor: actorKey(p), canConfirmImportant: principalCan(p, 'confirm:important'), ...(confirmToken ? { confirmToken } : {}) };
+}
+
+/** 账号可用的接口（本人的数据）。用法：`{ ...userGuard(), schema }` */
+export function userGuard(): { config: { userRoute: true }; preHandler: preHandlerAsyncHookHandler } {
+  return {
+    config: { userRoute: true },
+    preHandler: async function (req: FastifyRequest) {
+      if (!req.principal) throw new HttpError(401, 'UNAUTHORIZED', '请先登录');
+    },
+  };
+}
+
+/** 管理员：所有者令牌，或角色为 admin 的账号。 */
+export function adminGuard(): { config: { userRoute: true }; preHandler: preHandlerAsyncHookHandler } {
+  return {
+    config: { userRoute: true },
+    preHandler: async function (req: FastifyRequest) {
+      const p = req.principal;
+      if (!p) throw new HttpError(401, 'UNAUTHORIZED', '请先登录');
+      const isAdmin = p.type === 'owner' || (p.type === 'user' && p.role === 'admin');
+      if (!isAdmin) {
+        await req.audit('auth.denied', { type: 'role', id: 'admin' }, 'denied', `${req.method} ${req.routeOptions.url ?? ''}`);
+        throw new HttpError(403, 'FORBIDDEN', '只有管理员可以执行这个操作');
+      }
+    },
+  };
 }
