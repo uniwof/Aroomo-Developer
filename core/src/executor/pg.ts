@@ -5,6 +5,7 @@ import type {
   ExecutorStore,
   TaskKind,
   TaskRecord,
+  TakeoverRecord,
   TaskStatus,
 } from "./types.js";
 
@@ -39,8 +40,57 @@ const toTask = (r: Record<string, unknown>): TaskRecord => ({
   updatedAt: toDate(r.updated_at),
 });
 
+const toTk = (r: Record<string, unknown>): TakeoverRecord => ({
+  id: r.id as string,
+  userId: r.user_id as string,
+  taskId: r.task_id as string,
+  reason: r.reason as string,
+  message: r.message as string,
+  status: r.status as TakeoverRecord["status"],
+  note: (r.note as string | null) ?? null,
+  createdAt: toDate(r.created_at),
+  resolvedAt: toDateOrNull(r.resolved_at),
+});
+
 export class PgExecutorStore implements ExecutorStore {
   constructor(private readonly db: Db) {}
+
+  async insertTakeover(t: TakeoverRecord) {
+    await this.db.query(
+      `INSERT INTO exec_takeovers (id, user_id, task_id, reason, message, status, created_at)
+       VALUES ($1,$2,$3,$4,$5,'pending',$6)`,
+      [t.id, t.userId, t.taskId, t.reason, t.message, t.createdAt],
+    );
+  }
+  async getTakeover(userId: string, taskId: string, id: string) {
+    const { rows } = await this.db.query<Record<string, unknown>>(
+      "SELECT * FROM exec_takeovers WHERE user_id = $1 AND task_id = $2 AND id = $3",
+      [userId, taskId, id],
+    );
+    return rows[0] ? toTk(rows[0]) : null;
+  }
+  async listTakeovers(userId: string, taskId: string) {
+    const { rows } = await this.db.query<Record<string, unknown>>(
+      "SELECT * FROM exec_takeovers WHERE user_id = $1 AND task_id = $2 ORDER BY created_at",
+      [userId, taskId],
+    );
+    return rows.map(toTk);
+  }
+  async resolveTakeover(
+    userId: string,
+    taskId: string,
+    id: string,
+    status: "resolved" | "cancelled",
+    note: string | null,
+    now: Date,
+  ) {
+    const { rows } = await this.db.query<Record<string, unknown>>(
+      `UPDATE exec_takeovers SET status = $4, note = $5, resolved_at = $6
+       WHERE user_id = $1 AND task_id = $2 AND id = $3 AND status = 'pending' RETURNING *`,
+      [userId, taskId, id, status, note, now],
+    );
+    return rows[0] ? toTk(rows[0]) : null;
+  }
 
   async upsertExecutor(r: ExecutorRecord): Promise<ExecutorRecord> {
     const { rows } = await this.db.query<Record<string, unknown>>(

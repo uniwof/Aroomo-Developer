@@ -198,7 +198,114 @@ export function registerExecutorRoutes(
     },
   );
 
+  const idTid = {
+    type: "object",
+    required: ["id", "tid"],
+    properties: {
+      id: { type: "string", format: "uuid" },
+      tid: { type: "string", format: "uuid" },
+    },
+  } as const;
+  app.post<{
+    Params: { id: string };
+    Body: { reason: string; message: string };
+  }>(
+    "/api/executor/tasks/:id/takeover",
+    {
+      ...dev,
+      schema: {
+        params: uuidParam,
+        body: {
+          type: "object",
+          required: ["reason", "message"],
+          properties: {
+            reason: { type: "string", maxLength: 200 },
+            message: { type: "string", maxLength: 1000 },
+            screenshot: { type: "object" },
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      const w = who(req);
+      return reply
+        .status(201)
+        .send(
+          await svc.takeover(
+            w.userId,
+            w.clientId,
+            req.params.id,
+            req.body,
+            req.audit,
+          ),
+        );
+    },
+  );
+  app.get<{
+    Params: { id: string; tid: string };
+    Querystring: { waitSec?: number };
+  }>(
+    "/api/executor/tasks/:id/takeover/:tid",
+    {
+      ...dev,
+      schema: {
+        params: idTid,
+        querystring: {
+          type: "object",
+          properties: {
+            waitSec: { type: "integer", minimum: 0, maximum: 30 },
+          },
+        },
+      },
+    },
+    async (req) => {
+      const w = who(req);
+      return svc.takeoverStatus(
+        w.userId,
+        w.clientId,
+        req.params.id,
+        req.params.tid,
+        req.query.waitSec ?? 0,
+      );
+    },
+  );
+
   // —— 人用 ——
+  app.get<{ Params: { id: string } }>(
+    "/api/tasks/:id/takeovers",
+    { ...human, schema: { params: uuidParam } },
+    async (req) => ({
+      takeovers: await svc.takeovers(scopeOf(req), req.params.id),
+    }),
+  );
+  app.post<{
+    Params: { id: string; tid: string };
+    Body: { cancel?: boolean; note?: string } | null;
+  }>(
+    "/api/tasks/:id/takeovers/:tid/resolve",
+    {
+      ...human,
+      schema: {
+        params: idTid,
+        body: {
+          type: ["object", "null"],
+          properties: {
+            cancel: { type: "boolean" },
+            note: { type: "string", maxLength: 500 },
+          },
+        },
+      },
+    },
+    async (req) =>
+      svc.resolveTakeover(
+        scopeOf(req),
+        req.params.id,
+        req.params.tid,
+        req.body ?? {},
+        req.audit,
+      ),
+  );
+
   app.post<{
     Body: {
       kind: string;
