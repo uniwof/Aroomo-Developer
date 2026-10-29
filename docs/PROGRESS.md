@@ -118,6 +118,22 @@ P2–P7 的功能开发在阶段 C 之后照常在网页版上推进，离线版
 - 访问：https://app.pcmanai.com（Cloudflare Access 团队 `aroomo.cloudflareaccess.com`）。
 - 2026-10-28 13:24（北京时间）更新到 dev `f349d90`（#38–#40）：新增 `CORE_CHAT_TOKEN`；`KEY_VAULTS_SECRET` 原为 64 位十六进制（base64 解码 48 字节，LobeHub 拒绝），已改为 `openssl rand -base64 32`（旧值从未成功加密过数据；改前的 .env 备份在服务器 `deploy/.env.bak-*`）。8 个容器健康（cloudflared 无健康检查，Tunnel 状态 healthy、4 条连接），未登录访问 302 到 Access 登录页；空闲内存约 1.8 GiB 已用 / 3.7 GiB，swap 0。
 
+## 控制台需要的 API（控制台线登记，交后台线实现；2026-10-29）
+
+控制台 web/console 由 Core 在 /console 提供静态文件（D195），只调用 Core /api。已有可用：POST /auth/login、/auth/accept，GET /api/auth/me，POST /api/auth/logout，/api/members*，/api/keys*，/api/inbox*，/api/confirm/*，/api/clients*，/api/vault*，/api/memory*，/api/settings/*，/api/users*，/api/audit。
+
+| 需要 | 用在哪页 | 说明 | 状态 |
+|---|---|---|---|
+| 控制台会话：/auth/login 可选写 HttpOnly + SameSite=Strict Cookie（Path=/），/api 同时接受该 Cookie；改动类请求校验 X-Aroomo-Request 头 | 登录 | 现在只返回 Bearer 令牌，控制台暂存 sessionStorage；Cookie 更安全 | 待后台线 |
+| GET /api/capabilities（能力清单：成员、工具、技能、额度） | 能力地图与成员 | D157–D172 第 2 步 | 待后台线 |
+| GET /api/tools、工具开关与额度 | 工具 | 工具网关 | 待后台线 |
+| GET /api/library（资源库列表、搜索） | 资源库 | | 待后台线 |
+| GET /api/inbox?type=confirm\|takeover\|brief | 收件箱 | 接管卡、简报分类 | 待后台线 |
+| GET /api/executors、任务队列只读列表 | 本机执行员 | | 待后台线 |
+| GET /api/usage（额度圆环：已用 / 上限） | 顶栏（D7） | | 待后台线 |
+| GET /api/mcp/config（按当前用户生成 MCP 连接配置，不含明文令牌，令牌另走一次性显示） | 设置 | D195 MCP 配置复制 | 待后台线 |
+| GET /api/members 返回 online（布尔） | 成员头像彩色 / 黑白（D7） | | 待后台线 |
+
 ## 阻塞
 
 | 阻塞项 | 卡住什么 | 需要谁 |
