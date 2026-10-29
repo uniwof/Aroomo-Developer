@@ -112,6 +112,18 @@
 | B5 | MCP 调工具 | spend / danger 挂起等确认；超时作废；越权不可调用 |
 | B6 | 公共记忆与交接包 | 交接包无密钥无他人数据；写入需人确认 |
 
+## 7.1 B1b 剩余模块的实施顺序（不能乱，否则会留下越权口子）
+
+已完成：成员、负责人设置（`forUser` / 键前缀视图，账号可用）；外部客户端令牌（B3 底座）；公共记忆（B6 首版，天然带 user_id）。
+
+剩下三块**互相依赖**，必须按这个顺序，且在第 3 步完成之前**不得对账号用户或客户端令牌开放 `/v1` 对话**：
+
+1. **确认服务支持账号**（D117-17）：现在 `ConfirmService` 的重新验证靠 Cloudflare Access（只认所有者）。账号用户的「重要确认」改为重新输入密码（`users` 已有 scrypt 哈希）；确认令牌的 actor 已是 `user:<id>`，可直接沿用。完成后账号才能做「删 Key」「彻底删除」等重要确认。
+2. **收件箱按用户隔离**：`inbox_items` 加 `user_id`，去重索引改为 `(user_id, kind, related_type, related_id)`；`InboxStore.forUser`。**动作处理器（`registerHandler`）目前是所有者全局的**（例如 `member.candidate` 的入职会改所有者的成员）：隔离时处理器必须收到 `userId` 并只改该用户的数据，否则账号可以给自己发一张同 kind 的卡片去触发所有者的动作。账号用 `POST /api/inbox` 发卡片时 `kind` 只能是白名单里的。
+3. **Key 记录 + LiteLLM 模型名前缀 + 对话按用户路由**（D117-19）：`provider_keys` 加 `user_id`；LiteLLM 里的对外模型名 = `u<hex>/<modelName>`（所有者仍用原名），`KeysService` 按用户加前缀、`key-reconcile`、`model-caps` 任务逐用户执行；`ChatService` 按调用者取成员、负责人，把成员名映射为带前缀的模型名发给 LiteLLM。**危险点：** 用户的成员叫 `Groq`，若对话层不加前缀就会转给所有者的 `Groq` 部署，等于花所有者的钱——所以第 3 步必须一次完成成员名→带前缀模型名的映射，并写一条越权测试「A 的成员名等于所有者的模型名时，请求仍只发往 A 自己的前缀模型」。
+
+之后才做 B4（`/v1` 接受 `arc_` 客户端令牌与账号会话）。
+
 ## 8. 待负责人确认
 1. D117-15 写「用 LobeHub 自带 Better Auth」；因界面可能更换，B1a 在 Core 层自建账号（见 PROGRESS）。
 2. 所有者令牌的数据（`user_id='owner'`）并入所有者自己的账号的时机与方式。
