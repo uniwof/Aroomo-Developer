@@ -28,6 +28,8 @@ import { SecurityService } from './settings/security.js';
 import { scopedSettings } from './settings/store.js';
 import { bindAudit } from './audit/common.js';
 import { registerSettingsRoutes } from './settings/routes.js';
+import { PubMemService } from './pubmem/service.js';
+import { registerPubMemRoutes } from './pubmem/routes.js';
 import { ClientTokenService } from './clients/service.js';
 import { registerClientRoutes } from './clients/routes.js';
 import { UsersService } from './users/service.js';
@@ -165,6 +167,7 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps(), opts
 
   registerUserRoutes(app, users, deps.auditLog);
   registerClientRoutes(app, clients);
+  registerPubMemRoutes(app, new PubMemService(deps.pubmem, deps.now));
   registerAuditRoutes(app, deps.auditLog);
   const litellm = deps.litellm ?? new LiteLLMAdmin({ baseUrl: cfg.litellmBaseUrl, masterKey: cfg.litellmMasterKey });
   const members = new MembersService(deps.members, deps.now, confirm);

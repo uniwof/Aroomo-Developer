@@ -101,6 +101,7 @@ export function guard(cap: Capability, opts?: { user?: boolean }) {
 export function scopeOf(req: FastifyRequest): string {
   const p = req.principal;
   if (!p) throw new HttpError(401, 'UNAUTHORIZED', '请先登录');
+  if (p.type === 'client') return p.userId;
   return p.type === 'user' ? p.userId : 'owner';
 }
 
