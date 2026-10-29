@@ -27,7 +27,7 @@ export function registerAuditRoutes(app: FastifyInstance, log: AuditLog): void {
           type: 'object',
           additionalProperties: false,
           properties: {
-            actorType: { type: 'string', enum: ['owner', 'operator', 'system', 'member'] },
+            actorType: { type: 'string', enum: ['owner', 'operator', 'system', 'member', 'user'] },
             actorId: { type: 'string', maxLength: 200 },
             action: { type: 'string', maxLength: 200 },
             targetType: { type: 'string', maxLength: 100 },

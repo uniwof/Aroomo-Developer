@@ -3,7 +3,7 @@
  * 只追加：接口上没有任何修改或删除方法。
  */
 
-export type ActorType = 'owner' | 'operator' | 'system' | 'member';
+export type ActorType = 'owner' | 'operator' | 'system' | 'member' | 'user';
 export type AuditResult = 'ok' | 'denied' | 'failed';
 
 export interface AuditActor {

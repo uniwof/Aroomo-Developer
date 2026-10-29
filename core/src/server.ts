@@ -27,6 +27,8 @@ import { refreshModelCaps } from './members/caps.js';
 import { SecurityService } from './settings/security.js';
 import { bindAudit } from './audit/common.js';
 import { registerSettingsRoutes } from './settings/routes.js';
+import { UsersService } from './users/service.js';
+import { registerUserRoutes } from './users/routes.js';
 import type { RoutableMember } from './router/types.js';
 
 export const VERSION = '0.0.1';
@@ -85,13 +87,16 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps(), opts
       req.log.trace({ body: scrubForLog(req.body) }, 'request body');
     }
   });
+  const users = new UsersService(deps.users, deps.now);
+  const verifyStatic = createTokenVerifier({
+    ownerToken: cfg.ownerToken,
+    tokenSecret: cfg.tokenSecret,
+    operatorTokens: deps.operatorTokens,
+    now: deps.now,
+  });
   installAuth(app, {
-    verify: createTokenVerifier({
-      ownerToken: cfg.ownerToken,
-      tokenSecret: cfg.tokenSecret,
-      operatorTokens: deps.operatorTokens,
-      now: deps.now,
-    }),
+    // 主人令牌 / 操作员令牌 / 账号会话令牌（ars_ 开头）
+    verify: async (token) => (await verifyStatic(token)) ?? (await users.verifySession(token)),
     auditLog: deps.auditLog,
     ownerConfigured: Boolean(cfg.ownerToken),
   });
@@ -154,6 +159,7 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps(), opts
   });
   registerConfirmRoutes(app, confirm);
 
+  registerUserRoutes(app, users, deps.auditLog);
   registerAuditRoutes(app, deps.auditLog);
   const litellm = deps.litellm ?? new LiteLLMAdmin({ baseUrl: cfg.litellmBaseUrl, masterKey: cfg.litellmMasterKey });
   const members = new MembersService(deps.members, deps.now, confirm);

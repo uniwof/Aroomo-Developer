@@ -20,6 +20,9 @@ import type { KeyStore } from './keys/types.js';
 import { MemoryMemberStore } from './members/memory.js';
 import { PgMemberStore } from './members/pg.js';
 import type { MemberStore } from './members/types.js';
+import { MemoryUserStore } from './users/memory.js';
+import { PgUserStore } from './users/pg.js';
+import type { UserStore } from './users/types.js';
 import { MemorySettingsStore, PgSettingsStore, type SettingsStore } from './settings/store.js';
 
 export interface CoreDeps {
@@ -33,6 +36,7 @@ export interface CoreDeps {
   access?: AccessVerifier;
   keys: KeyStore;
   settings: SettingsStore;
+  users: UserStore;
   /** 测试时注入：对话入口调用 LiteLLM 用的 fetch */
   chatFetch?: typeof fetch;
   /** 测试时注入；不传则按配置连接 LiteLLM */
@@ -51,6 +55,7 @@ export function memoryDeps(now: () => Date = () => new Date()): CoreDeps {
     confirmChallenges: new MemoryChallengeStore(),
     keys: new MemoryKeyStore(),
     settings: new MemorySettingsStore(),
+    users: new MemoryUserStore(),
   };
 }
 
@@ -65,6 +70,7 @@ export function pgDeps(db: Db, now: () => Date = () => new Date()): CoreDeps {
     confirmChallenges: new PgChallengeStore(db),
     keys: new PgKeyStore(db),
     settings: new PgSettingsStore(db),
+    users: new PgUserStore(db),
     // 操作员令牌的签发 / 持久化属于负责人体系，后续 Issue 再落库
     operatorTokens: new MemoryOperatorTokenStore(),
   };
