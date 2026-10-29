@@ -29,7 +29,8 @@ function Write-Step([string]$Text) { Write-Output "==> $Text" }
 # 1. Node.js
 $node = Get-Command node -ErrorAction SilentlyContinue
 if (-not $node) { throw '没有找到 Node.js。请先安装 Node.js 22 LTS（https://nodejs.org/）后重新运行。' }
-$major = [int]((& node -p 'process.versions.node.split(".")[0]').Trim())
+# 不用 node -p "...": Windows PowerShell 5.1 调原生程序时会吞掉参数里的双引号
+$major = [int](((& node --version) -replace '[^0-9.]', '').Split('.')[0])
 if ($major -lt 22) { throw "Node.js 版本过低（$major），需要 22 或更高。" }
 Write-Step "Node.js $major 已就绪"
 
