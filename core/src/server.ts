@@ -35,6 +35,8 @@ import { PubMemService } from './pubmem/service.js';
 import { registerPubMemRoutes } from './pubmem/routes.js';
 import { ClientTokenService } from './clients/service.js';
 import { registerClientRoutes } from './clients/routes.js';
+import { ExecutorService } from './executor/service.js';
+import { registerExecutorRoutes } from './executor/routes.js';
 import { UsersService } from './users/service.js';
 import { registerUserRoutes } from './users/routes.js';
 import { registerConsole } from './console/static.js';
@@ -174,6 +176,7 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps(), opts
   registerConsole(app);
   registerVaultRoutes(app, new VaultService(cfg.vaultKey, deps.vault, deps.now, confirm));
   registerClientRoutes(app, clients);
+  registerExecutorRoutes(app, new ExecutorService(deps.executor, deps.now));
   registerPubMemRoutes(app, new PubMemService(deps.pubmem, deps.now));
   registerAuditRoutes(app, deps.auditLog);
   registerMcpConfigRoutes(app);
