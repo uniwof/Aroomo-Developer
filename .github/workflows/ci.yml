@@ -155,15 +155,24 @@ jobs:
 
   multiarch:
     name: 多架构镜像构建（amd64 + arm64：core、shell、backup）
-    runs-on: ubuntu-24.04
+    # 用原生 runner 分别构建：QEMU 模拟 arm64 构建 shell 会卡到 6 小时超时被取消
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       # 只构建、不推送（D71：不公开发布内嵌 LobeHub 的东西；这些镜像本身也不含 LobeHub，服务器 / 电脑上本地构建）
-      - run: docker buildx build --platform linux/amd64,linux/arm64 shell
-      - run: docker buildx build --platform linux/amd64,linux/arm64 core
-      - run: docker buildx build --platform linux/amd64,linux/arm64 deploy/backup
+      - run: docker buildx build --platform ${{ matrix.platform }} shell
+      - run: docker buildx build --platform ${{ matrix.platform }} core
+      - run: docker buildx build --platform ${{ matrix.platform }} deploy/backup
 
   ui-e2e:
     name: 界面端到端冒烟（官方 LobeHub + Aroomo Shell，电脑 + 手机截图）

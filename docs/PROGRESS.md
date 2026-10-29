@@ -81,10 +81,10 @@ P0 范围与验收见 PRODUCT 16.1。分支规则：CI 通过后主程序员可�
 | 序号 | 事项 | 谁 | 完成标准 | 状态 |
 |------|------|----|----------|------|
 | A1 | 一次交付：测试模型 Key、R2 桶和只限该桶的令牌 | 所有者（安全表单） | Hark 确认收到 | 🟡 测试 Key、R2 令牌已在保管库，待确认 R2 令牌只限该桶 |
-| A2 | 生成全系统唯一的主密钥（age-keygen 最小工具），公钥发给 Hark | 所有者 + Hark | 服务器 BACKUP_AGE_RECIPIENT 已填 | ⏳ |
-| A3 | 启用服务器备份；在另一台全新机器上恢复演练（同时验证迁移，D116-6） | Hark | 记录耗时，客户端零改动 | ⏳ |
-| A4 | 真实对话端到端；补测 2 个并发对话内存；LiteLLM 真实联调 | Hark | 验收第 2、4 条打勾 | 🟡 Core→LiteLLM→Groq 已通；网页 UI 端到端未完成 |
-| A5 | P0-f：所有者把 app.pcmanai.com「安装为应用」并正常使用 | 所有者 + Hark | 验收第 1、6 条打勾 | ⏳ |
+| A2 | 生成全系统唯一的主密钥（age-keygen 最小工具），公钥发给 Hark | 所有者 + Hark | 服务器 BACKUP_AGE_RECIPIENT 已填 | ✅ 2026-10-28 20:30 主密钥由独立版首次启动生成（DPAPI 保护），公钥已填服务器 `deploy/.env`（改前已备份） |
+| A3 | 启用服务器备份；在另一台全新机器上恢复演练（同时验证迁移，D116-6） | Hark | 记录耗时，客户端零改动 | ⛔ 服务器 `BACKUP_S3_*` 仍空：R2 令牌在 Hark 保管库，按规则不能经过沙盒/仓库送到服务器，需所有者用安全方式填入（见「需要你做」）；先在 CI 临时环境用本地 S3 做备份与恢复演练（`backup-e2e` 已有） |
+| A4 | 真实对话端到端；补测 2 个并发对话内存；LiteLLM 真实联调 | Hark | 验收第 2、4 条打勾 | 🟡 Core→LiteLLM→Groq 已通（约 0.7 秒）；2 路并发长回复实测（2026-10-28，standard 档，t4g.medium 4 GB）：lobe 峰值约 730 MiB、litellm 约 777 MiB，未用 swap，未超 mem_limit（各 1 GiB）；空闲（20:55）lobe 590 MiB、litellm 665 MiB、全栈约 1.5 GiB。Groq 免费额度会限流。网页 UI 端到端（浏览器里发消息收到回复）未完成：自动化浏览器访问 /aroomo/* 会卡住，待查 |
+| A5 | P0-f：所有者把 app.pcmanai.com「安装为应用」并正常使用 | 所有者 + Hark | 验收第 1、6 条打勾 | 🟡 2026-10-28 20:33 所有者已在 Chrome 把 app.pcmanai.com 安装为应用；「正常使用」待网页端到端（A4）完成后一并验收 |
 | A6 | Muse 评审 P0 | Muse | 验收第 5 条打勾 | ⏳ |
 | A7 | 文档清账：DECISIONS 入档；PRODUCT 7.3/7.5/7.6；third-party.md；VERIFY.md；HANDOFF 过期行 | Hark | 审查清单第 4、6 项通过 | 🟡 D111–D117 已入档 |
 
