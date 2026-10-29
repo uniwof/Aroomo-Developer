@@ -9,8 +9,9 @@
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { EgoLiteDriver } from './adapters/ego-lite.js';
+import { PlaywrightMcpDriver } from './adapters/playwright-mcp.js';
 import { DriverBrowserPort } from './agent/driver-session.js';
 import { RuleBasedPlanner } from './agent/planner.js';
 import { buildAllowlist, configPath, defaultConfig, loadConfig, tokenReader } from './config.js';
@@ -25,12 +26,13 @@ function out(s: string): void {
   process.stdout.write(`${s}\n`);
 }
 
-/** 按配置顺序组装浏览器适配器；Playwright MCP 备用驱动在后续 PR 接入 */
-function browserPorts(names: string[]): BrowserPort[] {
+/** 按配置顺序组装浏览器适配器（主选在前，不可用时自动用下一个） */
+function browserPorts(names: string[], configDir: string): BrowserPort[] {
   const planner = new RuleBasedPlanner();
   const ports: BrowserPort[] = [];
   for (const n of names) {
     if (n === 'ego-lite') ports.push(new DriverBrowserPort(new EgoLiteDriver(), planner));
+    if (n === 'playwright-mcp') ports.push(new DriverBrowserPort(new PlaywrightMcpDriver({ profileDir: join(configDir, 'pw-profile') }), planner));
   }
   return ports;
 }
@@ -81,7 +83,7 @@ export async function main(argv: string[]): Promise<number> {
       const cfg = loadConfig(path);
       const logger = createLogger({ level: cfg.logLevel });
       const transport = new HttpTransport({ baseUrl: cfg.coreUrl, getToken: tokenReader(cfg), version: VERSION });
-      const browsers = browserPorts(cfg.browsers);
+      const browsers = browserPorts(cfg.browsers, dirname(path));
       if (browsers.length === 0) logger.warn('还没有可用的浏览器适配器，领到的网页任务会失败并回报原因');
       const runner = new Runner({
         transport,

@@ -39,8 +39,8 @@ export class DriverError extends Error {
   }
 }
 
-/** 快照引用格式：@ + 数字 */
+/** 快照引用格式：ego lite 为 @数字，Playwright MCP 为 e12 / f1e3 这类字母数字；只允许字母数字，杜绝注入 */
 export function assertRef(ref: string): string {
-  if (!/^@\d{1,6}$/.test(ref)) throw new DriverError('BAD_REF', `元素引用格式不对：${ref.slice(0, 20)}`);
+  if (!/^@?[A-Za-z0-9]{1,16}$/.test(ref)) throw new DriverError('BAD_REF', `元素引用格式不对：${ref.slice(0, 20)}`);
   return ref;
 }

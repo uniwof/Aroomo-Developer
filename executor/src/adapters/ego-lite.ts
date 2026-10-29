@@ -25,7 +25,7 @@ export function spawnEgoExec(command = 'ego-browser'): EgoExec {
   return (script, timeoutMs) =>
     new Promise((resolve, reject) => {
       // 参数固定为 ['nodejs']，不含任何外部输入；Windows 上 ego-browser 可能是 .cmd，需要经 shell 启动
-      const child = spawn(command, ['nodejs'], { stdio: ['pipe', 'pipe', 'pipe'], shell: process.platform === 'win32', windowsHide: true });
+      const child = spawn(command, ['nodejs'], { stdio: ['pipe', 'pipe', 'pipe'], shell: process.platform === 'win32' && !/[\\/]/.test(command), windowsHide: true });
       let stdout = '';
       const timer = setTimeout(() => {
         child.kill();

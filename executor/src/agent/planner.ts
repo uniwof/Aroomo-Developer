@@ -37,12 +37,16 @@ export interface Planner {
 export function findRef(snapshot: string, kinds: string[], keywords: string[]): string | null {
   const lines = snapshot.split(/\r?\n/);
   for (const line of lines) {
-    const m = line.match(/@(\d{1,6})\s+([a-z]+)\s+"([^"]*)"/i);
-    if (!m) continue;
-    const [, num, role, text] = m as unknown as [string, string, string, string];
+    let ref: string, role: string, text: string;
+    const ego = line.match(/@(\d{1,6})\s+([a-z]+)\s+"([^"]*)"/i);
+    // Playwright MCP 快照（YAML）：- button "登录" [ref=e3]
+    const pw = line.match(/-\s+([a-z]+)\s+"([^"]*)"[^\n]*\[ref=([A-Za-z0-9]{1,16})\]/i);
+    if (ego) [, ref, role, text] = [ego[0], `@${ego[1]}`, ego[2] as string, ego[3] as string];
+    else if (pw) [, ref, role, text] = [pw[0], pw[3] as string, pw[1] as string, pw[2] as string];
+    else continue;
     const roleOk = kinds.length === 0 || kinds.includes(role.toLowerCase());
     const textOk = keywords.length === 0 || keywords.some((k) => text.includes(k));
-    if (roleOk && textOk) return `@${num}`;
+    if (roleOk && textOk) return ref;
   }
   return null;
 }

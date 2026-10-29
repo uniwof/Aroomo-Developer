@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildScript, EgoLiteDriver, parseOutput, type EgoExec } from '../src/adapters/ego-lite.js';
+import { PlaywrightMcpDriver, pageField, snapshotBody } from '../src/adapters/playwright-mcp.js';
 import { DriverBrowserPort } from '../src/agent/driver-session.js';
 import { findRef, RuleBasedPlanner, detectBlockerInSnapshot } from '../src/agent/planner.js';
 import { Allowlist } from '../src/allowlist.js';
@@ -21,6 +22,7 @@ import { HttpTransport } from '../src/transport.js';
 import { MockCore, TEST_TOKEN } from './mock-core.js';
 
 const FAKE_EGO = fileURLToPath(new URL('./fixtures/fake-ego.mjs', import.meta.url));
+const FAKE_PW = fileURLToPath(new URL('./fixtures/fake-playwright-mcp.mjs', import.meta.url));
 const VALUE = 'Contract-Secret-7731';
 
 function fakeEgoExec(statePath: string, scripts: string[], outputs: string[]): EgoExec {
@@ -49,6 +51,8 @@ interface Harness {
   driver: BrowserDriver;
   scripts: string[];
   outputs: string[];
+  /** 假登录页上的元素引用（各驱动格式不同） */
+  refs: { user: string; pass: string; login: string };
 }
 
 const DRIVERS: Record<string, () => Harness> = {
@@ -56,8 +60,19 @@ const DRIVERS: Record<string, () => Harness> = {
     const dir = mkdtempSync(join(tmpdir(), 'ego-'));
     const scripts: string[] = [];
     const outputs: string[] = [];
-    return { driver: new EgoLiteDriver({ exec: fakeEgoExec(join(dir, 'state.json'), scripts, outputs), timeoutMs: 10_000 }), scripts, outputs };
+    return {
+      driver: new EgoLiteDriver({ exec: fakeEgoExec(join(dir, 'state.json'), scripts, outputs), timeoutMs: 10_000 }),
+      scripts,
+      outputs,
+      refs: { user: '@1', pass: '@2', login: '@3' },
+    };
   },
+  'playwright-mcp（假 MCP 服务）': () => ({
+    driver: new PlaywrightMcpDriver({ command: process.execPath, args: [FAKE_PW] }),
+    scripts: [],
+    outputs: [],
+    refs: { user: 'e1', pass: 'e2', login: 'e3' },
+  }),
 };
 
 for (const [name, make] of Object.entries(DRIVERS)) {
@@ -76,7 +91,7 @@ for (const [name, make] of Object.entries(DRIVERS)) {
       await s.goto('https://example.com/login');
       expect(await s.url()).toBe('https://example.com/login');
       const snap = await s.snapshot();
-      expect(findRef(snap, ['button'], ['登录'])).toBe('@3');
+      expect(findRef(snap, ['button'], ['登录'])).toBe(h.refs.login);
       expect(await s.title()).toBeTypeOf('string');
       const info = await s.screenshotInfo();
       expect(info.width).toBeGreaterThan(0);
@@ -86,8 +101,8 @@ for (const [name, make] of Object.entries(DRIVERS)) {
     it('同一工作空间跨多次调用保持状态（每次是新进程）', async () => {
       const s = await h.driver.open('t2');
       await s.goto('https://example.com/login');
-      await s.fill('@1', VALUE);
-      await s.click('@3');
+      await s.fill(h.refs.user, VALUE);
+      await s.click(h.refs.login);
       expect(await s.url()).toBe('https://example.com/home');
       await s.close();
     });
@@ -95,8 +110,10 @@ for (const [name, make] of Object.entries(DRIVERS)) {
     it('填写的值不出现在子进程输出里', async () => {
       const s = await h.driver.open('t3');
       await s.goto('https://example.com/login');
-      await s.fill('@2', VALUE);
+      await s.fill(h.refs.pass, VALUE);
       expect(h.outputs.join('\n')).not.toContain(VALUE);
+      expect(await s.snapshot()).not.toContain(VALUE);
+      expect(await s.url()).not.toContain(VALUE);
       await s.close();
     });
 
@@ -117,7 +134,7 @@ for (const [name, make] of Object.entries(DRIVERS)) {
 
     it('交给所有者（handOff）', async () => {
       const s = await h.driver.open('t6');
-      expect(await s.handOff()).toBe(true);
+      expect(typeof (await s.handOff())).toBe('boolean');
       await s.close();
     });
   });
@@ -139,7 +156,23 @@ describe('ego lite 脚本生成与解析', () => {
   });
   it('引用格式校验', () => {
     expect(assertRef('@12')).toBe('@12');
-    expect(() => assertRef('12')).toThrow();
+    expect(assertRef('e12')).toBe('e12');
+    expect(() => assertRef('@1"x')).toThrow();
+    expect(() => assertRef('e1 e2')).toThrow();
+    expect(() => assertRef('')).toThrow();
+  });
+});
+
+describe('Playwright MCP 响应解析', () => {
+  it('取页面地址、标题与 yaml 快照', () => {
+    const t = '### Page state\n- Page URL: https://a.com/x\n- Page Title: T\n- Page Snapshot:\n```yaml\n- button "登录" [ref=e3]\n```';
+    expect(pageField(t, 'URL')).toBe('https://a.com/x');
+    expect(pageField(t, 'Title')).toBe('T');
+    expect(snapshotBody(t)).toBe('- button "登录" [ref=e3]\n');
+    expect(findRef(snapshotBody(t), ['button'], ['登录'])).toBe('e3');
+  });
+  it('没装时 available() 为 false', async () => {
+    expect(await new PlaywrightMcpDriver({ command: 'definitely-not-npx-xyz', args: [] }).available()).toBe(false);
   });
 });
 
@@ -178,8 +211,8 @@ describe('端到端：执行员 + ego lite 驱动（假运行时）+ 模拟 Core
     await core.stop();
   });
 
-  function start() {
-    const h = DRIVERS['ego-lite（假运行时）']!();
+  function start(which = 'ego-lite（假运行时）') {
+    const h = DRIVERS[which]!();
     const runner = new Runner({
       transport: new HttpTransport({ baseUrl: core.url, getToken: () => TEST_TOKEN, version: '0.1.0', timeoutMs: 15_000 }),
       allowlist: new Allowlist({ sites: ['example.com'], commands: [] }),
@@ -212,6 +245,24 @@ describe('端到端：执行员 + ego lite 驱动（假运行时）+ 模拟 Core
     expect(r.screenshot?.summary).toContain('example.com/home');
     expect(JSON.stringify(r)).not.toContain(VALUE);
     expect(h.outputs.join('')).not.toContain(VALUE);
+  }, 30_000);
+
+  it('登录任务：Playwright MCP 备选驱动同样成功', async () => {
+    start('playwright-mcp（假 MCP 服务）');
+    const t = core.enqueue({
+      kind: 'login',
+      site: 'https://example.com/login',
+      secrets: [
+        { secretId: 's', field: 'username' },
+        { secretId: 's', field: 'password' },
+      ],
+    });
+    core.secrets.set('s:username', 'baobao');
+    core.secrets.set('s:password', VALUE);
+    await core.waitFor(() => core.results.has(t.id), 20_000);
+    const r = core.results.get(t.id)!;
+    expect(r.status).toBe('succeeded');
+    expect(JSON.stringify(r)).not.toContain(VALUE);
   }, 30_000);
 
   it('验证码页：推接管卡', async () => {
