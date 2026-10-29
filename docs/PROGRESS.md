@@ -83,6 +83,22 @@ P0 范围与验收见 PRODUCT 16.1。分支规则：CI 通过后主程序员可�
 | Q4 模型 Key | 模型配置 | 仅配置 | 路由、aroomo/auto 先做，默认按负责人建议 |
 | Q5 本机执行员 | CLI 智能体适配器、白名单默认值 | 仅这两处 | 任务队列、协议、接管卡先做 |
 
+## 执行员需要的 API（执行员线登记，交后台线实现；2026-10-29）
+
+合同：[docs/executor-protocol.md](executor-protocol.md)；执行员客户端在 `executor/`，现用 `executor/test/mock-core.ts` 模拟测试。Core 端实现时以合同为准，有分歧先改合同。
+
+| 需要 | 说明 | 状态 |
+|---|---|---|
+| 客户端令牌新 scope：`tasks:pull`、`tasks:secret` | D162；令牌归属 user_id，只能领 / 取本用户的任务与凭据（越权测试） | 待后台线 |
+| 任务队列表 + MCP `create_task` / `get_task`（给 LobeHub 负责人用） | 任务类型 checkin / login / signup / browse；字段见合同 3.1；定时触发用 pg-boss（D173） | 待后台线 |
+| `POST /api/executor/hello` | 上线登记，返回 executorId、pollWaitSec、leaseSec；控制台据此显示「电脑在线 / 离线」 | 待后台线 |
+| `POST /api/executor/tasks/claim`（长轮询 ≤30 秒） | 一个任务只能领一次；租约 600 秒，过期退回队列（D162） | 待后台线 |
+| `POST /api/executor/tasks/:id/progress` | 进度 + 心跳续租；响应带 `cancel` | 待后台线 |
+| `POST /api/executor/tasks/:id/takeover`、`GET …/takeover/:tid`（长轮询） | 推接管卡到收件箱（captcha / 2fa / payment / login_failed / not_allowed），计入打扰预算 D100；等待期间租约冻结 | 待后台线 |
+| `POST /api/executor/tasks/:id/secret` | 按任务声明的 secretId + field 从保险箱取值；未声明返回 422 SECRET_NOT_DECLARED；每次审计 | 待后台线 |
+| `POST /api/executor/tasks/:id/result` | 结束任务，幂等；租约已收回返回 409 LEASE_LOST | 待后台线 |
+| 服务器端站点白名单（派任务前校验） | 与执行员本机白名单双重校验；hello 上报本机名单指纹 `allowlistHash` 供控制台比对 | 待后台线 |
+
 ## 分期总览（2026-10-28 起按 DECISIONS D114 / 第 7.6 节第三部分）
 
 总原则：先把服务器网页版做扎实，所有工作都在服务器上验证；离线版等「网页版完工」（D114）。在此之前独立版只修阻塞性 bug，CI 照常构建，不发新包。
