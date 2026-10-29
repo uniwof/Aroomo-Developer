@@ -89,7 +89,7 @@ describe.each(envs)('账号与登录 B1（$name）', (env) => {
     const { owner, as, register } = await setup();
     const u = await register('erin@example.com');
     const call = as(u.token);
-    for (const url of ['/api/keys', '/api/inbox', '/api/audit', '/api/settings/lead']) {
+    for (const url of ['/api/keys', '/api/inbox', '/api/audit', '/api/settings/security']) {
       const r = await call('GET', url);
       expect(r.statusCode, url).toBe(403);
     }

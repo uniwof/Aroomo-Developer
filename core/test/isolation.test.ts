@@ -96,6 +96,30 @@ describe.each(envs)('越权测试：成员（$name）', (env) => {
     expect((await a('POST', '/api/members/x/onboard')).statusCode).toBe(403);
   });
 
+  it('负责人设置按用户隔离：A 选的负责人不影响 B / 所有者，B 选不了 A 的成员', async () => {
+    const { deps, owner, register } = await setup();
+    const a = await register('a@example.com');
+    const b = await register('b@example.com');
+    const uid = async (c: typeof a) => (await c('GET', '/api/auth/me')).json().user.id as string;
+    const caps = { mode: 'chat', maxInputTokens: 128000, supportsTools: true, checkedAt: new Date().toISOString() };
+    for (const [c, name] of [[a, 'Alpha'], [b, 'Beta']] as const) {
+      await c('POST', '/api/members', { name });
+      const store = deps.members.forUser(await uid(c));
+      const m = (await store.listAll())[0]!;
+      await store.update({ ...m, modelCaps: caps });
+    }
+    expect((await a('GET', '/api/settings/lead')).json().effectiveLeadId).toBe('alpha');
+    expect((await b('GET', '/api/settings/lead')).json().effectiveLeadId).toBe('beta');
+    expect((await owner('GET', '/api/settings/lead')).json().effectiveLeadId).toBeNull();
+    expect((await a('PUT', '/api/settings/lead', { leadId: 'alpha' })).json()).toMatchObject({ leadId: 'alpha', auto: false });
+    expect((await b('GET', '/api/settings/lead')).json().leadId).toBeNull();
+    expect((await owner('GET', '/api/settings/lead')).json().leadId).toBeNull();
+    expect((await b('PUT', '/api/settings/lead', { leadId: 'alpha' })).statusCode).toBe(400); // B 没有 alpha
+    // 敏感内容保护开关仍是所有者专属
+    expect((await a('GET', '/api/settings/security')).statusCode).toBe(403);
+    expect((await a('PUT', '/api/settings/security', { sensitiveProtect: false })).statusCode).toBe(403);
+  });
+
   it('回收站清理任务逐个用户处理，且只清各自的', async () => {
     const { app, deps, clock, register } = await setup();
     const a = await register('a@example.com');

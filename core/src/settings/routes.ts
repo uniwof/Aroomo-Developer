@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { guard } from '../auth/plugin.js';
+import { guard, scopeOf } from '../auth/plugin.js';
 import type { LeadService } from './lead.js';
 import type { SecurityService } from './security.js';
 
@@ -19,12 +19,22 @@ const securityOut = {
   properties: { sensitiveProtect: { type: 'boolean' } },
 } as const;
 
-export function registerSettingsRoutes(app: FastifyInstance, lead: LeadService, security: SecurityService): void {
-  app.get('/api/settings/lead', { ...guard('members:read'), schema: { response: { 200: leadOut } } }, async () => lead.get());
+export function registerSettingsRoutes(
+  app: FastifyInstance,
+  ownerLead: LeadService,
+  security: SecurityService,
+  /** 账号用户的负责人服务（只读写本人的成员与设置）；不传则账号不能用 */
+  leadForUser?: (userId: string) => LeadService,
+): void {
+  const leadOf = (req: import('fastify').FastifyRequest): LeadService => {
+    const scope = scopeOf(req);
+    return scope === 'owner' ? ownerLead : (leadForUser as (u: string) => LeadService)(scope);
+  };
+  app.get('/api/settings/lead', { ...guard('members:read', { user: true }), schema: { response: { 200: leadOut } } }, async (req) => leadOf(req).get());
   app.put<{ Body: { leadId: string | null } }>(
     '/api/settings/lead',
     {
-      ...guard('settings:write'),
+      ...guard('settings:write', { user: true }),
       schema: {
         body: {
           type: 'object',
@@ -35,7 +45,7 @@ export function registerSettingsRoutes(app: FastifyInstance, lead: LeadService, 
         response: { 200: leadOut },
       },
     },
-    async (req) => lead.set(req.body.leadId, req.audit),
+    async (req) => leadOf(req).set(req.body.leadId, req.audit),
   );
 
   // 敏感内容保护（D38）：读取用普通设置权限；修改是操作员禁止项（D62），只有主人能改

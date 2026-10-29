@@ -25,6 +25,7 @@ import { confirmCleanupJob, keyReconcileJob, modelCapsJob, recycleBinJob } from 
 import { CandidateFlow } from './members/candidates.js';
 import { refreshModelCaps } from './members/caps.js';
 import { SecurityService } from './settings/security.js';
+import { scopedSettings } from './settings/store.js';
 import { bindAudit } from './audit/common.js';
 import { registerSettingsRoutes } from './settings/routes.js';
 import { UsersService } from './users/service.js';
@@ -188,7 +189,16 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps(), opts
   }, membersForUser);
   const lead = new LeadService(deps.settings, deps.members, deps.now);
   const security = new SecurityService(deps.settings, deps.now);
-  registerSettingsRoutes(app, lead, security);
+  const userLeads = new Map<string, LeadService>();
+  const leadForUser = (userId: string): LeadService => {
+    let svc = userLeads.get(userId);
+    if (!svc) {
+      svc = new LeadService(scopedSettings(deps.settings, userId), deps.members.forUser(userId), deps.now);
+      userLeads.set(userId, svc);
+    }
+    return svc;
+  };
+  registerSettingsRoutes(app, lead, security, leadForUser);
   // 对话入口（提议 H5）：LobeHub → Core /v1（D31 点名 / 交给负责人）→ LiteLLM
   registerChatRoutes(
     app,
