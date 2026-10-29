@@ -18,8 +18,16 @@
 
 > 需要 Node.js 22 LTS。备用的 Playwright MCP 需要本机装有 Chrome（首次使用时 npx 自动下载 @playwright/mcp）。ego lite 由你自己从官方安装（我们不打包、不分发），并在 ego lite 设置里**关闭崩溃报告上传**（D162）。
 
+**一键安装**（推荐，不需要管理员）：在仓库目录运行
+
 ```powershell
-# 1. 构建（开发期；正式版会给一个一键安装脚本）
+powershell -ExecutionPolicy Bypass -File executor\scripts\install-windows.ps1
+```
+
+它会检查 Node.js、构建、生成配置、让你安全输入令牌（不显示，保存为只有你可读的 device-token）、注册登录后自启。加 `-NoAutostart` 不注册自启。下面是等价的手动步骤：
+
+```powershell
+# 1. 构建
 cd executor
 npm ci
 npm run build
