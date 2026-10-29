@@ -4,6 +4,7 @@ import { Layout } from '@/components/Layout';
 import { Login } from '@/pages/Login';
 import { Members } from '@/pages/Members';
 import { Keys } from '@/pages/Keys';
+import { Inbox } from '@/pages/Inbox';
 import { Pending } from '@/pages/Pending';
 import { Settings } from '@/pages/Settings';
 import { session } from '@/lib/api';
@@ -20,7 +21,7 @@ export function App() {
         <Route path="members" element={<Members />} />
         <Route path="tools" element={<Pending title="工具" note={soon} />} />
         <Route path="library" element={<Pending title="资源库" note={soon} />} />
-        <Route path="inbox" element={<Pending title="收件箱" note={soon} />} />
+        <Route path="inbox" element={<Inbox />} />
         <Route path="executors" element={<Pending title="本机执行员" note={soon} />} />
         <Route path="keys" element={<Keys />} />
         <Route path="settings" element={<Settings />} />
