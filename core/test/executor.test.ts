@@ -321,3 +321,77 @@ describe.each(envs)("执行员任务队列（$name）", (env) => {
     ).toBe(404);
   });
 });
+
+describe.each(envs)("接管卡（$name）", (env) => {
+  it("推卡 → 等待 → 所有者处理 → 不能越权", async () => {
+    const clock = fakeClock();
+    const deps = await env.make(clock.now);
+    const app = buildServer(
+      loadConfig({
+        CORE_LOG_LEVEL: "silent",
+        CORE_OWNER_TOKEN: OWNER_TOKEN,
+        CORE_ACCESS_REAUTH: "off",
+        VAULT_KEY,
+      }),
+      deps,
+    );
+    try {
+      const call =
+        (headers: Record<string, string>) =>
+        (method: "GET" | "POST", url: string, payload?: object) =>
+          app.inject({ method, url, headers, ...(payload ? { payload } : {}) });
+      const owner = call(ownerAuth);
+      const tok = (
+        await owner("POST", "/api/clients", {
+          name: "c",
+          scopes: ["tasks:pull"],
+        })
+      ).json().token as string;
+      const dev = call({ authorization: `Bearer ${tok}` });
+      await dev("POST", "/api/executor/hello", {
+        deviceName: "pc",
+        platform: "win32",
+        version: "0.1.0",
+      });
+      const id = (
+        await owner("POST", "/api/tasks", {
+          kind: "login",
+          site: "https://example.com/",
+        })
+      ).json().task.id as string;
+      await dev("POST", "/api/executor/tasks/claim", { waitSec: 0 });
+      const tk = await dev("POST", `/api/executor/tasks/${id}/takeover`, {
+        reason: "captcha",
+        message: "请完成验证码",
+      });
+      expect(tk.statusCode).toBe(201);
+      const tid = tk.json().takeoverId as string;
+      const base = `/api/executor/tasks/${id}/takeover/${tid}`;
+      expect((await dev("GET", base)).json().status).toBe("pending");
+      expect(
+        (await owner("GET", `/api/tasks/${id}/takeovers`)).json().takeovers,
+      ).toHaveLength(1);
+      expect(
+        (
+          await owner("POST", `/api/tasks/${id}/takeovers/${tid}/resolve`, {
+            note: "done",
+          })
+        ).json().status,
+      ).toBe("resolved");
+      expect(
+        (await owner("POST", `/api/tasks/${id}/takeovers/${tid}/resolve`, {}))
+          .statusCode,
+      ).toBe(409);
+      expect((await dev("GET", base)).json()).toEqual({
+        status: "resolved",
+        note: "done",
+      });
+      expect(
+        (await dev("GET", `/api/executor/tasks/${id}/takeover/${id}`))
+          .statusCode,
+      ).toBe(404);
+    } finally {
+      await app.close();
+    }
+  });
+});

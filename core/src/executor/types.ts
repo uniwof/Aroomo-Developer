@@ -40,7 +40,35 @@ export interface TaskRecord {
   updatedAt: Date;
 }
 
+export interface TakeoverRecord {
+  id: string;
+  userId: string;
+  taskId: string;
+  reason: string;
+  message: string;
+  status: "pending" | "resolved" | "cancelled";
+  note: string | null;
+  createdAt: Date;
+  resolvedAt: Date | null;
+}
+
 export interface ExecutorStore {
+  insertTakeover(t: TakeoverRecord): Promise<void>;
+  getTakeover(
+    userId: string,
+    taskId: string,
+    id: string,
+  ): Promise<TakeoverRecord | null>;
+  listTakeovers(userId: string, taskId: string): Promise<TakeoverRecord[]>;
+  /** 只有 pending 能处理；返回更新后的记录，已处理返回 null */
+  resolveTakeover(
+    userId: string,
+    taskId: string,
+    id: string,
+    status: "resolved" | "cancelled",
+    note: string | null,
+    now: Date,
+  ): Promise<TakeoverRecord | null>;
   /** 同一 (user, client) 重复 hello 返回同一条记录 */
   upsertExecutor(
     r: Omit<ExecutorRecord, "lastSeenAt"> & { lastSeenAt: Date },

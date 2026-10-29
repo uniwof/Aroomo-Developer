@@ -5,6 +5,7 @@ import {
   TASK_KINDS,
   type ExecutorRecord,
   type ExecutorStore,
+  type TakeoverRecord,
   type TaskKind,
   type TaskRecord,
 } from "./types.js";
@@ -212,6 +213,119 @@ export class ExecutorService {
       clip(input.field, 64),
     );
     return { value };
+  }
+
+  #held(t: TaskRecord | null, exId: string): TaskRecord {
+    if (!t) throw new HttpError(404, "TASK_NOT_FOUND", "找不到这个任务");
+    if (
+      t.status !== "running" ||
+      t.executorId !== exId ||
+      !t.leaseExpiresAt ||
+      t.leaseExpiresAt.getTime() <= this.now().getTime()
+    )
+      throw new HttpError(409, "LEASE_LOST", "租约已失效，请停止这个任务");
+    return t;
+  }
+
+  /** 推接管卡。租约在等待期间由 takeoverStatus 轮询续期（冻结）。 */
+  async takeover(
+    userId: string,
+    clientId: string,
+    id: string,
+    input: { reason: string; message: string },
+    audit: AuditFn,
+  ): Promise<{ takeoverId: string }> {
+    const ex = await this.#me(userId, clientId);
+    this.#held(await this.store.getTask(userId, id), ex.id);
+    const rec: TakeoverRecord = {
+      id: randomUUID(),
+      userId,
+      taskId: id,
+      reason: clip(input.reason, 200),
+      message: clip(input.message, 1000),
+      status: "pending",
+      note: null,
+      createdAt: this.now(),
+      resolvedAt: null,
+    };
+    await this.store.insertTakeover(rec);
+    await audit("executor.takeover", { type: "task", id }, "ok", rec.reason);
+    return { takeoverId: rec.id };
+  }
+
+  async takeoverStatus(
+    userId: string,
+    clientId: string,
+    id: string,
+    tid: string,
+    waitSec: number,
+  ) {
+    const ex = await this.#me(userId, clientId);
+    const deadline =
+      Date.now() + Math.min(Math.max(waitSec, 0), POLL_WAIT_SEC) * 1000;
+    for (;;) {
+      this.#held(await this.store.getTask(userId, id), ex.id);
+      const t = await this.store.getTakeover(userId, id, tid);
+      if (!t)
+        throw new HttpError(404, "TAKEOVER_NOT_FOUND", "找不到这张接管卡");
+      if (t.status !== "pending")
+        return { status: t.status, ...(t.note ? { note: t.note } : {}) };
+      const at = this.now();
+      await this.store.renew(
+        userId,
+        id,
+        ex.id,
+        at,
+        new Date(at.getTime() + LEASE_SEC * 1000),
+        "takeover",
+        "等待所有者处理",
+      );
+      if (Date.now() >= deadline) return { status: t.status };
+      await sleep(Math.min(1000, Math.max(0, deadline - Date.now())));
+    }
+  }
+
+  async takeovers(userId: string, id: string) {
+    if (!(await this.store.getTask(userId, id)))
+      throw new HttpError(404, "TASK_NOT_FOUND", "找不到这个任务");
+    return (await this.store.listTakeovers(userId, id)).map((t) => ({
+      id: t.id,
+      reason: t.reason,
+      message: t.message,
+      status: t.status,
+      note: t.note,
+      createdAt: t.createdAt.toISOString(),
+      resolvedAt: t.resolvedAt?.toISOString() ?? null,
+    }));
+  }
+
+  async resolveTakeover(
+    userId: string,
+    id: string,
+    tid: string,
+    input: { cancel?: boolean; note?: string },
+    audit: AuditFn,
+  ) {
+    const t = await this.store.resolveTakeover(
+      userId,
+      id,
+      tid,
+      input.cancel ? "cancelled" : "resolved",
+      input.note ? clip(input.note, 500) : null,
+      this.now(),
+    );
+    if (!t) {
+      if (await this.store.getTakeover(userId, id, tid))
+        throw new HttpError(409, "TAKEOVER_DONE", "这张接管卡已经处理过了");
+      throw new HttpError(404, "TAKEOVER_NOT_FOUND", "找不到这张接管卡");
+    }
+    await audit(
+      "executor.takeover.resolve",
+      { type: "task", id },
+      "ok",
+      t.status,
+    );
+    return { status: t.status };
   }
 
   async #lost(userId: string, id: string): Promise<never> {

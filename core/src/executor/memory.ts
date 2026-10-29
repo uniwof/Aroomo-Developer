@@ -1,4 +1,9 @@
-import type { ExecutorRecord, ExecutorStore, TaskRecord } from "./types.js";
+import type {
+  ExecutorRecord,
+  ExecutorStore,
+  TakeoverRecord,
+  TaskRecord,
+} from "./types.js";
 
 const cp = (t: TaskRecord): TaskRecord => ({
   ...t,
@@ -9,6 +14,35 @@ const cp = (t: TaskRecord): TaskRecord => ({
 export class MemoryExecutorStore implements ExecutorStore {
   readonly #ex = new Map<string, ExecutorRecord>();
   readonly #tasks = new Map<string, TaskRecord>();
+  readonly #tk = new Map<string, TakeoverRecord>();
+
+  async insertTakeover(t: TakeoverRecord) {
+    this.#tk.set(t.id, { ...t });
+  }
+  async getTakeover(userId: string, taskId: string, id: string) {
+    const t = this.#tk.get(id);
+    return t && t.userId === userId && t.taskId === taskId ? { ...t } : null;
+  }
+  async listTakeovers(userId: string, taskId: string) {
+    return [...this.#tk.values()]
+      .filter((t) => t.userId === userId && t.taskId === taskId)
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      .map((t) => ({ ...t }));
+  }
+  async resolveTakeover(
+    userId: string,
+    taskId: string,
+    id: string,
+    status: "resolved" | "cancelled",
+    note: string | null,
+    now: Date,
+  ) {
+    const t = this.#tk.get(id);
+    if (!t || t.userId !== userId || t.taskId !== taskId) return null;
+    if (t.status !== "pending") return null;
+    Object.assign(t, { status, note, resolvedAt: now });
+    return { ...t };
+  }
 
   async upsertExecutor(r: ExecutorRecord): Promise<ExecutorRecord> {
     for (const e of this.#ex.values()) {
