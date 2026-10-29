@@ -6,10 +6,12 @@
 import type { Allowlist } from './allowlist.js';
 import { Backoff, sleep } from './backoff.js';
 import type { Logger } from './logger.js';
+import type { PhonePort } from './adapters/droidrun.js';
+import { runPhoneTask } from './tasks/phone.js';
 import { pickBrowser, type BrowserPort, type BrowserSession } from './ports/browser.js';
 import { TASK_KINDS, type ResultRequest, type ScreenshotSummary, type SecretRef, type Task, type TakeoverReason } from './protocol.js';
 import { Redactor } from './redact.js';
-import { TaskCancelled, TaskFailed, type TaskContext, type TaskHandler } from './tasks/context.js';
+import { TaskCancelled, TaskFailed, type TaskContext, type TaskHandler, type TaskOutcome } from './tasks/context.js';
 import { HANDLERS } from './tasks/handlers.js';
 import { CoreError, type CoreTransport } from './transport.js';
 
@@ -17,6 +19,8 @@ export interface RunnerOptions {
   transport: CoreTransport;
   allowlist: Allowlist;
   browsers: BrowserPort[];
+  /** 云手机 / 安卓适配器（DroidRun）；为空则手机任务回报 NO_PHONE */
+  phones?: PhonePort[];
   logger: Logger;
   deviceName: string;
   platform: string;
@@ -208,11 +212,24 @@ export class Runner {
     try {
       log.info('领到任务', { taskId: task.id, kind: task.kind });
       if (!(TASK_KINDS as readonly string[]).includes(task.kind)) throw new TaskFailed('UNKNOWN_KIND', `不认识的任务类型 ${task.kind}`);
-      const handler = this.#handlers[task.kind];
-      const port = await pickBrowser(this.#o.browsers);
-      if (!port) throw new TaskFailed('NO_BROWSER', '本机没有可用的浏览器适配器（ego lite / Playwright 都不可用）');
-      session = await port.open();
-      const out = await handler(ctx, session);
+      let out: TaskOutcome;
+      if (task.options?.device === 'phone') {
+        let phone: PhonePort | null = null;
+        for (const p of this.#o.phones ?? []) {
+          if (await p.available().catch(() => false)) {
+            phone = p;
+            break;
+          }
+        }
+        if (!phone) throw new TaskFailed('NO_PHONE', '本机没有可用的云手机 / 安卓适配器（DroidRun 未安装或未启用）');
+        out = await runPhoneTask(ctx, phone);
+      } else {
+        const handler = this.#handlers[task.kind];
+        const port = await pickBrowser(this.#o.browsers);
+        if (!port) throw new TaskFailed('NO_BROWSER', '本机没有可用的浏览器适配器（ego lite / Playwright 都不可用）');
+        session = await port.open({ label: task.id.slice(0, 8), redact: (s) => redactor.redact(s) });
+        out = await handler(ctx, session);
+      }
       result = { status: 'succeeded', summary: out.summary, ...(out.screenshot ? { screenshot: out.screenshot } : {}) };
     } catch (e) {
       if (e instanceof LeaseLost || leaseLost) {

@@ -18,8 +18,16 @@
 
 > 需要 Node.js 22 LTS。备用的 Playwright MCP 需要本机装有 Chrome（首次使用时 npx 自动下载 @playwright/mcp）。ego lite 由你自己从官方安装（我们不打包、不分发），并在 ego lite 设置里**关闭崩溃报告上传**（D162）。
 
+**一键安装**（推荐，不需要管理员）：在仓库目录运行
+
 ```powershell
-# 1. 构建（开发期；正式版会给一个一键安装脚本）
+powershell -ExecutionPolicy Bypass -File executor\scripts\install-windows.ps1
+```
+
+它会检查 Node.js、构建、生成配置、让你安全输入令牌（不显示，保存为只有你可读的 device-token）、注册登录后自启。加 `-NoAutostart` 不注册自启。下面是等价的手动步骤：
+
+```powershell
+# 1. 构建
 cd executor
 npm ci
 npm run build
@@ -82,9 +90,10 @@ npm run check   # lint + typecheck + test（测试用 test/mock-core.ts 模拟 C
 - `src/tasks/` — 任务类型 checkin / login / signup / browse
 - `src/ports/browser.ts` — 任务用的高层浏览器端口；`src/ports/driver.ts` — 驱动原语（快照 / 点击 / 填写 / 交给所有者）
 - `src/adapters/ego-lite.ts` — ego lite 驱动：经 `ego-browser nodejs` 的 stdin 传脚本（值不进命令行、不落盘），工作空间命名 `aroomo-…`
-- `src/agent/` — 规划器（现为规则版，不需要模型；模型版经 Core /v1 在后续 PR 接入）与驱动→任务会话的包装
+- `src/agent/` — 规划器与驱动→任务会话的包装：`model-planner.ts` 经 Core /v1 让模型规划（配置 `planner.type: "model"`，默认，模型 `aroomo/auto`；只发脱敏快照和字段名，失败自动退回规则版）；`planner.ts` 规则版（`planner.type: "rule"` 时不把页面内容发给任何模型）
 - `src/adapters/playwright-mcp.ts` + `mcp-stdio.ts` — Playwright MCP 备用驱动（`npx -y @playwright/mcp@0.0.83 --browser chrome --user-data-dir <配置目录>\pw-profile`，独立持久配置，有界面，遇验证码直接在窗口里处理）；最小 MCP stdio 客户端，零依赖
-- DroidRun 云手机适配器在后续 PR 接入；新驱动加进 `test/driver-contract.test.ts` 的 DRIVERS 即跑同一套合同测试
+- `src/adapters/droidrun.ts` + `bridges/droidrun_bridge.py` — 云手机 / 安卓（DroidRun，现名 mobilerun，MIT）：需要本机 Python 3.11–3.13 与 `pip install mobilerun`；配置 `phone: { enabled: true, device: { serial | control_backend + device_id } }`（云手机厂商待 Q3）；任务 `options.device = "phone"`、`site = "android-app://包名"`，按 `allowlist.apps` 校验；凭据经 type_secret 按 secret id 输入，模型看不到值；
+- 新浏览器驱动加进 `test/driver-contract.test.ts` 的 DRIVERS 即跑同一套合同测试
 - `src/allowlist.ts`、`src/redact.ts` — 白名单与脱敏
 
 依赖只用可商用许可证（运行时零第三方依赖；开发依赖 TypeScript/ESLint/Vitest 均为 MIT/Apache-2.0）。

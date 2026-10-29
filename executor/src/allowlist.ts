@@ -13,6 +13,8 @@ import { createHash } from 'node:crypto';
 export interface AllowlistConfig {
   sites: string[];
   commands: string[];
+  /** 手机应用包名（如 com.example.app），手机任务用；空 = 不操作任何应用 */
+  apps?: string[];
   allowHttp?: boolean;
 }
 
@@ -34,8 +36,14 @@ export class Allowlist {
   readonly #sites: string[];
   readonly #commands: Set<string>;
   readonly #allowHttp: boolean;
+  readonly #apps: Set<string>;
 
   constructor(cfg: AllowlistConfig) {
+    this.#apps = new Set((cfg.apps ?? []).map((a) => {
+      const v = a.trim().toLowerCase();
+      if (!/^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/.test(v)) throw new Error(`应用包名格式不对：${a}`);
+      return v;
+    }));
     this.#sites = [...new Set(cfg.sites.map(normalizeSiteEntry))].sort();
     this.#commands = new Set(cfg.commands.map((c) => c.trim()).filter(Boolean));
     this.#allowHttp = cfg.allowHttp === true;
@@ -48,7 +56,7 @@ export class Allowlist {
   /** 名单指纹：hello 时上报，控制台可对比「服务器端名单」与「本机名单」是否一致；不泄露名单内容 */
   hash(): string {
     const h = createHash('sha256');
-    h.update(JSON.stringify({ s: this.#sites, c: [...this.#commands].sort() }));
+    h.update(JSON.stringify({ s: this.#sites, c: [...this.#commands].sort(), a: [...this.#apps].sort() }));
     return h.digest('hex').slice(0, 16);
   }
 
@@ -74,6 +82,14 @@ export class Allowlist {
       }
     }
     return { ok: false, reason: `${host} 不在白名单里` };
+  }
+
+  /** 手机任务目标：android-app://<包名> */
+  checkApp(raw: string): AllowDecision {
+    const m = raw.trim().toLowerCase().match(/^android-app:\/\/([a-z0-9_.]+)\/?$/);
+    if (!m) return { ok: false, reason: '手机任务的目标要写成 android-app://包名' };
+    const pkg = m[1] as string;
+    return this.#apps.has(pkg) ? { ok: true, host: pkg } : { ok: false, reason: `应用 ${pkg} 不在白名单里` };
   }
 
   /** 命令白名单按「完整命令名」精确匹配（不做前缀匹配，避免 `git` 放行 `git-evil`） */

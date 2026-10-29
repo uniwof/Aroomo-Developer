@@ -21,7 +21,8 @@ export interface Task {
   site: string;
   instruction?: string;
   secrets?: SecretRef[];
-  options?: { cloudOk?: boolean; markDisposable?: boolean };
+  /** device=phone：在云手机 / 安卓上执行，site 写 android-app://<包名> */
+  options?: { cloudOk?: boolean; markDisposable?: boolean; device?: 'pc' | 'phone' };
   createdAt: string;
   leaseExpiresAt: string;
 }

@@ -10,11 +10,13 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
+import { DroidRunPhone } from './adapters/droidrun.js';
 import { EgoLiteDriver } from './adapters/ego-lite.js';
 import { PlaywrightMcpDriver } from './adapters/playwright-mcp.js';
 import { DriverBrowserPort } from './agent/driver-session.js';
-import { RuleBasedPlanner } from './agent/planner.js';
-import { buildAllowlist, configPath, defaultConfig, loadConfig, tokenReader } from './config.js';
+import { ModelPlanner } from './agent/model-planner.js';
+import { RuleBasedPlanner, type Planner } from './agent/planner.js';
+import { buildAllowlist, configPath, type ExecutorConfig, defaultConfig, loadConfig, tokenReader } from './config.js';
 import { createLogger } from './logger.js';
 import type { BrowserPort } from './ports/browser.js';
 import { Runner } from './runner.js';
@@ -27,8 +29,10 @@ function out(s: string): void {
 }
 
 /** 按配置顺序组装浏览器适配器（主选在前，不可用时自动用下一个） */
-function browserPorts(names: string[], configDir: string): BrowserPort[] {
-  const planner = new RuleBasedPlanner();
+function browserPorts(cfg: ExecutorConfig, configDir: string): BrowserPort[] {
+  const names = cfg.browsers;
+  const planner: Planner =
+    cfg.planner.type === 'model' ? new ModelPlanner({ baseUrl: cfg.coreUrl, getToken: tokenReader(cfg), model: cfg.planner.model }) : new RuleBasedPlanner();
   const ports: BrowserPort[] = [];
   for (const n of names) {
     if (n === 'ego-lite') ports.push(new DriverBrowserPort(new EgoLiteDriver(), planner));
@@ -83,12 +87,16 @@ export async function main(argv: string[]): Promise<number> {
       const cfg = loadConfig(path);
       const logger = createLogger({ level: cfg.logLevel });
       const transport = new HttpTransport({ baseUrl: cfg.coreUrl, getToken: tokenReader(cfg), version: VERSION });
-      const browsers = browserPorts(cfg.browsers, dirname(path));
+      const browsers = browserPorts(cfg, dirname(path));
       if (browsers.length === 0) logger.warn('还没有可用的浏览器适配器，领到的网页任务会失败并回报原因');
+      const phones = cfg.phone.enabled
+        ? [new DroidRunPhone({ coreUrl: cfg.coreUrl, getToken: tokenReader(cfg), model: cfg.planner.model, ...(cfg.phone.python ? { python: cfg.phone.python } : {}), ...(cfg.phone.device ? { device: cfg.phone.device } : {}) })]
+        : [];
       const runner = new Runner({
         transport,
         allowlist: buildAllowlist(cfg),
         browsers,
+        phones,
         logger,
         deviceName: cfg.deviceName,
         platform: `${process.platform}-${process.arch}`,
