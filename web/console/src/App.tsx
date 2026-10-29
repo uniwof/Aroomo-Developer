@@ -4,6 +4,7 @@ import { Layout } from '@/components/Layout';
 import { Login } from '@/pages/Login';
 import { Members } from '@/pages/Members';
 import { Pending } from '@/pages/Pending';
+import { Settings } from '@/pages/Settings';
 import { session } from '@/lib/api';
 
 const soon = '这一页正在从旧界面迁过来，很快就能用。';
@@ -21,7 +22,7 @@ export function App() {
         <Route path="inbox" element={<Pending title="收件箱" note={soon} />} />
         <Route path="executors" element={<Pending title="本机执行员" note={soon} />} />
         <Route path="keys" element={<Pending title="Key 与接入" note={soon} />} />
-        <Route path="settings" element={<Pending title="设置" note={soon} />} />
+        <Route path="settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/members" replace />} />
       </Route>
     </Routes>
