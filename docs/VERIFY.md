@@ -15,12 +15,16 @@
 | V6 | 智能体头像接受外部图片地址（Core 生成的 SVG） | 能显示且能刷新 | 待测 | |
 | V7 | Core /mcp 以连接器接入，并按用户区分 | 两个账号调用时 Core 能区分 | 待测（依赖后台线 Core /mcp） | |
 | V8 | 有没有官方 API / CLI 批量创建、更新智能体和群组 | 有 → 自动同步；没有 → 导入模板 | 静态通过 | 官方 CLI `@lobehub/cli`（命令 `lh`，镜像内 apps/cli 0.0.66，npm 最新 0.0.72）有 `agent`、`agent-group`、`skill`、`task`、`topic` 子命令；登录方式为设备码或配置 API Key 服务器。npm 上未声明许可证（随 LobeHub 仓库许可），所以**只作为外部工具原样调用，不进我们的依赖树**（许可证闸门会拦）。D191 同步走「官方 CLI / 接口」档，不写 LobeHub 数据库 |
-| V9 | 关掉知识库后是否还需要 pg_search | 记录结论 | 静态通过：**不需要** | 镜像内迁移 `0090_enable_pg_search.sql` 在数据库没有 pg_search 时跳过，`0093` 的 BM25 索引同样跳过；全文检索由 `FTS_SEARCH_PROVIDER` 选择（`pg_search` 默认 / `pg_like` / `elasticsearch`）。启动守卫 `pgSearchGuard.js`：选了 pg_search 而库里没有会拒绝启动，所以换普通 PostgreSQL 时**必须同时设 `FTS_SEARCH_PROVIDER=pg_like`**。结论：按 D193「不需要」分支，LobeHub 与 Core 共用官方 PostgreSQL 17 实例、各用一个库，不需要 ParadeDB 例外。实机切换在换库 / 迁甲骨文时验证 |
+| V9 | 关掉知识库后是否还需要 pg_search | 记录结论 | 通过：**不需要** | 独立版（installer/standalone）早已用普通 PostgreSQL + `FTS_SEARCH_PROVIDER=pg_like` 跑官方 LobeHub，CI「构建离线安装包 + 静默安装 + 冒烟测试」每次都通过，即实测证据。镜像内迁移 `0090_enable_pg_search.sql` 在数据库没有 pg_search 时跳过，`0093` 的 BM25 索引同样跳过；全文检索由 `FTS_SEARCH_PROVIDER` 选择（`pg_search` 默认 / `pg_like` / `elasticsearch`）。启动守卫 `pgSearchGuard.js`：选了 pg_search 而库里没有会拒绝启动，所以换普通 PostgreSQL 时**必须同时设 `FTS_SEARCH_PROVIDER=pg_like`**。结论：按 D193「不需要」分支，LobeHub 与 Core 共用官方 PostgreSQL 17 实例、各用一个库，不需要 ParadeDB 例外。服务器版换库在迁甲骨文时按此配置 |
 
 ## 方法
 
 - 静态核验：`docker exec aroomo-lobe-1` 只读查看官方镜像内的迁移、启动脚本与包目录（2026-10-29）。
 - 界面实测（下一步）：在 Hark 沙盒里经 SSH 端口转发访问测试机上的 LobeHub，用官方 CLI 与 Hark 沙盒内的浏览器操作；**不在服务器上跑浏览器**。
+
+## 语音开关（D68 / 所有者：无语音）
+
+LobeHub 2.2.20 官方 FEATURE_FLAGS 里与语音相关的只有 `speech_to_text`、`voice_dictation`，服务器版已关（独立版早已关）。没有朗读（TTS）开关；LobeHub 里不填任何供应商 Key，OpenAI 朗读调用不通，但浏览器内置朗读入口仍可能显示——按 D190 不再用注入隐藏。
 
 ## 结论（暂定）
 
