@@ -1,0 +1,70 @@
+@import 'tailwindcss';
+
+/* 深浅色：默认跟随系统；<html class="dark"> / class="light" 可手动切换 */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* 品牌（D7 / 所有者 2026-10-28）：珊瑚色只作填充、上面用深色字；白底上的珊瑚色文字用 #b4441b，深色模式文字 #ff9a73 */
+@theme {
+  --color-brand: #ff7f50;
+  --color-brand-ink: #1d1d1f;
+  --color-brand-text: #b4441b;
+  --color-brand-text-dark: #ff9a73;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei UI', 'Segoe UI', system-ui, sans-serif;
+}
+
+:root {
+  --bg: #ffffff;
+  --fg: #1d1d1f;
+  --muted: #6e6e73;
+  --card: #f5f5f7;
+  --border: #e5e5ea;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --bg: #000000;
+    --fg: #f5f5f7;
+    --muted: #a1a1a6;
+    --card: #1c1c1e;
+    --border: #2c2c2e;
+    color-scheme: dark;
+  }
+}
+
+:root.dark {
+  --bg: #000000;
+  --fg: #f5f5f7;
+  --muted: #a1a1a6;
+  --card: #1c1c1e;
+  --border: #2c2c2e;
+  color-scheme: dark;
+}
+
+/* 正文 14px；只保证浏览器缩放不破版（v4.3 无障碍裁决） */
+html {
+  font-size: 14px;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
