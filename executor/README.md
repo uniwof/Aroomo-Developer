@@ -80,7 +80,10 @@ npm run check   # lint + typecheck + test（测试用 test/mock-core.ts 模拟 C
 - `src/transport.ts` — 与 Core 通信（HTTP 长轮询，可替换）
 - `src/runner.ts` — 主循环：上线、领取、心跳续租、接管等待、回报、断线重连
 - `src/tasks/` — 任务类型 checkin / login / signup / browse
-- `src/ports/browser.ts` — 浏览器端口；适配器放 `src/adapters/`（ego lite、Playwright MCP、DroidRun 在后续 PR 接入）
+- `src/ports/browser.ts` — 任务用的高层浏览器端口；`src/ports/driver.ts` — 驱动原语（快照 / 点击 / 填写 / 交给所有者）
+- `src/adapters/ego-lite.ts` — ego lite 驱动：经 `ego-browser nodejs` 的 stdin 传脚本（值不进命令行、不落盘），工作空间命名 `aroomo-…`
+- `src/agent/` — 规划器（现为规则版，不需要模型；模型版经 Core /v1 在后续 PR 接入）与驱动→任务会话的包装
+- Playwright MCP 备用驱动、DroidRun 云手机适配器在后续 PR 接入；新驱动加进 `test/driver-contract.test.ts` 的 DRIVERS 即跑同一套合同测试
 - `src/allowlist.ts`、`src/redact.ts` — 白名单与脱敏
 
 依赖只用可商用许可证（运行时零第三方依赖；开发依赖 TypeScript/ESLint/Vitest 均为 MIT/Apache-2.0）。

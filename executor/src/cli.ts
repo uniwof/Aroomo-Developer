@@ -10,6 +10,9 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { dirname } from 'node:path';
+import { EgoLiteDriver } from './adapters/ego-lite.js';
+import { DriverBrowserPort } from './agent/driver-session.js';
+import { RuleBasedPlanner } from './agent/planner.js';
 import { buildAllowlist, configPath, defaultConfig, loadConfig, tokenReader } from './config.js';
 import { createLogger } from './logger.js';
 import type { BrowserPort } from './ports/browser.js';
@@ -22,9 +25,14 @@ function out(s: string): void {
   process.stdout.write(`${s}\n`);
 }
 
-/** 已实现的浏览器适配器；ego lite / Playwright MCP 适配器在后续 PR 接入这里 */
-function browserPorts(_names: string[]): BrowserPort[] {
-  return [];
+/** 按配置顺序组装浏览器适配器；Playwright MCP 备用驱动在后续 PR 接入 */
+function browserPorts(names: string[]): BrowserPort[] {
+  const planner = new RuleBasedPlanner();
+  const ports: BrowserPort[] = [];
+  for (const n of names) {
+    if (n === 'ego-lite') ports.push(new DriverBrowserPort(new EgoLiteDriver(), planner));
+  }
+  return ports;
 }
 
 export async function main(argv: string[]): Promise<number> {
