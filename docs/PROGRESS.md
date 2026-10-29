@@ -90,6 +90,7 @@ P0 范围与验收见 PRODUCT 16.1。分支规则：CI 通过后主程序员可�
 | 需要 | 说明 | 状态 |
 |---|---|---|
 | 客户端令牌新 scope：`tasks:pull`、`tasks:secret` | D162；令牌归属 user_id，只能领 / 取本用户的任务与凭据（越权测试） | 待后台线 |
+| 执行员令牌同时可授 `models:chat`（已有 scope） | 执行员的模型规划器经 Core /v1/chat/completions 规划网页操作（默认模型 aroomo/auto）；只发脱敏后的快照与字段名，不发凭据值 | 已有 scope，需在控制台「本机执行员」生成令牌时默认勾上 |
 | 任务队列表 + MCP `create_task` / `get_task`（给 LobeHub 负责人用） | 任务类型 checkin / login / signup / browse；字段见合同 3.1；定时触发用 pg-boss（D173） | 待后台线 |
 | `POST /api/executor/hello` | 上线登记，返回 executorId、pollWaitSec、leaseSec；控制台据此显示「电脑在线 / 离线」 | 待后台线 |
 | `POST /api/executor/tasks/claim`（长轮询 ≤30 秒） | 一个任务只能领一次；租约 600 秒，过期退回队列（D162） | 待后台线 |

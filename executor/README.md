@@ -82,7 +82,7 @@ npm run check   # lint + typecheck + test（测试用 test/mock-core.ts 模拟 C
 - `src/tasks/` — 任务类型 checkin / login / signup / browse
 - `src/ports/browser.ts` — 任务用的高层浏览器端口；`src/ports/driver.ts` — 驱动原语（快照 / 点击 / 填写 / 交给所有者）
 - `src/adapters/ego-lite.ts` — ego lite 驱动：经 `ego-browser nodejs` 的 stdin 传脚本（值不进命令行、不落盘），工作空间命名 `aroomo-…`
-- `src/agent/` — 规划器（现为规则版，不需要模型；模型版经 Core /v1 在后续 PR 接入）与驱动→任务会话的包装
+- `src/agent/` — 规划器与驱动→任务会话的包装：`model-planner.ts` 经 Core /v1 让模型规划（配置 `planner.type: "model"`，默认，模型 `aroomo/auto`；只发脱敏快照和字段名，失败自动退回规则版）；`planner.ts` 规则版（`planner.type: "rule"` 时不把页面内容发给任何模型）
 - `src/adapters/playwright-mcp.ts` + `mcp-stdio.ts` — Playwright MCP 备用驱动（`npx -y @playwright/mcp@0.0.83 --browser chrome --user-data-dir <配置目录>\pw-profile`，独立持久配置，有界面，遇验证码直接在窗口里处理）；最小 MCP stdio 客户端，零依赖
 - DroidRun 云手机适配器在后续 PR 接入；新驱动加进 `test/driver-contract.test.ts` 的 DRIVERS 即跑同一套合同测试
 - `src/allowlist.ts`、`src/redact.ts` — 白名单与脱敏

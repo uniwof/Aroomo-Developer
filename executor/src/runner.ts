@@ -211,7 +211,7 @@ export class Runner {
       const handler = this.#handlers[task.kind];
       const port = await pickBrowser(this.#o.browsers);
       if (!port) throw new TaskFailed('NO_BROWSER', '本机没有可用的浏览器适配器（ego lite / Playwright 都不可用）');
-      session = await port.open();
+      session = await port.open({ label: task.id.slice(0, 8), redact: (s) => redactor.redact(s) });
       const out = await handler(ctx, session);
       result = { status: 'succeeded', summary: out.summary, ...(out.screenshot ? { screenshot: out.screenshot } : {}) };
     } catch (e) {

@@ -33,13 +33,20 @@ export interface BrowserSession {
   close(): Promise<void>;
 }
 
+export interface OpenOptions {
+  /** 工作空间标签（通常是任务 id） */
+  label?: string;
+  /** 页面文字离开本机（给规划模型）前的脱敏函数 */
+  redact?: (text: string) => string;
+}
+
 export interface BrowserPort {
   /** 适配器名：ego-lite / playwright-mcp / fake */
   readonly name: string;
   /** 本机是否可用（ego lite 已安装、Playwright 可启动等）；不可用时执行员切换到备选 */
   available(): Promise<boolean>;
   /** 开一个隔离的工作空间（ego lite 的独立 Space；不碰所有者自己的标签页） */
-  open(): Promise<BrowserSession>;
+  open(opts?: OpenOptions): Promise<BrowserSession>;
 }
 
 /** 按顺序选第一个可用的适配器（主选在前） */
