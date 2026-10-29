@@ -2,9 +2,11 @@
 
 > 任何接手者只读 docs/PRODUCT.md、docs/PROGRESS.md 和本文件就能继续工作（PRODUCT 17.2.3 第 5 条）。
 > 在 Core 的自动交接包（I3）实现前由执行者手动维护（见 DECISIONS D28）。
-> 最后更新：2026-10-28，主程序员（Hark）。
+> 最后更新：2026-10-29，主程序员（Hark）。
 
 ## 1. 一句话现状
+**2026-10-29：** 定位已改为「资源中枢」（D118，界面只是接在上面的一层，LobeHub 可能更换，所有者尚未决定）；现阶段重心见 DECISIONS 7.6–7.7 与 PROGRESS「分期总览」阶段 A–D：A（P0 收尾）→ B（P1 + 多用户 + 中枢后端）→ C（长期主机迁移脚本，AWS 现服务器即长期主机，不真实换机）→ D（离线版）。在所有者定界面之前不做 LobeHub 专属工作。下面是 2026-10-28 的历史现状：
+
 P0（MVP）进行中。dev 上已有：仓库骨架 / Compose / CI（#4）、v4.3 裁决文档（#3）、Core 的审计日志（#18）、成员（#20）、收件箱（#22）、Key 管理（#24）、点名解析（#25）、Windows 安装器（#23）；2026-10-28 负责人裁决 D62–D65 已入档（#26）并实现：操作员白名单 + 统一确认服务（#27）、备份改为主密钥公钥加密（#28）、安装器主密钥窗口 + 电脑版备份（#29）、测试版发布流程（#30，预发布 `local-test`）。Core 有 HTTP API 和 PostgreSQL 存储。界面入口已改为 Aroomo Shell（#36，`shell/`，提议 H1）：浏览器 → Shell → 官方 LobeHub，品牌 Aroomo、按 §8 隐藏、朗读禁用；Aroomo 页面已接 Core API（#38），对话经 Core `/v1` 路由到 LiteLLM（#39，含 Responses API 转换），Core 定时任务已接入（#40）。服务器已更新到 dev `f349d90`，Tunnel 已改指 `http://shell:3000`（2026-10-28）。试用服务器已上线（AWS 俄亥俄 t4g.medium ARM64，标准版，https://app.pcmanai.com 经 Cloudflare Tunnel + Access，2026-10-28）；Windows 测试版尚未在真实电脑上跑过。
 
 ## 2. 必读
@@ -23,14 +25,14 @@ P0（MVP）进行中。dev 上已有：仓库骨架 / Compose / CI（#4）、v4.
 ## 4. 进行中 / 下一步
 1. Core 代码地图（`core/src/`）：`db/`（pg 连接池 + 迁移器，迁移在 `core/migrations/NNNN_*.sql`，合并后只增不改）、`auth/`（主人令牌 `CORE_OWNER_TOKEN`、操作员令牌只存 HMAC；`capabilities.ts` = D62 白名单 + 禁止清单；每个路由用 `guard(cap)` 声明能力，操作员调用未声明 / 不在白名单的接口一律 403 + 审计）、`audit/`（只追加；`req.audit(action, target, result, note?)`）、`members/`、`inbox/`（含 `POST /api/inbox` 发卡片）、`confirm/`（**统一确认服务，D63**：`ConfirmService.require(spec, confirmCtx(...), audit)`，普通直接放行，重要 → 428 challenge → `/api/confirm/:id/steps` 两步 + 3 秒 + 凭据操作 Access 重新验证 → 一次性令牌；新增需要确认的操作一律用它，不要另造确认方式）、`keys/`（LiteLLM 管理 API；完整 Key 只在 LiteLLM）、`router/`（D31 点名 / 交给负责人）。依赖装配在 `deps.ts`，路由注册在 `server.ts`。
 2. 测试约定：每个存储都有内存 + PostgreSQL 实现，跑同一套契约测试（`test/helpers/db.ts`：PGlite 总是跑，设置 `CORE_TEST_DATABASE_URL` 时再跑真 PG；CI 已配 postgres:17 服务容器）。测试里的假密钥在运行时拼接（避免 gitleaks 误报），前缀 `placeholder-`。
-3. 下一步（Core）：对话链路、前端接入、定时任务已完成（#38–#40；`core/src/chat/`、`core/src/jobs/`）。剩下：操作员令牌签发 / 吊销与落库（负责人体系）；Responses API 路径的工具调用（P0 不转发）；对话里助理名仍显示上游默认名（消息区不做文字替换）。
+3. 下一步（Core）：对话链路、前端接入、定时任务已完成（#38–#40；`core/src/chat/`、`core/src/jobs/`）。**现在的顺序以 PROGRESS 阶段 A–D 为准**（B1 账号与 user_id 隔离 → B2 保险箱 + 工具网关 → B3 只读 MCP → B4 OpenAI 兼容接口 → B6 公共记忆与交接包）。剩下：操作员令牌签发 / 吊销与落库（负责人体系）；Responses API 路径的工具调用（P0 不转发）；对话里助理名仍显示上游默认名（消息区不做文字替换）。
 4. 生成 ed25519 SSH 密钥并把公钥发给用户（若尚未完成）；经安全表单一次性要齐 P0 凭据（D60）。
-5. 服务器已完成：全模块部署、标准版内存实测（PR #34）、Tunnel + Access（`CF_ACCESS_TEAM_DOMAIN`/`CF_ACCESS_AUD` 已写入服务器 .env）。还要做：拿到测试模型 Key 后补测真实对话内存；R2 桶 + 只限该桶的独立令牌（D72，用户在控制台建）到位后启用 backup profile；填用户发来的主密钥公钥 `BACKUP_AGE_RECIPIENT` + 备份存储凭据 → AWS 之外备份 + 真实恢复演练（需要用户临时输入主密钥）；对真实 LiteLLM v1.106.4 联调 Key 管理（见 #24「未验证事项」）。
+5. 服务器已完成：全模块部署、标准版内存实测（PR #34）、Tunnel + Access（`CF_ACCESS_TEAM_DOMAIN`/`CF_ACCESS_AUD` 已写入服务器 .env）。还要做：R2 桶已开通（桶 aroomo-backup，桶专用令牌已存保险箱），待把令牌注入服务器 `BACKUP_S3_*` 后启用 backup profile（真实对话与并发内存已测，见 MEMORY-REPORT.md）；填用户发来的主密钥公钥 `BACKUP_AGE_RECIPIENT` + 备份存储凭据 → AWS 之外备份 + 真实恢复演练（需要用户临时输入主密钥）；对真实 LiteLLM v1.106.4 联调 Key 管理（见 #24「未验证事项」）。
 6. Windows 本地版：测试版在预发布 `local-test`（`.github/workflows/release-local-test.yml`，dev 上 installer/ 改动自动重发）。等用户在真实电脑上装一次，按反馈修。
 7. 沟通：每天日报 ≤5 行，末行「需要你做」（D61）。用户 48 小时未回复：不卡脖子的继续，卡脖子的暂停并记录（D54）。
 
 ## 5. 阻塞 / 未决问题
-- R2 备份令牌、测试模型 Key 未交付；服务器 .env 里的 LITELLM_SALT_KEY 等需用户离线备份；主密钥公钥未到（用户装测试版时生成）；用户电脑配置（Windows 版本、内存、剩余硬盘）未填。
+- R2 令牌尚未注入服务器（A3，所有者已授权自行用浏览器建令牌并注入）；服务器 .env 里的 LITELLM_SALT_KEY 等需用户离线备份；主密钥公钥未到（用户装测试版时生成）；用户电脑配置（Windows 版本、内存、剩余硬盘）未填。
 - PR #1、#2 仍为 open、未合并到 main（2026-10-27 经 GitHub API 核实；用户消息中说已合并，两者不一致，需用户确认）。
 - Muse 1–15 原文与负责人裁决表已补齐（DECISIONS 第 7.5 节，2026-10-28）。
 - 值班哨兵排期未定（不在 P0 MVP）。
