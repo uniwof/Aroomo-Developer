@@ -95,6 +95,7 @@ for (const [name, make] of Object.entries(DRIVERS)) {
       expect(await s.title()).toBeTypeOf('string');
       const info = await s.screenshotInfo();
       expect(info.width).toBeGreaterThan(0);
+      if (info.sha256 !== undefined) expect(info.sha256).toMatch(/^[0-9a-f]{64}$/);
       await s.close();
     });
 
@@ -243,6 +244,7 @@ describe('端到端：执行员 + ego lite 驱动（假运行时）+ 模拟 Core
     const r = core.results.get(t.id)!;
     expect(r.status).toBe('succeeded');
     expect(r.screenshot?.summary).toContain('example.com/home');
+    expect(r.screenshot?.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(JSON.stringify(r)).not.toContain(VALUE);
     expect(h.outputs.join('')).not.toContain(VALUE);
   }, 30_000);

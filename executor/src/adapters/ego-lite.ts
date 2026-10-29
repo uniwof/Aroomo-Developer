@@ -149,8 +149,16 @@ class EgoLiteSession implements DriverSession {
     await this.#run(`  await page.press(${JSON.stringify(assertRef(ref))}, ${JSON.stringify(key)});\n  __out({ ok: true });`);
   }
   screenshotInfo() {
-    return this.#run<{ width: number; height: number }>(
-      '  const s = await page.evaluate("({ width: window.innerWidth, height: window.innerHeight })");\n  __out({ ok: true, data: s });',
+    // 截图写到系统临时目录，本机算 sha256 后立即删除；图片本体不出本机
+    return this.#run<{ width: number; height: number; sha256?: string }>(
+      [
+        '  const s = await page.evaluate("({ width: window.innerWidth, height: window.innerHeight })");',
+        '  const fs = await import("node:fs/promises"); const os = await import("node:os"); const path = await import("node:path"); const crypto = await import("node:crypto");',
+        '  const f = path.join(os.tmpdir(), "aroomo-shot-" + crypto.randomUUID() + ".png");',
+        '  let sha256;',
+        '  try { await page.screenshot({ path: f }); sha256 = crypto.createHash("sha256").update(await fs.readFile(f)).digest("hex"); } catch {} finally { await fs.rm(f, { force: true }); }',
+        '  __out({ ok: true, data: { ...s, sha256 } });',
+      ].join('\n'),
     );
   }
   async handOff() {
