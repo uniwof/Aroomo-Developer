@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { loadConfig } from "../src/config.js";
@@ -5,6 +6,7 @@ import { type CoreDeps, memoryDeps, pgDeps } from "../src/deps.js";
 import { buildServer } from "../src/server.js";
 import { OWNER_TOKEN, dbTargets, fakeClock, ownerAuth } from "./helpers/db.js";
 
+const VAULT_KEY = randomBytes(32).toString("base64");
 const PW = "correct-horse-battery";
 const envs = [
   {
@@ -32,6 +34,7 @@ describe.each(envs)("执行员任务队列（$name）", (env) => {
         CORE_LOG_LEVEL: "silent",
         CORE_OWNER_TOKEN: OWNER_TOKEN,
         CORE_ACCESS_REAUTH: "off",
+        VAULT_KEY,
       }),
       deps,
     );
@@ -264,5 +267,57 @@ describe.each(envs)("执行员任务队列（$name）", (env) => {
         })
       ).statusCode,
     ).toBe(201);
+  });
+
+  it("取凭据：只能取声明过的、持有租约的、本人保险箱里的；需要 tasks:secret", async () => {
+    const { register, client } = await setup();
+    const alice = await register("a2@example.com");
+    const bob = await register("b2@example.com");
+    const mk = async (h: typeof alice, v: string) =>
+      (
+        await h("POST", "/api/vault", { name: "n", kind: "password", value: v })
+      ).json().secret.id as string;
+    const sA = await mk(alice, "pw-alice-123");
+    const sB = await mk(bob, "pw-bob-456");
+    const devA = await client(alice, ["tasks:pull", "tasks:secret"]);
+    const devNo = await client(alice, ["tasks:pull"]);
+    for (const d of [devA, devNo])
+      await d("POST", "/api/executor/hello", {
+        deviceName: "pc",
+        platform: "x",
+        version: "1",
+      });
+    const tid = (
+      await alice("POST", "/api/tasks", {
+        kind: "login",
+        site: "https://example.com/",
+        secrets: [{ secretId: sA, field: "password" }],
+      })
+    ).json().task.id as string;
+    const url = `/api/executor/tasks/${tid}/secret`;
+    expect(
+      (await devA("POST", url, { secretId: sA, field: "password" })).statusCode,
+    ).toBe(409); // 未领取
+    await devA("POST", "/api/executor/tasks/claim", { waitSec: 0 });
+    const ok = await devA("POST", url, { secretId: sA, field: "password" });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().value).toBe("pw-alice-123");
+    expect(
+      (await devA("POST", url, { secretId: sB, field: "password" })).statusCode,
+    ).toBe(422);
+    expect(
+      (await devNo("POST", url, { secretId: sA, field: "password" }))
+        .statusCode,
+    ).toBe(403);
+    const bobDev = await client(bob, ["tasks:pull", "tasks:secret"]);
+    await bobDev("POST", "/api/executor/hello", {
+      deviceName: "pc",
+      platform: "x",
+      version: "1",
+    });
+    expect(
+      (await bobDev("POST", url, { secretId: sA, field: "password" }))
+        .statusCode,
+    ).toBe(404);
   });
 });

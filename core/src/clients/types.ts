@@ -3,7 +3,7 @@
  */
 
 /** 目前可授予的范围。B5 的 tools:call:<id> 随工具网关一起加入，这里不预留（宁可不能授予，也不要悄悄放宽）。 */
-export const CLIENT_SCOPES = ['bookmarks:read', 'memory:read', 'brief:read', 'tools:list', 'models:chat', 'tasks:pull'] as const;
+export const CLIENT_SCOPES = ['bookmarks:read', 'memory:read', 'brief:read', 'tools:list', 'models:chat', 'tasks:pull', 'tasks:secret'] as const;
 export type ClientScope = (typeof CLIENT_SCOPES)[number];
 
 export interface ClientTokenRecord {

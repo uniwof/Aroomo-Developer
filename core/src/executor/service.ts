@@ -47,6 +47,10 @@ export class ExecutorService {
   constructor(
     private readonly store: ExecutorStore,
     private readonly now: () => Date,
+    private readonly resolveSecret: (
+      userId: string,
+      secretId: string,
+    ) => Promise<string | null> = async () => null,
   ) {}
 
   async hello(
@@ -174,6 +178,40 @@ export class ExecutorService {
       await this.#lost(userId, id);
     }
     await audit("executor.result", { type: "task", id }, "ok", input.status);
+  }
+
+  /** 运行时取凭据：只能取本任务声明过的 secretId，只给持有租约的执行员；明文只在响应里，永不落库、不进审计 */
+  async secret(
+    userId: string,
+    clientId: string,
+    id: string,
+    input: { secretId: string; field: string },
+    audit: AuditFn,
+  ): Promise<{ value: string }> {
+    const ex = await this.#me(userId, clientId);
+    const t = await this.store.getTask(userId, id);
+    if (!t) throw new HttpError(404, "TASK_NOT_FOUND", "找不到这个任务");
+    if (
+      t.status !== "running" ||
+      t.executorId !== ex.id ||
+      !t.leaseExpiresAt ||
+      t.leaseExpiresAt.getTime() <= this.now().getTime()
+    )
+      throw new HttpError(409, "LEASE_LOST", "租约已失效，请停止这个任务");
+    if (!t.secrets.some((s) => s.secretId === input.secretId))
+      throw new HttpError(422, "SECRET_NOT_DECLARED", "任务里没有声明这个凭据");
+    const value = await this.resolveSecret(userId, input.secretId);
+    if (value === null) {
+      await audit("executor.secret", { type: "task", id }, "failed", "missing");
+      throw new HttpError(404, "SECRET_NOT_FOUND", "保险箱里找不到这个凭据");
+    }
+    await audit(
+      "executor.secret",
+      { type: "task", id },
+      "ok",
+      clip(input.field, 64),
+    );
+    return { value };
   }
 
   async #lost(userId: string, id: string): Promise<never> {
