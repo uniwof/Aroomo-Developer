@@ -48,7 +48,8 @@ LobeHub Tasks（定时）→ 负责人 → Core MCP create_task ─┐
   "site": "https://example.com/",      // 起点 URL，必须命中执行员本机白名单
   "instruction": "自然语言说明（可选）",
   "secrets": [ { "secretId": "uuid", "field": "username" }, { "secretId": "uuid", "field": "password" } ],
-  "options": { "cloudOk": false, "markDisposable": false },  // markDisposable：注册类账号「封号即丢弃」（D95）
+  "options": { "cloudOk": false, "markDisposable": false, "device": "pc" },  // markDisposable：注册类账号「封号即丢弃」（D95）
+  // device: "phone" 时在云手机 / 安卓上执行（DroidRun），site 写 "android-app://<包名>"，按执行员 allowlist.apps 校验
   "createdAt": "ISO", "leaseExpiresAt": "ISO"
 }
 ```

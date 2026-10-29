@@ -24,6 +24,8 @@ export interface ExecutorConfig {
   browsers: BrowserAdapterName[];
   /** model：经 Core /v1 让模型规划（失败自动退回规则）；rule：只用规则，不把页面内容发给模型 */
   planner: { type: 'model' | 'rule'; model: string };
+  /** 云手机 / 安卓（DroidRun）；enabled=false 时不接手机任务。device 按 Q3 选定的云手机厂商填 */
+  phone: { enabled: boolean; python?: string; device?: { serial?: string; control_backend?: string; device_id?: string } };
   logLevel: LogLevel;
 }
 
@@ -45,9 +47,10 @@ export function defaultConfig(dir: string): ExecutorConfig {
     coreUrl: 'https://app.pcmanai.com',
     deviceName: 'my-pc',
     tokenFile: join(dir, 'device-token'),
-    allowlist: { sites: [], commands: [] },
+    allowlist: { sites: [], commands: [], apps: [] },
     browsers: ['ego-lite', 'playwright-mcp'],
     planner: { type: 'model', model: 'aroomo/auto' },
+    phone: { enabled: false },
     logLevel: 'info',
   };
 }
@@ -86,11 +89,34 @@ export function parseConfig(raw: unknown, dir: string): ExecutorConfig {
     coreUrl,
     deviceName: str('deviceName', d.deviceName),
     tokenFile: str('tokenFile', d.tokenFile),
-    allowlist: { sites, commands: arr(al.commands, 'allowlist.commands'), allowHttp: al.allowHttp === true },
+    allowlist: { sites, commands: arr(al.commands, 'allowlist.commands'), apps: arr(al.apps, 'allowlist.apps'), allowHttp: al.allowHttp === true },
     browsers: browsers as BrowserAdapterName[],
     planner: { type: plannerType, model: plannerModel.trim() },
+    phone: parsePhone(r.phone),
     logLevel: logLevel as LogLevel,
   };
+}
+
+function parsePhone(v: unknown): ExecutorConfig['phone'] {
+  if (v === undefined) return { enabled: false };
+  if (!v || typeof v !== 'object') throw new Error('phone 必须是对象');
+  const p = v as Record<string, unknown>;
+  const out: ExecutorConfig['phone'] = { enabled: p.enabled === true };
+  if (p.python !== undefined) {
+    if (typeof p.python !== 'string' || !p.python.trim()) throw new Error('phone.python 必须是非空文字');
+    out.python = p.python.trim();
+  }
+  if (p.device !== undefined) {
+    const d = p.device as Record<string, unknown>;
+    const dev: NonNullable<ExecutorConfig['phone']['device']> = {};
+    for (const k of ['serial', 'control_backend', 'device_id'] as const) {
+      if (d[k] === undefined) continue;
+      if (typeof d[k] !== 'string') throw new Error(`phone.device.${k} 必须是文字`);
+      dev[k] = d[k] as string;
+    }
+    out.device = dev;
+  }
+  return out;
 }
 
 export function loadConfig(path = configPath()): ExecutorConfig {

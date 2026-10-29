@@ -10,6 +10,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
+import { DroidRunPhone } from './adapters/droidrun.js';
 import { EgoLiteDriver } from './adapters/ego-lite.js';
 import { PlaywrightMcpDriver } from './adapters/playwright-mcp.js';
 import { DriverBrowserPort } from './agent/driver-session.js';
@@ -88,10 +89,14 @@ export async function main(argv: string[]): Promise<number> {
       const transport = new HttpTransport({ baseUrl: cfg.coreUrl, getToken: tokenReader(cfg), version: VERSION });
       const browsers = browserPorts(cfg, dirname(path));
       if (browsers.length === 0) logger.warn('还没有可用的浏览器适配器，领到的网页任务会失败并回报原因');
+      const phones = cfg.phone.enabled
+        ? [new DroidRunPhone({ coreUrl: cfg.coreUrl, getToken: tokenReader(cfg), model: cfg.planner.model, ...(cfg.phone.python ? { python: cfg.phone.python } : {}), ...(cfg.phone.device ? { device: cfg.phone.device } : {}) })]
+        : [];
       const runner = new Runner({
         transport,
         allowlist: buildAllowlist(cfg),
         browsers,
+        phones,
         logger,
         deviceName: cfg.deviceName,
         platform: `${process.platform}-${process.arch}`,
