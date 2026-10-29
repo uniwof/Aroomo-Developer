@@ -23,6 +23,9 @@ import type { MemberStore } from './members/types.js';
 import { MemoryClientTokenStore } from './clients/memory.js';
 import { PgClientTokenStore } from './clients/pg.js';
 import type { ClientTokenStore } from './clients/types.js';
+import { MemoryPubMemStore } from './pubmem/memory.js';
+import { PgPubMemStore } from './pubmem/pg.js';
+import type { PubMemStore } from './pubmem/types.js';
 import { MemoryUserStore } from './users/memory.js';
 import { PgUserStore } from './users/pg.js';
 import type { UserStore } from './users/types.js';
@@ -41,6 +44,7 @@ export interface CoreDeps {
   settings: SettingsStore;
   users: UserStore;
   clients: ClientTokenStore;
+  pubmem: PubMemStore;
   /** 测试时注入：对话入口调用 LiteLLM 用的 fetch */
   chatFetch?: typeof fetch;
   /** 测试时注入；不传则按配置连接 LiteLLM */
@@ -61,6 +65,7 @@ export function memoryDeps(now: () => Date = () => new Date()): CoreDeps {
     settings: new MemorySettingsStore(),
     users: new MemoryUserStore(),
     clients: new MemoryClientTokenStore(),
+    pubmem: new MemoryPubMemStore(),
   };
 }
 
@@ -77,6 +82,7 @@ export function pgDeps(db: Db, now: () => Date = () => new Date()): CoreDeps {
     settings: new PgSettingsStore(db),
     users: new PgUserStore(db),
     clients: new PgClientTokenStore(db),
+    pubmem: new PgPubMemStore(db),
     // 操作员令牌的签发 / 持久化属于负责人体系，后续 Issue 再落库
     operatorTokens: new MemoryOperatorTokenStore(),
   };
