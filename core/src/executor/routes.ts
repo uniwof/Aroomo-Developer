@@ -165,6 +165,39 @@ export function registerExecutorRoutes(
     },
   );
 
+  app.post<{
+    Params: { id: string };
+    Body: { secretId: string; field: string };
+  }>(
+    "/api/executor/tasks/:id/secret",
+    {
+      config: { clientScope: "tasks:secret" },
+      schema: {
+        params: uuidParam,
+        body: {
+          type: "object",
+          required: ["secretId", "field"],
+          additionalProperties: false,
+          properties: {
+            secretId: { type: "string", format: "uuid" },
+            field: { type: "string", maxLength: 64 },
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      const w = who(req);
+      reply.header("cache-control", "no-store");
+      return svc.secret(
+        w.userId,
+        w.clientId,
+        req.params.id,
+        req.body,
+        req.audit,
+      );
+    },
+  );
+
   // —— 人用 ——
   app.post<{
     Body: {
@@ -206,11 +239,9 @@ export function registerExecutorRoutes(
       },
     },
     async (req, reply) =>
-      reply
-        .status(201)
-        .send({
-          task: taskJson(await svc.create(scopeOf(req), req.body, req.audit)),
-        }),
+      reply.status(201).send({
+        task: taskJson(await svc.create(scopeOf(req), req.body, req.audit)),
+      }),
   );
   app.get("/api/tasks", human, async (req) => ({
     tasks: (await svc.list(scopeOf(req))).map(taskJson),
