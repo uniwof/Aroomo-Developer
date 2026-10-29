@@ -37,6 +37,9 @@ function makeTask(state, nameOrId) {
     },
     press: async () => {},
     evaluate: async () => ({ width: 1280, height: 800 }),
+    screenshot: async ({ path }) => {
+      writeFileSync(path, 'fake-png-' + sp.url);
+    },
   };
   return {
     spaceId: sp.id,

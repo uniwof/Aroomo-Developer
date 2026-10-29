@@ -15,8 +15,8 @@ export interface DriverSession {
   /** value 只在内存里；实现不得记录、写盘或放进命令行参数 */
   fill(ref: string, value: string): Promise<void>;
   press(ref: string, key: string): Promise<void>;
-  /** 截图尺寸（图片本体不出本机，合同 3.2） */
-  screenshotInfo(): Promise<{ width: number; height: number }>;
+  /** 截图尺寸与指纹（图片本体不出本机、用完即删，合同 3.2） */
+  screenshotInfo(): Promise<{ width: number; height: number; sha256?: string }>;
   /** 把这个工作空间交给所有者手动操作（验证码等）；不支持返回 false */
   handOff(): Promise<boolean>;
   close(): Promise<void>;
