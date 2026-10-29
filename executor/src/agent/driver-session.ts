@@ -78,7 +78,9 @@ class PlannedSession implements BrowserSession {
   }
 
   async screenshot(): Promise<ScreenshotSummary> {
-    const [url, info] = await Promise.all([this.drv.url().catch(() => ''), this.drv.screenshotInfo().catch(() => ({ width: 0, height: 0 }))]);
+    // 依次执行：驱动每次调用可能是新进程，并发会互相争抢同一个工作空间
+    const url = await this.drv.url().catch(() => '');
+    const info = await this.drv.screenshotInfo().catch(() => ({ width: 0, height: 0 }));
     const title = await this.drv.title().catch(() => '');
     const summary = `页面 ${url}${title ? `（${title.slice(0, 60)}）` : ''}`;
     return { summary: this.redact(summary), width: info.width, height: info.height, ...('sha256' in info && info.sha256 ? { sha256: info.sha256 } : {}) };

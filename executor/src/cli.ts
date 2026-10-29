@@ -3,6 +3,7 @@
  * aroomo-executor 命令行
  *   init                 生成默认配置（白名单为空，保守）
  *   check                检查配置与令牌是否就绪（不打印令牌）
+ *   status               检查配置、令牌，并试连 Core（不打印令牌）
  *   check-url <网址>     看某个网址是否在白名单里
  *   run                  连接 Core 并开始领取任务（Ctrl+C 退出）
  */
@@ -74,6 +75,28 @@ export async function main(argv: string[]): Promise<number> {
       out(`浏览器适配器顺序：${cfg.browsers.join(' → ')}`);
       return tokenOk ? 0 : 2;
     }
+    case 'status': {
+      const cfg = loadConfig(path);
+      let tokenOk = false;
+      try {
+        tokenOk = tokenReader(cfg)().length > 0;
+      } catch {
+        tokenOk = false;
+      }
+      out(`版本：${VERSION}`);
+      out(`Core：${cfg.coreUrl}`);
+      out(`设备令牌：${tokenOk ? '已就绪' : '缺少'}`);
+      out(`白名单网站：${buildAllowlist(cfg).siteCount} 个`);
+      let reach = false;
+      try {
+        const r = await fetch(new URL('/health', cfg.coreUrl), { signal: AbortSignal.timeout(5000) });
+        reach = r.ok;
+        out(`Core 连通：${r.ok ? '正常' : `异常（HTTP ${r.status}）`}`);
+      } catch {
+        out('Core 连通：无法连接');
+      }
+      return tokenOk && reach ? 0 : 2;
+    }
     case 'check-url': {
       if (!arg) {
         out('用法：aroomo-executor check-url <网址>');
@@ -110,7 +133,7 @@ export async function main(argv: string[]): Promise<number> {
       return 0;
     }
     default:
-      out('用法：aroomo-executor <init|check|check-url <网址>|run>');
+      out('用法：aroomo-executor <init|check|status|check-url <网址>|run>');
       return cmd ? 64 : 0;
   }
 }
