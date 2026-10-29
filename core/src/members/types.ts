@@ -69,6 +69,10 @@ export class InvalidOrderError extends Error {
  * 名字唯一：大小写不敏感，只在未删除成员之间。
  */
 export interface MemberStore {
+  /** 同一份数据里属于另一个用户的视图（D111：互相看不见）。所有方法只读写这个用户的行。 */
+  forUser(userId: string): MemberStore;
+  /** 有成员数据的全部用户（后台任务逐个用户处理用；不含成员内容） */
+  userIds(): Promise<string[]>;
   listAll(): Promise<Member[]>;
   get(id: string): Promise<Member | null>;
   /** @throws DuplicateIdError | DuplicateNameError */

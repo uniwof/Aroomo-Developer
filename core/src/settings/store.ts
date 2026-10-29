@@ -32,3 +32,18 @@ export class PgSettingsStore implements SettingsStore {
     );
   }
 }
+
+/**
+ * 某个用户的设置视图（D111）：键加用户前缀。'owner'（所有者令牌）用原来的键，保持既有数据可读。
+ * 前缀 = 'u' + 去掉连字符的用户 id（32 位十六进制），仍满足 core_settings 的键格式（小写字母开头，≤64）。
+ */
+export function scopedSettings(store: SettingsStore, userId: string): SettingsStore {
+  if (userId === 'owner') return store;
+  const hex = userId.toLowerCase().replace(/[^a-f0-9]/g, '');
+  if (!/^[a-f0-9]{32}$/.test(hex)) throw new Error('非法 user id');
+  const k = (key: string) => `u${hex}.${key}`;
+  return {
+    get: <T>(key: string) => store.get<T>(k(key)),
+    set: (key: string, value: unknown, at: Date) => store.set(k(key), value, at),
+  };
+}
