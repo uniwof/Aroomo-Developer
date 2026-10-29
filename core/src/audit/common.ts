@@ -11,7 +11,7 @@ import {
   type AuditActor,
 } from './types.js';
 
-const ACTOR_TYPES = new Set(['owner', 'operator', 'system', 'member', 'user']);
+const ACTOR_TYPES = new Set(['owner', 'operator', 'system', 'member', 'user', 'client']);
 const RESULTS = new Set(['ok', 'denied', 'failed']);
 
 /** 校验 + 脱敏，得到可以落库的条目（不含 id/ts）。 */

@@ -30,6 +30,8 @@ import { SecurityService } from './settings/security.js';
 import { scopedSettings } from './settings/store.js';
 import { bindAudit } from './audit/common.js';
 import { registerSettingsRoutes } from './settings/routes.js';
+import { ClientTokenService } from './clients/service.js';
+import { registerClientRoutes } from './clients/routes.js';
 import { UsersService } from './users/service.js';
 import { registerUserRoutes } from './users/routes.js';
 import type { RoutableMember } from './router/types.js';
@@ -91,6 +93,7 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps(), opts
     }
   });
   const users = new UsersService(deps.users, deps.now);
+  const clients = new ClientTokenService(deps.clients, deps.now);
   const verifyStatic = createTokenVerifier({
     ownerToken: cfg.ownerToken,
     tokenSecret: cfg.tokenSecret,
@@ -99,7 +102,7 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps(), opts
   });
   installAuth(app, {
     // 主人令牌 / 操作员令牌 / 账号会话令牌（ars_ 开头）
-    verify: async (token) => (await verifyStatic(token)) ?? (await users.verifySession(token)),
+    verify: async (token) => (await verifyStatic(token)) ?? (await users.verifySession(token)) ?? (await clients.verify(token)),
     auditLog: deps.auditLog,
     ownerConfigured: Boolean(cfg.ownerToken),
   });
@@ -164,6 +167,7 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps(), opts
 
   registerUserRoutes(app, users, deps.auditLog);
   registerVaultRoutes(app, new VaultService(cfg.vaultKey, deps.vault, deps.now, confirm));
+  registerClientRoutes(app, clients);
   registerAuditRoutes(app, deps.auditLog);
   const litellm = deps.litellm ?? new LiteLLMAdmin({ baseUrl: cfg.litellmBaseUrl, masterKey: cfg.litellmMasterKey });
   const members = new MembersService(deps.members, deps.now, confirm);
