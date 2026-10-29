@@ -1,3 +1,5 @@
+import { VaultService } from './vault/service.js';
+import { registerVaultRoutes } from './vault/routes.js';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { registerAuditRoutes } from './audit/routes.js';
 import { installAuth } from './auth/plugin.js';
@@ -166,6 +168,7 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps(), opts
   registerConfirmRoutes(app, confirm);
 
   registerUserRoutes(app, users, deps.auditLog);
+  registerVaultRoutes(app, new VaultService(cfg.vaultKey, deps.vault, deps.now, confirm));
   registerClientRoutes(app, clients);
   registerPubMemRoutes(app, new PubMemService(deps.pubmem, deps.now));
   registerAuditRoutes(app, deps.auditLog);
