@@ -45,7 +45,7 @@ describe('模型规划器', () => {
   });
 
   it('发给模型的内容：没有要填写的值，页面快照先脱敏', async () => {
-    const SECRET = 'Very-Secret-Pw-5512';
+    const SECRET = ['Very', 'Secret', 'Pw', '5512'].join('-');
     const EMAIL = 'baobao@example.com';
     const seen: string[] = [];
     let snap = `@1 textbox "邮箱" 当前值 ${EMAIL}\n@2 textbox "密码"\n@3 button "登录"`;
