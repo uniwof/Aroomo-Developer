@@ -67,6 +67,24 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  licenses:
+    name: 许可证闸门（D179：npm + Python）
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: 闸门判定逻辑单测
+        run: node --test scripts/license-gate/policy.test.mjs
+      - name: npm（所有 package-lock.json，含 devDependencies）
+        run: node scripts/license-gate/check-npm.mjs
+      - name: Python（所有 requirements*.txt，pip-licenses）
+        run: bash scripts/license-gate/check-python.sh
+
   compose:
     name: Compose 配置校验 + 脚本检查
     runs-on: ubuntu-24.04
@@ -75,7 +93,7 @@ jobs:
       - run: docker compose version
       - run: scripts/check-compose.sh
       - name: shellcheck
-        run: shellcheck -x scripts/*.sh scripts/lib/*.sh deploy/backup/entrypoint.sh deploy/postgres/20-aroomo-dbs.sh deploy/lobe/rustfs-init.sh
+        run: shellcheck -x scripts/*.sh scripts/lib/*.sh scripts/license-gate/*.sh deploy/backup/entrypoint.sh deploy/postgres/20-aroomo-dbs.sh deploy/lobe/rustfs-init.sh
       - name: 备份保留策略单元测试
         run: scripts/test-retention.sh
       - name: Pester（pwsh，含与 select-tier.sh 的对照）
