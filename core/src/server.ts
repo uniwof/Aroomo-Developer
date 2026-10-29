@@ -36,6 +36,7 @@ import { ClientTokenService } from './clients/service.js';
 import { registerClientRoutes } from './clients/routes.js';
 import { UsersService } from './users/service.js';
 import { registerUserRoutes } from './users/routes.js';
+import { registerConsole } from './console/static.js';
 import type { RoutableMember } from './router/types.js';
 
 export const VERSION = '0.0.1';
@@ -168,6 +169,8 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps(), opts
   registerConfirmRoutes(app, confirm);
 
   registerUserRoutes(app, users, deps.auditLog);
+  // 控制台静态文件 /console（D195，控制台线）
+  registerConsole(app);
   registerVaultRoutes(app, new VaultService(cfg.vaultKey, deps.vault, deps.now, confirm));
   registerClientRoutes(app, clients);
   registerPubMemRoutes(app, new PubMemService(deps.pubmem, deps.now));
