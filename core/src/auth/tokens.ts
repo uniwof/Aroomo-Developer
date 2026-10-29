@@ -6,6 +6,7 @@
  *   令牌的签发 / 吊销 API 属于「负责人体系」（PRODUCT §9.3、§11.2 第 4 条），本期只提供校验与内存存储。
  */
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import type { ClientPrincipal } from '../clients/types.js';
 import type { UserPrincipal } from '../users/types.js';
 import { type Capability, operatorMayHave } from './capabilities.js';
 
@@ -13,7 +14,9 @@ export type Principal =
   | { type: 'owner'; id: 'owner' }
   | { type: 'operator'; id: string; capabilities: ReadonlySet<Capability> }
   /** 多用户账号（B1）。业务接口默认不对它开放：只有显式声明 userRoute 的接口放行，直到该模块完成 user_id 隔离 */
-  | UserPrincipal;
+  | UserPrincipal
+  /** 外部客户端令牌（B3）：只有令牌里勾选的范围；业务接口默认不对它开放 */
+  | ClientPrincipal;
 
 export interface OperatorTokenRecord {
   id: string;
@@ -72,12 +75,13 @@ export function createTokenVerifier(opts: TokenVerifierOptions) {
 
 export function principalCan(p: Principal, cap: Capability): boolean {
   if (p.type === 'owner') return true;
-  if (p.type === 'user') return false; // 账号没有「能力」；它能做什么由各路由的 userRoute / requireAdmin 决定
+  if (p.type === 'user' || p.type === 'client') return false; // 账号没有「能力」；它能做什么由各路由的 userRoute / requireAdmin 决定
   return operatorMayHave(cap) && p.capabilities.has(cap);
 }
 
 /** 审计 / 确认令牌里用来标识操作者的字符串 */
 export function actorKey(p: Principal): string {
   if (p.type === 'owner') return 'owner';
+  if (p.type === 'client') return `client:${p.clientId}`;
   return p.type === 'user' ? `user:${p.userId}` : `operator:${p.id}`;
 }
