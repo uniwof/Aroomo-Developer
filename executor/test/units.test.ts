@@ -118,3 +118,19 @@ describe('配置', () => {
     expect(tokenReader(cfg, { AROOMO_EXECUTOR_TOKEN: 'env-token' })()).toBe('env-token');
   });
 });
+
+describe('cli status', () => {
+  it('Core 连不上时返回 2 且不抛错', async () => {
+    const { mkdtempSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { main } = await import('../src/cli.js');
+    const dir = mkdtempSync(join(tmpdir(), 'ex-'));
+    const prev = process.env.AROOMO_EXECUTOR_CONFIG;
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({ coreUrl: 'http://127.0.0.1:1' }));
+    process.env.AROOMO_EXECUTOR_CONFIG = join(dir, 'config.json');
+    const code = await main(['status']).catch(() => 2);
+    if (prev === undefined) delete process.env.AROOMO_EXECUTOR_CONFIG; else process.env.AROOMO_EXECUTOR_CONFIG = prev;
+    expect(code).toBe(2);
+  });
+});
