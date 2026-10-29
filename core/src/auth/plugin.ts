@@ -69,8 +69,26 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
 }
 
 /** 路由选项：声明所需能力（供操作员白名单检查）并挂上 requireCapability。用法：`{ ...guard('members:read'), schema }` */
-export function guard(cap: Capability): { config: { capability: Capability }; preHandler: preHandlerAsyncHookHandler } {
-  return { config: { capability: cap }, preHandler: requireCapability(cap) };
+export function guard(cap: Capability): { config: { capability: Capability }; preHandler: preHandlerAsyncHookHandler };
+/** `{ user: true }`：账号也能用，但处理函数必须按 `scopeOf(req)` 只读写本人的数据（D111）。 */
+export function guard(cap: Capability, opts: { user: true }): { config: { capability: Capability; userRoute: true }; preHandler: preHandlerAsyncHookHandler };
+export function guard(cap: Capability, opts?: { user?: boolean }) {
+  if (!opts?.user) return { config: { capability: cap }, preHandler: requireCapability(cap) };
+  const cheque = requireCapability(cap);
+  return {
+    config: { capability: cap, userRoute: true as const },
+    preHandler: async function (this: FastifyInstance, req: FastifyRequest, reply: FastifyReply) {
+      if (req.principal?.type === 'user') return; // 账号：数据隔离由 scopeOf 保证，不走能力白名单
+      return cheque.call(this, req, reply);
+    } as preHandlerAsyncHookHandler,
+  };
+}
+
+/** 数据归属：所有者令牌（及操作员，代表所有者）= 'owner'；账号 = 它自己的 id。所有业务查询都必须带它。 */
+export function scopeOf(req: FastifyRequest): string {
+  const p = req.principal;
+  if (!p) throw new HttpError(401, 'UNAUTHORIZED', '请先登录');
+  return p.type === 'user' ? p.userId : 'owner';
 }
 
 /** 路由级权限：白名单式，默认拒绝；拒绝也写审计（result=denied）。 */

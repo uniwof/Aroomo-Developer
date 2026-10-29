@@ -85,11 +85,11 @@ describe.each(envs)('账号与登录 B1（$name）', (env) => {
     expect(ghost.json().error.code).toBe('BAD_CREDENTIALS');
   });
 
-  it('账号默认不能访问任何业务接口（成员 / Key / 审计 / 收件箱），拒绝会写审计', async () => {
+  it('账号默认不能访问未做隔离的业务接口（Key / 审计 / 收件箱 / 设置），拒绝会写审计', async () => {
     const { owner, as, register } = await setup();
     const u = await register('erin@example.com');
     const call = as(u.token);
-    for (const url of ['/api/members', '/api/keys', '/api/inbox', '/api/audit', '/api/settings/lead']) {
+    for (const url of ['/api/keys', '/api/inbox', '/api/audit', '/api/settings/lead']) {
       const r = await call('GET', url);
       expect(r.statusCode, url).toBe(403);
     }

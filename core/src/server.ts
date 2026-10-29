@@ -169,13 +169,23 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps(), opts
   registerInboxRoutes(app, inbox);
   // 入职流程（PRODUCT §9.1）：加 Key → 候选 → 一键入职
   const candidates = new CandidateFlow(members, deps.members, inbox, litellm, deps.now);
+  // 账号用户的成员服务：同一份数据里本人的视图（D111）。账号用户没有候选 / 入职流程（那条链路还是所有者全局的，B1b 后续再隔离）
+  const userMembers = new Map<string, MembersService>();
+  const membersForUser = (userId: string): MembersService => {
+    let svc = userMembers.get(userId);
+    if (!svc) {
+      svc = new MembersService(deps.members.forUser(userId), deps.now, confirm);
+      userMembers.set(userId, svc);
+    }
+    return svc;
+  };
   registerMemberRoutes(app, members, {
     onboard: (id, audit) => candidates.onboard(id, audit),
     afterCreate: async (m) => {
       await refreshModelCaps(deps.members, litellm, deps.now, [m.name]).catch(() => 0);
       return (await deps.members.get(m.id)) ?? m;
     },
-  });
+  }, membersForUser);
   const lead = new LeadService(deps.settings, deps.members, deps.now);
   const security = new SecurityService(deps.settings, deps.now);
   registerSettingsRoutes(app, lead, security);
@@ -214,7 +224,7 @@ export function buildServer(cfg: CoreConfig, deps: CoreDeps = memoryDeps(), opts
 
   // 定时任务（回收站 30 天、过期确认清理、Key 对账）
   const jobs = new Scheduler(bindAudit(deps.auditLog, { type: 'system', id: 'jobs' }));
-  jobs.add(recycleBinJob(members));
+  jobs.add(recycleBinJob(async () => [members, ...(await deps.members.userIds()).filter((u) => u !== 'owner').map(membersForUser)]));
   jobs.add(confirmCleanupJob(deps.confirmChallenges, deps.now));
   jobs.add(keyReconcileJob(deps.keys, litellm, inbox, deps.now));
   jobs.add(modelCapsJob(deps.members, litellm, deps.now));

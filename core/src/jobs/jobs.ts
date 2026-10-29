@@ -19,13 +19,15 @@ import type { Job } from './scheduler.js';
 
 const HOUR = 60 * 60 * 1000;
 
-export function recycleBinJob(members: MembersService): Job {
+/** 回收站清理：逐个用户处理（所有者 + 每个账号用户）。 */
+export function recycleBinJob(allMembers: () => Promise<MembersService[]>): Job {
   return {
     name: 'recycle-bin',
     intervalMs: 6 * HOUR,
     async run(audit) {
-      const ids = await members.sweepExpired(audit);
-      return ids.length ? `purged=${ids.length}` : '';
+      let n = 0;
+      for (const members of await allMembers()) n += (await members.sweepExpired(audit)).length;
+      return n ? `purged=${n}` : '';
     },
   };
 }
