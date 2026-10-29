@@ -202,6 +202,14 @@ describe.each(envs)('保险箱接口 B2（$name）', (env) => {
     expect((await app.inject({ method: 'GET', url: '/api/vault' })).statusCode).toBe(401);
   });
 
+  it('客户端令牌（无论什么范围）用不了保险箱', async () => {
+    const { owner, bearer } = await setup();
+    const tok = (await owner('POST', '/api/clients', { name: 'c', scopes: ['memory:read', 'bookmarks:read', 'brief:read', 'tools:list'] })).json().token;
+    const c = bearer(tok);
+    expect((await c('GET', '/api/vault')).statusCode).toBe(403);
+    expect((await c('POST', '/api/vault', { name: 'x', kind: 'note', value: 'y' })).statusCode).toBe(403);
+  });
+
   it('没有设置 VAULT_KEY → 503，不静默降级', async () => {
     const { owner } = await setup('');
     expect((await owner('GET', '/api/vault')).statusCode).toBe(503);
