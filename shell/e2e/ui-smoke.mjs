@@ -60,7 +60,7 @@ check('登录接口', login.ok(), login.status());
 const storage = await api.storageState();
 
 const browser = await chromium.launch();
-// 登录页（未登录）：确认 Logo / 主题色
+// 登录页（未登录）
 {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'en-US' });
   const page = await ctx.newPage();
@@ -68,7 +68,8 @@ const browser = await chromium.launch();
   await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
   await shoot(page, 'desktop-signin');
   const t = await page.evaluate(() => document.body.innerText);
-  check('登录页看不到 LobeHub', !/LobeHub|LobeChat/.test(t), (t.match(/.{0,30}(LobeHub|LobeChat).{0,30}/) || [''])[0]);
+  // D190：LobeHub 保留自己的品牌（所有者已接受），这里只确认登录页能打开
+  check('登录页可打开', t.trim().length > 0, t.slice(0, 80));
   await ctx.close();
 }
 for (const [label, viewport, isMobile] of [
@@ -127,60 +128,14 @@ for (const [label, viewport, isMobile] of [
   await page.goto(base + '/', { waitUntil: 'domcontentloaded' });
   await page.waitForLoadState('networkidle', { timeout: 60000 }).catch(() => {});
   await shoot(page, `${label}-home`);
-  const title = await page.title();
-  check(`${label} 标题是 Aroomo`, /Aroomo/.test(title) && !/LobeHub/.test(title), title);
+  // D190：LobeHub 原样使用——页面不再注入 Aroomo 的 CSS / JS，不替换品牌，不隐藏入口
   const text = await page.evaluate(() => document.body.innerText);
-  check(`${label} 页面上看不到 LobeHub / Lobe AI`, !/LobeHub|LobeChat|Lobe\s?AI/.test(text), (text.match(/.{0,30}(LobeHub|LobeChat|Lobe\s?AI).{0,30}/) || [''])[0]);
   check(`${label} 简体中文`, /[\u4e00-\u9fa5]/.test(text), text.slice(0, 80));
-  check(`${label} 上游文字 Logo 已替换`, (await page.locator('svg[data-aroomo-logo]:visible').count()) === 0);
-  const dockVisible = await page.locator('#aroomo-dock').isVisible().catch(() => false);
-  check(`${label} 底部图标（收藏 / 成员 / 收件箱 / 设置）`, dockVisible && (await page.locator('#aroomo-dock a[data-aroomo-dock]').count()) === 4, new URL(page.url()).pathname);
-  check(`${label} 首页没有上游吉祥物（运营素材图）`, (await page.evaluate(() => [...document.querySelectorAll('img')].filter((i) => /lobeobjects\.space\/dc\/ops-assets\//.test(i.currentSrc || i.src) && i.getBoundingClientRect().width).length)) === 0);
-  const promo = await page.evaluate(() => (document.body.innerText.match(/^(上新|推荐)$/gm) || []).join('/'));
-  check(`${label} 首页没有「上新」「推荐」推广条`, promo === '', promo);
-  const strayX = await page.evaluate(() => [...document.querySelectorAll('main svg.lucide-x, body svg.lucide-x')].filter((x) => { const r = x.getBoundingClientRect(); return r.width && !x.closest('[data-aroomo-hidden],[role="dialog"]'); }).length);
-  check(`${label} 首页推广条的 × 也已隐藏`, strayX === 0, strayX);
-  check(`${label} 侧栏有 Aroomo 标志`, (await page.locator('#aroomo-dock .aroomo-dock-brand svg').count()) === 1);
-  // —— 品牌与主题色（主人的 Logo + 珊瑚色 #ff7f50）：诊断写进 theme.json，供核对 ——
-  const theme = await page.evaluate(async () => {
-    const vars = window.__aroomoThemeVars || {};
-    const coral = /rgb\((255, 127, 80|255, 147, 107|232, 105, 60|255, 154, 115|229, 103, 59)\)/;
-    const buttons = [...document.querySelectorAll('button,[role="button"]')]
-      .filter((b) => b.offsetParent !== null)
-      .map((b) => { const cs = getComputedStyle(b); return { text: (b.innerText || b.getAttribute('aria-label') || '').slice(0, 20), bg: cs.backgroundColor, color: cs.color, cls: (b.className || '').toString().slice(0, 60) }; });
-    const icons = [...document.querySelectorAll('link[rel~="icon"],link[rel="apple-touch-icon"],link[rel="manifest"],meta[name="theme-color"]')].map((l) => l.outerHTML);
-    const manifest = await fetch('/manifest.json').then((r) => r.json()).catch(() => null);
-    const size = (u) => fetch(u, { cache: 'no-store' }).then((r) => r.blob()).then((b) => b.size).catch(() => -1);
-    return {
-      vars, icons, themeColor: manifest && manifest.theme_color,
-      coralButtons: buttons.filter((b) => coral.test(b.bg)),
-      buttons: buttons.slice(0, 40),
-      lobeAvatar: await size('/avatars/lobe-ai.png'), aroomoAvatar: await size('/aroomo/static/avatar.png'),
-      appIcon: await size('/app-icons/icon-192x192.png'), aroomoIcon: await size('/aroomo/static/icon-192.png'),
-      font: getComputedStyle(document.body).fontFamily,
-      imgs: [...document.querySelectorAll('img')].filter((i) => i.offsetParent !== null).map((i) => i.getAttribute('src')).slice(0, 40),
-      coralText: [...document.querySelectorAll('a,span,label,p,div')]
-        .filter((e) => e.offsetParent !== null && !e.closest('#aroomo-dock') && [...e.childNodes].some((n) => n.nodeType === 3 && n.nodeValue.trim()) && getComputedStyle(e).color === 'rgb(255, 127, 80)')
-        .map((e) => e.innerText.slice(0, 20)),
-    };
-  });
-  writeFileSync(path.join(out, `${label}-theme.json`), JSON.stringify(theme, null, 1));
-  check(`${label} 主题色变量已覆盖为珊瑚色`, Object.keys(theme.vars).length > 0, Object.keys(theme.vars).slice(0, 8).join(','));
-  const light = (c) => { const m = /rgba?\((\d+), (\d+), (\d+)/.exec(c); return Boolean(m && +m[1] >= 200 && +m[2] >= 200 && +m[3] >= 200); };
-  check(`${label} 珊瑚色按钮上的字是深色`, theme.coralButtons.every((b) => !light(b.color)), JSON.stringify(theme.coralButtons.slice(0, 3)));
-  check(`${label} 白底上没有浅珊瑚色文字`, theme.coralText.length === 0, JSON.stringify(theme.coralText.slice(0, 3)));
-  check(`${label} PWA theme_color 是珊瑚色`, theme.themeColor === '#ff7f50', theme.themeColor);
-  check(`${label} 默认助理头像 / PWA 图标是 Aroomo 的`, theme.lobeAvatar === theme.aroomoAvatar && theme.appIcon === theme.aroomoIcon, `${theme.lobeAvatar}/${theme.aroomoAvatar} ${theme.appIcon}/${theme.aroomoIcon}`);
-  check(`${label} 苹果式系统字体`, /apple-system|PingFang|Microsoft YaHei UI/.test(theme.font), theme.font);
-  check(`${label} shell.js 已加载`, await page.evaluate(() => Boolean(window.__aroomoShell)));
-  const hiddenVisible = await page.evaluate(() => {
-    const bad = ['发现', '社区', '市场', '图片', '视频', '文稿', '资源', '记忆', '朗读', '语音服务'];
-    return [...document.querySelectorAll('body *')]
-      .filter((el) => el.offsetParent !== null && !el.closest('[data-aroomo-hidden]'))
-      .map((el) => [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.nodeValue.trim()).join(''))
-      .filter((t) => bad.includes(t));
-  });
-  check(`${label} §8 之外的入口已隐藏`, hiddenVisible.length === 0, hiddenVisible.join(','));
+  const injected = await page.evaluate(() => ({
+    shell: Boolean(window.__aroomoShell),
+    tags: [...document.querySelectorAll('script[src],link[href]')].map((e) => e.getAttribute('src') || e.getAttribute('href')).filter((u) => u && u.includes('/aroomo/static/')),
+  }));
+  check(`${label} D190 页面未被注入`, !injected.shell && injected.tags.length === 0, JSON.stringify(injected));
   // 打开一个对话（会话列表里的第一项 / 资源管家）
   const firstChat = page.locator('a[href^="/agent/"]').first();
   if (await firstChat.count()) {
@@ -189,10 +144,8 @@ for (const [label, viewport, isMobile] of [
   }
   await shoot(page, `${label}-chat`);
 
-  await page.goto(base + '/community', { waitUntil: 'domcontentloaded' });
-  check(`${label} /community 跳回首页`, new URL(page.url()).pathname === '/', page.url());
-  await page.goto(base + '/settings/tts', { waitUntil: 'domcontentloaded' });
-  check(`${label} /settings 跳到 Aroomo 设置`, new URL(page.url()).pathname.startsWith('/aroomo/settings'), page.url());
+  // Aroomo 设置页（迁到控制台 /console 之前仍在 /aroomo）
+  await page.goto(base + '/aroomo/settings', { waitUntil: 'domcontentloaded' });
   await shoot(page, `${label}-settings`);
   const tabs = await page.locator('.vtabs a').allInnerTexts();
   check(`${label} 设置 6 个 Tab`, tabs.join('/') === '通用/负责人/账号/通知/安全/高级', tabs.join('/'));
@@ -308,31 +261,9 @@ for (const [label, viewport, isMobile] of [
     const ok2 = await sendAndWait('@Nobody 在吗', '没有叫「Nobody」的成员');
     await shoot(page, 'desktop-chat-mention');
     check('对话：点名不存在的成员只给提示（D31）', ok2);
-    // —— 输入框 @ 联想 Aroomo 成员（H3 最小改动方案）——
-    await input.click().catch(() => {});
-    await page.keyboard.type('@Fak');
-    const pop = page.locator('#aroomo-mention');
-    const popOk = await pop.waitFor({ timeout: 10000 }).then(() => true).catch(() => false);
-    await shoot(page, 'desktop-chat-mention-suggest');
-    check('对话：@ 弹出 Aroomo 成员联想', popOk && (await pop.innerText().catch(() => '')).includes('Fake Model'), await pop.innerText().catch(() => 'no popup'));
-    await page.keyboard.press('Enter');
-    await page.waitForTimeout(800);
-    await shoot(page, 'desktop-chat-mention-picked');
-    // 读当前获得焦点的输入框（页面里可能有多个可编辑区，locator.first() 不一定是它）
-    const typed = await page.evaluate(() => { const a = document.activeElement; return a ? (a.value !== undefined && a.tagName === 'TEXTAREA' ? a.value : a.innerText || '') : ''; });
-    check('对话：回车填入「@Fake Model 」且没有直接发送', /@Fake Model\s*$/.test(typed.replace(/\u00a0/g, ' ')), JSON.stringify(typed));
-    await page.keyboard.type('在吗');
-    await page.keyboard.press('Enter');
-    const ok3 = await page
-      .waitForFunction(() => { const t = document.body.innerText; const i = t.lastIndexOf('— Fake Model'); return i >= 0 && t.charAt(i + '— Fake Model'.length) !== '（' && t.includes('在吗'); }, null, { timeout: 90000 })
-      .then(() => true)
-      .catch(() => false);
-    const lastText = (await page.evaluate(() => document.body.innerText)).slice(-300);
-    check('参考项 @ 联想填入后发送：直接回答、不署「负责人」（点名路由已由 Core 测试和上面的 @Nobody 覆盖）', ok3 && /— Fake Model(?!（)/.test(lastText), lastText);
+    // D190：@ 联想脚本（mention.js）已删除；成员 @ 改由 LobeHub 群组原生功能承担（D189，V3 验证）
   }
 
-  const tts = await page.evaluate(() => fetch('/webapi/tts/openai', { method: 'POST' }).then((r) => r.status).catch((e) => String(e)));
-  check(`${label} 朗读接口禁用`, tts === 403 || /朗读功能已关闭/.test(String(tts)), tts);
   check(`${label} 首页没有脚本错误`, jsErrors.length === 0, jsErrors.slice(0, 3).join(' | '));
   await ctx.close();
 }
@@ -340,7 +271,7 @@ await browser.close();
 writeFileSync(path.join(out, 'checks.json'), JSON.stringify(checks, null, 1));
 const failed = checks.filter((c) => !c.ok);
 // 第一轮只把核心项设为必须通过；其余写进报告供核对选择器
-const required = /标题是 Aroomo|shell.js 已加载|跳回首页|跳到 Aroomo 设置|设置 6 个 Tab|朗读接口禁用|登录接口|填 Key|Key 明文|对话：|进入候选|一键入职|退出登录|敏感内容保护开关|发收件箱卡片|确认卡|倒计时|处理完毕|删除 Key/;
+const required = /D190 页面未被注入|设置 6 个 Tab|登录接口|填 Key|Key 明文|对话：|进入候选|一键入职|退出登录|敏感内容保护开关|发收件箱卡片|确认卡|倒计时|处理完毕|删除 Key/;
 const hard = failed.filter((c) => required.test(c.name));
 console.log(`\n${checks.length - failed.length}/${checks.length} 通过；必须项失败 ${hard.length}`);
 process.exit(hard.length ? 1 : 0);
