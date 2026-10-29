@@ -22,6 +22,8 @@ export interface ExecutorConfig {
   allowlist: AllowlistConfig;
   /** 按顺序尝试，第一个可用的生效（主选在前） */
   browsers: BrowserAdapterName[];
+  /** model：经 Core /v1 让模型规划（失败自动退回规则）；rule：只用规则，不把页面内容发给模型 */
+  planner: { type: 'model' | 'rule'; model: string };
   logLevel: LogLevel;
 }
 
@@ -45,6 +47,7 @@ export function defaultConfig(dir: string): ExecutorConfig {
     tokenFile: join(dir, 'device-token'),
     allowlist: { sites: [], commands: [] },
     browsers: ['ego-lite', 'playwright-mcp'],
+    planner: { type: 'model', model: 'aroomo/auto' },
     logLevel: 'info',
   };
 }
@@ -74,12 +77,18 @@ export function parseConfig(raw: unknown, dir: string): ExecutorConfig {
   const coreUrl = str('coreUrl', d.coreUrl);
   new URL(coreUrl);
   if ('token' in r || 'deviceToken' in r) throw new Error('不要把令牌写进 config.json；请放在 device-token 文件或环境变量 AROOMO_EXECUTOR_TOKEN');
+  const pl = (r.planner ?? {}) as Record<string, unknown>;
+  const plannerType = pl.type === undefined ? d.planner.type : pl.type;
+  if (plannerType !== 'model' && plannerType !== 'rule') throw new Error('planner.type 只能是 model 或 rule');
+  const plannerModel = pl.model === undefined ? d.planner.model : pl.model;
+  if (typeof plannerModel !== 'string' || !plannerModel.trim()) throw new Error('planner.model 必须是非空文字');
   return {
     coreUrl,
     deviceName: str('deviceName', d.deviceName),
     tokenFile: str('tokenFile', d.tokenFile),
     allowlist: { sites, commands: arr(al.commands, 'allowlist.commands'), allowHttp: al.allowHttp === true },
     browsers: browsers as BrowserAdapterName[],
+    planner: { type: plannerType, model: plannerModel.trim() },
     logLevel: logLevel as LogLevel,
   };
 }
