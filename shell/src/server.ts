@@ -3,7 +3,10 @@
  *   /aroomo/static/*   Aroomo 的静态资源（不需要登录，不含任何秘密）
  *   /aroomo/api/*      → Core /api/*（要求已登录 LobeHub；由这里附加主人令牌，浏览器永远拿不到令牌）
  *   /aroomo、/aroomo/* Aroomo 页面（成员、Key 与接入、收件箱、收藏、设置）
- *   其余               → 官方 LobeHub（HTML 文档注入 Aroomo 的 CSS / JS；其他原样转发，含流式输出与 WebSocket）
+ *   其余               → 官方 LobeHub，原样转发（含流式输出与 WebSocket）。
+ *
+ * D190：不再改 LobeHub——不注入 CSS / JS、不替换品牌和图标、不按路径隐藏或拦截页面与接口。
+ * LobeHub 功能取舍只用官方 FEATURE_FLAGS（deploy/docker-compose.yml）。
  */
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import https from 'node:https';
@@ -11,10 +14,7 @@ import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { Duplex } from 'node:stream';
-import zlib from 'node:zlib';
 import type { ShellConfig } from './config.js';
-import { transformHtml } from './html.js';
-import { decideNavigation, isBlockedApi } from './rules.js';
 import { allowAll, LobeSessionChecker, type SessionChecker } from './session.js';
 import { handleLogout } from './logout.js';
 import { AUTOLOGIN_MARK, LobeLocalAutoLogin, safeCallback, type AutoLogin } from './autologin.js';
@@ -39,18 +39,6 @@ const MIME: Record<string, string> = {
   '.png': 'image/png',
   '.ico': 'image/x-icon',
 };
-
-const MAX_HTML_BYTES = 8 * 1024 * 1024;
-
-/** 上游品牌图片路径 → Aroomo 静态文件名（没有就返回 null） */
-export function brandAsset(p: string): string | null {
-  if (p === '/avatars/lobe-ai.png') return 'avatar.png';
-  const m = /^\/app-icons\/icon-(192x192|512x512)(\.maskable)?\.png$/.exec(p);
-  if (m) return `icon-${m[2] ? 'maskable-' : ''}${m[1] === '192x192' ? '192' : '512'}.png`;
-  if (p === '/icons/icon-192x192.png') return 'icon-192.png';
-  if (p === '/icons/icon-512x512.png') return 'icon-512.png';
-  return null;
-}
 
 /** LobeHub 还没起来时的「正在准备」页：Aroomo Logo + 珊瑚色，自动刷新（不靠 JS 也能用） */
 export const PREPARING_HTML = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
@@ -108,19 +96,6 @@ function hasCookie(cookieHeader: string | undefined, name: string): boolean {
 
 function wantsHtml(req: IncomingMessage): boolean {
   return (req.method === 'GET' || req.method === 'HEAD') && String(req.headers.accept ?? '').includes('text/html');
-}
-
-function decode(buf: Buffer, enc: string | undefined): Buffer {
-  switch ((enc ?? '').toLowerCase()) {
-    case 'gzip':
-      return zlib.gunzipSync(buf);
-    case 'br':
-      return zlib.brotliDecompressSync(buf);
-    case 'deflate':
-      return zlib.inflateSync(buf);
-    default:
-      return buf;
-  }
 }
 
 /** 同源校验：改动类请求必须带自定义头（跨站页面无法在不经 CORS 预检的情况下加），Origin 若有必须同源 */
@@ -206,54 +181,23 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
   function proxyLobe(req: IncomingMessage, res: ServerResponse, url: URL) {
     const html = wantsHtml(req);
     const cookie = req.headers.cookie;
+    // 新访客默认简体中文：只设 LobeHub 官方的语言 Cookie，不改页面内容
     const setLocale = !hasCookie(cookie, 'LOBE_LOCALE');
     const extra: Record<string, string | undefined> = {};
-    if (html) extra['accept-encoding'] = 'identity';
     if (setLocale) {
       extra.cookie = [cookie, `LOBE_LOCALE=${cfg.defaultLocale}`].filter(Boolean).join('; ');
       extra['accept-language'] = `${cfg.defaultLocale},zh;q=0.9`;
     }
     const target = new URL(url.pathname + url.search, cfg.lobeUpstream);
     const up = clientFor(target).request(target, { method: req.method, headers: forwardHeaders(req, extra) }, (upRes) => {
-      const ct = String(upRes.headers['content-type'] ?? '');
       const headers = responseHeaders(upRes);
       if (setLocale) {
         const sc = headers['set-cookie'];
         const mine = `LOBE_LOCALE=${cfg.defaultLocale}; Path=/; Max-Age=31536000; SameSite=Lax`;
         headers['set-cookie'] = Array.isArray(sc) ? [...sc, mine] : sc ? [sc, mine] : [mine];
       }
-      if (!html || !ct.includes('text/html') || req.method === 'HEAD') {
-        res.writeHead(upRes.statusCode ?? 502, headers);
-        upRes.pipe(res);
-        return;
-      }
-      const chunks: Buffer[] = [];
-      let size = 0;
-      upRes.on('data', (c: Buffer) => {
-        size += c.length;
-        if (size <= MAX_HTML_BYTES) chunks.push(c);
-      });
-      upRes.on('end', () => {
-        if (size > MAX_HTML_BYTES) {
-          res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
-          return res.end('页面过大');
-        }
-        let body: string;
-        try {
-          body = transformHtml(decode(Buffer.concat(chunks), upRes.headers['content-encoding'] as string | undefined).toString('utf8'));
-        } catch {
-          res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
-          return res.end('页面解析失败');
-        }
-        delete headers['content-length'];
-        delete headers['content-encoding'];
-        delete headers['etag'];
-        headers['cache-control'] = 'no-store';
-        const buf = Buffer.from(body, 'utf8');
-        headers['content-length'] = String(buf.length);
-        res.writeHead(upRes.statusCode ?? 200, headers);
-        res.end(buf);
-      });
+      res.writeHead(upRes.statusCode ?? 502, headers);
+      upRes.pipe(res);
       upRes.on('error', () => res.destroy());
     });
     up.on('error', () => {
@@ -286,13 +230,6 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
       return handleLogout(req, res, cfg.lobeUpstream);
     }
 
-    // 品牌图标（上游路径也拦下，避免浏览器缓存的旧链接仍显示 LobeHub 图标）
-    if (/^\/favicon[^/]*\.ico$/.test(p)) return serveFile(res, path.join(staticRoot, 'favicon.ico'), 'public, max-age=86400', req.method);
-    if (p === '/apple-touch-icon.png') return serveFile(res, path.join(staticRoot, 'apple-touch-icon.png'), 'public, max-age=86400', req.method);
-    if (p === '/manifest.json' || p === '/manifest.webmanifest') return serveFile(res, path.join(staticRoot, 'manifest.json'), 'public, max-age=300', req.method);
-    // 上游的 PWA 图标、默认助理头像（Lobe AI 吉祥物）→ Aroomo 图标（文件是官方镜像里的，不改，只在入口拦下）
-    const brandFile = brandAsset(p);
-    if (brandFile) return serveFile(res, path.join(staticRoot, brandFile), 'public, max-age=86400', req.method);
 
     // Windows 独立版（D78）：没登录的页面请求，替本机主人登录后跳回原页面（登录页 / 注册页跳到 callbackUrl）
     if (autoLogin && wantsHtml(req) && !hasCookie(req.headers.cookie, AUTOLOGIN_MARK) && !(await session.check(req.headers.cookie))) {
@@ -323,16 +260,6 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
       return serveFile(res, appHtml, 'no-store', req.method);
     }
 
-    // D68：朗读接口禁用
-    if (isBlockedApi(p)) return sendJson(res, 403, { error: { code: 'DISABLED', message: '朗读功能已关闭' } });
-
-    if (wantsHtml(req)) {
-      const d = decideNavigation(p);
-      if (d.kind === 'redirect') {
-        res.writeHead(302, { location: d.location, 'cache-control': 'no-store' });
-        return res.end();
-      }
-    }
     return proxyLobe(req, res, url);
   }
 

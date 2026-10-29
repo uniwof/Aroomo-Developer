@@ -24,7 +24,7 @@ export interface ShellConfig {
   auth: AuthMode;
   /** 新访客默认语言（写 LOBE_LOCALE cookie） */
   defaultLocale: string;
-  /** 静态资源目录（shell.js / shell.css / 图标 / Aroomo 页面） */
+  /** 静态资源目录（图标 / Aroomo 页面） */
   publicDir: string;
   /** 会话校验结果缓存时长 */
   sessionCacheMs: number;

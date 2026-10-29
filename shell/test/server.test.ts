@@ -1,13 +1,9 @@
 import http, { type Server } from 'node:http';
 import net, { type AddressInfo } from 'node:net';
 import zlib from 'node:zlib';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
-import { brandAsset, createShellServer } from '../src/server.js';
-import { HIDDEN_PREFIXES, REDIRECTS, decideNavigation } from '../src/rules.js';
-import { transformHtml } from '../src/html.js';
+import { createShellServer } from '../src/server.js';
 import type { SessionChecker } from '../src/session.js';
 
 const HTML = '<!doctype html><html><head><title>LobeHub · 你的 AI 助手</title><link rel="icon" href="/favicon.ico?v=1"><link rel="manifest" href="/manifest.json"></head><body><div id="root"></div></body></html>';
@@ -92,21 +88,14 @@ afterAll(async () => {
 const html = { accept: 'text/html,application/xhtml+xml' };
 
 describe('LobeHub 页面', () => {
-  it('注入 Aroomo 的 CSS/JS、替换品牌和图标、默认简体中文', async () => {
+  it('D190：HTML 原样转发——不注入、不换品牌和图标；只补默认简体中文 Cookie', async () => {
     const res = await fetch(`${base}/`, { headers: { ...html, 'accept-encoding': 'gzip, br' } });
     expect(res.status).toBe(200);
     const body = await res.text();
-    expect(body).not.toContain('LobeHub');
-    expect(body).toContain('<title>Aroomo · 你的 AI 助手</title>');
-    expect(body).toMatch(/<head><meta name="application-name" content="Aroomo">/);
-    expect(body).toContain('/aroomo/static/shell.js');
-    expect(body).toContain('/aroomo/static/shell.css');
-    // 输入框 @ 联想 Aroomo 成员（H3）
-    expect(body).toMatch(/<script src="\/aroomo\/static\/mention\.js\?v=\w+"><\/script>/);
-    expect(body).toContain('href="/aroomo/static/favicon.ico"');
-    expect(body).toContain('href="/aroomo/static/manifest.json"');
-    // HTML 向上游要不压缩的版本
-    expect(lobeSeen.at(-1)?.acceptEncoding).toBe('identity');
+    expect(body).toBe(HTML);
+    expect(body).not.toContain('/aroomo/static/');
+    // 压缩协商原样交给上游
+    expect(lobeSeen.at(-1)?.acceptEncoding).toBe('gzip, br');
     // 新访客：带上 LOBE_LOCALE=zh-CN，并写回 cookie；上游自己的 set-cookie 保留
     expect(lobeSeen.at(-1)?.cookie).toContain('LOBE_LOCALE=zh-CN');
     const cookies = res.headers.getSetCookie();
@@ -123,9 +112,10 @@ describe('LobeHub 页面', () => {
     expect(res.headers.getSetCookie().some((c) => c.startsWith('LOBE_LOCALE'))).toBe(false);
   });
 
-  it('上游仍然压缩时先解压再处理', async () => {
-    const body = await (await fetch(`${base}/gz`, { headers: html })).text();
-    expect(body).toContain('Aroomo · 你的 AI 助手');
+  it('上游压缩的 HTML 原样透传（不解压不改写）', async () => {
+    const r = await fetch(`${base}/gz`, { headers: html });
+    expect(r.headers.get('content-encoding')).toBe('gzip');
+    expect(await r.text()).toBe(HTML);
   });
 
   it('非 HTML（接口、流式输出）原样转发', async () => {
@@ -134,57 +124,17 @@ describe('LobeHub 页面', () => {
     expect(sse).toBe('data: LobeHub 1\n\ndata: 2\n\n');
   });
 
-  it('§8 没有的页面整页打开时跳回首页；设置跳到 Aroomo 设置', async () => {
-    for (const p of ['/community', '/discover/assistant', '/image', '/memory', '/page/abc']) {
+  it('D190：不按路径隐藏或拦截 LobeHub 的页面与接口（功能取舍只用官方 FEATURE_FLAGS）', async () => {
+    for (const p of ['/community', '/discover/assistant', '/settings/provider', '/favicon.ico', '/manifest.json', '/avatars/lobe-ai.png']) {
       const r = await fetch(`${base}${p}`, { headers: html, redirect: 'manual' });
-      expect(r.status, p).toBe(302);
-      expect(r.headers.get('location')).toBe('/');
-    }
-    const s = await fetch(`${base}/settings/provider`, { headers: html, redirect: 'manual' });
-    expect(s.headers.get('location')).toBe('/aroomo/settings');
-    // 接口请求不跳转
-    const api = await fetch(`${base}/community`, { redirect: 'manual' });
-    expect(api.status).toBe(200);
-  });
-
-  it('D68：朗读接口被禁用', async () => {
-    const r = await fetch(`${base}/webapi/tts/openai`, { method: 'POST', body: '{}' });
-    expect(r.status).toBe(403);
-    expect(lobeSeen.some((s) => s.url.startsWith('/webapi/tts'))).toBe(false);
-  });
-
-  it('图标走 Aroomo 自己的', async () => {
-    for (const p of ['/favicon.ico', '/favicon-32x32.ico', '/apple-touch-icon.png', '/manifest.json']) {
-      const r = await fetch(`${base}${p}`);
       expect(r.status, p).toBe(200);
-      await r.arrayBuffer();
+      expect(await r.text(), p).toBe(HTML);
     }
-    const m = (await (await fetch(`${base}/manifest.json`)).json()) as { name: string; theme_color: string; icons: Array<{ src: string; sizes: string; purpose: string }> };
-    expect(m.name).toBe('Aroomo');
-    expect(m.theme_color).toBe('#ff7f50');
-    for (const ic of m.icons) {
-      const r = await fetch(`${base}${ic.src}`);
-      expect(r.status, ic.src).toBe(200);
-      await r.arrayBuffer();
-    }
-    expect(m.icons.some((i) => i.purpose === 'maskable' && i.sizes === '512x512')).toBe(true);
-  });
-
-  it('上游的 PWA 图标、Lobe AI 默认头像换成 Aroomo 的（不转发给 LobeHub）', async () => {
-    const own = async (u: string) => Buffer.from(await (await fetch(`${base}${u}`)).arrayBuffer());
     const n = lobeSeen.length;
-    expect((await own('/avatars/lobe-ai.png')).equals(await own('/aroomo/static/avatar.png'))).toBe(true);
-    expect((await own('/app-icons/icon-192x192.png')).equals(await own('/aroomo/static/icon-192.png'))).toBe(true);
-    expect((await own('/app-icons/icon-512x512.maskable.png')).equals(await own('/aroomo/static/icon-maskable-512.png'))).toBe(true);
-    expect(lobeSeen.length).toBe(n);
-    expect(brandAsset('/avatars/agent-default.png')).toBeNull();
-  });
-
-  it('HTML 里的主题色是珊瑚色，上游的 theme-color 去掉', () => {
-    const out = transformHtml('<html><head><meta name="theme-color" content="#000"></head><body></body></html>');
-    expect(out).toContain('<meta name="theme-color" content="#ff7f50">');
-    expect(out).not.toContain('content="#000"');
-    expect(out).toContain('/aroomo/static/favicon.svg');
+    const tts = await fetch(`${base}/webapi/tts/openai`, { method: 'POST', body: '{}' });
+    expect(tts.status).toBe(200);
+    await tts.text();
+    expect(lobeSeen.length).toBe(n + 1);
   });
 
   it('LobeHub 没起来时：网页显示 Aroomo「正在准备」页（自动刷新），接口仍是 502 文本', async () => {
@@ -277,7 +227,7 @@ describe('Aroomo 页面与 /aroomo/api', () => {
   it('静态资源不能越界读文件', async () => {
     const r = await fetch(`${base}/aroomo/static/..%2f..%2fpackage.json`);
     expect(r.status).toBe(404);
-    expect((await fetch(`${base}/aroomo/static/shell.js`)).status).toBe(200);
+    expect((await fetch(`${base}/aroomo/static/app.js`)).status).toBe(200);
   });
 });
 
@@ -310,27 +260,11 @@ describe('退出登录（§8.3 账号）', () => {
     expect(lobeSignOut).toHaveLength(0);
     expect(res.headers.getSetCookie().some((c) => c.startsWith('__Secure-better-auth.session_token=;'))).toBe(true);
   });
-  it('mention.js 可以加载', async () => {
-    expect((await fetch(`${base}/aroomo/static/mention.js`)).status).toBe(200);
-  });
-});
-
-describe('规则', () => {
-  it('shell.js 与 rules.ts 的隐藏 / 跳转列表一致', () => {
-    const js = readFileSync(path.resolve(__dirname, '../public/static/shell.js'), 'utf8');
-    const hidden = JSON.parse(/var HIDDEN_PREFIXES = (\[[^\]]*\])/.exec(js)![1]!.replace(/'/g, '"'));
-    expect(hidden).toEqual([...HIDDEN_PREFIXES]);
-    const redirects = JSON.parse(
-      /var REDIRECTS = (\{[^}]*\})/.exec(js)![1]!.replace(/'/g, '"').replace(/(\w+):/g, '"$1":'),
-    );
-    expect(redirects).toEqual(REDIRECTS);
-  });
-
-  it('首页、对话页放行', () => {
-    for (const p of ['/', '/agent/inbox', '/group/x', '/signin', '/aroomo']) expect(decideNavigation(p).kind).toBe('pass');
-  });
-
-  it('品牌替换不改小写网址', () => {
-    expect(transformHtml('<head></head><a href="https://lobehub.com">LobeHub</a>')).toContain('https://lobehub.com">Aroomo<');
+  it('D190：注入用的脚本和样式已删除', async () => {
+    for (const f of ['shell.js', 'shell.css', 'mention.js']) {
+      const r = await fetch(`${base}/aroomo/static/${f}`);
+      expect(r.status, f).toBe(404);
+      await r.text();
+    }
   });
 });
