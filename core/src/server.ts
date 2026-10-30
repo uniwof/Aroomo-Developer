@@ -30,6 +30,7 @@ import {
   confirmCleanupJob,
   keyReconcileJob,
   modelCapsJob,
+  taskTimeoutJob,
   recycleBinJob,
 } from "./jobs/jobs.js";
 import { CandidateFlow } from "./members/candidates.js";
@@ -343,6 +344,7 @@ export function buildServer(
   jobs.add(confirmCleanupJob(deps.confirmChallenges, deps.now));
   jobs.add(keyReconcileJob(deps.keys, litellm, inbox, deps.now));
   jobs.add(modelCapsJob(deps.members, litellm, deps.now));
+  jobs.add(taskTimeoutJob(deps.executor, deps.now));
   app.decorate("jobs", jobs);
   if (opts.startJobs ?? cfg.jobs) {
     app.addHook("onReady", async () => jobs.start());

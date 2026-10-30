@@ -34,7 +34,7 @@ describe('定时任务', () => {
     app.inject({ method, url, headers: ownerAuth, ...(payload !== undefined ? { payload: payload as object } : {}) });
 
   it('注册了四个任务', () => {
-    expect(app.jobs.names().sort()).toEqual(['confirm-cleanup', 'key-reconcile', 'model-caps', 'recycle-bin']);
+    expect(app.jobs.names().sort()).toEqual(['confirm-cleanup', 'key-reconcile', 'model-caps', 'recycle-bin', 'task-timeout']);
   });
 
   it('回收站：29 天还在，30 天后彻底删除并写审计', async () => {

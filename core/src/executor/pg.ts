@@ -186,6 +186,19 @@ export class PgExecutorStore implements ExecutorStore {
     );
     return rows[0] ? toTask(rows[0]) : null;
   }
+  async sweep(now: Date, queuedBefore: Date) {
+    const a = await this.db.query<{ id: string }>(
+      `UPDATE exec_tasks SET status = CASE WHEN cancel_requested THEN 'cancelled' ELSE 'queued' END, executor_id = NULL, lease_expires_at = NULL, updated_at = $1
+       WHERE status = 'running' AND lease_expires_at <= $1 RETURNING id`,
+      [now],
+    );
+    const b = await this.db.query<{ id: string }>(
+      `UPDATE exec_tasks SET status = 'failed', result_error = 'NO_EXECUTOR', result_summary = '超过时限没有执行员领取，已过期', updated_at = $1
+       WHERE status = 'queued' AND created_at < $2 RETURNING id`,
+      [now, queuedBefore],
+    );
+    return { requeued: a.rows.length, expired: b.rows.length };
+  }
   async renew(
     userId: string,
     id: string,
