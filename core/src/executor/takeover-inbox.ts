@@ -13,6 +13,8 @@ import { badRequest, HttpError } from "../http/errors.js";
 import type { ExecutorService, TakeoverHooks } from "./service.js";
 
 export const TAKEOVER_KIND = "executor.takeover";
+export const RESULT_KIND = "executor.result";
+const KIND_TEXT: Record<string, string> = { checkin: "签到", login: "登录", signup: "注册", browse: "浏览" };
 const OWNER = "owner";
 
 const REASON_TEXT: Record<string, string> = {
@@ -145,6 +147,24 @@ export function takeoverHooks(inbox: InboxService, budget?: InterruptBudget, now
             { id: "done", label: "我处理好了，继续" },
             { id: "cancel", label: "取消这个任务" },
           ],
+          ...(inboxUser(userId) ? { userId: inboxUser(userId) } : {}),
+        },
+        audit,
+      );
+    },
+    async finished(userId, info, audit) {
+      const what = KIND_TEXT[info.kind] ?? "任务";
+      const host = hostOf(info.site);
+      const ok = info.status === "succeeded";
+      await inbox.createInboxItem(
+        {
+          group: "brief",
+          kind: RESULT_KIND,
+          urgency: ok ? "low" : "normal",
+          title: ok ? `${what}完成：${host}` : `${what}没成功：${host}`,
+          summary: (ok ? info.summary : info.error || info.summary || "执行员没说原因。").slice(0, 300),
+          related: { type: "task", id: info.taskId },
+          actions: [{ id: "ack", label: "知道了" }],
           ...(inboxUser(userId) ? { userId: inboxUser(userId) } : {}),
         },
         audit,
