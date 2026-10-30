@@ -4,6 +4,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { registerMcpConfigRoutes } from "./mcpconfig/routes.js";
 import { CapabilityService } from "./capabilities/service.js";
 import { registerCapabilityRoutes } from "./capabilities/routes.js";
+import { TrialService, trialExpiryJob } from "./capabilities/trials.js";
 import { registerAuditRoutes } from "./audit/routes.js";
 import { installAuth } from "./auth/plugin.js";
 import { createTokenVerifier } from "./auth/tokens.js";
@@ -231,7 +232,7 @@ export function buildServer(
   registerLibraryRoutes(app, new LibraryService(deps.library, deps.now));
   registerAuditRoutes(app, deps.auditLog);
   registerMcpConfigRoutes(app);
-  registerCapabilityRoutes(app, new CapabilityService());
+  registerCapabilityRoutes(app, new CapabilityService(), (u) => new TrialService(scopedSettings(deps.settings, u), deps.now));
   const litellm =
     deps.litellm ??
     new LiteLLMAdmin({
@@ -345,6 +346,8 @@ export function buildServer(
   jobs.add(keyReconcileJob(deps.keys, litellm, inbox, deps.now));
   jobs.add(modelCapsJob(deps.members, litellm, deps.now));
   jobs.add(taskTimeoutJob(deps.executor, deps.now));
+  // 快跑阶段只有所有者：试用到期提醒只看所有者的设置（加固阶段再按用户遍历）
+  jobs.add(trialExpiryJob(new TrialService(deps.settings, deps.now), inbox));
   app.decorate("jobs", jobs);
   if (opts.startJobs ?? cfg.jobs) {
     app.addHook("onReady", async () => jobs.start());
