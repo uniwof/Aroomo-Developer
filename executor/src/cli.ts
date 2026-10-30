@@ -4,6 +4,7 @@
  *   init                 生成默认配置（白名单为空，保守）
  *   check                检查配置与令牌是否就绪（不打印令牌）
  *   status               检查配置、令牌，并试连 Core（不打印令牌）
+ *   doctor               逐项排查（Node、令牌、白名单、Core、浏览器），给出下一步
  *   allow/disallow <网站>  加入 / 移除白名单（不用手改 JSON）
  *   sites                列出白名单
  *   check-url <网址>     看某个网址是否在白名单里
@@ -20,6 +21,7 @@ import { DriverBrowserPort } from './agent/driver-session.js';
 import { ModelPlanner } from './agent/model-planner.js';
 import { RuleBasedPlanner, type Planner } from './agent/planner.js';
 import { buildAllowlist, configPath, type ExecutorConfig, defaultConfig, loadConfig, tokenReader } from './config.js';
+import { realProbes, renderDoctor, runDoctor } from './doctor.js';
 import { editSites } from './siteconfig.js';
 import { createLogger } from './logger.js';
 import type { BrowserPort } from './ports/browser.js';
@@ -102,6 +104,11 @@ export async function main(argv: string[]): Promise<number> {
       }
       return tokenOk && reach ? 0 : 2;
     }
+    case 'doctor': {
+      const [text, code] = renderDoctor(await runDoctor(loadConfig(path), realProbes()));
+      out(text);
+      return code;
+    }
     case 'allow':
     case 'disallow': {
       if (!arg) {
@@ -164,7 +171,7 @@ export async function main(argv: string[]): Promise<number> {
       return 0;
     }
     default:
-      out('用法：aroomo-executor <init|check|status|allow <网站>|disallow <网站>|sites|check-url <网址>|run>');
+      out('用法：aroomo-executor <init|check|status|doctor|allow <网站>|disallow <网站>|sites|check-url <网址>|run>');
       return cmd ? 64 : 0;
   }
 }

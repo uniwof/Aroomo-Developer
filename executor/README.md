@@ -80,6 +80,7 @@ Register-ScheduledTask -TaskName "Aroomo Executor" -Action $act -Trigger $trg -S
 | `init` | 生成默认配置（白名单为空） |
 | `check` | 检查配置和令牌是否就绪（不显示令牌） |
 | `status` | 检查配置、令牌并试连 Core |
+| `doctor` | 逐项排查（Node、令牌、白名单、Core、浏览器），每项给下一步 |
 | `allow <网站>` / `disallow <网站>` | 加入 / 移除白名单（接受主机名、`*.域名` 或完整网址），不用手改 JSON |
 | `sites` | 列出白名单 |
 | `check-url <网址>` | 看某个网址是否允许 |
