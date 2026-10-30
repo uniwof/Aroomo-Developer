@@ -67,6 +67,10 @@ Register-ScheduledTask -TaskName "Aroomo Executor" -Action $act -Trigger $trg -S
 
 同样 `npm ci && npm run build && node dist/cli.js init`，配置在 `~/.config/aroomo/executor/`。
 
+## 站点配方（可选）
+
+常用网站可以把步骤写死，比每次让模型现想更快更稳。在配置目录放 `recipes.json`（示例：`examples/recipes.example.json`）：每个配方有 `site`、`kind` 和一串步骤：`goto`、`fill`（只写字段名，值运行时按 secret id 现取）、`act`、`expect`（问一句，答案含关键词才算通过）、`blockers`（遇验证码推接管卡）、`screenshot`。配方出错自动退回通用办法；`onFail: "fail"` 则直接失败。文字里不允许出现 `{{ }}` 占位或写死的值。取消、白名单外、验证码多次未过不会兜底。
+
 ## 命令
 
 | 命令 | 作用 |
@@ -87,7 +91,7 @@ npm run check   # lint + typecheck + test（测试用 test/mock-core.ts 模拟 C
 
 - `src/transport.ts` — 与 Core 通信（HTTP 长轮询，可替换）
 - `src/runner.ts` — 主循环：上线、领取、心跳续租、接管等待、回报、断线重连
-- `src/tasks/` — 任务类型 checkin / login / signup / browse
+- `src/tasks/` — 任务类型 checkin / login / signup / browse；`recipes.ts` 站点配方
 - `src/ports/browser.ts` — 任务用的高层浏览器端口；`src/ports/driver.ts` — 驱动原语（快照 / 点击 / 填写 / 交给所有者）
 - `src/adapters/ego-lite.ts` — ego lite 驱动：经 `ego-browser nodejs` 的 stdin 传脚本（值不进命令行、不落盘），工作空间命名 `aroomo-…`
 - `src/agent/` — 规划器与驱动→任务会话的包装：`model-planner.ts` 经 Core /v1 让模型规划（配置 `planner.type: "model"`，默认，模型 `aroomo/auto`；只发脱敏快照和字段名，失败自动退回规则版）；`planner.ts` 规则版（`planner.type: "rule"` 时不把页面内容发给任何模型）
