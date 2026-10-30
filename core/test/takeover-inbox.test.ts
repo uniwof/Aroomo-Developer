@@ -47,11 +47,13 @@ describe("接管卡进收件箱", () => {
     const { owner, dev, id, tid, open } = await setup();
     const cards = await open();
     expect(cards).toHaveLength(1);
-    expect(cards[0].group).toBe("decision");
-    expect(cards[0].urgency).toBe("urgent");
-    expect(cards[0].title).toContain("example.com");
-    expect(cards[0].actions.map((a) => a.id)).toEqual(["done", "cancel"]);
-    const r = await owner("POST", `/api/inbox/${cards[0].id}/actions/done`, {});
+    const card = cards[0];
+    if (!card) throw new Error("no card");
+    expect(card.group).toBe("decision");
+    expect(card.urgency).toBe("urgent");
+    expect(card.title).toContain("example.com");
+    expect(card.actions.map((a) => a.id)).toEqual(["done", "cancel"]);
+    const r = await owner("POST", `/api/inbox/${card.id}/actions/done`, {});
     expect(r.statusCode).toBe(200);
     expect((await dev("GET", `/api/executor/tasks/${id}/takeover/${tid}`)).json().status).toBe("resolved");
     expect(await open()).toHaveLength(0);
@@ -59,7 +61,8 @@ describe("接管卡进收件箱", () => {
 
   it("卡上点「取消这个任务」→ 接管卡 cancelled", async () => {
     const { owner, dev, id, tid, open } = await setup();
-    const [card] = await open();
+    const card = (await open())[0];
+    if (!card) throw new Error("no card");
     expect((await owner("POST", `/api/inbox/${card.id}/actions/cancel`, {})).statusCode).toBe(200);
     expect((await dev("GET", `/api/executor/tasks/${id}/takeover/${tid}`)).json().status).toBe("cancelled");
   });
