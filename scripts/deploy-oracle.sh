@@ -54,8 +54,8 @@ firewall(){
   local n; n=$(sudo iptables -L INPUT --line-numbers | awk '/REJECT/{l=$1} END{print l+0}')
   (( n > 0 )) || die "INPUT 里没找到 REJECT 规则"
   for p in $ports; do
-    local c="iptables -I INPUT $n -p tcp --dport $p -m state --state NEW -j ACCEPT"
-    if (( apply )); then sudo $c; n=$((n+1)); else echo "sudo $c"; fi
+    local c=(iptables -I INPUT "$n" -p tcp --dport "$p" -m state --state NEW -j ACCEPT)
+    if (( apply )); then sudo "${c[@]}"; n=$((n+1)); else echo "sudo ${c[*]}"; fi
   done
   if (( apply )); then sudo netfilter-persistent save; else echo "sudo netfilter-persistent save"; fi
   echo "另需：VCN（vcn-free）安全列表放行同样端口 —— 需要主会话（浏览器操作）" >&2
