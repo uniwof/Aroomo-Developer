@@ -9,9 +9,15 @@ import type { CreateMemberInput, MembersService, UpdateMemberInput } from './ser
 import { CAPABILITY_TAGS, type Member } from './types.js';
 import { leadEligibility } from './caps.js';
 
-export function memberJson(m: Member) {
+/** 在线 = 在职、启用、没删除，并且有一把状态正常的 Key 对着它（圆环头像彩色 / 黑白，D7）。keyNames 是正常 Key 的模型名（小写）。 */
+export function isOnline(m: Member, keyNames: ReadonlySet<string>): boolean {
+  return m.status === 'active' && m.enabled && !m.deletedAt && keyNames.has(m.name.trim().toLowerCase());
+}
+
+export function memberJson(m: Member, online?: boolean) {
   const lead = leadEligibility(m);
   return {
+    ...(online === undefined ? {} : { online }),
     id: m.id,
     name: m.name,
     aliases: m.aliases,
@@ -55,6 +61,8 @@ export function registerMemberRoutes(
   hooks: MemberRouteHooks = {},
   /** 账号用户的成员服务（只读写本人的数据）；不传则账号用户不能用成员接口 */
   forUser?: (userId: string) => MembersService,
+  /** 某个范围（'owner' 或账号 id）下状态正常的 Key 的模型名；传了列表才带 online */
+  keyNames?: (scope: string) => Promise<string[]>,
 ): void {
   const U = { user: true } as const;
   /** 按调用者选服务：所有者 / 操作员 = 所有者数据；账号 = 本人数据 */
@@ -68,7 +76,12 @@ export function registerMemberRoutes(
       ...guard('members:read', U),
       schema: { querystring: { type: 'object', properties: { deleted: { type: 'boolean' } } } },
     },
-    async (req) => ({ members: (await svcOf(req).list({ deleted: req.query.deleted === true })).map(memberJson) }),
+    async (req) => {
+      const list = await svcOf(req).list({ deleted: req.query.deleted === true });
+      if (!keyNames) return { members: list.map((m) => memberJson(m)) };
+      const names = new Set((await keyNames(scopeOf(req))).map((n) => n.trim().toLowerCase()));
+      return { members: list.map((m) => memberJson(m, isOnline(m, names))) };
+    },
   );
 
   app.post<{ Body: CreateMemberInput }>(
@@ -158,6 +171,6 @@ export function registerMemberRoutes(
         },
       },
     },
-    async (req) => ({ members: (await svcOf(req).reorder(req.body.ids, req.audit)).map(memberJson) }),
+    async (req) => ({ members: (await svcOf(req).reorder(req.body.ids, req.audit)).map((m) => memberJson(m)) }),
   );
 }
