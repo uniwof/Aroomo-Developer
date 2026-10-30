@@ -40,8 +40,8 @@ describe('上游模型名映射', () => {
       fetchImpl,
     });
     const req = { model: 'other', messages: [{ role: 'user', content: 'hi' }] };
-    await svc.complete(req, new AbortController().signal, { upstreamModel: (n) => `ua/${n}` } as never);
-    await svc.complete(req, new AbortController().signal, { upstreamModel: (n) => `ub/${n}` } as never);
+    await svc.complete(req, new AbortController().signal, { upstreamModel: (n: string) => `ua/${n}` } as never);
+    await svc.complete(req, new AbortController().signal, { upstreamModel: (n: string) => `ub/${n}` } as never);
     await svc.complete(req, new AbortController().signal);
     expect(seen).toEqual(['ua/GPT', 'ub/GPT', 'GPT']);
   });
