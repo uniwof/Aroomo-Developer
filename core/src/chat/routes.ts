@@ -21,7 +21,7 @@ function tokenOk(req: FastifyRequest, expected: string | undefined): void {
 export function registerChatRoutes(app: FastifyInstance, chat: ChatService, chatToken: string | undefined): void {
   app.get('/v1/models', async (req) => {
     tokenOk(req, chatToken);
-    return chat.models();
+    return await chat.models();
   });
 
   app.post<{ Body: Record<string, unknown> }>(

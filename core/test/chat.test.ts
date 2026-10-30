@@ -101,7 +101,7 @@ describe('/v1 对话入口（LobeHub → Core → LiteLLM，D31）', () => {
     build();
     expect((await app.inject({ method: 'GET', url: '/v1/models', headers: ownerAuth })).statusCode).toBe(401);
     const m = await app.inject({ method: 'GET', url: '/v1/models', headers: chatAuth });
-    expect(m.json().data.map((d: { id: string }) => d.id)).toEqual(['aroomo']);
+    expect(m.json().data.map((d: { id: string }) => d.id)).toEqual(['aroomo', 'aroomo/auto']);
   });
 
   it('还没有成员：回一句提示，不调用 LiteLLM', async () => {
@@ -231,5 +231,35 @@ describe('/v1 对话入口（LobeHub → Core → LiteLLM，D31）', () => {
     expect(text(r)).toContain('（负责人）');
     expect((await app.inject({ method: 'PUT', url: '/api/settings/security', headers: ownerAuth, payload: { sensitiveProtect: false } })).statusCode).toBe(200);
     expect((await app.inject({ method: 'GET', url: '/api/settings/security', headers: ownerAuth })).json().sensitiveProtect).toBe(false);
+  });
+
+  it('aroomo/auto 与负责人入口一致；aroomo/<成员> 直接由该成员答（不 @ 也不交给负责人）', async () => {
+    await addMember('GPT-4o mini');
+    const claude = (await addMember('Claude')).json() as { id?: string; member?: { id: string } };
+    const claudeId = claude.id ?? claude.member?.id ?? 'claude';
+    // 模型列表带上成员别名
+    const ids = (await app.inject({ method: 'GET', url: '/v1/models', headers: chatAuth })).json().data.map((d: { id: string }) => d.id);
+    expect(ids).toContain('aroomo/auto');
+    expect(ids).toContain(`aroomo/${claudeId}`);
+    // aroomo/auto：不 @ → 负责人，@ → 该成员
+    const a = await chat('你好', { model: 'aroomo/auto' });
+    expect(seen.map((x) => x.model)).toEqual(['GPT-4o mini']);
+    expect(text(a)).toContain('（负责人）');
+    seen.length = 0;
+    await chat('@Claude 你好', { model: 'aroomo/auto' });
+    expect(seen.map((x) => x.model)).toEqual(['Claude']);
+    // 成员别名：直接由该成员答，没有署名；正文里的 @ 不再解析
+    seen.length = 0;
+    const m = await chat('@GPT-4o mini 你好', { model: `aroomo/${claudeId}` });
+    expect(seen.map((x) => x.model)).toEqual(['Claude']);
+    expect(text(m)).toBe('我是 Claude');
+    // 名字（空格换 -）也认；不存在的成员给提示，不调用 LiteLLM
+    seen.length = 0;
+    await chat('hi', { model: 'aroomo/gpt-4o-mini' });
+    expect(seen.map((x) => x.model)).toEqual(['GPT-4o mini']);
+    seen.length = 0;
+    const none = await chat('hi', { model: 'aroomo/nobody' });
+    expect(seen).toHaveLength(0);
+    expect(text(none)).toContain('没有这位在职成员');
   });
 });

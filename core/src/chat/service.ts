@@ -18,6 +18,20 @@ import { activeMembers } from '../settings/lead.js';
 import { looksSensitive, type SecurityService } from '../settings/security.js';
 
 export const CHAT_MODEL = 'aroomo';
+/** 负责人入口：有 @ 点名则该成员答，不 @ 由负责人答（与 aroomo 同义，给 LobeHub 群组里的负责人用） */
+export const AUTO_MODEL = 'aroomo/auto';
+/** 成员别名前缀：aroomo/<成员 id 或名字> 直接由该成员回答（LobeHub 群组里每个成员智能体用） */
+export const MEMBER_MODEL_PREFIX = 'aroomo/';
+
+const slug = (s: string) => s.trim().toLowerCase().replace(/\s+/g, '-');
+
+/** 把 aroomo/<x> 解析成在职成员：先按 id，再按名字 / 别名（空格换成 -，大小写不敏感）。 */
+export function resolveMemberModel(model: string, members: Member[]): Member | null {
+  if (!model.startsWith(MEMBER_MODEL_PREFIX) || model === AUTO_MODEL) return null;
+  const key = slug(model.slice(MEMBER_MODEL_PREFIX.length));
+  if (!key) return null;
+  return members.find((m) => m.id === key) ?? members.find((m) => [m.name, ...m.aliases].some((n) => slug(n) === key)) ?? null;
+}
 export const MEMBER_TIMEOUT_MS = 120_000;
 
 export interface ChatDeps {
@@ -134,8 +148,11 @@ export class ChatService {
     this.#fetch = d.fetchImpl ?? fetch;
   }
 
-  models(): Json {
-    return { object: 'list', data: [{ id: CHAT_MODEL, object: 'model', created: 0, owned_by: 'aroomo' }] };
+  /** 模型列表：aroomo、aroomo/auto（负责人入口），以及每位在职成员的别名 aroomo/<id> */
+  async models(): Promise<Json> {
+    const members = activeMembers(await this.d.listMembers());
+    const ids = [CHAT_MODEL, AUTO_MODEL, ...members.map((m) => `${MEMBER_MODEL_PREFIX}${m.id}`)];
+    return { object: 'list', data: ids.map((id) => ({ id, object: 'model', created: 0, owned_by: 'aroomo' })) };
   }
 
   async #upstream(body: Json, signal: AbortSignal): Promise<Response> {
@@ -153,7 +170,7 @@ export class ChatService {
     if (ctx) return new ChatService({ ...this.d, ...ctx, fetchImpl: this.#fetch }).complete(req, signal);
     const stream = req.stream === true;
     const messages = (Array.isArray(req.messages) ? req.messages : []) as ChatMessage[];
-    const decorated = req.model === CHAT_MODEL;
+    const decorated = req.model === CHAT_MODEL || req.model === AUTO_MODEL;
     const members = activeMembers(await this.d.listMembers());
     const routable: RoutableMember[] = members.map((m) => ({ id: m.id, name: m.name, aliases: m.aliases, enabled: m.enabled }));
     const leadState = await this.d.lead.get();
@@ -161,6 +178,13 @@ export class ChatService {
 
     if (!members.length) {
       return textReply(stream, '还没有可用的成员。请先打开「成员 → Key 与接入」填入一个 Key，再在「成员」里点「入职」，就能对话了。');
+    }
+
+    // 成员别名 aroomo/<成员>：LobeHub 群组里该成员智能体的发言，直接由该成员回答（不解析 @、不加署名）
+    if (typeof req.model === 'string' && req.model.startsWith(MEMBER_MODEL_PREFIX) && req.model !== AUTO_MODEL) {
+      const target = resolveMemberModel(req.model, members);
+      if (!target) return textReply(stream, `没有这位在职成员（${req.model}）。请在「成员」里确认名字，或改用 aroomo/auto 交给负责人。`);
+      return this.#forward(req, target.name, '', '', stream, signal);
     }
 
     // 系统任务（起标题、翻译等）：交给负责人，不解析 @、不加提示和署名。
