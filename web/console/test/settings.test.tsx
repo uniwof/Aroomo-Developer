@@ -81,4 +81,26 @@ describe('设置页', () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(JSON.stringify(config, null, 2)));
     expect(await screen.findByText(/已复制/)).toBeInTheDocument();
   });
+
+  it('打扰预算：显示今日统计，加减后 PUT', async () => {
+    session.set('placeholder-session');
+    const puts: Array<{ url: string; body: unknown }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (init?.method === 'PUT') {
+          puts.push({ url, body: JSON.parse(String(init.body)) });
+          return json(200, {});
+        }
+        if (url === '/api/interrupt-budget') return json(200, { daily: 3, today: { total: 4, loud: 3, quiet: 1 } });
+        if (url === '/api/members') return json(200, { members: [] });
+        return json(200, { leadId: null, effectiveLeadId: null, auto: true });
+      }),
+    );
+    render(<Settings />);
+    expect(await screen.findByText(/今天已来 4 张接管卡/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '增加一次' }));
+    await waitFor(() => expect(puts[0]).toEqual({ url: '/api/interrupt-budget', body: { daily: 4 } }));
+    expect(screen.getByLabelText('每天提醒次数')).toHaveTextContent('4');
+  });
 });
