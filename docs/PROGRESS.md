@@ -147,6 +147,7 @@ P2–P7 的功能开发在阶段 C 之后照常在网页版上推进，离线版
 | /v1 模型别名（LobeHub 群组同步用）：`aroomo/auto` = 负责人入口（@成员 则该成员答，不 @ 负责人答，与 `aroomo` 同义）；`aroomo/<成员id>` = 直接由该成员答（不解析 @、不署名；名字空格换 - 也认）；`GET /v1/models` 列出这些别名 | LobeHub 群组：负责人智能体用 aroomo/auto，每个成员智能体用 aroomo/<成员id> | M1 第 3 项 | ✅ PR p1/lead-routing |
 | /api/library 资源库最小版：POST（只给 url 也行；同链接去重；像密码/Key 的内容拒收）、GET ?q=&kind=&limit=（关键词检索，多词都要命中，标题>标签>链接>正文）、GET/:id、DELETE/:id（仅本人）。客户端范围 library:read / library:write（MCP submit_resource 用 write）。检索先 ILIKE，接口后可换 PGroonga | 资源库页（丢链接+搜索） | M2 | ✅ PR p1/library |
 | POST /mcp（Core 对外 MCP，JSON-RPC 2.0；Authorization: Bearer 所有者/账号/arc_ 令牌）：工具 search_library、get_library_item、submit_resource、list_memory_topics、get_memory；tools/list 按客户端范围动态返回，无范围=工具不存在；输出打码；每次调用审计 mcp.call。GET /mcp = 405。LobeHub 设置→MCP 里用 /api/mcp/config 的配置 | LobeHub 接入 Core MCP | M2 | ✅ PR p1/mcp-readonly（A 类，needs-leader-review） |
+| /api/gateway/tools（GET，工具清单+风险）、/api/gateway/call（POST {tool,args,confirmToken}；spend→付款类重要确认、danger→不可逆类重要确认，先 428 再带令牌重发，令牌绑定工具+参数）、/api/gateway/http-tools（GET/PUT/DELETE 登记通用 HTTP 工具，PUT 是凭据类重要确认；Key 只存保险箱 secretId）。仅本人，操作员/客户端令牌 403；首批工具=read_webpage（免 Key 读公网网页，SSRF 防护）+ 本机执行员 browser_task_*（带凭据=danger）+ HTTP 工具 | 工具页（登记/调用+确认卡）、LobeHub（经 /mcp，下一步） | M2 | ✅ PR p1/tool-gateway |
 | GET /api/tools、工具开关与额度 | 工具 | 工具网关 | 待后台线 |
 | GET /api/library（资源库列表、搜索） | 资源库 | | 待后台线 |
 | GET /api/inbox?type=confirm\|takeover\|brief | 收件箱 | 接管卡、简报分类 | 待后台线 |
