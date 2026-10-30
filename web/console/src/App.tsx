@@ -7,6 +7,7 @@ import { Keys } from '@/pages/Keys';
 import { Inbox } from '@/pages/Inbox';
 import { Pending } from '@/pages/Pending';
 import { Settings } from '@/pages/Settings';
+import { Tools } from '@/pages/Tools';
 import { Library } from '@/pages/Library';
 import { session } from '@/lib/api';
 
@@ -20,7 +21,7 @@ export function App() {
       <Route element={<Layout />}>
         <Route index element={<Navigate to="/members" replace />} />
         <Route path="members" element={<Members />} />
-        <Route path="tools" element={<Pending title="工具" note={soon} />} />
+        <Route path="tools" element={<Tools />} />
         <Route path="library" element={<Library />} />
         <Route path="inbox" element={<Inbox />} />
         <Route path="executors" element={<Pending title="本机执行员" note={soon} />} />
