@@ -30,3 +30,5 @@ LobeHub 2.2.20 官方 FEATURE_FLAGS 里与语音相关的只有 `speech_to_text`
 
 - V8、V9 不阻塞；V9 去掉了对 ParadeDB（AGPL）的需要，不必再问所有者 ParadeDB 例外。
 - V1 静态看齐全；V1 界面实测与 V2、V3 完成后在 DECISIONS 记最终结论（LobeHub 或 Open WebUI）。
+
+- V1–V3 自动脚本：scripts/verify-d189.mjs（只读 GET）。无 LOBE_URL/LOBE_TOKEN 时 V1–V3 记「待测」并以退出码 2 结束，绝不当作通过；V3 为对话行为，需 CI 假模型界面测试。结论待全部实测后写入 DECISIONS。
