@@ -239,7 +239,7 @@ export function buildServer(
     takeoverHooks(inbox, interruptBudget, deps.now),
   );
   registerTakeoverHandler(inbox, executorSvc);
-  registerInterruptBudgetRoutes(app, interruptBudget);
+  registerInterruptBudgetRoutes(app, interruptBudget, inbox);
   registerExecutorRoutes(app, executorSvc);
   registerPubMemRoutes(app, new PubMemService(deps.pubmem, deps.now));
   registerLibraryRoutes(app, new LibraryService(deps.library, deps.now));

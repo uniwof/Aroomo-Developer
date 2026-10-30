@@ -54,7 +54,7 @@ describe("打扰预算（D100）", () => {
 
   it("默认每天 3 张：前 3 张紧急，第 4 张降为普通；次日重新计数", async () => {
     const { clock, owner, takeover, finish, cards } = await setup();
-    expect((await owner("GET", "/api/interrupt-budget")).json()).toEqual({ daily: 3 });
+    expect((await owner("GET", "/api/interrupt-budget")).json()).toEqual({ daily: 3, today: { total: 0, loud: 0, quiet: 0 } });
     for (let i = 0; i < 3; i++) {
       const { id, tid } = await takeover("captcha");
       expect((await cards()).every((c) => c.urgency === "urgent")).toBe(true);
@@ -65,6 +65,7 @@ describe("打扰预算（D100）", () => {
     expect(c4).toHaveLength(1);
     expect(c4[0]?.urgency).toBe("normal");
     expect(c4[0]?.summary).toContain("30 分钟");
+    expect((await owner("GET", "/api/interrupt-budget")).json()).toEqual({ daily: 3, today: { total: 4, loud: 3, quiet: 1 } });
     await finish(t4);
     clock.advance(24 * 60 * 60 * 1000);
     await takeover("captcha");
