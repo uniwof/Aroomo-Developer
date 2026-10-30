@@ -143,6 +143,71 @@ function SecuritySection() {
   );
 }
 
+interface Budget {
+  daily: number;
+  today?: { total: number; loud: number; quiet: number };
+}
+
+/** 打扰预算（D100）：每天最多让本机执行员「喊你」几次；超出的接管卡静默躺在收件箱，30 分钟没人处理就自动取消 */
+function BudgetSection() {
+  const [b, setB] = useState<Budget | null>(null);
+  const [msg, setMsg] = useState('');
+  useEffect(() => {
+    api<Budget>('GET', '/api/interrupt-budget')
+      .then(setB)
+      .catch((e) => setMsg(errText(e)));
+  }, []);
+
+  async function change(delta: number) {
+    if (!b) return;
+    const next = Math.min(50, Math.max(0, b.daily + delta));
+    if (next === b.daily) return;
+    setMsg('');
+    try {
+      await api('PUT', '/api/interrupt-budget', { daily: next });
+      setB({ ...b, daily: next });
+      setMsg(`已保存：每天最多提醒你 ${next} 次`);
+    } catch (e) {
+      setMsg(errText(e));
+    }
+  }
+
+  const btn = 'min-h-11 min-w-11 rounded-xl border border-[var(--border)] text-[20px] disabled:opacity-40';
+  return (
+    <>
+      <Field
+        label="每天最多打扰我几次"
+        hint={
+          b?.today
+            ? `今天已来 ${b.today.total} 张接管卡（提醒了 ${b.today.loud}，静默 ${b.today.quiet}）。付款类每次都会提醒。`
+            : '执行员遇到验证码、登录等要你出手的事，每天最多提醒这么多次；超出的静默放进收件箱。付款类每次都会提醒。'
+        }
+      >
+        {b ? (
+          <div className="flex items-center gap-2">
+            <button type="button" aria-label="减少一次" className={btn} disabled={b.daily <= 0} onClick={() => void change(-1)}>
+              −
+            </button>
+            <span aria-label="每天提醒次数" className="min-w-8 text-center text-[18px] font-semibold">
+              {b.daily}
+            </span>
+            <button type="button" aria-label="增加一次" className={btn} disabled={b.daily >= 50} onClick={() => void change(1)}>
+              +
+            </button>
+          </div>
+        ) : (
+          <span className="text-[var(--muted)]">—</span>
+        )}
+      </Field>
+      {msg && (
+        <p role="status" className="pb-3 text-[var(--muted)]">
+          {msg}
+        </p>
+      )}
+    </>
+  );
+}
+
 interface McpConfig {
   url: string;
   config: unknown;
@@ -202,6 +267,10 @@ export function Settings() {
       <h2 className="text-[16px] font-semibold">安全</h2>
       <div className="divide-y divide-[var(--border)] rounded-2xl bg-[var(--card)] px-4">
         <SecuritySection />
+      </div>
+      <h2 className="text-[16px] font-semibold">执行员提醒</h2>
+      <div className="rounded-2xl bg-[var(--card)] px-4">
+        <BudgetSection />
       </div>
       <h2 className="text-[16px] font-semibold">外部接入</h2>
       <div className="rounded-2xl bg-[var(--card)] px-4">
