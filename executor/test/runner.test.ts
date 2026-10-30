@@ -196,6 +196,33 @@ describe('执行员 ↔ 模拟 Core', () => {
   });
 });
 
+describe('结果核对', () => {
+  it('签到：页面说失败就报失败，不当成功', async () => {
+    makeRunner({ actReplies: { 判断签到结果: '失败：今天的名额已满' } });
+    const t = core.enqueue({ kind: 'checkin', site: 'https://example.com/daily' });
+    await core.waitFor(() => core.results.has(t.id));
+    expect(core.results.get(t.id)!.error?.code).toBe('CHECKIN_FAILED');
+  });
+
+  it('注册：页面说失败就报失败', async () => {
+    makeRunner({ actReplies: { 判断注册结果: '失败：用户名已被占用' } });
+    const t = core.enqueue({ kind: 'signup', site: 'https://example.com/register' });
+    await core.waitFor(() => core.results.has(t.id));
+    expect(core.results.get(t.id)!.error?.code).toBe('SIGNUP_FAILED');
+  });
+
+  it('注册：需要验证邮件时推接管卡，处理后继续', async () => {
+    makeRunner({ actReplies: { 判断注册结果: '需要验证邮件' } });
+    const t = core.enqueue({ kind: 'signup', site: 'https://example.com/register' });
+    await core.waitFor(() => core.takeovers.size > 0);
+    const [card] = [...core.takeovers.values()];
+    expect(card?.req.reason).toBe('2fa');
+    core.resolveTakeover(t.id);
+    await core.waitFor(() => core.results.has(t.id));
+    expect(core.results.get(t.id)!.status).toBe('succeeded');
+  });
+});
+
 describe('HttpTransport', () => {
   it('非本机地址必须 https', () => {
     expect(() => new HttpTransport({ baseUrl: 'http://app.example.com', getToken: () => 'x', version: '0' })).toThrow();
