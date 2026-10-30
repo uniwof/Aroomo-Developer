@@ -5,4 +5,4 @@ set -euo pipefail
 cd "$(dirname "$0")/../web/console"
 docker run --rm -v "$PWD:/w" -w /w -e npm_config_update_notifier=false node:22.23.4-alpine3.24 \
   sh -c 'npm ci --no-audit --no-fund && npm run build'
-test -f dist/index.html && echo "console built: $(ls dist/assets | wc -l) assets"
+test -f dist/index.html && echo "console built"
