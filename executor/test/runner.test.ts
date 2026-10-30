@@ -14,7 +14,7 @@ let core: MockCore;
 let ac: AbortController;
 let logs: string[];
 
-function makeRunner(script: FakeScript = {}, opts: { token?: string; browsers?: FakeBrowser[] } = {}) {
+function makeRunner(script: FakeScript = {}, opts: { token?: string; browsers?: FakeBrowser[]; runner?: Partial<ConstructorParameters<typeof Runner>[0]> } = {}) {
   const browser = new FakeBrowser('fake', script);
   const runner = new Runner({
     transport: new HttpTransport({ baseUrl: core.url, getToken: () => opts.token ?? TEST_TOKEN, version: '0.1.0', timeoutMs: 3000 }),
@@ -26,6 +26,7 @@ function makeRunner(script: FakeScript = {}, opts: { token?: string; browsers?: 
     version: '0.1.0',
     authRetryMs: 50,
     backoff: new Backoff(20, 100, () => 0),
+    ...(opts.runner ?? {}),
   });
   const done = runner.run(ac.signal);
   return { runner, browser, done };
@@ -217,6 +218,28 @@ describe('结果核对', () => {
     await core.waitFor(() => core.takeovers.size > 0);
     const [card] = [...core.takeovers.values()];
     expect(card?.req.reason).toBe('2fa');
+    core.resolveTakeover(t.id);
+    await core.waitFor(() => core.results.has(t.id));
+    expect(core.results.get(t.id)!.status).toBe('succeeded');
+  });
+});
+
+describe('看门狗', () => {
+  it('浏览器卡住超过时限：按失败回报并关闭会话', async () => {
+    const { browser } = makeRunner({ hangOn: '签到' }, { runner: { taskActiveMaxMs: 300, watchdogTickMs: 50 } });
+    const t = core.enqueue({ kind: 'checkin', site: 'https://example.com/daily' });
+    await core.waitFor(() => core.results.has(t.id));
+    const r = core.results.get(t.id)!;
+    expect(r.status).toBe('failed');
+    expect(r.error?.code).toBe('TASK_TIMEOUT');
+    expect(browser.sessions[0]?.closed).toBe(true);
+  });
+
+  it('等你处理接管卡的时间不算在时限里', async () => {
+    makeRunner({ actReplies: { 判断注册结果: '需要验证邮件' } }, { runner: { taskActiveMaxMs: 400, watchdogTickMs: 50 } });
+    const t = core.enqueue({ kind: 'signup', site: 'https://example.com/register' });
+    await core.waitFor(() => core.takeovers.size > 0);
+    await new Promise((r) => setTimeout(r, 900));
     core.resolveTakeover(t.id);
     await core.waitFor(() => core.results.has(t.id));
     expect(core.results.get(t.id)!.status).toBe('succeeded');
