@@ -288,6 +288,10 @@ export function buildServer(
       },
     },
     membersForUser,
+    async (scope) =>
+      (await deps.keys.list(scope === "owner" ? undefined : scope))
+        .filter((k) => k.status === "active")
+        .map((k) => k.modelName),
   );
   const lead = new LeadService(deps.settings, deps.members, deps.now);
   const security = new SecurityService(deps.settings, deps.now);

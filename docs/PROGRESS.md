@@ -153,7 +153,7 @@ P2–P7 的功能开发在阶段 C 之后照常在网页版上推进，离线版
 | GET /api/executors、任务队列只读列表 | 本机执行员 | | 待后台线 |
 | GET /api/usage（额度圆环：已用 / 上限） | 顶栏（D7） | | 待后台线 |
 | GET /api/mcp/config（按当前用户生成 MCP 连接配置，不含明文令牌，令牌另走一次性显示） | 设置 | D195 MCP 配置复制 | 已做（PR 待合并）|
-| GET /api/members 返回 online（布尔） | 成员头像彩色 / 黑白（D7） | | 待后台线 |
+| GET /api/members 每位成员多 online（布尔：在职 + 启用 + 未删除 + 有一把状态正常的 Key 对着它） | 成员头像彩色 / 黑白（D7） | 只在列表接口带；其他接口不带 | ✅ PR p1/member-online |
 | GET/PUT /api/settings/security、GET /api/audit 对 owner/admin 账号开放（现在只认所有者令牌，账号登录会 403） | 设置 → 安全 | 控制台用账号登录 | 待后台线 |
 
 ## 阻塞
