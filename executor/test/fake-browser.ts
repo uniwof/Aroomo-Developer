@@ -19,6 +19,7 @@ export class FakeSession implements BrowserSession {
   filled: FillField[] = [];
   actions: string[] = [];
   closed = false;
+  handOffs = 0;
   #blockers: (Blocker | null)[];
 
   constructor(private readonly script: FakeScript) {
@@ -44,6 +45,10 @@ export class FakeSession implements BrowserSession {
   }
   async screenshot(): Promise<ScreenshotSummary> {
     return { summary: `页面 ${this.url}`, width: 1280, height: 800 };
+  }
+  async handOff() {
+    this.handOffs++;
+    return true;
   }
   async close() {
     this.closed = true;

@@ -30,6 +30,8 @@ export interface BrowserSession {
   /** 检测验证码 / 两步验证 / 付款页；没有障碍返回 null */
   detectBlocker(): Promise<Blocker | null>;
   screenshot(): Promise<ScreenshotSummary>;
+  /** 把窗口交给所有者处理（ego lite 的 handOff）；不支持的实现可不提供，返回 false 表示所有者直接在已开的窗口里处理 */
+  handOff?(): Promise<boolean>;
   close(): Promise<void>;
 }
 
