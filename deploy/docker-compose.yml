@@ -216,7 +216,7 @@ services:
       AGENT_GATEWAY_SERVICE_TOKEN: ${GATEWAY_SERVICE_TOKEN:-}
       # LobeHub 官方功能开关（运行时生效，不改镜像）：隐藏 PRODUCT §8 没有的功能（D68 隐藏不删除；清单见 DECISIONS 提议 H2）
       # 市场 / 更新日志 / 检查更新 / 欢迎页推荐 / 画图 / 知识库 / 服务商设置与 Key 输入（Key 只在 Aroomo「Key 与接入」里填，写入 LiteLLM）
-      FEATURE_FLAGS: '-speech_to_text,-voice_dictation,-market,-changelog,-check_updates,-welcome_suggest,-ai_image,-knowledge_base,-rag_eval,-provider_settings,-openai_api_key,-openai_proxy_url,-api_key_manage,-agent_share,-dashboard,-cloud_promotion'
+      FEATURE_FLAGS: '-speech_to_text,-voice_dictation,-market,-changelog,-check_updates,-welcome_suggest,-ai_image,-knowledge_base,-rag_eval,-provider_settings,-openai_api_key,-openai_proxy_url,-agent_share,-dashboard,-cloud_promotion'
       TZ: ${TZ:-Asia/Shanghai}
     healthcheck:
       test: ['CMD', '/bin/node', '-e', "fetch('http://127.0.0.1:3210/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
