@@ -18,3 +18,6 @@
 | Core / Shell / backup（自建） | 有 | CI「多架构镜像构建」amd64+arm64 已绿 |
 
 不需要替代方案。不在服务器跑浏览器/模拟器（执行员在用户电脑）。
+
+## 部署脚本（scripts/deploy-oracle.sh）
+`preflight`（只检查）→ `deploy`（记录回滚点后 compose up）→ `rollback`；`firewall` 默认只打印 iptables 命令，`--apply` 才执行并 `netfilter-persistent save`。VCN（vcn-free）安全列表需要主会话浏览器放行端口。正式迁移等 AWS 稳定且主会话确认后再做；boinc-client 部署当天才删。
