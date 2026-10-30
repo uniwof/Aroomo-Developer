@@ -26,6 +26,14 @@ const groups: { key: Item['group']; title: string }[] = [
   { key: 'brief', title: '简报' },
 ];
 
+/** 2026-10-31 08:05 这样的短时间，读屏友好；解析失败就原样显示。 */
+function formatTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getMonth() + 1}月${d.getDate()}日 ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 export function Inbox() {
   const [data, setData] = useState<Record<string, Item[]> | null>(null);
   const [msg, setMsg] = useState('');
@@ -49,6 +57,19 @@ export function Inbox() {
     }
   }
 
+  /** 知道了：把条目移出收件箱（POST /api/inbox/dismiss，批量）。 */
+  async function dismiss(ids: string[]) {
+    setMsg('');
+    try {
+      await api('POST', '/api/inbox/dismiss', { ids });
+      setMsg(ids.length > 1 ? `已清掉 ${ids.length} 条` : '已清掉');
+      load();
+    } catch (e) {
+      setMsg(e instanceof ApiError ? e.message : '操作失败，请稍后再试');
+    }
+  }
+  const canDismiss = (i: Item) => i.group !== 'decision' || (i.actions ?? []).length === 0;
+
   return (
     <section aria-labelledby="inbox-title" className="space-y-6">
       <h1 id="inbox-title" className="text-[20px] font-semibold">
@@ -62,7 +83,14 @@ export function Inbox() {
       {data &&
         groups.map((g) => (
           <div key={g.key} className="space-y-2">
-            <h2 className="text-[16px] font-semibold">{g.title}</h2>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-[16px] font-semibold">{g.title}</h2>
+              {g.key === 'brief' && (data[g.key] ?? []).length > 1 && (
+                <Button variant="outline" className="min-h-11" onClick={() => dismiss((data[g.key] ?? []).map((i) => i.id))}>
+                  全部知道了
+                </Button>
+              )}
+            </div>
             {(data[g.key] ?? []).length === 0 && <p className="text-[var(--muted)]">暂时没有</p>}
             <ul className="space-y-2">
               {(data[g.key] ?? []).map((i) => (
@@ -72,6 +100,7 @@ export function Inbox() {
                     {i.title}
                   </p>
                   {i.summary && <p className="whitespace-pre-wrap text-[var(--muted)]">{i.summary}</p>}
+                  <p className="text-[14px] text-[var(--muted)]">{formatTime(i.createdAt)}</p>
                   <div className="flex flex-wrap gap-2">
                     {(i.actions ?? []).map((a) =>
                       a.confirm ? (
@@ -83,6 +112,11 @@ export function Inbox() {
                           {a.label}
                         </Button>
                       ),
+                    )}
+                    {canDismiss(i) && (
+                      <Button variant="outline" className="min-h-11" aria-label={`知道了：${i.title}`} onClick={() => dismiss([i.id])}>
+                        知道了
+                      </Button>
                     )}
                   </div>
                 </li>
