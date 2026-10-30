@@ -53,6 +53,10 @@ export class Allowlist {
     return this.#sites.length;
   }
 
+  sites(): readonly string[] {
+    return this.#sites;
+  }
+
   /** 名单指纹：hello 时上报，控制台可对比「服务器端名单」与「本机名单」是否一致；不泄露名单内容 */
   hash(): string {
     const h = createHash('sha256');

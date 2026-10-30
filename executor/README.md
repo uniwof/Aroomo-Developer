@@ -4,6 +4,8 @@
 用本机浏览器（ego lite 为主，Playwright MCP 备用）完成，再把进度、结果和截图摘要报回 Core。
 遇到验证码、两步验证、付款会暂停，在收件箱推一张「接管卡」，你处理完它再继续。
 
+给视力不好的用户：[用户说明.md](用户说明.md)（每步一句话）。
+
 依据：DECISIONS D162、D173、D189、D192；协议见 [docs/executor-protocol.md](../docs/executor-protocol.md)。
 
 ## 安全要点
@@ -77,6 +79,9 @@ Register-ScheduledTask -TaskName "Aroomo Executor" -Action $act -Trigger $trg -S
 |---|---|
 | `init` | 生成默认配置（白名单为空） |
 | `check` | 检查配置和令牌是否就绪（不显示令牌） |
+| `status` | 检查配置、令牌并试连 Core |
+| `allow <网站>` / `disallow <网站>` | 加入 / 移除白名单（接受主机名、`*.域名` 或完整网址），不用手改 JSON |
+| `sites` | 列出白名单 |
 | `check-url <网址>` | 看某个网址是否允许 |
 | `run` | 连接 Core，开始领任务 |
 
