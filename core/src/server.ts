@@ -45,6 +45,8 @@ import { registerLibraryRoutes } from "./library/routes.js";
 import { ClientTokenService } from "./clients/service.js";
 import { registerClientRoutes } from "./clients/routes.js";
 import { ExecutorService } from "./executor/service.js";
+import { GatewayService } from "./gateway/service.js";
+import { registerGatewayRoutes } from "./gateway/routes.js";
 import { registerExecutorRoutes } from "./executor/routes.js";
 import { UsersService } from "./users/service.js";
 import { registerUserRoutes } from "./users/routes.js";
@@ -220,10 +222,19 @@ export function buildServer(
   );
   registerVaultRoutes(app, vaultSvc);
   registerClientRoutes(app, clients);
-  registerExecutorRoutes(
+  const executorSvc = new ExecutorService(deps.executor, deps.now, (u, id) =>
+    vaultSvc.resolveForGateway(u, id),
+  );
+  registerExecutorRoutes(app, executorSvc);
+  registerGatewayRoutes(
     app,
-    new ExecutorService(deps.executor, deps.now, (u, id) =>
-      vaultSvc.resolveForGateway(u, id),
+    new GatewayService(
+      deps.settings,
+      confirm,
+      deps.now,
+      executorSvc,
+      (u, id) => vaultSvc.exists(u, id),
+      (u, id) => vaultSvc.resolveForGateway(u, id),
     ),
   );
   registerPubMemRoutes(app, new PubMemService(deps.pubmem, deps.now));
