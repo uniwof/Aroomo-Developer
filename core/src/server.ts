@@ -48,6 +48,7 @@ import { ClientTokenService } from "./clients/service.js";
 import { registerClientRoutes } from "./clients/routes.js";
 import { ExecutorService } from "./executor/service.js";
 import { registerExecutorRoutes } from "./executor/routes.js";
+import { registerTakeoverHandler, takeoverHooks } from "./executor/takeover-inbox.js";
 import { UsersService } from "./users/service.js";
 import { registerUserRoutes } from "./users/routes.js";
 import { registerConsole } from "./console/static.js";
@@ -222,13 +223,16 @@ export function buildServer(
   );
   registerVaultRoutes(app, vaultSvc);
   registerClientRoutes(app, clients);
-  registerExecutorRoutes(
-    app,
-    new ExecutorService(deps.executor, deps.now, (u, id) =>
-        vaultSvc.resolveForGateway(u, id),
-      (u) => scopedSettings(deps.settings, u),
-    ),
+  const inbox = new InboxService(deps.inbox, confirm, deps.now);
+  const executorSvc = new ExecutorService(
+    deps.executor,
+    deps.now,
+    (u, id) => vaultSvc.resolveForGateway(u, id),
+    (u) => scopedSettings(deps.settings, u),
+    takeoverHooks(inbox),
   );
+  registerTakeoverHandler(inbox, executorSvc);
+  registerExecutorRoutes(app, executorSvc);
   registerPubMemRoutes(app, new PubMemService(deps.pubmem, deps.now));
   registerLibraryRoutes(app, new LibraryService(deps.library, deps.now));
   registerAuditRoutes(app, deps.auditLog);
@@ -241,7 +245,6 @@ export function buildServer(
       masterKey: cfg.litellmMasterKey,
     });
   const members = new MembersService(deps.members, deps.now, confirm);
-  const inbox = new InboxService(deps.inbox, confirm, deps.now);
   // 供其他模块调用 createInboxItem()
   app.decorate("inbox", inbox);
   registerInboxRoutes(app, inbox);

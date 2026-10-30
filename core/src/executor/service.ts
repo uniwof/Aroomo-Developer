@@ -12,6 +12,15 @@ import {
   type TaskRecord,
 } from "./types.js";
 
+export interface TakeoverHooks {
+  opened?: (
+    userId: string,
+    info: { taskId: string; site: string; takeoverId: string; reason: string; message: string },
+    audit: AuditFn,
+  ) => Promise<void>;
+  closed?: (userId: string, taskId: string, takeoverId: string, audit: AuditFn) => Promise<void>;
+}
+
 export const LEASE_SEC = 600;
 export const POLL_WAIT_SEC = 30;
 const MAX_QUEUED_PER_USER = 200;
@@ -56,6 +65,8 @@ export class ExecutorService {
     ) => Promise<string | null> = async () => null,
     /** 某用户的设置视图（服务器端站点白名单存在这里） */
     private readonly settingsFor: (userId: string) => SettingsStore | null = () => null,
+    /** 接管卡进收件箱 / 处理后收回的钩子（server.ts 接线；失败不影响任务本身） */
+    private readonly hooks: TakeoverHooks = {},
   ) {}
 
   async getAllowlist(userId: string): Promise<string[]> {
@@ -257,7 +268,7 @@ export class ExecutorService {
     audit: AuditFn,
   ): Promise<{ takeoverId: string }> {
     const ex = await this.#me(userId, clientId);
-    this.#held(await this.store.getTask(userId, id), ex.id);
+    const task = this.#held(await this.store.getTask(userId, id), ex.id);
     const rec: TakeoverRecord = {
       id: randomUUID(),
       userId,
@@ -271,6 +282,15 @@ export class ExecutorService {
     };
     await this.store.insertTakeover(rec);
     await audit("executor.takeover", { type: "task", id }, "ok", rec.reason);
+    try {
+      await this.hooks.opened?.(
+        userId,
+        { taskId: id, site: task.site, takeoverId: rec.id, reason: rec.reason, message: rec.message },
+        audit,
+      );
+    } catch (e) {
+      await audit("executor.takeover.card", { type: "task", id }, "failed", String((e as Error)?.message ?? e).slice(0, 100));
+    }
     return { takeoverId: rec.id };
   }
 
@@ -326,6 +346,8 @@ export class ExecutorService {
     tid: string,
     input: { cancel?: boolean; note?: string },
     audit: AuditFn,
+    /** 从收件箱卡片来的：卡片由收件箱自己收，不再触发收回钩子 */
+    fromInbox = false,
   ) {
     const t = await this.store.resolveTakeover(
       userId,
@@ -346,6 +368,12 @@ export class ExecutorService {
       "ok",
       t.status,
     );
+    if (!fromInbox)
+      try {
+        await this.hooks.closed?.(userId, id, tid, audit);
+      } catch {
+        /* 收件箱卡片收不回不影响处理结果 */
+      }
     return { status: t.status };
   }
 
