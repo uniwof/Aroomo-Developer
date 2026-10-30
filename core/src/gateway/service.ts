@@ -9,6 +9,7 @@ import { type HttpToolDef, HttpToolAdapter, checkDef, MemoryDayCounter } from '.
 import { AdapterRegistry } from '../adapters/registry.js';
 import { ExecutorAgentAdapter, type SecretExists, type TaskPort } from '../adapters/executor-agent.js';
 import type { ToolResult, ToolRisk, ToolSpec } from '../adapters/types.js';
+import { WebFetchAdapter } from './webfetch.js';
 import { type ConfirmCtx, type ConfirmKind, ConfirmService } from '../confirm/confirm.js';
 import { badRequest, notFound } from '../http/errors.js';
 import { type SettingsStore, scopedSettings } from '../settings/store.js';
@@ -27,6 +28,7 @@ export const confirmKindOf = (risk: ToolRisk): ConfirmKind | null => (risk === '
 
 export class GatewayService {
   readonly #counter = new MemoryDayCounter();
+  readonly #web: WebFetchAdapter;
 
   constructor(
     private readonly settings: SettingsStore,
@@ -37,14 +39,16 @@ export class GatewayService {
     private readonly resolveSecret: (userId: string, secretId: string) => Promise<string | null>,
     private readonly fetchImpl?: typeof fetch,
     private readonly resolveHost?: (h: string) => Promise<string[]>,
-  ) {}
+  ) {
+    this.#web = new WebFetchAdapter({ now, ...(fetchImpl ? { fetch: fetchImpl } : {}), ...(resolveHost ? { resolveHost } : {}) });
+  }
 
   async #defs(userId: string): Promise<HttpToolDef[]> {
     return (await scopedSettings(this.settings, userId).get<HttpToolDef[]>(SETTINGS_KEY)) ?? [];
   }
 
   async #registry(userId: string): Promise<AdapterRegistry> {
-    const reg = new AdapterRegistry().add(new ExecutorAgentAdapter(this.tasks, this.secretExists));
+    const reg = new AdapterRegistry().add(this.#web).add(new ExecutorAgentAdapter(this.tasks, this.secretExists));
     for (const d of await this.#defs(userId)) {
       if (!d.enabled) continue;
       try {
