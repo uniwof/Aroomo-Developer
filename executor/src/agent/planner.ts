@@ -53,11 +53,32 @@ export function findRef(snapshot: string, kinds: string[], keywords: string[]): 
   return null;
 }
 
+/** 快照行里的角色（ego：`@3 link "x"`；Playwright MCP：`- link "x" [ref=e3]`），认不出返回空串 */
+function lineRole(line: string): string {
+  const m = line.match(/@\d{1,6}\s+([a-z]+)\s+"/i) ?? line.match(/-\s+([a-z]+)\s+"/i);
+  return (m?.[1] ?? '').toLowerCase();
+}
+
+/** 导航类行（链接、菜单、标签）里的字样不算障碍，例如菜单里的「支付设置」 */
+const NAV_ROLES = new Set(['link', 'menuitem', 'tab', 'listitem', 'navigation', 'treeitem']);
+
+const CAPTCHA_RE =
+  /captcha|滑块|拖动.{0,6}验证|人机验证|安全验证|verify you are human|are you a robot|just a moment|checking your browser|performing security verification|cf-turnstile|turnstile|正在验证您|确认您是真人|请稍候.{0,8}验证/;
+const TWOFA_RE =
+  /one-time|verification code|security code|authentication code|passcode|\botp\b|验证码|动态口令|短信验证|two-factor|两步验证|二次验证|2fa|authenticator/;
+const PAYMENT_RE = /payment|信用卡|card number|cvv|cvc|付款|立即支付|确认支付|pay now|place order|checkout.*pay/;
+
 export function detectBlockerInSnapshot(snapshot: string): PlanStep | null {
-  const s = snapshot.toLowerCase();
-  if (/captcha|滑块|人机验证|verify you are human|recaptcha|hcaptcha/.test(s)) return { op: 'blocked', blocker: 'captcha', note: '页面需要验证码' };
-  if (/one-time|verification code|验证码|two-factor|两步验证|2fa|authenticator/.test(s)) return { op: 'blocked', blocker: '2fa', note: '页面需要两步验证' };
-  if (/payment|信用卡|card number|付款|checkout.*pay/.test(s)) return { op: 'blocked', blocker: 'payment', note: '页面进入付款环节' };
+  const captcha = snapshot.toLowerCase();
+  if (CAPTCHA_RE.test(captcha)) return { op: 'blocked', blocker: 'captcha', note: '页面需要验证码' };
+  // 两步验证、付款只看非导航行，避免菜单里的字样误报
+  const body = snapshot
+    .split(/\r?\n/)
+    .filter((l) => !NAV_ROLES.has(lineRole(l)))
+    .join('\n')
+    .toLowerCase();
+  if (TWOFA_RE.test(body)) return { op: 'blocked', blocker: '2fa', note: '页面需要两步验证' };
+  if (PAYMENT_RE.test(body)) return { op: 'blocked', blocker: 'payment', note: '页面进入付款环节' };
   return null;
 }
 
