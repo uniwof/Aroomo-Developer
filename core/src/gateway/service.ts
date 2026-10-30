@@ -72,6 +72,13 @@ export class GatewayService {
     return (await this.#registry(userId)).tools().map(({ name, description, inputSchema, risk }: ToolSpec) => ({ name, description, inputSchema, risk }));
   }
 
+  /** 这次调用的风险级别；没有这个工具返回 null。给 MCP 入口先判断用（spend / danger 不在外部入口执行）。 */
+  async riskFor(userId: string, tool: string, args: Record<string, unknown>): Promise<ToolRisk | null> {
+    const reg = await this.#registry(userId);
+    if (!reg.find(tool)) return null;
+    return reg.riskOf(tool, args) ?? 'danger';
+  }
+
   async call(userId: string, tool: string, args: Record<string, unknown>, cctx: ConfirmCtx, audit: AuditFn): Promise<ToolResult> {
     const reg = await this.#registry(userId);
     const adapter = reg.find(tool);

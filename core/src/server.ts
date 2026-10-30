@@ -223,26 +223,24 @@ export function buildServer(
   );
   registerVaultRoutes(app, vaultSvc);
   registerClientRoutes(app, clients);
-  const executorSvc = new ExecutorService(deps.executor, deps.now, (u, id) =>
+  const executorService = new ExecutorService(deps.executor, deps.now, (u, id) =>
     vaultSvc.resolveForGateway(u, id),
   );
-  registerExecutorRoutes(app, executorSvc);
-  registerGatewayRoutes(
-    app,
-    new GatewayService(
-      deps.settings,
-      confirm,
-      deps.now,
-      executorSvc,
-      (u, id) => vaultSvc.exists(u, id),
-      (u, id) => vaultSvc.resolveForGateway(u, id),
-    ),
+  const gatewayService = new GatewayService(
+    deps.settings,
+    confirm,
+    deps.now,
+    executorService,
+    (u, id) => vaultSvc.exists(u, id),
+    (u, id) => vaultSvc.resolveForGateway(u, id),
   );
+  registerGatewayRoutes(app, gatewayService);
+  registerExecutorRoutes(app, executorService);
   const pubMemService = new PubMemService(deps.pubmem, deps.now);
   registerPubMemRoutes(app, pubMemService);
   const libraryService = new LibraryService(deps.library, deps.now);
   registerLibraryRoutes(app, libraryService);
-  registerMcpRoutes(app, libraryService, pubMemService);
+  registerMcpRoutes(app, libraryService, pubMemService, executorService, deps.now, gatewayService);
   registerAuditRoutes(app, deps.auditLog);
   registerMcpConfigRoutes(app);
   registerCapabilityRoutes(app, new CapabilityService());

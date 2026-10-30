@@ -11,6 +11,10 @@ import type { AuditFn } from '../audit/types.js';
 import { scopeOf } from '../auth/plugin.js';
 import type { Principal } from '../auth/tokens.js';
 import { HttpError } from '../http/errors.js';
+import { type ExecutorService, taskJson } from '../executor/service.js';
+import { TASK_KINDS } from '../executor/types.js';
+import type { GatewayService } from '../gateway/service.js';
+import { confirmKindOf } from '../gateway/service.js';
 import type { LibraryService } from '../library/service.js';
 import { LIBRARY_KINDS, type LibraryItem, type LibraryKind } from '../library/types.js';
 import type { PubMemService } from '../pubmem/service.js';
@@ -42,8 +46,87 @@ interface RpcReq {
 const str = (v: unknown, max = 2000): string | undefined => (typeof v === 'string' && v.length <= max ? v : undefined);
 const line = (i: LibraryItem) => `- [${i.kind}] ${i.title}${i.url ? ` ${i.url}` : ''}${i.tags.length ? ` #${i.tags.join(' #')}` : ''}（id: ${i.id}）${i.body ? `\n  ${i.body.replace(/\s+/g, ' ').slice(0, 160)}` : ''}`;
 
-export function buildTools(lib: LibraryService, mem: PubMemService): Tool[] {
+/** 北京时间的日期（定时签到「同 kind+site+当天」去重用） */
+const cstDay = (d: Date) => new Date(d.getTime() + 8 * 3600_000).toISOString().slice(0, 10);
+
+function taskLine(t: ReturnType<typeof taskJson>): string {
+  const tail = t.resultSummary ? `：${t.resultSummary}` : t.resultError ? `（失败：${t.resultError}）` : t.lastMessage ? `（${t.lastMessage}）` : '';
+  return `- ${t.kind} ${t.site} 状态 ${t.status}${tail}（id: ${t.id}）`;
+}
+
+function taskTools(ex: ExecutorService, now: () => Date): Tool[] {
   return [
+    {
+      name: 'create_task',
+      description: '派一个任务给用户电脑上的本机执行员（签到 checkin、登录 login、注册 signup、浏览 browse）。同一网站同一类型当天已派过就不重复派。secrets 只写保险箱条目 id 和字段名，不写值。',
+      scope: 'tasks:create',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: [...TASK_KINDS] },
+          site: { type: 'string', description: 'https:// 网址，或 android-app://包名' },
+          instruction: { type: 'string' },
+          secrets: { type: 'array', maxItems: 10, items: { type: 'object', properties: { secretId: { type: 'string' }, field: { type: 'string' } }, required: ['secretId', 'field'] } },
+          options: { type: 'object' },
+        },
+        required: ['kind', 'site'],
+      },
+      async run(ctx, a) {
+        const kind = str(a.kind, 16) ?? '';
+        const site = str(a.site, 2048) ?? '';
+        const today = cstDay(now());
+        const dup = (await ex.list(ctx.userId)).find((t) => t.kind === kind && t.site === site && t.status !== 'cancelled' && t.status !== 'failed' && cstDay(t.createdAt) === today);
+        if (dup) return `今天已经派过这个任务，不重复派。
+${taskLine(taskJson(dup))}`;
+        const secrets = Array.isArray(a.secrets)
+          ? a.secrets.flatMap((s) => {
+              const o = s as Json;
+              const secretId = str(o?.secretId, 64);
+              const field = str(o?.field, 64);
+              return secretId && field ? [{ secretId, field }] : [];
+            })
+          : [];
+        const options = a.options && typeof a.options === 'object' && !Array.isArray(a.options) ? (a.options as Record<string, unknown>) : undefined;
+        const t = await ex.create(ctx.userId, { kind, site, ...(str(a.instruction, 4000) ? { instruction: str(a.instruction, 4000)! } : {}), secrets, ...(options ? { options } : {}) }, ctx.audit);
+        return `已派给本机执行员。
+${taskLine(taskJson(t))}`;
+      },
+    },
+    {
+      name: 'get_task',
+      description: '按 id 查一个任务的进度和结果。',
+      scope: 'tasks:read',
+      inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+      async run(ctx, a) {
+        return taskLine(taskJson(await ex.get(ctx.userId, str(a.id, 64) ?? '')));
+      },
+    },
+    {
+      name: 'list_tasks',
+      description: '列出最近的任务，可按状态筛选（queued/running/succeeded/failed/cancelled）。',
+      scope: 'tasks:read',
+      inputSchema: { type: 'object', properties: { status: { type: 'string', enum: ['queued', 'running', 'succeeded', 'failed', 'cancelled'] } } },
+      async run(ctx, a) {
+        const status = str(a.status, 16);
+        const rows = (await ex.list(ctx.userId)).filter((t) => !status || t.status === status).slice(0, 20);
+        return rows.length ? rows.map((t) => taskLine(taskJson(t))).join('\n') : '没有符合的任务。';
+      },
+    },
+    {
+      name: 'cancel_task',
+      description: '取消一个排队中或进行中的任务。',
+      scope: 'tasks:create',
+      inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+      async run(ctx, a) {
+        return taskLine(taskJson(await ex.cancel(ctx.userId, str(a.id, 64) ?? '', ctx.audit)));
+      },
+    },
+  ];
+}
+
+export function buildTools(lib: LibraryService, mem: PubMemService, ex?: ExecutorService, now: () => Date = () => new Date()): Tool[] {
+  return [
+    ...(ex ? taskTools(ex, now) : []),
     {
       name: 'search_library',
       description: '在资源库里按关键词搜索文章、技能、方法、素材、工具线索、链接和点子。多个词要同时命中。',
@@ -123,11 +206,12 @@ export function buildTools(lib: LibraryService, mem: PubMemService): Tool[] {
 
 const hasScope = (p: Principal, scope: string): boolean => (p.type === 'client' ? (p.scopes as ReadonlySet<string>).has(scope) : p.type === 'owner' || p.type === 'user');
 
+const actorOf = (p: Principal): string => (p.type === 'client' ? `client:${p.clientId}` : p.type === 'user' ? `user:${p.userId}` : 'owner');
 const ok = (id: RpcReq['id'], result: unknown) => ({ jsonrpc: '2.0', id: id ?? null, result });
 const fail = (id: RpcReq['id'], code: number, message: string) => ({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
 
-export function registerMcpRoutes(app: FastifyInstance, lib: LibraryService, mem: PubMemService): void {
-  const tools = buildTools(lib, mem);
+export function registerMcpRoutes(app: FastifyInstance, lib: LibraryService, mem: PubMemService, ex?: ExecutorService, now: () => Date = () => new Date(), gw?: GatewayService): void {
+  const tools = buildTools(lib, mem, ex, now);
   const byName = new Map(tools.map((t) => [t.name, t]));
 
   async function handle(req: RpcReq, p: Principal, userId: string, audit: AuditFn): Promise<unknown | null> {
@@ -146,10 +230,34 @@ export function registerMcpRoutes(app: FastifyInstance, lib: LibraryService, mem
       case 'ping':
         return ok(id, {});
       case 'tools/list':
-        return ok(id, { tools: tools.filter((t) => hasScope(p, t.scope)).map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
+      {
+        const own = tools.filter((t) => hasScope(p, t.scope)).map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
+        // 工具网关里 read / write 级的工具（花钱 / 不可逆的不在外部入口露出）
+        const ext = gw && hasScope(p, 'tools:call') ? (await gw.list(userId)).filter((t) => !confirmKindOf(t.risk) && !byName.has(t.name)).map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) : [];
+        return ok(id, { tools: [...own, ...ext] });
+      }
       case 'tools/call': {
         const name = str(req.params?.name, 100) ?? '';
         const tool = byName.get(name);
+        if (!tool && gw && hasScope(p, 'tools:call')) {
+          const gargs = req.params?.arguments && typeof req.params.arguments === 'object' ? (req.params.arguments as Json) : {};
+          const risk = await gw.riskFor(userId, name, gargs);
+          if (risk !== null) {
+            if (confirmKindOf(risk)) {
+              await audit('mcp.call', { type: 'mcp-tool', id: name.slice(0, 64) }, 'denied', `risk=${risk} 不在外部入口执行`);
+              return ok(id, { content: [{ type: 'text', text: `「${name}」会花钱或做不可逆的操作，不能从外部入口调用。请打开 Aroomo 控制台，在那里确认后再执行。` }], isError: true });
+            }
+            try {
+              const r = await gw.call(userId, name, gargs, { actor: actorOf(p), canConfirmImportant: false }, audit);
+              await audit('mcp.call', { type: 'mcp-tool', id: name.slice(0, 64) }, r.isError ? 'failed' : 'ok');
+              return ok(id, { content: r.content.map((c) => ({ ...c, text: redactSecrets(c.text) })), ...(r.isError ? { isError: true } : {}) });
+            } catch (e) {
+              const msg = e instanceof HttpError ? e.message : '工具执行失败';
+              await audit('mcp.call', { type: 'mcp-tool', id: name.slice(0, 64) }, 'failed', msg.slice(0, 120));
+              return ok(id, { content: [{ type: 'text', text: redactSecrets(msg) }], isError: true });
+            }
+          }
+        }
         // 没有范围 = 不存在（不泄露存在性），同样写审计
         if (!tool || !hasScope(p, tool.scope)) {
           await audit('mcp.call', { type: 'mcp-tool', id: name.slice(0, 64) }, 'denied', '工具不存在或没有范围');
