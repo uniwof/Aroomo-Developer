@@ -42,6 +42,7 @@ import { PubMemService } from "./pubmem/service.js";
 import { registerPubMemRoutes } from "./pubmem/routes.js";
 import { LibraryService } from "./library/service.js";
 import { registerLibraryRoutes } from "./library/routes.js";
+import { registerMcpRoutes } from "./mcp/server.js";
 import { ClientTokenService } from "./clients/service.js";
 import { registerClientRoutes } from "./clients/routes.js";
 import { ExecutorService } from "./executor/service.js";
@@ -226,8 +227,11 @@ export function buildServer(
       vaultSvc.resolveForGateway(u, id),
     ),
   );
-  registerPubMemRoutes(app, new PubMemService(deps.pubmem, deps.now));
-  registerLibraryRoutes(app, new LibraryService(deps.library, deps.now));
+  const pubMemService = new PubMemService(deps.pubmem, deps.now);
+  registerPubMemRoutes(app, pubMemService);
+  const libraryService = new LibraryService(deps.library, deps.now);
+  registerLibraryRoutes(app, libraryService);
+  registerMcpRoutes(app, libraryService, pubMemService);
   registerAuditRoutes(app, deps.auditLog);
   registerMcpConfigRoutes(app);
   registerCapabilityRoutes(app, new CapabilityService());
