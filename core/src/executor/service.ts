@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { AuditFn } from "../audit/types.js";
 import { badRequest, HttpError, notFound } from "../http/errors.js";
+import type { SettingsStore } from "../settings/store.js";
+import { MAX_ALLOWLIST, normalizeList, siteAllowed } from "./allowlist.js";
 import {
   TASK_KINDS,
   type ExecutorRecord,
@@ -52,7 +54,24 @@ export class ExecutorService {
       userId: string,
       secretId: string,
     ) => Promise<string | null> = async () => null,
+    /** 某用户的设置视图（服务器端站点白名单存在这里） */
+    private readonly settingsFor: (userId: string) => SettingsStore | null = () => null,
   ) {}
+
+  async getAllowlist(userId: string): Promise<string[]> {
+    const v = await this.settingsFor(userId)?.get<{ sites?: string[] }>("executor_allowlist");
+    return Array.isArray(v?.sites) ? v.sites : [];
+  }
+  async setAllowlist(userId: string, sites: unknown[], audit: AuditFn): Promise<string[]> {
+    if (sites.length > MAX_ALLOWLIST) throw badRequest("白名单最多 100 条", "TOO_MANY");
+    const { list, bad } = normalizeList(sites);
+    if (bad.length) throw badRequest(`这些条目不对：${bad.join("、")}`, "BAD_ENTRY");
+    const st = this.settingsFor(userId);
+    if (!st) throw new HttpError(500, "NO_SETTINGS", "设置不可用");
+    await st.set("executor_allowlist", { sites: list }, this.now());
+    await audit("executor.allowlist", { type: "executor", id: "allowlist" }, "ok", `${list.length} 条`);
+    return list;
+  }
 
   async hello(
     userId: string,
@@ -62,6 +81,7 @@ export class ExecutorService {
       platform: string;
       version: string;
       adapters?: string[];
+      allowlistHash?: string;
     },
     audit: AuditFn,
   ) {
@@ -74,6 +94,7 @@ export class ExecutorService {
       platform: clip(input.platform, 32),
       version: clip(input.version, 32),
       adapters: (input.adapters ?? []).slice(0, 10).map((a) => clip(a, 32)),
+      allowlistHash: input.allowlistHash ? clip(input.allowlistHash, 128) : null,
       createdAt: at,
       lastSeenAt: at,
     });
@@ -353,6 +374,8 @@ export class ExecutorService {
         "网址不对：需要 https:// 开头的网址，或 android-app://包名",
         "BAD_SITE",
       );
+    if (!siteAllowed(input.site, await this.getAllowlist(userId)))
+      throw new HttpError(403, "SITE_NOT_ALLOWED", "这个网站不在你设置的白名单里");
     const queued = (await this.store.listTasks(userId, 500)).filter(
       (t) => t.status === "queued",
     ).length;
@@ -405,6 +428,7 @@ export class ExecutorService {
       platform: e.platform,
       version: e.version,
       adapters: e.adapters,
+      allowlistHash: e.allowlistHash,
       lastSeenAt: e.lastSeenAt.toISOString(),
       online: nowMs - e.lastSeenAt.getTime() < 90_000,
     }));

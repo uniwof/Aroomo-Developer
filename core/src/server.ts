@@ -224,7 +224,8 @@ export function buildServer(
   registerExecutorRoutes(
     app,
     new ExecutorService(deps.executor, deps.now, (u, id) =>
-      vaultSvc.resolveForGateway(u, id),
+        vaultSvc.resolveForGateway(u, id),
+      (u) => scopedSettings(deps.settings, u),
     ),
   );
   registerPubMemRoutes(app, new PubMemService(deps.pubmem, deps.now));

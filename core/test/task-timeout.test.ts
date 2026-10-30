@@ -37,7 +37,8 @@ describe.each(stores)('任务队列清扫（$name）', (s) => {
     const clock = fakeClock();
     const store = await s.make();
     const t0 = clock.now();
-    const ex = await store.upsertExecutor({ id: '11111111-1111-4111-8111-111111111111', userId: 'owner', clientId: 'c1', deviceName: 'pc', platform: 'win32', version: '1', adapters: [], createdAt: t0, lastSeenAt: t0 });
+    const ex = await store.upsertExecutor({ id: '11111111-1111-4111-8111-111111111111', userId: 'owner', clientId: 'c1', deviceName: 'pc', platform: 'win32', version: '1', adapters: [],
+        allowlistHash: null, createdAt: t0, lastSeenAt: t0 });
     const ids = {
       lapsed: '00000000-0000-4000-8000-000000000001',
       lapsedCancel: '00000000-0000-4000-8000-000000000002',
