@@ -2,6 +2,8 @@ import { VaultService } from "./vault/service.js";
 import { registerVaultRoutes } from "./vault/routes.js";
 import Fastify, { type FastifyInstance } from "fastify";
 import { registerMcpConfigRoutes } from "./mcpconfig/routes.js";
+import { CapabilityService } from "./capabilities/service.js";
+import { registerCapabilityRoutes } from "./capabilities/routes.js";
 import { registerAuditRoutes } from "./audit/routes.js";
 import { installAuth } from "./auth/plugin.js";
 import { createTokenVerifier } from "./auth/tokens.js";
@@ -225,6 +227,7 @@ export function buildServer(
   registerPubMemRoutes(app, new PubMemService(deps.pubmem, deps.now));
   registerAuditRoutes(app, deps.auditLog);
   registerMcpConfigRoutes(app);
+  registerCapabilityRoutes(app, new CapabilityService());
   const litellm =
     deps.litellm ??
     new LiteLLMAdmin({
