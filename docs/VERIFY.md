@@ -32,3 +32,5 @@ LobeHub 2.2.20 官方 FEATURE_FLAGS 里与语音相关的只有 `speech_to_text`
 - V1 静态看齐全；V1 界面实测与 V2、V3 完成后在 DECISIONS 记最终结论（LobeHub 或 Open WebUI）。
 
 - V1–V3 自动脚本：scripts/verify-d189.mjs（只读 GET）。无 LOBE_URL/LOBE_TOKEN 时 V1–V3 记「待测」并以退出码 2 结束，绝不当作通过；V3 为对话行为，需 CI 假模型界面测试。结论待全部实测后写入 DECISIONS。
+
+- V8 同步脚本：scripts/lobe-sync.mjs（官方 CLI lh，环境变量 LOBEHUB_SERVER + LOBEHUB_CLI_API_KEY，不打印）。lh 能 agent create / agent-group create / add-agents；设置群组负责人（supervisor）没有 CLI 参数，需在 LobeHub 群组设置里选一次。Core /v1 目前只露出 aroomo 一个模型，@ 点名与负责人兜底由 Core 路由，所以 V3 现状是「一个 aroomo 智能体内 @ 成员→成员答，不 @→负责人答」；成员别名（aroomo/<名字>）等后台线露出后脚本自动改用。待 V2 令牌实测。
