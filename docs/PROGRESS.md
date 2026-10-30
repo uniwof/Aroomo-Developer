@@ -151,7 +151,7 @@ P2–P7 的功能开发在阶段 C 之后照常在网页版上推进，离线版
 | GET /api/library（资源库列表、搜索） | 资源库 | | 待后台线 |
 | GET /api/inbox?type=confirm\|takeover\|brief | 收件箱 | 接管卡、简报分类 | 待后台线 |
 | GET /api/executors、任务队列只读列表 | 本机执行员 | | 待后台线 |
-| GET /api/usage（额度圆环：已用 / 上限） | 顶栏（D7） | | 待后台线 |
+| GET /api/usage（额度圆环：每位在职成员 today{requests,errors,limited}、last7DaysRequests、quota{used,limit,unit:"次/天"}、quotaKnown、ratio、state=unknown/ok/warn/full/limited；total）；PUT /api/usage/limits/:memberId {dailyLimit:整数\|null}（所有者自己填每天次数上限，没填=未知） | 顶栏/成员头像圆环（D7） | Core 自己数经 /v1 的调用（北京时间按天，只记次数）；账号用户 tracked=false | ✅ PR p1/usage |
 | GET /api/mcp/config（按当前用户生成 MCP 连接配置，不含明文令牌，令牌另走一次性显示） | 设置 | D195 MCP 配置复制 | 已做（PR 待合并）|
 | GET /api/members 返回 online（布尔） | 成员头像彩色 / 黑白（D7） | | 待后台线 |
 | GET/PUT /api/settings/security、GET /api/audit 对 owner/admin 账号开放（现在只认所有者令牌，账号登录会 403） | 设置 → 安全 | 控制台用账号登录 | 待后台线 |
