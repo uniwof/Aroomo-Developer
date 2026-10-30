@@ -149,7 +149,7 @@ P2–P7 的功能开发在阶段 C 之后照常在网页版上推进，离线版
 | /api/library 资源库最小版：POST（只给 url 也行；同链接去重；像密码/Key 的内容拒收）、GET ?q=&kind=&limit=（关键词检索，多词都要命中，标题>标签>链接>正文）、GET/:id、DELETE/:id（仅本人）。客户端范围 library:read / library:write（MCP submit_resource 用 write）。检索先 ILIKE，接口后可换 PGroonga | 资源库页（丢链接+搜索） | M2 | ✅ PR p1/library |
 | GET /api/tools、工具开关与额度 | 工具 | 工具网关 | 待后台线 |
 | GET /api/library（资源库列表、搜索） | 资源库 | | 待后台线 |
-| GET /api/inbox?type=confirm\|takeover\|brief | 收件箱 | 接管卡、简报分类 | 待后台线 |
+| GET /api/inbox?type=confirm\|takeover\|brief（可与 group/status 组合；confirm = 含重要确认动作的卡） | 收件箱 | 接管卡、简报分类 | ✅ PR p1/inbox-type |
 | GET /api/executors、任务队列只读列表 | 本机执行员 | | 待后台线 |
 | GET /api/usage（额度圆环：已用 / 上限） | 顶栏（D7） | | 待后台线 |
 | GET /api/mcp/config（按当前用户生成 MCP 连接配置，不含明文令牌，令牌另走一次性显示） | 设置 | D195 MCP 配置复制 | 已做（PR 待合并）|
