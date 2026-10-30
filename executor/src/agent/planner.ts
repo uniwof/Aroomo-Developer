@@ -26,6 +26,8 @@ export interface PlanInput {
   availableFields: string[];
   /** 已经做过的步骤数，防止死循环 */
   round: number;
+  /** 前几轮已做过的动作（只有字段名与动作，不含值），多轮规划时给模型参考 */
+  history?: string[];
 }
 
 export interface Planner {
