@@ -61,4 +61,24 @@ describe('设置页', () => {
     expect(await screen.findByText('这个账号还不能改这一项（等后台开放账号权限）')).toBeInTheDocument();
     expect(screen.queryByRole('switch')).toBeNull();
   });
+
+  it('MCP 配置：显示并一键复制，内容只有占位符不含令牌', async () => {
+    session.set('placeholder-session');
+    const writeText = vi.fn(async () => undefined);
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    const config = { mcpServers: { aroomo: { url: 'https://x/mcp', headers: { Authorization: 'Bearer <YOUR_ARC_TOKEN>' } } } };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url === '/api/mcp/config') return json(200, { url: 'https://x/mcp', config });
+        return json(403, { error: { code: 'FORBIDDEN', message: 'x' } });
+      }),
+    );
+    render(<Settings />);
+    const btn = await screen.findByRole('button', { name: '复制配置' });
+    await waitFor(() => expect(btn).not.toBeDisabled());
+    fireEvent.click(btn);
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(JSON.stringify(config, null, 2)));
+    expect(await screen.findByText(/已复制/)).toBeInTheDocument();
+  });
 });
