@@ -31,6 +31,8 @@ export interface CreateInboxInput {
   summary?: string;
   related?: InboxRef;
   actions?: InboxAction[];
+  /** 内部用：归属账号。HTTP 路由不开放此字段 */
+  userId?: string;
 }
 
 export interface BatchDismissResult {
@@ -115,6 +117,7 @@ export class InboxService {
       actions,
       status: 'open',
       createdAt: this.now(),
+      ...(input.userId ? { userId: input.userId } : {}),
     };
     const out = await this.store.insertDedup(item);
     await audit(out.created ? 'inbox.create' : 'inbox.create_deduped', { type: 'inbox', id: out.item.id }, 'ok', kind);
@@ -125,8 +128,8 @@ export class InboxService {
     return this.store.list(filter);
   }
 
-  async unreadCount(): Promise<{ total: number; byGroup: Record<InboxGroup, number> }> {
-    const byGroup = await this.store.openCounts();
+  async unreadCount(userId?: string): Promise<{ total: number; byGroup: Record<InboxGroup, number> }> {
+    const byGroup = await this.store.openCounts(userId);
     return { total: Object.values(byGroup).reduce((a, b) => a + b, 0), byGroup };
   }
 

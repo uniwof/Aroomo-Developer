@@ -50,9 +50,13 @@ export interface InboxItem {
   createdAt: Date;
   resolvedAt?: Date;
   resolvedAction?: string;
+  /** 归属账号；缺省 = 所有者（D117） */
+  userId?: string;
 }
 
 export interface InboxListFilter {
+  /** 只看某账号的条目；缺省 = 只看所有者（无 userId）的条目 */
+  userId?: string;
   group?: InboxGroup;
   status?: InboxStatus;
 }
@@ -63,7 +67,7 @@ export interface InboxStore {
   get(id: string): Promise<InboxItem | null>;
   list(filter: InboxListFilter): Promise<InboxItem[]>;
   /** 各组 open 条目数 */
-  openCounts(): Promise<Record<InboxGroup, number>>;
+  openCounts(userId?: string): Promise<Record<InboxGroup, number>>;
   /**
    * 比较并交换：只有当前 status 为 open 时才改成 next.status，返回更新后的条目；
    * 已不是 open 返回 null。并发重复请求只有一个能成功。
