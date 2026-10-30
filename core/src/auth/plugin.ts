@@ -9,6 +9,7 @@ import { HttpError } from '../http/errors.js';
 import type { Capability } from './capabilities.js';
 import type { ConfirmCtx } from '../confirm/confirm.js';
 import { actorKey, type Principal, principalCan } from './tokens.js';
+import { CSRF_HEADER, readSessionCookie, UNSAFE_METHODS } from './session-cookie.js';
 
 declare module 'fastify' {
   interface FastifyContextConfig {
@@ -54,10 +55,17 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
     }
     const h = req.headers.authorization;
     const m = typeof h === 'string' ? /^Bearer\s+(\S+)$/i.exec(h) : null;
-    const principal = m ? await opts.verify(m[1] as string) : null;
-    if (!principal) throw new HttpError(401, 'UNAUTHORIZED', '请先登录');
+    // 没有 Bearer 头时，认控制台会话 Cookie（只对账号会话有效）
+    const cookieToken = m ? null : readSessionCookie(req.headers.cookie);
+    const raw = m ? (m[1] as string) : cookieToken;
+    const principal = raw ? await opts.verify(raw) : null;
+    if (!principal || (cookieToken && principal.type !== 'user')) throw new HttpError(401, 'UNAUTHORIZED', '请先登录');
     req.principal = principal;
     req.audit = bindAudit(opts.auditLog, actorOf(principal));
+    if (cookieToken && UNSAFE_METHODS.has(req.method) && !req.headers[CSRF_HEADER]) {
+      await req.audit('auth.denied', { type: 'csrf', id: req.routeOptions.url ?? req.url.split('?')[0] ?? '' }, 'denied', `${req.method} Cookie 会话缺少 ${CSRF_HEADER} 头`);
+      throw new HttpError(403, 'CSRF', `用 Cookie 登录时，改动类请求要带 ${CSRF_HEADER} 头`);
+    }
     // D62：操作员只按白名单放行。没有声明能力的接口、不存在的接口、白名单外的能力，一律拒绝并审计。
     if (principal.type === 'client') {
       const cfg = req.routeOptions.config;
