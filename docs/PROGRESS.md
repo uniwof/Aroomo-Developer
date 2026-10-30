@@ -91,14 +91,14 @@ P0 范围与验收见 PRODUCT 16.1。分支规则：CI 通过后主程序员可�
 |---|---|---|
 | 客户端令牌新 scope：`tasks:pull`、`tasks:secret` | D162；令牌归属 user_id，只能领 / 取本用户的任务与凭据（越权测试） | 待后台线 |
 | 执行员令牌同时可授 `models:chat`（已有 scope） | 执行员的模型规划器经 Core /v1/chat/completions 规划网页操作（默认模型 aroomo/auto）；只发脱敏后的快照与字段名，不发凭据值 | 已有 scope，需在控制台「本机执行员」生成令牌时默认勾上 |
-| 任务队列表 + MCP `create_task` / `get_task`（给 LobeHub 负责人用） | 任务类型 checkin / login / signup / browse；字段见合同 3.1；定时触发用 pg-boss（D173） | 待后台线 |
+| 任务队列表 + MCP `create_task` / `get_task`（给 LobeHub 负责人用） | 任务类型 checkin / login / signup / browse；字段见合同 3.1；定时触发用 pg-boss（D173） | ✅ 任务队列与 /api/tasks 已有；MCP 工具 create_task/get_task/list_tasks/cancel_task 在 PR p1/mcp-tasks（客户端范围 tasks:create / tasks:read；当天同 kind+site 去重） |
 | `POST /api/executor/hello` | 上线登记，返回 executorId、pollWaitSec、leaseSec；控制台据此显示「电脑在线 / 离线」 | 待后台线 |
 | `POST /api/executor/tasks/claim`（长轮询 ≤30 秒） | 一个任务只能领一次；租约 600 秒，过期退回队列（D162） | 待后台线 |
 | `POST /api/executor/tasks/:id/progress` | 进度 + 心跳续租；响应带 `cancel` | 待后台线 |
 | `POST /api/executor/tasks/:id/takeover`、`GET …/takeover/:tid`（长轮询） | 推接管卡到收件箱（captcha / 2fa / payment / login_failed / not_allowed），计入打扰预算 D100；等待期间租约冻结 | 待后台线 |
 | `POST /api/executor/tasks/:id/secret` | 按任务声明的 secretId + field 从保险箱取值；未声明返回 422 SECRET_NOT_DECLARED；每次审计 | 待后台线 |
 | `POST /api/executor/tasks/:id/result` | 结束任务，幂等；租约已收回返回 409 LEASE_LOST | 待后台线 |
-| Core `/mcp` 工具 `create_task` / `get_task` / `list_tasks` / `cancel_task`（包一层 `/api/tasks`，同令牌隔离；同 kind+site+当天去重） | 工具定义与 LobeHub 定时任务写法见 [executor-schedule.md](executor-schedule.md)；`POST /api/tasks` 已在 dev，MCP 层待后台线（V4 依赖） | 待后台线 |
+| Core `/mcp` 工具 `create_task` / `get_task` / `list_tasks` / `cancel_task`（包一层 `/api/tasks`，同令牌隔离；同 kind+site+当天去重） | 工具定义与 LobeHub 定时任务写法见 [executor-schedule.md](executor-schedule.md)；`POST /api/tasks` 已在 dev，MCP 层待后台线（V4 依赖） | ✅ 任务队列与 /api/tasks 已有；MCP 工具 create_task/get_task/list_tasks/cancel_task 在 PR p1/mcp-tasks（客户端范围 tasks:create / tasks:read；当天同 kind+site 去重） |
 | 服务器端站点白名单（派任务前校验） | 与执行员本机白名单双重校验；hello 上报本机名单指纹 `allowlistHash` 供控制台比对 | 待后台线 |
 
 ## 分期总览（2026-10-28 起按 DECISIONS D114 / 第 7.6 节第三部分）
@@ -146,6 +146,7 @@ P2–P7 的功能开发在阶段 C 之后照常在网页版上推进，离线版
 | GET /api/capabilities?kind=&access=（能力清单第一版：items 文本/生图/视频 + counts + summary「文本 N · 生图 N · 视频 N」；每项 access=free/trial/paid、status=ready/unverified/failed/missing/keyless、quota{used,limit,unit}、quotaKnown=false 显示「未知」；tools 为算力/沙盒/云手机等；library 技能 148/资源 45 分组计数） | 能力地图与成员 | D157–D172 第 2 步 / M1 | ✅ PR p1/capabilities-api（种子来自资源清单，不含 Key；实时额度待后续） |
 | /v1 模型别名（LobeHub 群组同步用）：`aroomo/auto` = 负责人入口（@成员 则该成员答，不 @ 负责人答，与 `aroomo` 同义）；`aroomo/<成员id>` = 直接由该成员答（不解析 @、不署名；名字空格换 - 也认）；`GET /v1/models` 列出这些别名 | LobeHub 群组：负责人智能体用 aroomo/auto，每个成员智能体用 aroomo/<成员id> | M1 第 3 项 | ✅ PR p1/lead-routing |
 | /api/library 资源库最小版：POST（只给 url 也行；同链接去重；像密码/Key 的内容拒收）、GET ?q=&kind=&limit=（关键词检索，多词都要命中，标题>标签>链接>正文）、GET/:id、DELETE/:id（仅本人）。客户端范围 library:read / library:write（MCP submit_resource 用 write）。检索先 ILIKE，接口后可换 PGroonga | 资源库页（丢链接+搜索） | M2 | ✅ PR p1/library |
+| POST /mcp（Core 对外 MCP，JSON-RPC 2.0；Authorization: Bearer 所有者/账号/arc_ 令牌）：工具 search_library、get_library_item、submit_resource、list_memory_topics、get_memory；tools/list 按客户端范围动态返回，无范围=工具不存在；输出打码；每次调用审计 mcp.call。GET /mcp = 405。LobeHub 设置→MCP 里用 /api/mcp/config 的配置 | LobeHub 接入 Core MCP | M2 | ✅ PR p1/mcp-readonly（A 类，needs-leader-review） |
 | GET /api/tools、工具开关与额度 | 工具 | 工具网关 | 待后台线 |
 | GET /api/library（资源库列表、搜索） | 资源库 | | 待后台线 |
 | GET /api/inbox?type=confirm\|takeover\|brief | 收件箱 | 接管卡、简报分类 | 待后台线 |
