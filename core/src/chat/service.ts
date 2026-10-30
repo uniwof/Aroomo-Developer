@@ -45,6 +45,8 @@ export interface ChatDeps {
   upstreamModel?: (name: string) => string;
   /** 规矩（公共记忆 topic rules）：对话转发前拼进系统提示；不传或返回 null = 不注入 */
   rules?: () => Promise<string | null>;
+  /** 每次调用上游后记一笔（额度圆环用）；账号成员（有 upstreamModel）不记到所有者名下 */
+  onCall?: (member: string, outcome: 'ok' | 'error' | 'limited') => void;
   fetchImpl?: typeof fetch;
 }
 
@@ -176,12 +178,20 @@ export class ChatService {
 
   async #upstream(body: Json, signal: AbortSignal): Promise<Response> {
     if (!this.d.litellmKey) throw new Error('litellm_not_configured');
-    return this.#fetch(`${this.d.litellmBaseUrl.replace(/\/+$/, '')}/v1/chat/completions`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${this.d.litellmKey}`, 'content-type': 'application/json' },
-      body: JSON.stringify(this.d.upstreamModel && typeof body.model === 'string' ? { ...body, model: this.d.upstreamModel(body.model) } : body),
-      signal,
-    });
+    const count = !this.d.upstreamModel && typeof body.model === 'string' ? this.d.onCall : undefined;
+    try {
+      const res = await this.#fetch(`${this.d.litellmBaseUrl.replace(/\/+$/, '')}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${this.d.litellmKey}`, 'content-type': 'application/json' },
+        body: JSON.stringify(this.d.upstreamModel && typeof body.model === 'string' ? { ...body, model: this.d.upstreamModel(body.model) } : body),
+        signal,
+      });
+      count?.(body.model as string, res.ok ? 'ok' : res.status === 429 ? 'limited' : 'error');
+      return res;
+    } catch (e) {
+      count?.(body.model as string, 'error');
+      throw e;
+    }
   }
 
   /** 按调用者的上下文（成员名前缀映射/成员列表）处理一次对话；不传 ctx = 用全局依赖 */

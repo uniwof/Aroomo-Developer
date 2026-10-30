@@ -25,6 +25,8 @@ import { MembersService } from "./members/service.js";
 import { route } from "./router/route.js";
 import { LeadService } from "./settings/lead.js";
 import { ChatService } from "./chat/service.js";
+import { UsageService } from "./usage/service.js";
+import { registerUsageRoutes } from "./usage/routes.js";
 import { registerChatRoutes } from "./chat/routes.js";
 import { Scheduler } from "./jobs/scheduler.js";
 import { inboxTidyJob } from "./inbox/tidy.js";
@@ -305,6 +307,8 @@ export function buildServer(
     return svc;
   };
   registerSettingsRoutes(app, lead, security, leadForUser);
+  const usage = new UsageService(deps.settings, deps.now);
+  registerUsageRoutes(app, usage, (u) => (u === "owner" ? deps.members : deps.members.forUser(u)));
   // 对话入口（提议 H5）：LobeHub → Core /v1（D31 点名 / 交给负责人）→ LiteLLM
   registerChatRoutes(
     app,
@@ -316,6 +320,7 @@ export function buildServer(
       security,
       // 规矩 = 所有者公共记忆的 rules 主题（B6）；没有就不注入
       rules: async () => (await deps.pubmem.get('owner', 'rules'))?.body ?? null,
+      onCall: (m, o) => usage.record(m, o),
       ...(deps.chatFetch ? { fetchImpl: deps.chatFetch } : {}),
     }),
     cfg.chatToken,
