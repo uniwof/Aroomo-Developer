@@ -148,7 +148,9 @@ export class ChatService {
     });
   }
 
-  async complete(req: Json, signal: AbortSignal): Promise<ChatResult> {
+  /** 按调用者的上下文（成员名前缀映射/成员列表）处理一次对话；不传 ctx = 用全局依赖 */
+  async complete(req: Json, signal: AbortSignal, ctx?: Pick<ChatDeps, 'upstreamModel' | 'listMembers'>): Promise<ChatResult> {
+    if (ctx) return new ChatService({ ...this.d, ...ctx, fetchImpl: this.#fetch }).complete(req, signal);
     const stream = req.stream === true;
     const messages = (Array.isArray(req.messages) ? req.messages : []) as ChatMessage[];
     const decorated = req.model === CHAT_MODEL;
