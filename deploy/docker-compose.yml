@@ -129,6 +129,9 @@ services:
     build:
       context: ../core
     image: aroomo-core:${AROOMO_CORE_TAG:-dev}
+    # 控制台静态文件（先跑 scripts/build-console.sh）；目录不存在时 /console 返回 404 提示
+    volumes:
+      - ../web/console/dist:/app/console:ro
     depends_on:
       postgres:
         condition: service_healthy
