@@ -68,7 +68,7 @@ describe.each(envs)('工具网关（$name）', (env) => {
     const r = await owner('GET', '/api/gateway/tools');
     expect(r.statusCode).toBe(200);
     const byName = Object.fromEntries(r.json().tools.map((t: { name: string; risk: string }) => [t.name, t.risk]));
-    expect(byName).toMatchObject({ browser_task_create: 'write', browser_task_status: 'read', browser_task_cancel: 'write' });
+    expect(byName).toMatchObject({ read_webpage: 'read', browser_task_create: 'write', browser_task_status: 'read', browser_task_cancel: 'write' });
   });
 
   it('普通任务（不带凭据）直接执行；带凭据的登录任务 → 428，没确认前一个任务也没建，确认后才建', async () => {
