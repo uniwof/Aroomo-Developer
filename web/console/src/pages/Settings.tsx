@@ -143,6 +143,53 @@ function SecuritySection() {
   );
 }
 
+interface McpConfig {
+  url: string;
+  config: unknown;
+}
+
+/** MCP 连接配置一键复制（D195）：只含地址和令牌占位符，令牌本身不在这里出现 */
+function McpSection() {
+  const [cfg, setCfg] = useState<McpConfig | null>(null);
+  const [msg, setMsg] = useState('');
+  useEffect(() => {
+    api<McpConfig>('GET', '/api/mcp/config')
+      .then(setCfg)
+      .catch((e) => setMsg(errText(e)));
+  }, []);
+
+  async function copy() {
+    if (!cfg) return;
+    const text = JSON.stringify(cfg.config, null, 2);
+    try {
+      await navigator.clipboard.writeText(text);
+      setMsg('已复制。把 <YOUR_ARC_TOKEN> 换成你的令牌后粘贴到外部客户端。');
+    } catch {
+      setMsg('这个浏览器不让自动复制，请长按下面的文字手动复制。');
+    }
+  }
+
+  return (
+    <>
+      <Field label="MCP 连接配置" hint="给外部客户端（Claude、Cursor 等）接入 Aroomo 用。令牌不在这里显示。">
+        <Button variant="outline" disabled={!cfg} onClick={() => void copy()}>
+          复制配置
+        </Button>
+      </Field>
+      {cfg && (
+        <pre aria-label="MCP 配置内容" className="my-2 overflow-x-auto rounded-xl bg-[var(--bg)] p-3 text-[14px] select-all">
+          {JSON.stringify(cfg.config, null, 2)}
+        </pre>
+      )}
+      {msg && (
+        <p role="status" className="pb-3 text-[var(--muted)]">
+          {msg}
+        </p>
+      )}
+    </>
+  );
+}
+
 export function Settings() {
   return (
     <section aria-labelledby="settings-title" className="space-y-6">
@@ -156,6 +203,10 @@ export function Settings() {
       <div className="divide-y divide-[var(--border)] rounded-2xl bg-[var(--card)] px-4">
         <SecuritySection />
       </div>
+      <h2 className="text-[16px] font-semibold">外部接入</h2>
+      <div className="rounded-2xl bg-[var(--card)] px-4">
+        <McpSection />
+      </div>
       <h2 className="text-[16px] font-semibold">账号</h2>
       <div className="rounded-2xl bg-[var(--card)] px-4">
         <Field label="登录" hint="退出后要重新输入邮箱和密码">
@@ -164,7 +215,7 @@ export function Settings() {
           </Button>
         </Field>
       </div>
-      <p className="text-[var(--muted)]">外部客户端令牌与 MCP 配置复制即将上线。</p>
+      <p className="text-[var(--muted)]">外部客户端令牌即将上线。</p>
     </section>
   );
 }
