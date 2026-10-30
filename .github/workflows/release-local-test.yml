@@ -1,0 +1,78 @@
+# Windows 本地版测试版发布：构建安装包，发布 / 更新 GitHub 预发布 local-test（固定文件名，链接不变）。
+# 仓库是公开的，资产链接不登录也能下载：
+#   https://github.com/uniwof/Aroomo-Developer/releases/download/local-test/AroomoSetup-local-test.exe
+# 触发：手动（workflow_dispatch），或 dev 上 installer/ 有改动时。
+name: 发布本地测试版（local-test）
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev]
+    paths:
+      - 'installer/windows/**'
+      - '.github/workflows/release-local-test.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-local-test
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: 构建并发布 AroomoSetup-local-test.exe
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      TAG: local-test
+      ASSET: AroomoSetup-local-test.exe
+    steps:
+      - uses: actions/checkout@v6
+      - name: 下载 age-keygen.exe（核对 SHA-256）
+        shell: powershell
+        run: installer\windows\Get-AgeKeygen.ps1
+      - name: 构建安装包（Inno Setup）
+        shell: powershell
+        run: |
+          $iscc = Get-Command iscc.exe -ErrorAction SilentlyContinue
+          if (-not $iscc) {
+            $default = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+            if (-not (Test-Path $default)) { choco install innosetup -y --no-progress | Out-Host }
+            $iscc = $default
+          } else { $iscc = $iscc.Source }
+          $ver = "0.1.0-test.${{ github.run_number }}"
+          & $iscc "/DAppVersion=$ver" installer\windows\aroomo-setup.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Copy-Item "installer\windows\Output\AroomoSetup-$ver.exe" "dist\$env:ASSET"
+          $h = (Get-FileHash -Algorithm SHA256 "dist\$env:ASSET").Hash.ToLowerInvariant()
+          $len = (Get-Item "dist\$env:ASSET").Length
+          "$h  $env:ASSET" | Set-Content -Encoding ascii dist\SHA256SUMS.txt
+          "version=$ver" >> $env:GITHUB_ENV
+          Write-Output "$env:ASSET $len 字节 sha256 $h"
+      - name: 发布 / 更新预发布 local-test
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $notes = @"
+          Aroomo Windows 本地版 **测试版** $env:version（提交 ${{ github.sha }}）。
+
+          - 还没有在真实的 Windows 电脑上完整测试过。
+          - 安装包没有数字签名：出现「Windows 已保护你的电脑」时，选「更多信息」，再选「仍要运行」。
+          - 安装过程中会显示主密钥，必须保存（密码管理器 + 纸质副本）并点「已保存」才能继续。
+          - 校验：见 SHA256SUMS.txt。
+          "@
+          Set-Content -Path notes.md -Value $notes -Encoding utf8
+          gh release view $env:TAG *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:TAG --prerelease --target $env:GITHUB_SHA --title "Aroomo 本地版测试版（local-test）" --notes-file notes.md
+          } else {
+            # 把标签移到这次的提交，再更新说明
+            gh api -X PATCH "repos/$env:GITHUB_REPOSITORY/git/refs/tags/$env:TAG" -f sha=$env:GITHUB_SHA -F force=true | Out-Null
+            gh release edit $env:TAG --prerelease --title "Aroomo 本地版测试版（local-test）" --notes-file notes.md
+          }
+          gh release upload $env:TAG "dist/$env:ASSET" dist/SHA256SUMS.txt --clobber
+          Write-Output "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:TAG/$env:ASSET"

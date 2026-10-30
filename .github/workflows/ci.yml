@@ -1,0 +1,294 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Core（lint + typecheck + test + build）
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: core
+    # 真 PostgreSQL：数据库相关测试除 PGlite 外再对它跑一遍（test/helpers/db.ts）
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: aroomo_test
+          POSTGRES_PASSWORD: placeholder-ci-only
+          POSTGRES_DB: aroomo_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U aroomo_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      CORE_TEST_DATABASE_URL: postgresql://aroomo_test:placeholder-ci-only@localhost:5432/aroomo_test
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: core/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  shell:
+    name: Shell（界面薄层：lint + typecheck + test + build）
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: shell
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: shell/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  console:
+    name: 控制台（web/console：typecheck + test + build）
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: web/console
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/console/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  licenses:
+    name: 许可证闸门（D179：npm + Python）
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: 闸门判定逻辑单测
+        run: node --test scripts/license-gate/policy.test.mjs
+      - name: npm（所有 package-lock.json，含 devDependencies）
+        run: node scripts/license-gate/check-npm.mjs
+      - name: Python（所有 requirements*.txt，pip-licenses）
+        run: bash scripts/license-gate/check-python.sh
+      - name: 检查 third-party.md 与依赖一致
+        run: node scripts/generate-third-party.mjs --check
+
+  compose:
+    name: Compose 配置校验 + 脚本检查
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - run: docker compose version
+      - run: scripts/check-compose.sh
+      - name: shellcheck
+        run: shellcheck -x scripts/*.sh scripts/lib/*.sh scripts/license-gate/*.sh deploy/backup/entrypoint.sh deploy/postgres/20-aroomo-dbs.sh deploy/lobe/rustfs-init.sh
+      - name: 备份保留策略单元测试
+        run: scripts/test-retention.sh
+      - name: Pester（pwsh，含与 select-tier.sh 的对照）
+        shell: pwsh
+        run: |
+          if (Get-Command Install-PSResource -ErrorAction SilentlyContinue) {
+            Install-PSResource Pester -Version 5.7.1 -TrustRepository -Scope CurrentUser -Reinstall
+          } else {
+            Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force -SkipPublisherCheck
+          }
+          Import-Module Pester -RequiredVersion 5.7.1
+          $c = New-PesterConfiguration
+          $c.Run.Path = 'installer/windows/tests'
+          $c.Run.Exit = $true
+          Invoke-Pester -Configuration $c
+      - name: select-tier 阈值
+        run: |
+          test "$(MEM_TOTAL_MB=1900 scripts/select-tier.sh)" = demo-2g
+          test "$(MEM_TOTAL_MB=3900 scripts/select-tier.sh)" = standard
+          test "$(MEM_TOTAL_MB=7700 scripts/select-tier.sh)" = full
+
+  images:
+    name: 自建镜像构建（core、backup）
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - run: docker build -t aroomo-core:ci core
+      - run: docker build -t aroomo-backup:ci deploy/backup
+      - run: docker build -t aroomo-shell:ci shell
+      - name: shell 镜像冒烟测试
+        run: |
+          docker run -d --name shell -e SHELL_AUTH=off aroomo-shell:ci
+          for i in $(seq 1 20); do
+            if docker exec shell node -e "fetch('http://127.0.0.1:3000/aroomo/static/app.js').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
+              echo healthy; docker rm -f shell; exit 0
+            fi
+            sleep 1
+          done
+          docker logs shell; exit 1
+      - name: backup 镜像自检
+        run: |
+          docker run --rm --entrypoint age aroomo-backup:ci --version
+          docker run --rm --entrypoint age-keygen aroomo-backup:ci --version
+          docker run --rm --entrypoint rclone aroomo-backup:ci version
+          docker run --rm --entrypoint zstd aroomo-backup:ci --version
+          docker run --rm --entrypoint tar aroomo-backup:ci --version
+          docker run --rm --entrypoint pg_dumpall aroomo-backup:ci --version
+      - name: core 镜像冒烟测试
+        run: |
+          docker run -d --name core -e CORE_LOG_LEVEL=warn aroomo-core:ci
+          docker exec core ls /app/migrations/0001_audit_log.sql
+          for i in $(seq 1 20); do
+            if docker exec core node -e "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
+              echo healthy; docker rm -f core; exit 0
+            fi
+            sleep 1
+          done
+          docker logs core; exit 1
+
+  backup-e2e:
+    name: 备份/恢复端到端（S3 目标 → 删库 → 恢复 → 核对 → 演练）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - run: docker compose version
+      - run: scripts/test-backup-e2e.sh
+        env:
+          E2E_REPORT_DIR: ${{ runner.temp }}/drill-reports
+      - name: 上传恢复演练报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restore-drill-report
+          path: ${{ runner.temp }}/drill-reports/
+          if-no-files-found: ignore
+
+  multiarch:
+    name: 多架构镜像构建（amd64 + arm64：core、shell、backup）
+    # 用原生 runner 分别构建：QEMU 模拟 arm64 构建 shell 会卡到 6 小时超时被取消
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+      # 只构建、不推送（D71：不公开发布内嵌 LobeHub 的东西；这些镜像本身也不含 LobeHub，服务器 / 电脑上本地构建）
+      - run: docker buildx build --platform ${{ matrix.platform }} shell
+      - run: docker buildx build --platform ${{ matrix.platform }} core
+      - run: docker buildx build --platform ${{ matrix.platform }} deploy/backup
+
+  ui-e2e:
+    name: 界面端到端冒烟（官方 LobeHub + Aroomo Shell，电脑 + 手机截图）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: docker compose version
+      - run: scripts/test-ui-e2e.sh
+        env:
+          E2E_REPORT_DIR: ${{ runner.temp }}/ui-e2e-report
+      - name: 上传截图和报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-e2e-report
+          path: ${{ runner.temp }}/ui-e2e-report/
+          if-no-files-found: ignore
+
+  windows-installer:
+    name: Windows 安装器（PSScriptAnalyzer + Pester + 构建 .exe）
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: 安装 Pester 5 / PSScriptAnalyzer
+        shell: powershell
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force -SkipPublisherCheck
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser -Force
+      - name: PSScriptAnalyzer
+        shell: powershell
+        run: |
+          $r = Invoke-ScriptAnalyzer -Path installer/windows -Recurse -Settings installer/windows/PSScriptAnalyzerSettings.psd1
+          $r | Format-Table -AutoSize RuleName, Severity, ScriptName, Line, Message | Out-String -Width 250
+          if (@($r).Count -gt 0) { exit 1 }
+      - name: Pester（Windows PowerShell 5.1）
+        shell: powershell
+        run: |
+          Import-Module Pester -RequiredVersion 5.7.1
+          $c = New-PesterConfiguration
+          $c.Run.Path = 'installer/windows/tests'
+          $c.Run.Exit = $true
+          $c.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $c
+      - name: 下载 age-keygen.exe（核对 SHA-256，D64 主密钥离线生成）
+        shell: powershell
+        run: installer\windows\Get-AgeKeygen.ps1
+      - name: 构建安装包（Inno Setup）
+        shell: powershell
+        run: |
+          $iscc = Get-Command iscc.exe -ErrorAction SilentlyContinue
+          if (-not $iscc) {
+            $default = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+            if (-not (Test-Path $default)) { choco install innosetup -y --no-progress | Out-Host }
+            $iscc = $default
+          } else { $iscc = $iscc.Source }
+          & $iscc "/DAppVersion=0.1.0-ci.${{ github.run_number }}" installer\windows\aroomo-setup.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem installer\windows\Output | Format-Table Name, Length
+      - name: 上传安装包
+        uses: actions/upload-artifact@v4
+        with:
+          name: aroomo-setup-windows
+          path: installer/windows/Output/*.exe
+          if-no-files-found: error
+
+  secrets:
+    name: 密钥扫描（gitleaks）
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

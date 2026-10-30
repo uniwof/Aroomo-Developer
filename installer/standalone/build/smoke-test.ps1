@@ -1,0 +1,208 @@
+﻿<#
+.SYNOPSIS
+  CI 冒烟测试（windows-latest，Windows PowerShell 5.1）：直接用打包好的程序文件夹，在临时数据文件夹里
+  初始化 → 启动全部服务 → 检查各服务、LiteLLM 虚拟 Key、模型列表 → 备份（测试用主密钥）→ 停止。
+  记录冷启动时间（D77-3 目标：后台冷启动 ≤ 15 秒；第一次启动含数据库初始化和迁移，单独记录）：
+    ui_ready_s      第二次启动：从运行 start 到界面可用（Shell 替浏览器登录 LobeHub，返回 302）
+    second_start_s  第二次启动：start 结束（主界面全部就绪：Shell、LobeHub、Core、LiteLLM 及其依赖）
+    all_ready_s     第二次启动：完整档模块（收藏、RSSHub、Chromium、Meilisearch）也都就绪
+    second_start_timing  每个服务的开始 / 就绪秒数（logs\startup-timing.json）
+  失败时打印各服务日志的末尾（日志本来就不含密钥）。
+#>
+[CmdletBinding()]
+param([Parameter(Mandatory)][string]$AppDir, [string]$DataDir = (Join-Path $env:RUNNER_TEMP 'AroomoData'))
+$ErrorActionPreference = 'Stop'
+$env:CI = 'true'
+$launcher = Join-Path $AppDir 'installer\standalone\aroomo-standalone.ps1'
+$ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$results = [ordered]@{}
+
+function Run([string]$Act, [string[]]$Extra = @(), [scriptblock]$WhileRunning = $null) {
+    # 子进程输出直接打印到控制台（不混进返回值）；最多等 25 分钟，卡住时打印日志再失败
+    # WhileRunning：子进程运行期间每 250 毫秒调用一次（返回 $true 后不再调用），用来测「界面什么时候能用」
+    $p = Start-Process -FilePath $ps -ArgumentList (@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$launcher`"", '-Action', $Act, '-AppDir', "`"$AppDir`"", '-DataDir', "`"$DataDir`"") + $Extra) -NoNewWindow -PassThru
+    # 先取一次 Handle：否则 Windows PowerShell 的 Start-Process 结束后 ExitCode 是空的（会被当成 0）
+    $null = $p.Handle
+    if ($WhileRunning) {
+        $done = $false
+        while (-not $p.HasExited) {
+            if (-not $done) { $done = [bool](& $WhileRunning) }
+            Start-Sleep -Milliseconds 250
+        }
+        if (-not $done) { [void](& $WhileRunning) }
+    }
+    if (-not $p.WaitForExit(25 * 60 * 1000)) {
+        & taskkill.exe /T /F /PID $p.Id | Out-Null
+        throw "$Act 25 分钟没有结束"
+    }
+    $p.WaitForExit()
+    if ($null -eq $p.ExitCode) { return 99 }
+    return [int]$p.ExitCode
+}
+function Dump-Logs {
+    foreach ($f in Get-ChildItem (Join-Path $DataDir 'logs') -File -ErrorAction SilentlyContinue) {
+        Write-Host "----- $($f.Name)（末尾）-----"
+        Get-Content $f.FullName -Tail 60 | ForEach-Object { Write-Host $_ }
+    }
+}
+
+try {
+    if ((Run 'init') -ne 0) { throw 'init 失败' }
+    Import-Module (Join-Path $AppDir 'installer\windows\Aroomo.psm1') -Force -DisableNameChecking
+    Import-Module (Join-Path $AppDir 'installer\standalone\AroomoStandalone.psm1') -Force -DisableNameChecking
+
+    $t = [Diagnostics.Stopwatch]::StartNew()
+    if ((Run 'start' @('-WaitAll')) -ne 0) { throw '第一次启动失败' }
+    $results.first_start_s = [int]$t.Elapsed.TotalSeconds
+    if ((Run 'status') -ne 0) { throw '有服务不正常' }
+
+    $ctx = Get-AroomoSAContext -AppDir $AppDir -DataDir $DataDir
+    $c = $ctx.Config
+    $ll = "http://127.0.0.1:$($c['LITELLM_PORT'])"
+    $h = @{ Authorization = "Bearer $($c['LITELLM_MASTER_KEY'])" }
+    # LobeHub 用的虚拟 Key 能列模型（证明 LiteLLM + Prisma + PostgreSQL 都通）
+    $models = Invoke-RestMethod -Uri "$ll/v1/models" -Headers @{ Authorization = "Bearer $($c['LOBE_LITELLM_VIRTUAL_KEY'])" } -UseBasicParsing
+    $results.litellm_virtual_key = 'ok'
+    # 用管理接口加一个模型（假 Key，不会真的调用），确认写入数据库
+    $body = @{ model_name = 'smoke-test'; litellm_params = @{ model = 'openai/gpt-4o-mini'; api_key = 'sk-smoke-test-not-real-000000' } } | ConvertTo-Json -Depth 5
+    Invoke-RestMethod -Method Post -Uri "$ll/model/new" -Headers $h -ContentType 'application/json' -Body $body -UseBasicParsing | Out-Null
+    $results.litellm_model_new = 'ok'
+    # Core 健康 + 能连 LiteLLM
+    $results.core_healthz = (Invoke-WebRequest -Uri "http://127.0.0.1:$($c['CORE_PORT'])/healthz" -UseBasicParsing).StatusCode
+    $results.lobe_http = Get-AroomoSAHttpStatus -Url "http://127.0.0.1:$($c['LOBE_PORT'])/" -TimeoutMs 30000
+    $pub = Get-AroomoSAPublicUrl -Paths $ctx.Paths -Config $c
+    $results.public_url_http = Get-AroomoSAHttpStatus -Url "$pub/" -TimeoutMs 30000
+    if ($results.lobe_http -lt 200 -or $results.lobe_http -ge 500) { throw "LobeHub 返回 $($results.lobe_http)" }
+
+    # D78：本机主人自动登录（没有 Cookie 打开界面 → Shell 替浏览器登录 → 302 带会话 Cookie）；再用这个会话经 Shell 调 Core
+    if (Test-AroomoSAShell -Paths $ctx.Paths) {
+        $req = [System.Net.HttpWebRequest]::Create("$pub/")
+        $req.Accept = 'text/html'; $req.AllowAutoRedirect = $false; $req.Proxy = $null; $req.Timeout = 120000
+        try { $resp = $req.GetResponse() } catch [System.Net.WebException] { $resp = $_.Exception.Response }
+        $code = [int]$resp.StatusCode
+        $raw = [string]$resp.Headers['Set-Cookie']
+        $resp.Close()
+        # 多个 Set-Cookie 被合成一行（逗号分隔）：取每个 Cookie 的「名=值」（只打印名字，不打印值）
+        $pairs = @([regex]::Matches($raw, '(?:^|,)\s*([A-Za-z0-9_.\-]+)=([^;,]*)') | ForEach-Object { "$($_.Groups[1].Value)=$($_.Groups[2].Value)" })
+        $results.autologin_cookies = (@($pairs | ForEach-Object { ($_ -split '=', 2)[0] }) -join ' ')
+        if ($code -ne 302 -or -not ($pairs -match 'session_token=.')) { throw "本机主人自动登录没有成功（HTTP $code）" }
+        $results.autologin = 'ok'
+        $cookie = (@($pairs | Where-Object { $_ -notmatch '^(aroomo_al|LOBE_LOCALE)=' }) -join '; ')
+        function Get-WithCookie([string]$Url) {
+            $q = [System.Net.HttpWebRequest]::Create($Url)
+            $q.Proxy = $null; $q.Timeout = 60000; $q.Accept = 'application/json'; $q.Headers.Add('Cookie', $cookie)
+            try { $rs = $q.GetResponse() } catch [System.Net.WebException] { $rs = $_.Exception.Response }
+            $sr = New-Object IO.StreamReader($rs.GetResponseStream()); $body = $sr.ReadToEnd(); $sr.Close()
+            $st = [int]$rs.StatusCode; $rs.Close()
+            return @{ Status = $st; Body = $body }
+        }
+        $gs = Get-WithCookie "$pub/api/auth/get-session"
+        $results.session_via_shell = "$($gs.Status) user=$([bool]($gs.Body -match '"user"\s*:\s*\{'))"
+        $api = Get-WithCookie "$pub/aroomo/api/inbox/unread-count"
+        $results.aroomo_api_via_shell = $api.Status
+        if ($api.Status -ne 200) { throw "自动登录后经 Shell 调 Core 返回 $($api.Status)" }
+    }
+
+    # 完整档模块（这个版本带了就必须正常）：收藏 Karakeep（+ Meilisearch、无界面浏览器）、RSSHub
+    foreach ($m in @(
+            @{ Name = 'karakeep'; Url = "http://127.0.0.1:$($c['KARAKEEP_PORT'])/api/health" },
+            @{ Name = 'meilisearch'; Url = "http://127.0.0.1:$($c['MEILI_PORT'])/health" },
+            @{ Name = 'browser'; Url = "http://127.0.0.1:$($c['BROWSER_PORT'])/json/version" },
+            @{ Name = 'rsshub'; Url = "http://127.0.0.1:$($c['RSSHUB_PORT'])/" })) {
+        if (-not (Get-AroomoSASpec $ctx $m.Name)) { $results["$($m.Name)_http"] = 'not in this build'; continue }
+        $code = Get-AroomoSAHttpStatus -Url $m.Url -TimeoutMs 30000
+        $results["$($m.Name)_http"] = $code
+        if ($code -lt 200 -or $code -ge 400) { throw "$($m.Name) 返回 $code" }
+    }
+
+    # D78：收藏（Karakeep）也由本机主人自动登录（第一次自动注册主人账号），用户不用注册
+    if (Get-AroomoSASpec $ctx 'karakeep') {
+        $kurl = "http://127.0.0.1:$($c['KARAKEEP_PORT'])"
+        $req = [System.Net.HttpWebRequest]::Create("$kurl/")
+        $req.Accept = 'text/html'; $req.AllowAutoRedirect = $false; $req.Proxy = $null; $req.Timeout = 120000
+        try { $resp = $req.GetResponse() } catch [System.Net.WebException] { $resp = $_.Exception.Response }
+        $kcode = [int]$resp.StatusCode
+        $kraw = [string]$resp.Headers['Set-Cookie']
+        $resp.Close()
+        $kpairs = @([regex]::Matches($kraw, '(?:^|,)\s*([A-Za-z0-9_.\-]+)=([^;,]*)') | ForEach-Object { "$($_.Groups[1].Value)=$($_.Groups[2].Value)" })
+        $results.karakeep_autologin_cookies = (@($kpairs | ForEach-Object { ($_ -split '=', 2)[0] }) -join ' ')
+        if ($kcode -ne 302 -or -not ($kpairs -match 'session_token=.')) { throw "收藏的本机主人自动登录没有成功（HTTP $kcode）" }
+        $kq = [System.Net.HttpWebRequest]::Create("$kurl/api/auth/get-session")
+        $kq.Proxy = $null; $kq.Timeout = 60000; $kq.Accept = 'application/json'
+        $kq.Headers.Add('Cookie', (@($kpairs | Where-Object { $_ -notmatch '^aroomo_al=' }) -join '; '))
+        try { $krs = $kq.GetResponse() } catch [System.Net.WebException] { $krs = $_.Exception.Response }
+        $ksr = New-Object IO.StreamReader($krs.GetResponseStream()); $kbody = $ksr.ReadToEnd(); $ksr.Close(); $krs.Close()
+        if ($kbody -notmatch '"user"\s*:\s*\{') { throw '收藏自动登录后拿不到会话' }
+        $results.karakeep_autologin = 'ok'
+    }
+
+    # 备份：测试用主密钥（只在这台 CI 机器上，用完即弃）
+    $k = New-AroomoMasterKey -AgeKeygenPath (Get-AroomoAgeKeygenPath -AppDir $AppDir)
+    Write-AroomoPrivateFile -Path $ctx.Paths.EnvFile -Content (Set-AroomoEnvValues -Content ([IO.File]::ReadAllText($ctx.Paths.EnvFile)) -Values @{ BACKUP_AGE_RECIPIENT = $k.PublicKey })
+    $testIdentity = $k.Identity
+    Remove-Variable k
+    $ctx = Get-AroomoSAContext -AppDir $AppDir -DataDir $DataDir
+    $b = Invoke-AroomoSABackup -Context $ctx
+    if (-not $b.Ok) { throw "备份失败：$($b.Step)" }
+    $results.backup = "ok（$($b.DurationS) 秒，$([int]((Get-Item $b.File).Length / 1KB)) KB）"
+    # 格式和服务器一致（D79，format 2）：.tar.zst.age，里面是 backup-stage/manifest.json、data/secrets/aroomo.env、data/rustfs
+    if ($b.File -notmatch '\.tar\.zst\.age$') { throw "备份文件名不是服务器格式：$($b.File)" }
+    $meta = Get-Content -Raw ($b.File -replace '\.tar\.zst\.age$', '.meta.json') | ConvertFrom-Json
+    if ($meta.format -ne 2 -or $meta.compression -ne 'zstd') { throw '备份元数据不是 format 2 / zstd' }
+    # 恢复演练：用测试主密钥把刚才的备份恢复回去（删库重建再导入），之后重启并核对数据还在
+    $rr = Restore-AroomoSABackup -Context $ctx -File $b.File -Identity $testIdentity
+    Remove-Variable testIdentity
+    if (-not $rr.Ok) { throw "恢复演练失败：$($rr.Step)" }
+    $results.restore_drill = 'ok'
+
+    if ((Run 'stop') -ne 0) { throw '停止失败' }
+    # 恢复后的第一次启动：恢复让启动标记作废，LiteLLM / LobeHub 会重新检查并迁移数据库（备份可能来自别的版本）
+    $t = [Diagnostics.Stopwatch]::StartNew()
+    if ((Run 'start' @('-WaitAll')) -ne 0) { throw '恢复后启动失败' }
+    $results.restore_start_s = [math]::Round($t.Elapsed.TotalSeconds, 1)
+    # 恢复后的数据：备份前加的模型还在（LiteLLM 库）
+    $ctx = Get-AroomoSAContext -AppDir $AppDir -DataDir $DataDir
+    $mi = Invoke-RestMethod -Uri "http://127.0.0.1:$($ctx.Config['LITELLM_PORT'])/model/info" -Headers @{ Authorization = "Bearer $($ctx.Config['LITELLM_MASTER_KEY'])" } -UseBasicParsing
+    if (-not (@($mi.data) | Where-Object { $_.model_name -eq 'smoke-test' })) { throw '恢复后找不到备份前加的模型' }
+    $results.restore_data_check = 'ok'
+    if ((Run 'stop') -ne 0) { throw '恢复后停止失败' }
+    # 第二次（热数据）冷启动时间：D77-3 目标 ≤ 15 秒。界面可用 = Shell 替浏览器登录 LobeHub 成功（302 + 会话 Cookie）
+    $script:uiReady = $null
+    $probe = {
+        $q = [System.Net.HttpWebRequest]::Create("$pub/")
+        $q.Accept = 'text/html'; $q.AllowAutoRedirect = $false; $q.Proxy = $null; $q.Timeout = 3000
+        try { $rs = $q.GetResponse() } catch [System.Net.WebException] { $rs = $_.Exception.Response } catch { $rs = $null }
+        if (-not $rs) { return $false }
+        $code = [int]$rs.StatusCode; $rs.Close()
+        if ($code -eq 302 -or $code -eq 200) { $script:uiReady = [math]::Round($t.Elapsed.TotalSeconds, 1); return $true }
+        return $false
+    }
+    $t = [Diagnostics.Stopwatch]::StartNew()
+    if ((Run 'start' @() $probe) -ne 0) { throw '第二次启动失败' }
+    $results.second_start_s = [math]::Round($t.Elapsed.TotalSeconds, 1)
+    $results.ui_ready_s = $script:uiReady
+    $timingFile = Join-Path $DataDir 'logs\startup-timing.json'
+    if (Test-Path $timingFile) { $results.second_start_timing = (Get-Content -Raw $timingFile | ConvertFrom-Json) }
+    # 诊断（D77-3）：LiteLLM / LobeHub 这次启动的输出末尾（日志不含密钥）；单独 import LiteLLM 代理要多久
+    foreach ($n in 'litellm', 'lobe') {
+        $lf = Join-Path $DataDir "logs\$n.log"
+        if (Test-Path $lf) { Write-Host "----- 第二次启动后 $n.log（末尾）-----"; Get-Content $lf -Tail 40 | ForEach-Object { Write-Host $_ } }
+    }
+    $env:LITELLM_LOCAL_MODEL_COST_MAP = 'True'; $env:PYTHONDONTWRITEBYTECODE = '1'
+    $pyw = [Diagnostics.Stopwatch]::StartNew()
+    & $ctx.Paths.Python -c 'import litellm.proxy.proxy_server' *> $null
+    $results.litellm_import_s = [math]::Round($pyw.Elapsed.TotalSeconds, 1)
+    # 完整档模块随后启动：再等它们也都就绪（start -WaitAll 不会重复启动已在运行的服务）
+    if ((Run 'start' @('-WaitAll')) -ne 0) { throw '第二次启动后完整档模块没有全部就绪' }
+    $results.all_ready_s = [math]::Round($t.Elapsed.TotalSeconds, 1)
+    if ($results.second_start_s -gt 15) { Write-Host "::warning::第二次启动 $($results.second_start_s) 秒，超过 D77-3 目标 15 秒（界面可用 $($results.ui_ready_s) 秒）" }
+    [void](Run 'stop')
+    $results.data_dir_mb = [int]((Get-ChildItem -Recurse -File $DataDir | Measure-Object Length -Sum).Sum / 1MB)
+    $results.installed_mb = [int]((Get-ChildItem -Recurse -File $AppDir -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum / 1MB)
+    $results | ConvertTo-Json -Depth 5 | Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'smoke-results.json')
+} catch {
+    Write-Host "冒烟测试失败：$($_.Exception.Message)"
+    Dump-Logs
+    $results | ConvertTo-Json
+    exit 1
+}

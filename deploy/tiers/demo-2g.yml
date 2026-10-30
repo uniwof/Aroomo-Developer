@@ -1,0 +1,17 @@
+# 档位：对话演示版（约 2 GB 内存，DECISIONS v4.3：原「精简版」改名）
+# ⚠ 暂定值：2 GB 机器未实测；参考 docs/ops/MEMORY-REPORT.md（标准版实测 LiteLLM 常驻约 620 MiB，2 GB 档位很紧）。
+# D66：每个容器都必须有 mem_limit。超出 mem_limit 的容器会被 OOM 杀掉并按 restart 策略重启。
+# 包含：postgres、redis、rustfs、litellm、core、lobe。不启用 cloudflared/backup 以外的可选模块。
+services:
+  postgres: { mem_limit: 384m }
+  redis: { mem_limit: 48m }
+  rustfs: { mem_limit: 128m }
+  rustfs-init: { mem_limit: 64m }
+  litellm: { mem_limit: 512m } # 同时在 .env 保持 LITELLM_NUM_WORKERS=1
+  core: { mem_limit: 128m }
+  shell: { mem_limit: 64m }
+  lobe: { mem_limit: 640m }
+  cloudflared: { mem_limit: 64m }
+  backup: { mem_limit: 128m }
+  restore: { mem_limit: 256m }
+  gateway: { mem_limit: 96m }
