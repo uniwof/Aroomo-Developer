@@ -7,6 +7,7 @@
  *   doctor               逐项排查（Node、令牌、白名单、Core、浏览器），给出下一步
  *   allow/disallow <网站>  加入 / 移除白名单（不用手改 JSON）
  *   sites                列出白名单
+ *   recipe add <网站> [newapi|generic] / list / remove <网站>  装 / 看 / 删站点配方（登录+签到）
  *   check-url <网址>     看某个网址是否在白名单里
  *   run                  连接 Core 并开始领取任务（Ctrl+C 退出）
  */
@@ -27,6 +28,7 @@ import { createLogger } from './logger.js';
 import type { BrowserPort } from './ports/browser.js';
 import { Runner } from './runner.js';
 import { HANDLERS } from './tasks/handlers.js';
+import { addTemplate, listRecipes, removeSite, TEMPLATE_NAMES, type TemplateName } from './tasks/recipe-templates.js';
 import { loadRecipes, withRecipes } from './tasks/recipes.js';
 import { HttpTransport } from './transport.js';
 
@@ -51,6 +53,7 @@ function browserPorts(cfg: ExecutorConfig, configDir: string): BrowserPort[] {
 
 export async function main(argv: string[]): Promise<number> {
   const [cmd, arg] = argv;
+  const recipesFile = join(dirname(configPath()), 'recipes.json');
   const path = configPath();
   switch (cmd) {
     case 'init': {
@@ -127,6 +130,35 @@ export async function main(argv: string[]): Promise<number> {
         out(`不行：${e instanceof Error ? e.message : String(e)}`);
         return 1;
       }
+    }
+    case 'recipe': {
+      const [, sub, site, tpl] = argv;
+      try {
+        if (sub === 'list') {
+          const rs = listRecipes(recipesFile);
+          out(rs.length ? rs.map((r) => `${r.site}  ${r.kind}  （${r.steps} 步）`).join('\n') : '（还没有配方：没有配方时由规划器现想）');
+          return 0;
+        }
+        if (sub === 'add' && site) {
+          if (tpl !== undefined && !(TEMPLATE_NAMES as readonly string[]).includes(tpl)) {
+            out(`模板只有：${TEMPLATE_NAMES.join('、')}`);
+            return 64;
+          }
+          const r = addTemplate(recipesFile, site, tpl as TemplateName | undefined);
+          out(`已装上：${r.added.join('、')}。记得先 allow 这个网站。`);
+          return 0;
+        }
+        if (sub === 'remove' && site) {
+          const r = removeSite(recipesFile, site);
+          out(r.removed.length ? `已删除：${r.removed.join('、')}` : '没有这个网站的配方');
+          return 0;
+        }
+      } catch (e) {
+        out(`不行：${e instanceof Error ? e.message : String(e)}`);
+        return 1;
+      }
+      out('用法：aroomo-executor recipe add <网站> [newapi|generic] | list | remove <网站>');
+      return 64;
     }
     case 'sites': {
       const cfg = loadConfig(path);
