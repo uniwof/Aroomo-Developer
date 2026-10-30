@@ -7,6 +7,7 @@
  * - 填写的值经 stdin JSON 传给 MCP 服务，不进命令行；服务响应会回显代码（含值），一律不记录。
  */
 
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { assertRef, DriverError, type BrowserDriver, type DriverSession } from '../ports/driver.js';
 import { resultText, StdioMcpClient, type McpClient } from './mcp-stdio.js';
@@ -107,7 +108,16 @@ class PlaywrightSession implements DriverSession {
   async screenshotInfo() {
     const t = await this.#call('browser_evaluate', { function: '() => ({ width: window.innerWidth, height: window.innerHeight })' });
     const m = t.match(/\{\s*"width"\s*:\s*(\d+)\s*,\s*"height"\s*:\s*(\d+)\s*\}/);
-    return m ? { width: Number(m[1]), height: Number(m[2]) } : { width: 0, height: 0 };
+    const size = m ? { width: Number(m[1]), height: Number(m[2]) } : { width: 0, height: 0 };
+    // 截图只在本机算指纹：图片字节算完 sha256 就丢，不落盘、不上传、不进日志
+    try {
+      const r = await this.c.callTool('browser_take_screenshot', { type: 'png' }, 30_000);
+      const img = (r.content ?? []).find((c) => c.type === 'image' && typeof c.data === 'string');
+      if (img?.data) return { ...size, sha256: createHash('sha256').update(Buffer.from(img.data, 'base64')).digest('hex') };
+    } catch {
+      /* 没有截图指纹也能继续 */
+    }
+    return size;
   }
   async handOff() {
     return false; // 有界面窗口，所有者直接在窗口里处理

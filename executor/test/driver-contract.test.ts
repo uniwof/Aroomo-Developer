@@ -3,6 +3,7 @@
  * 接 Playwright MCP 时，把它加进 DRIVERS 即可。
  */
 
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -171,6 +172,15 @@ describe('Playwright MCP 响应解析', () => {
     expect(pageField(t, 'Title')).toBe('T');
     expect(snapshotBody(t)).toBe('- button "登录" [ref=e3]\n');
     expect(findRef(snapshotBody(t), ['button'], ['登录'])).toBe('e3');
+  });
+  it('截图指纹：本机对图片字节算 sha256，不返回图片', async () => {
+    const s = await new PlaywrightMcpDriver({ command: process.execPath, args: [FAKE_PW] }).open('sha');
+    await s.goto('https://example.com/home');
+    const info = await s.screenshotInfo();
+    const want = createHash('sha256').update('fake-png-https://example.com/home').digest('hex');
+    expect(info.sha256).toBe(want);
+    expect(Object.keys(info).sort()).toEqual(['height', 'sha256', 'width']);
+    await s.close();
   });
   it('没装时 available() 为 false', async () => {
     expect(await new PlaywrightMcpDriver({ command: 'definitely-not-npx-xyz', args: [] }).available()).toBe(false);
