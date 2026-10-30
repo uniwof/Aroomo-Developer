@@ -16,6 +16,16 @@ function stubFetch(reply: string | number, seen: string[] = []): typeof fetch {
 }
 
 describe('模型规划器', () => {
+  it('多轮规划：把前几轮已做动作（不含值）带给模型', async () => {
+    const seen: string[] = [];
+    const p = new ModelPlanner({ baseUrl: 'https://core.test', getToken: () => 't', fetchImpl: stubFetch('{"steps":[{"op":"done","note":"ok"}]}', seen) });
+    await p.plan({ ...INPUT, round: 2, history: ['填写 username', '点击'] });
+    expect(seen[0]).toContain('前几轮已做：填写 username；点击');
+    await p.plan(INPUT);
+    expect(seen[1]).not.toContain('前几轮已做');
+  });
+
+
   it('解析模型输出的步骤', async () => {
     const p = new ModelPlanner({
       baseUrl: 'https://core.test',
