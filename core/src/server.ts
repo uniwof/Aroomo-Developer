@@ -48,7 +48,13 @@ import { ClientTokenService } from "./clients/service.js";
 import { registerClientRoutes } from "./clients/routes.js";
 import { ExecutorService } from "./executor/service.js";
 import { registerExecutorRoutes } from "./executor/routes.js";
-import { registerTakeoverHandler, takeoverHooks } from "./executor/takeover-inbox.js";
+import {
+  InterruptBudget,
+  quietTakeoverExpiryJob,
+  registerInterruptBudgetRoutes,
+  registerTakeoverHandler,
+  takeoverHooks,
+} from "./executor/takeover-inbox.js";
 import { UsersService } from "./users/service.js";
 import { registerUserRoutes } from "./users/routes.js";
 import { registerConsole } from "./console/static.js";
@@ -224,14 +230,16 @@ export function buildServer(
   registerVaultRoutes(app, vaultSvc);
   registerClientRoutes(app, clients);
   const inbox = new InboxService(deps.inbox, confirm, deps.now);
+  const interruptBudget = new InterruptBudget((u) => scopedSettings(deps.settings, u), deps.now);
   const executorSvc = new ExecutorService(
     deps.executor,
     deps.now,
     (u, id) => vaultSvc.resolveForGateway(u, id),
     (u) => scopedSettings(deps.settings, u),
-    takeoverHooks(inbox),
+    takeoverHooks(inbox, interruptBudget, deps.now),
   );
   registerTakeoverHandler(inbox, executorSvc);
+  registerInterruptBudgetRoutes(app, interruptBudget);
   registerExecutorRoutes(app, executorSvc);
   registerPubMemRoutes(app, new PubMemService(deps.pubmem, deps.now));
   registerLibraryRoutes(app, new LibraryService(deps.library, deps.now));
@@ -350,6 +358,7 @@ export function buildServer(
   jobs.add(keyReconcileJob(deps.keys, litellm, inbox, deps.now));
   jobs.add(modelCapsJob(deps.members, litellm, deps.now));
   jobs.add(taskTimeoutJob(deps.executor, deps.now));
+  jobs.add(quietTakeoverExpiryJob(inbox, executorSvc, deps.now));
   // 快跑阶段只有所有者：试用到期提醒只看所有者的设置（加固阶段再按用户遍历）
   jobs.add(trialExpiryJob(new TrialService(deps.settings, deps.now), inbox));
   app.decorate("jobs", jobs);
