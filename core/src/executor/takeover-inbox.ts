@@ -40,6 +40,9 @@ export class InterruptBudget {
     private readonly settings: (userId: string) => SettingsStore,
     private readonly now: () => Date,
   ) {}
+  clock(): Date {
+    return this.now();
+  }
   async daily(userId: string): Promise<number> {
     const v = await this.settings(userId).get<{ daily: number }>(BUDGET_KEY);
     return v && Number.isInteger(v.daily) && v.daily >= 0 ? v.daily : DEFAULT_DAILY_BUDGET;
@@ -52,10 +55,22 @@ export class InterruptBudget {
   }
 }
 
-export function registerInterruptBudgetRoutes(app: FastifyInstance, budget: InterruptBudget): void {
-  app.get("/api/interrupt-budget", { ...guard("members:read", { user: true }) }, async (req) => ({
-    daily: await budget.daily(scopeOf(req)),
-  }));
+/** 今天（北京时间）已推的接管卡张数：total 全部、loud 紧急（提醒过人）、quiet 静默（超预算） */
+export async function takeoverUsageToday(inbox: InboxService, userId: string, now: Date) {
+  const since = dayStart(now).getTime();
+  const cards = (await inbox.list({ group: "decision", ...(inboxUser(userId) ? { userId: inboxUser(userId)! } : {}) })).filter(
+    (i) => i.kind === TAKEOVER_KIND && i.createdAt.getTime() >= since,
+  );
+  const loud = cards.filter((c) => c.urgency === "urgent").length;
+  return { total: cards.length, loud, quiet: cards.length - loud };
+}
+
+export function registerInterruptBudgetRoutes(app: FastifyInstance, budget: InterruptBudget, inbox?: InboxService): void {
+  app.get("/api/interrupt-budget", { ...guard("members:read", { user: true }) }, async (req) => {
+    const daily = await budget.daily(scopeOf(req));
+    if (!inbox) return { daily };
+    return { daily, today: await takeoverUsageToday(inbox, scopeOf(req), budget.clock()) };
+  });
   app.put<{ Body: { daily: number } }>(
     "/api/interrupt-budget",
     {
@@ -113,10 +128,7 @@ export function takeoverHooks(inbox: InboxService, budget?: InterruptBudget, now
       // 今天已经推过几张接管卡；达到预算后，非付款类降为静默卡
       let quiet = false;
       if (budget && info.reason !== "payment") {
-        const since = dayStart(now()).getTime();
-        const today = (await inbox.list({ group: "decision", ...(inboxUser(userId) ? { userId: inboxUser(userId)! } : {}) })).filter(
-          (i) => i.kind === TAKEOVER_KIND && i.createdAt.getTime() >= since,
-        ).length;
+        const today = (await takeoverUsageToday(inbox, userId, now())).total;
         quiet = today >= (await budget.daily(userId));
       }
       await inbox.createInboxItem(
