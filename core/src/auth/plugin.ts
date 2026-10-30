@@ -18,6 +18,8 @@ declare module 'fastify' {
     userRoute?: boolean;
     /** 客户端令牌（B3）需要具备的范围；没声明的接口客户端一律 403 */
     clientScope?: string;
+    /** /mcp：客户端令牌可以进入，具体工具的范围在 MCP 内逐个检查（没有范围的工具表现为不存在） */
+    clientMcp?: boolean;
     /** 客户端可以查看自己（GET /api/clients/self） */
     clientSelf?: boolean;
   }
@@ -48,7 +50,8 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
   app.decorateRequest('audit', noAudit);
 
   app.addHook('onRequest', async (req: FastifyRequest) => {
-    if (!req.url.startsWith('/api/')) return;
+    const isMcp = req.url === '/mcp' || req.url.startsWith('/mcp?');
+    if (!req.url.startsWith('/api/') && !isMcp) return;
     if (!opts.ownerConfigured) {
       throw new HttpError(503, 'AUTH_NOT_CONFIGURED', '尚未配置访问令牌（CORE_OWNER_TOKEN），暂时不能使用');
     }
@@ -61,7 +64,7 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
     // D62：操作员只按白名单放行。没有声明能力的接口、不存在的接口、白名单外的能力，一律拒绝并审计。
     if (principal.type === 'client') {
       const cfg = req.routeOptions.config;
-      const ok = cfg?.clientSelf === true || (cfg?.clientScope !== undefined && (principal.scopes as ReadonlySet<string>).has(cfg.clientScope));
+      const ok = cfg?.clientSelf === true || cfg?.clientMcp === true || (cfg?.clientScope !== undefined && (principal.scopes as ReadonlySet<string>).has(cfg.clientScope));
       if (!ok) {
         await req.audit('auth.denied', { type: 'route', id: req.routeOptions.url ?? req.url.split('?')[0] ?? '' }, 'denied', `${req.method} 客户端令牌没有这个范围`);
         throw new HttpError(403, 'FORBIDDEN', '没有权限执行这个操作');

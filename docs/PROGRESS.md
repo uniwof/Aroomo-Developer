@@ -146,6 +146,7 @@ P2–P7 的功能开发在阶段 C 之后照常在网页版上推进，离线版
 | GET /api/capabilities?kind=&access=（能力清单第一版：items 文本/生图/视频 + counts + summary「文本 N · 生图 N · 视频 N」；每项 access=free/trial/paid、status=ready/unverified/failed/missing/keyless、quota{used,limit,unit}、quotaKnown=false 显示「未知」；tools 为算力/沙盒/云手机等；library 技能 148/资源 45 分组计数） | 能力地图与成员 | D157–D172 第 2 步 / M1 | ✅ PR p1/capabilities-api（种子来自资源清单，不含 Key；实时额度待后续） |
 | /v1 模型别名（LobeHub 群组同步用）：`aroomo/auto` = 负责人入口（@成员 则该成员答，不 @ 负责人答，与 `aroomo` 同义）；`aroomo/<成员id>` = 直接由该成员答（不解析 @、不署名；名字空格换 - 也认）；`GET /v1/models` 列出这些别名 | LobeHub 群组：负责人智能体用 aroomo/auto，每个成员智能体用 aroomo/<成员id> | M1 第 3 项 | ✅ PR p1/lead-routing |
 | /api/library 资源库最小版：POST（只给 url 也行；同链接去重；像密码/Key 的内容拒收）、GET ?q=&kind=&limit=（关键词检索，多词都要命中，标题>标签>链接>正文）、GET/:id、DELETE/:id（仅本人）。客户端范围 library:read / library:write（MCP submit_resource 用 write）。检索先 ILIKE，接口后可换 PGroonga | 资源库页（丢链接+搜索） | M2 | ✅ PR p1/library |
+| POST /mcp（Core 对外 MCP，JSON-RPC 2.0；Authorization: Bearer 所有者/账号/arc_ 令牌）：工具 search_library、get_library_item、submit_resource、list_memory_topics、get_memory；tools/list 按客户端范围动态返回，无范围=工具不存在；输出打码；每次调用审计 mcp.call。GET /mcp = 405。LobeHub 设置→MCP 里用 /api/mcp/config 的配置 | LobeHub 接入 Core MCP | M2 | ✅ PR p1/mcp-readonly（A 类，needs-leader-review） |
 | GET /api/tools、工具开关与额度 | 工具 | 工具网关 | 待后台线 |
 | GET /api/library（资源库列表、搜索） | 资源库 | | 待后台线 |
 | GET /api/inbox?type=confirm\|takeover\|brief | 收件箱 | 接管卡、简报分类 | 待后台线 |
