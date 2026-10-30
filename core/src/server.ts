@@ -296,6 +296,8 @@ export function buildServer(
       listMembers: () => deps.members.listAll(),
       lead,
       security,
+      // 规矩 = 所有者公共记忆的 rules 主题（B6）；没有就不注入
+      rules: async () => (await deps.pubmem.get('owner', 'rules'))?.body ?? null,
       ...(deps.chatFetch ? { fetchImpl: deps.chatFetch } : {}),
     }),
     cfg.chatToken,

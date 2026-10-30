@@ -262,4 +262,22 @@ describe('/v1 对话入口（LobeHub → Core → LiteLLM，D31）', () => {
     expect(seen).toHaveLength(0);
     expect(text(none)).toContain('没有这位在职成员');
   });
+
+  it('规矩注入：公共记忆 rules 拼进系统提示；系统任务（起标题）不注入；没有规矩时不变', async () => {
+    await addMember('GPT-4o mini');
+    await chat('你好');
+    expect(seen.at(-1)!.messages.map((m) => m.role)).toEqual(['system', 'user']);
+    expect(await app.inject({ method: 'PUT', url: '/api/memory/rules', headers: ownerAuth, payload: { title: '规矩', body: '回答先给结论。不要替我花钱。' } })).toMatchObject({ statusCode: 200 });
+    await chat('你好');
+    const m = seen.at(-1)!.messages;
+    expect(m.map((x) => x.role)).toEqual(['system', 'system', 'user']);
+    expect(String(m[0]!.content)).toContain('回答先给结论');
+    expect(String(m[1]!.content)).toBe('s'); // 原系统提示保留
+    // 成员别名同样注入
+    await chat('hi', { model: 'aroomo/gpt-4o-mini' });
+    expect(String(seen.at(-1)!.messages[0]!.content)).toContain('不要替我花钱');
+    // 系统任务不注入
+    await chat('起标题', { model: 'gpt-4o-mini' });
+    expect(seen.at(-1)!.messages.map((x) => x.role)).toEqual(['system', 'user']);
+  });
 });
