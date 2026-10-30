@@ -129,6 +129,18 @@ describe('配方执行', () => {
     expect(core.progress.filter((p) => p.taskId === t.id).map((p) => p.body.stage)).not.toContain('fallback');
   });
 
+  it('遇验证码：先 handOff 把窗口交给所有者，再推接管卡，处理完继续', async () => {
+    const { browser } = start({ blockers: [{ reason: 'captcha', message: '滑块' }, null], actReplies: { 是否已登录: '已登录' } }, example);
+    core.secrets.set('s1:username', USER);
+    core.secrets.set('s1:password', PW);
+    const t = core.enqueue({ kind: 'checkin', site: 'https://example.com/', secrets });
+    await core.waitFor(() => core.takeovers.size > 0);
+    expect(browser.sessions[0]!.handOffs).toBe(1);
+    core.resolveTakeover(t.id);
+    await core.waitFor(() => core.results.has(t.id));
+    expect(core.results.get(t.id)!.status).toBe('succeeded');
+  });
+
   it('配方里的 goto 跳出白名单：失败为 NOT_ALLOWED，不兜底', async () => {
     const rec = { recipes: [{ id: 'bad', site: 'example.com', kind: 'browse', steps: [{ do: 'goto', url: 'https://evil.net/' }] }] };
     start({}, rec);

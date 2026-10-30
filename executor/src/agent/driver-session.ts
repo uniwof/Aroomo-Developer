@@ -86,6 +86,10 @@ class PlannedSession implements BrowserSession {
     return { summary: this.redact(summary), width: info.width, height: info.height, ...('sha256' in info && info.sha256 ? { sha256: info.sha256 } : {}) };
   }
 
+  async handOff(): Promise<boolean> {
+    return this.drv.handOff();
+  }
+
   async close() {
     this.#pending.clear();
     await this.drv.close();
