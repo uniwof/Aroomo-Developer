@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ApiError, api } from '@/lib/api';
+import { Allowlist } from '@/components/Allowlist';
 
 export interface ExecutorInfo {
   id: string;
@@ -131,6 +132,8 @@ export function Executors() {
           ))}
         </ul>
       </section>
+
+      <Allowlist />
 
       <section aria-labelledby="exec-tasks" className="flex flex-col gap-2">
         <h2 id="exec-tasks" className="text-[16px] font-semibold">
