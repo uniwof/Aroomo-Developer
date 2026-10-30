@@ -5,6 +5,7 @@ import { Brand, QuotaRing } from './brand';
 import { Button } from './ui/button';
 import { api, logout } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { useUsage, worstRow } from '@/lib/usage';
 
 /** D195 控制台页面 */
 export const NAV = [
@@ -38,6 +39,7 @@ function useInboxCount(): number {
 
 export function Layout() {
   const inboxCount = useInboxCount();
+  const worst = worstRow(useUsage().rows);
   return (
     <div className="min-h-dvh md:flex">
       <a href="#main" className="sr-only focus:not-sr-only">
@@ -47,8 +49,8 @@ export function Layout() {
         <div className="flex min-h-14 items-center justify-between px-4">
           <Brand />
           <div className="flex items-center gap-1">
-            {/* 额度：后台线提供 /api/usage 前显示为空圆环（不编造数字） */}
-            <QuotaRing />
+            {/* 额度圆环（D7）：取上限已填的成员里最满的一位；都没填上限=空圆环 */}
+            <QuotaRing used={worst?.quota.used} limit={worst?.quota.limit} />
             <Button variant="ghost" aria-label="退出登录" onClick={() => void logout()}>
               <LogOut className="size-5" aria-hidden="true" />
               <span className="sr-only md:not-sr-only">退出</span>
