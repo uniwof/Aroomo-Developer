@@ -4,6 +4,8 @@
  *   init                 生成默认配置（白名单为空，保守）
  *   check                检查配置与令牌是否就绪（不打印令牌）
  *   status               检查配置、令牌，并试连 Core（不打印令牌）
+ *   allow/disallow <网站>  加入 / 移除白名单（不用手改 JSON）
+ *   sites                列出白名单
  *   check-url <网址>     看某个网址是否在白名单里
  *   run                  连接 Core 并开始领取任务（Ctrl+C 退出）
  */
@@ -18,6 +20,7 @@ import { DriverBrowserPort } from './agent/driver-session.js';
 import { ModelPlanner } from './agent/model-planner.js';
 import { RuleBasedPlanner, type Planner } from './agent/planner.js';
 import { buildAllowlist, configPath, type ExecutorConfig, defaultConfig, loadConfig, tokenReader } from './config.js';
+import { editSites } from './siteconfig.js';
 import { createLogger } from './logger.js';
 import type { BrowserPort } from './ports/browser.js';
 import { Runner } from './runner.js';
@@ -99,6 +102,31 @@ export async function main(argv: string[]): Promise<number> {
       }
       return tokenOk && reach ? 0 : 2;
     }
+    case 'allow':
+    case 'disallow': {
+      if (!arg) {
+        out(`用法：aroomo-executor ${cmd} <网站，如 example.com 或完整网址>`);
+        return 64;
+      }
+      if (!existsSync(path)) {
+        out('还没有配置文件，请先运行 init');
+        return 2;
+      }
+      try {
+        const r = editSites(path, cmd === 'allow' ? 'add' : 'remove', arg);
+        out(r.changed ? `${cmd === 'allow' ? '已加入' : '已移除'}：${r.entry}（现在共 ${r.sites.length} 个网站）` : `没有变化：${r.entry}${cmd === 'allow' ? ' 已经在名单里' : ' 本来就不在名单里'}`);
+        return 0;
+      } catch (e) {
+        out(`不行：${e instanceof Error ? e.message : String(e)}`);
+        return 1;
+      }
+    }
+    case 'sites': {
+      const cfg = loadConfig(path);
+      const sites = [...buildAllowlist(cfg).sites()];
+      out(sites.length ? sites.join('\n') : '（空：不会访问任何网站）');
+      return 0;
+    }
     case 'check-url': {
       if (!arg) {
         out('用法：aroomo-executor check-url <网址>');
@@ -136,7 +164,7 @@ export async function main(argv: string[]): Promise<number> {
       return 0;
     }
     default:
-      out('用法：aroomo-executor <init|check|status|check-url <网址>|run>');
+      out('用法：aroomo-executor <init|check|status|allow <网站>|disallow <网站>|sites|check-url <网址>|run>');
       return cmd ? 64 : 0;
   }
 }
