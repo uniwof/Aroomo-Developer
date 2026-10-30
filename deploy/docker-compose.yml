@@ -356,6 +356,67 @@ services:
       - ./.restore:/restore-secrets
     networks: [aroomo]
 
+  # ---------------------------------------------------------------------------
+  # Gatus 服务健康检查（profile: monitoring）
+  # ---------------------------------------------------------------------------
+  gatus:
+    <<: *restart
+    image: twinproduction/gatus:v5.16.0
+    profiles: [monitoring]
+    environment:
+      GATUS_USER: ${GATUS_USER:-admin}
+      GATUS_PASSWORD: ${GATUS_PASSWORD:-}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - ./gatus/config.yaml:/config/config.yaml:ro
+    healthcheck:
+      test: ['CMD-SHELL', "wget -qO- http://localhost:8080/health | grep -q '\"status\":200' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [aroomo]
+
+  # ---------------------------------------------------------------------------
+  # Beszel Hub 资源监控（profile: monitoring）
+  # ---------------------------------------------------------------------------
+  beszel:
+    <<: *restart
+    image: henrygf/beszel:v0.10.0
+    profiles: [monitoring]
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - beszel-data:/beszel_data
+    healthcheck:
+      test: ['CMD-SHELL', "wget -qO- http://localhost:8090/api/health | grep -q '\"status\":200' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [aroomo]
+
+  # ---------------------------------------------------------------------------
+  # Beszel Agent 主机/容器采集 Agent（profile: monitoring）
+  # ---------------------------------------------------------------------------
+  beszel-agent:
+    <<: *restart
+    image: henrygf/beszel-agent:v0.10.0
+    profiles: [monitoring]
+    environment:
+      PORT: '45876'
+      KEY: ${BESZEL_AGENT_KEY:-}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    healthcheck:
+      test: ['CMD-SHELL', "nc -z 127.0.0.1 45876 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [aroomo]
+
 networks:
   aroomo:
     driver: bridge
@@ -366,3 +427,4 @@ volumes:
   pg-data:
   redis-data:
   rustfs-data:
+  beszel-data:

@@ -1,0 +1,60 @@
+# Gatus 健康检查配置 (Aroomo)
+# 默认按 30s 间隔检查 Aroomo 核心服务健康状态
+
+storage:
+  type: memory
+
+security:
+  basic:
+    username: "${GATUS_USER}"
+    password: "${GATUS_PASSWORD}"
+
+endpoints:
+  - name: Aroomo Core
+    group: aroomo
+    url: "http://core:8080/healthz"
+    interval: 30s
+    conditions:
+      - "[STATUS] == 200"
+
+  - name: Aroomo Shell
+    group: aroomo
+    url: "http://shell:3000/aroomo/healthz"
+    interval: 30s
+    conditions:
+      - "[STATUS] == 200"
+
+  - name: LiteLLM
+    group: aroomo
+    url: "http://litellm:4000/health/liveliness"
+    interval: 30s
+    conditions:
+      - "[STATUS] == 200"
+
+  - name: LobeHub
+    group: aroomo
+    url: "http://lobe:3210/"
+    interval: 30s
+    conditions:
+      - "[STATUS] < 500"
+
+  - name: PostgreSQL
+    group: infrastructure
+    url: "tcp://postgres:5432"
+    interval: 30s
+    conditions:
+      - "[CONNECTED] == true"
+
+  - name: Redis
+    group: infrastructure
+    url: "tcp://redis:6379"
+    interval: 30s
+    conditions:
+      - "[CONNECTED] == true"
+
+  - name: RustFS
+    group: infrastructure
+    url: "http://rustfs:9000/health"
+    interval: 30s
+    conditions:
+      - "[STATUS] == 200"

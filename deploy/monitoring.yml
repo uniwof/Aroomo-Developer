@@ -1,0 +1,13 @@
+# Aroomo 监控 Compose 叠加文件（Gatus 健康检查 + Beszel 资源监控）
+# 用法：docker compose -f docker-compose.yml -f tiers/standard.yml -f monitoring.yml --profile monitoring up -d
+version: '3.8'
+
+services:
+  gatus:
+    profiles: [monitoring]
+
+  beszel:
+    profiles: [monitoring]
+
+  beszel-agent:
+    profiles: [monitoring]
