@@ -19,6 +19,12 @@ export interface TakeoverHooks {
     audit: AuditFn,
   ) => Promise<void>;
   closed?: (userId: string, taskId: string, takeoverId: string, audit: AuditFn) => Promise<void>;
+  /** 任务结束（成功/失败）时给收件箱留一张结果卡；失败不影响任务本身 */
+  finished?: (
+    userId: string,
+    info: { taskId: string; kind: string; site: string; status: "succeeded" | "failed"; summary: string; error: string | null },
+    audit: AuditFn,
+  ) => Promise<void>;
 }
 
 export const LEASE_SEC = 600;
@@ -211,6 +217,17 @@ export class ExecutorService {
       await this.#lost(userId, id);
     }
     await audit("executor.result", { type: "task", id }, "ok", input.status);
+    if (t && input.status !== "cancelled") {
+      try {
+        await this.hooks.finished?.(
+          userId,
+          { taskId: id, kind: t.kind, site: t.site, status: input.status, summary: t.resultSummary ?? "", error: t.resultError },
+          audit,
+        );
+      } catch {
+        // 结果卡只是通知，写不进去不能让任务回报失败
+      }
+    }
   }
 
   /** 运行时取凭据：只能取本任务声明过的 secretId，只给持有租约的执行员；明文只在响应里，永不落库、不进审计 */
