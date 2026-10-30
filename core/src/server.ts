@@ -325,6 +325,7 @@ export function buildServer(
       // 规矩 = 所有者公共记忆的 rules 主题（B6）；没有就不注入
       rules: async () => (await deps.pubmem.get('owner', 'rules'))?.body ?? null,
       onCall: (m, o) => usage.record(m, o),
+      onTokens: (m, n) => usage.recordTokens(m, n),
       ...(deps.chatFetch ? { fetchImpl: deps.chatFetch } : {}),
     }),
     cfg.chatToken,

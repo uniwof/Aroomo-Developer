@@ -18,11 +18,13 @@ describe("额度圆环 /api/usage", () => {
   function setup() {
     const clock = fakeClock();
     const status: Record<string, number> = {};
+    const tokens: Record<string, number> = {};
     const deps = memoryDeps(clock.now);
     deps.chatFetch = (async (_url: unknown, init?: { body?: string }) => {
       const model = (JSON.parse(String(init?.body)) as { model: string }).model;
       const st = status[model] ?? 200;
-      return new Response(JSON.stringify({ choices: [{ index: 0, message: { role: "assistant", content: "hi" }, finish_reason: "stop" }] }), {
+      const total = tokens[model];
+      return new Response(JSON.stringify({ choices: [{ index: 0, message: { role: "assistant", content: "hi" }, finish_reason: "stop" }], ...(total ? { usage: { total_tokens: total } } : {}) }), {
         status: st,
         headers: { "content-type": "application/json" },
       });
@@ -48,7 +50,7 @@ describe("额度圆环 /api/usage", () => {
         headers: { authorization: `Bearer ${CHAT_TOKEN}` },
         payload: { model, messages: [{ role: "user", content: "hi" }] },
       });
-    return { app, owner, say, status, clock };
+    return { app, owner, say, status, tokens, clock };
   }
 
   it("按成员数今天的调用；出错、被限流分开记；没填上限 = 未知", async () => {
@@ -68,6 +70,21 @@ describe("额度圆环 /api/usage", () => {
     expect(row("Alpha").state).toBe("unknown");
     expect(row("Beta").today).toEqual({ requests: 1, errors: 1, limited: 0 });
     expect(u.total).toEqual({ requests: 3, errors: 1, limited: 0 });
+  });
+
+  it("供应商返回了用量就累计 token；没返回的成员显示未知（null）", async () => {
+    const t = setup();
+    await t.owner("POST", "/api/members", { name: "Alpha" });
+    await t.owner("POST", "/api/members", { name: "Beta" });
+    t.tokens["Alpha"] = 120;
+    await t.say("aroomo/alpha");
+    await t.say("aroomo/alpha");
+    await t.say("aroomo/beta");
+    const u = (await t.owner("GET", "/api/usage")).json();
+    const row = (n: string) => u.members.find((m: { name: string }) => m.name === n);
+    expect(row("Alpha").tokensToday).toBe(240);
+    expect(row("Beta").tokensToday).toBeNull();
+    expect(row("Alpha").today).toEqual({ requests: 2, errors: 0, limited: 0 });
   });
 
   it("供应商返回 429：当天标 limited", async () => {
