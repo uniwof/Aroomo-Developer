@@ -7,6 +7,8 @@ export type KeyStatus = 'active' | 'sync_failed';
 
 export interface KeyRecord {
   id: string;
+  /** 所属账号；缺省 = 所有者 */
+  userId?: string;
   name: string;
   /** 获取网址（在哪里申请到的这个 Key） */
   sourceUrl: string;
@@ -24,7 +26,8 @@ export interface KeyRecord {
 }
 
 export interface KeyStore {
-  list(): Promise<KeyRecord[]>;
+  /** userId 缺省 = 所有者的 Key；只返回该账号自己的 */
+  list(userId?: string): Promise<KeyRecord[]>;
   get(id: string): Promise<KeyRecord | null>;
   insert(k: KeyRecord): Promise<void>;
   update(k: KeyRecord): Promise<void>;

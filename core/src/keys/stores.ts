@@ -4,8 +4,8 @@ import type { KeyRecord, KeyStatus, KeyStore } from './types.js';
 
 export class MemoryKeyStore implements KeyStore {
   readonly #rows = new Map<string, KeyRecord>();
-  async list(): Promise<KeyRecord[]> {
-    return [...this.#rows.values()].map((r) => structuredClone(r)).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  async list(userId?: string): Promise<KeyRecord[]> {
+    return [...this.#rows.values()].filter((r) => r.userId === userId).map((r) => structuredClone(r)).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   }
   async get(id: string): Promise<KeyRecord | null> {
     const r = this.#rows.get(id);
@@ -25,6 +25,7 @@ export class MemoryKeyStore implements KeyStore {
 
 interface Row {
   id: string;
+  user_id: string | null;
   name: string;
   source_url: string;
   last4: string;
@@ -38,10 +39,11 @@ interface Row {
   updated_at: Date | string;
 }
 
-const COLS = 'id, name, source_url, last4, model, model_name, api_base, litellm_model_id, status, models_synced_at, created_at, updated_at';
+const COLS = 'id, user_id, name, source_url, last4, model, model_name, api_base, litellm_model_id, status, models_synced_at, created_at, updated_at';
 
 const toRec = (r: Row): KeyRecord => ({
   id: r.id,
+  ...(r.user_id !== null ? { userId: r.user_id } : {}),
   name: r.name,
   sourceUrl: r.source_url,
   last4: r.last4,
@@ -57,6 +59,7 @@ const toRec = (r: Row): KeyRecord => ({
 
 const vals = (k: KeyRecord) => [
   k.id,
+  k.userId ?? null,
   k.name,
   k.sourceUrl,
   k.last4,
@@ -72,8 +75,8 @@ const vals = (k: KeyRecord) => [
 
 export class PgKeyStore implements KeyStore {
   constructor(private readonly db: Db) {}
-  async list(): Promise<KeyRecord[]> {
-    const { rows } = await this.db.query<Row>(`SELECT ${COLS} FROM provider_keys ORDER BY created_at, id`);
+  async list(userId?: string): Promise<KeyRecord[]> {
+    const { rows } = await this.db.query<Row>(`SELECT ${COLS} FROM provider_keys WHERE user_id IS NOT DISTINCT FROM $1 ORDER BY created_at, id`, [userId ?? null]);
     return rows.map(toRec);
   }
   async get(id: string): Promise<KeyRecord | null> {
@@ -81,7 +84,7 @@ export class PgKeyStore implements KeyStore {
     return rows[0] ? toRec(rows[0]) : null;
   }
   async insert(k: KeyRecord): Promise<void> {
-    await this.db.query(`INSERT INTO provider_keys (${COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, vals(k));
+    await this.db.query(`INSERT INTO provider_keys (${COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, vals(k));
   }
   async update(k: KeyRecord): Promise<void> {
     await this.db.query(
