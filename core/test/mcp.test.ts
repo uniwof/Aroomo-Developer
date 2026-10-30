@@ -83,4 +83,36 @@ describe('Core /mcp（资源库与公共记忆）', () => {
     expect(logs).toContain('mcp.call');
     expect(logs).toContain('denied');
   });
+
+  it('任务工具：create_task 按范围、当天去重；账号看不到别人的任务；cancel_task', async () => {
+    const maker = await clientHeaders(['tasks:create']);
+    const viewer = await clientHeaders(['tasks:read']);
+    const none = await clientHeaders(['library:read']);
+    expect((await rpc(maker, 'tools/list')).json().result.tools.map((t: { name: string }) => t.name).sort()).toEqual(['cancel_task', 'create_task']);
+    expect((await call(none, 'create_task', { kind: 'checkin', site: 'https://a.example.com/' })).json().error.code).toBe(-32602);
+    expect((await call(viewer, 'create_task', { kind: 'checkin', site: 'https://a.example.com/' })).json().error.code).toBe(-32602);
+    const made = text(await call(maker, 'create_task', { kind: 'checkin', site: 'https://a.example.com/', instruction: '签到' }));
+    expect(made).toContain('已派给本机执行员');
+    const id = /id: ([0-9a-f-]{36})/.exec(made)?.[1] ?? '';
+    expect(id).toHaveLength(36);
+    // 当天同 kind+site 不重复派
+    expect(text(await call(maker, 'create_task', { kind: 'checkin', site: 'https://a.example.com/' }))).toContain('今天已经派过');
+    expect((await owner('GET', '/api/tasks')).json().tasks).toHaveLength(1);
+    // 错误参数是工具内错误，不是协议错误
+    expect((await call(maker, 'create_task', { kind: 'nuke', site: 'https://a.example.com/' })).json().result.isError).toBe(true);
+    expect((await call(maker, 'create_task', { kind: 'login', site: 'ftp://x' })).json().result.isError).toBe(true);
+    expect(text(await call(viewer, 'get_task', { id }))).toContain('状态 queued');
+    expect(text(await call(viewer, 'list_tasks', { status: 'queued' }))).toContain(id);
+    expect(text(await call(viewer, 'list_tasks', { status: 'succeeded' }))).toContain('没有符合');
+    // 别的账号看不到
+    const inv = await owner('POST', '/api/users/invites', { email: 'b@example.com' });
+    const acc = await app.inject({ method: 'POST', url: '/auth/accept', payload: { token: inv.json().token, password: PW } });
+    const b = { authorization: `Bearer ${acc.json().token}` };
+    expect((await call(b, 'get_task', { id })).json().result.isError).toBe(true);
+    expect((await call(b, 'cancel_task', { id })).json().result.isError).toBe(true);
+    expect(text(await call(b, 'list_tasks'))).toContain('没有符合');
+    expect(text(await call(maker, 'cancel_task', { id }))).toContain('cancelled');
+    // 取消后当天可以重新派
+    expect(text(await call(maker, 'create_task', { kind: 'checkin', site: 'https://a.example.com/' }))).toContain('已派给');
+  });
 });

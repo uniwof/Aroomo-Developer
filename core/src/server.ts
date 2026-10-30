@@ -221,17 +221,15 @@ export function buildServer(
   );
   registerVaultRoutes(app, vaultSvc);
   registerClientRoutes(app, clients);
-  registerExecutorRoutes(
-    app,
-    new ExecutorService(deps.executor, deps.now, (u, id) =>
-      vaultSvc.resolveForGateway(u, id),
-    ),
+  const executorService = new ExecutorService(deps.executor, deps.now, (u, id) =>
+    vaultSvc.resolveForGateway(u, id),
   );
+  registerExecutorRoutes(app, executorService);
   const pubMemService = new PubMemService(deps.pubmem, deps.now);
   registerPubMemRoutes(app, pubMemService);
   const libraryService = new LibraryService(deps.library, deps.now);
   registerLibraryRoutes(app, libraryService);
-  registerMcpRoutes(app, libraryService, pubMemService);
+  registerMcpRoutes(app, libraryService, pubMemService, executorService, deps.now);
   registerAuditRoutes(app, deps.auditLog);
   registerMcpConfigRoutes(app);
   registerCapabilityRoutes(app, new CapabilityService());
