@@ -35,6 +35,6 @@ describe('接管卡', () => {
     expect(posts[0]).toEqual({ url: '/api/tasks/t1/takeovers/k1/resolve', body: { cancel: false } });
     fireEvent.click(screen.getByRole('button', { name: '放弃' }));
     await waitFor(() => expect(posts).toHaveLength(2));
-    expect(posts[1].body).toEqual({ cancel: true });
+    expect(posts[1]?.body).toEqual({ cancel: true });
   });
 });
