@@ -1,8 +1,9 @@
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { Inbox, LogOut, KeyRound, Library, Map, Monitor, Settings, Wrench } from 'lucide-react';
 import { Brand, QuotaRing } from './brand';
 import { Button } from './ui/button';
-import { logout } from '@/lib/api';
+import { api, logout } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 /** D195 控制台页面 */
@@ -16,7 +17,27 @@ export const NAV = [
   { to: '/settings', label: '设置', icon: Settings },
 ] as const;
 
+/** 收件箱未处理数（/api/inbox/unread-count），每 60 秒刷新；查不到就不显示，不编造 */
+function useInboxCount(): number {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      api<{ total: number }>('GET', '/api/inbox/unread-count')
+        .then((r) => alive && typeof r.total === 'number' && setN(r.total))
+        .catch(() => undefined);
+    void load();
+    const t = setInterval(load, 60_000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
+  return n;
+}
+
 export function Layout() {
+  const inboxCount = useInboxCount();
   return (
     <div className="min-h-dvh md:flex">
       <a href="#main" className="sr-only focus:not-sr-only">
@@ -48,6 +69,12 @@ export function Layout() {
             >
               <Icon className="size-5" aria-hidden="true" />
               {label}
+              {to === '/inbox' && inboxCount > 0 && (
+                <span className="ml-auto min-w-6 rounded-full bg-[var(--fg)] px-2 text-center text-[14px] text-[var(--bg)]">
+                  {inboxCount}
+                  <span className="sr-only"> 条待处理</span>
+                </span>
+              )}
             </NavLink>
           ))}
         </nav>
