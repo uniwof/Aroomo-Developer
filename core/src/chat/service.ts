@@ -43,7 +43,18 @@ export interface ChatDeps {
   security?: SecurityService;
   /** 账号成员的上游模型名映射（如 u<hex>/名字）；不传 = 原名（所有者共享池） */
   upstreamModel?: (name: string) => string;
+  /** 规矩（公共记忆 topic rules）：对话转发前拼进系统提示；不传或返回 null = 不注入 */
+  rules?: () => Promise<string | null>;
   fetchImpl?: typeof fetch;
+}
+
+export const RULES_MAX = 4000;
+
+/** 把规矩放进消息列表最前面的系统消息（已有的系统提示保留，规矩在它前面） */
+export function withRules(messages: ChatMessage[], rules: string | null): ChatMessage[] {
+  const r = rules?.trim();
+  if (!r) return messages;
+  return [{ role: 'system', content: `【Aroomo 规矩】请遵守下面的规矩：\n${r.slice(0, RULES_MAX)}` }, ...messages];
 }
 
 export const NO_LEAD_TEXT =
@@ -155,6 +166,14 @@ export class ChatService {
     return { object: 'list', data: ids.map((id) => ({ id, object: 'model', created: 0, owned_by: 'aroomo' })) };
   }
 
+  async #rules(): Promise<string | null> {
+    try {
+      return (await this.d.rules?.()) ?? null;
+    } catch {
+      return null; // 规矩读不到不影响对话
+    }
+  }
+
   async #upstream(body: Json, signal: AbortSignal): Promise<Response> {
     if (!this.d.litellmKey) throw new Error('litellm_not_configured');
     return this.#fetch(`${this.d.litellmBaseUrl.replace(/\/+$/, '')}/v1/chat/completions`, {
@@ -166,7 +185,7 @@ export class ChatService {
   }
 
   /** 按调用者的上下文（成员名前缀映射/成员列表）处理一次对话；不传 ctx = 用全局依赖 */
-  async complete(req: Json, signal: AbortSignal, ctx?: Pick<ChatDeps, 'upstreamModel' | 'listMembers'>): Promise<ChatResult> {
+  async complete(req: Json, signal: AbortSignal, ctx?: Pick<ChatDeps, 'upstreamModel' | 'listMembers' | 'rules'>): Promise<ChatResult> {
     if (ctx) return new ChatService({ ...this.d, ...ctx, fetchImpl: this.#fetch }).complete(req, signal);
     const stream = req.stream === true;
     const messages = (Array.isArray(req.messages) ? req.messages : []) as ChatMessage[];
@@ -184,7 +203,7 @@ export class ChatService {
     if (typeof req.model === 'string' && req.model.startsWith(MEMBER_MODEL_PREFIX) && req.model !== AUTO_MODEL) {
       const target = resolveMemberModel(req.model, members);
       if (!target) return textReply(stream, `没有这位在职成员（${req.model}）。请在「成员」里确认名字，或改用 aroomo/auto 交给负责人。`);
-      return this.#forward(req, target.name, '', '', stream, signal);
+      return this.#forward({ ...req, messages: withRules(messages, await this.#rules()) }, target.name, '', '', stream, signal);
     }
 
     // 系统任务（起标题、翻译等）：交给负责人，不解析 @、不加提示和署名。
@@ -198,7 +217,7 @@ export class ChatService {
     const sensitive = protect && looksSensitive(last.text);
     const plan = route(last.text, { members: routable, leadId: leadState.effectiveLeadId, sensitive });
     const prefix = plan.hints.length ? `${hintText(plan.hints)}\n\n` : '';
-    const nextMessages = replaceUserText(messages, last.index, plan.body);
+    const nextMessages = withRules(replaceUserText(messages, last.index, plan.body), await this.#rules());
 
     if (plan.mode === 'delegate') {
       const leadName = nameOf(plan.leadId);
