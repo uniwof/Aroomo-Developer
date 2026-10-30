@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ApiError, api } from '@/lib/api';
+import { TakeoverCards } from '@/components/TakeoverCards';
 
 interface Action {
   id: string;
@@ -54,6 +55,7 @@ export function Inbox() {
       <p role="status" className="text-[var(--muted)]">
         {msg}
       </p>
+      <TakeoverCards />
       {data === null && !msg && <p className="text-[var(--muted)]">加载中…</p>}
       {data &&
         groups.map((g) => (
