@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { MemberAvatar } from '@/components/brand';
 import { api, type Member } from '@/lib/api';
+import { CapabilityMap } from '@/components/CapabilityMap';
 
 /** 能力地图与成员。能力清单 API（/api/capabilities）由后台线提供后再加能力地图；先列成员。 */
 export function Members() {
@@ -22,6 +23,8 @@ export function Members() {
       <h1 id="members-title" className="text-[20px] font-semibold">
         能力地图与成员
       </h1>
+      <CapabilityMap />
+      <h2 className="text-[18px] font-semibold">成员</h2>
       {error && <p role="alert">{error}</p>}
       {!members && !error && <p className="text-[var(--muted)]">正在加载…</p>}
       {members && members.length === 0 && <p className="text-[var(--muted)]">还没有成员。到「Key 与接入」填一个模型 Key，模型就会成为候选成员。</p>}

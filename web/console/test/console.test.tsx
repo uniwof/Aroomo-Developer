@@ -94,7 +94,7 @@ describe('页面', () => {
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'pw' } });
     fireEvent.click(screen.getByRole('button', { name: '登录' }));
     await waitFor(() => expect(screen.getByRole('heading', { name: '能力地图与成员' })).toBeInTheDocument());
-    await waitFor(() => expect(screen.getByText('gpt-oss-20b')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByText('gpt-oss-20b').length).toBeGreaterThan(0));
     expect(screen.getByTitle('Kimi（离线）')).toHaveAttribute('data-online', 'false');
     expect(screen.getByRole('navigation', { name: '控制台' }).querySelectorAll('a')).toHaveLength(7);
   });
@@ -110,5 +110,29 @@ describe('页面', () => {
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'bad' } });
     fireEvent.click(screen.getByRole('button', { name: '登录' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('邮箱或密码不对');
+  });
+});
+
+describe('能力清单（M1）', () => {
+  it('汇总行、徽标、额度未知', async () => {
+    const { summaryLine, quotaText } = await import('@/lib/capabilities');
+    const items = [
+      { id: '1', name: 'a', kind: 'text', provider: 'p', access: 'free', quota: null },
+      { id: '2', name: 'b', kind: 'image', provider: 'p', access: 'trial', quota: { used: 3, limit: 10, unit: '次' } },
+    ] as const;
+    expect(summaryLine([...items])).toBe('文本 1 · 生图 1 · 视频 0');
+    expect(quotaText(null)).toBe('额度：未知');
+    expect(quotaText({ used: null, limit: 10, unit: '次' })).toBe('额度：未知');
+    expect(quotaText(items[1].quota)).toBe('额度：已用 3 / 10 次');
+  });
+
+  it('接口未上线(404)时显示示例数据并标明', async () => {
+    const { CapabilityMap } = await import('@/components/CapabilityMap');
+    vi.stubGlobal('fetch', vi.fn(async () => json(404, { error: { code: 'NOT_FOUND', message: 'x' } })));
+    render(<CapabilityMap />);
+    await waitFor(() => expect(screen.getByTestId('cap-summary')).toHaveTextContent('文本 5 · 生图 2 · 视频 0'));
+    expect(screen.getByRole('note')).toHaveTextContent('示例数据');
+    expect(screen.getAllByText('永久免费').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('试用').length).toBeGreaterThan(0);
   });
 });
