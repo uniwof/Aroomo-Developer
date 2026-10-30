@@ -32,6 +32,8 @@ function call(name, a) {
       return text('ok');
     case 'browser_evaluate':
       return text('### Result\n{"width":1280,"height":800}');
+    case 'browser_take_screenshot':
+      return { content: [{ type: 'image', data: Buffer.from('fake-png-' + url).toString('base64'), mimeType: 'image/png' }] };
     case 'browser_close':
       return text('closed');
     default:
