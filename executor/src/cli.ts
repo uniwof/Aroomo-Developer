@@ -21,6 +21,8 @@ import { buildAllowlist, configPath, type ExecutorConfig, defaultConfig, loadCon
 import { createLogger } from './logger.js';
 import type { BrowserPort } from './ports/browser.js';
 import { Runner } from './runner.js';
+import { HANDLERS } from './tasks/handlers.js';
+import { loadRecipes, withRecipes } from './tasks/recipes.js';
 import { HttpTransport } from './transport.js';
 
 export const VERSION = '0.1.0';
@@ -120,6 +122,7 @@ export async function main(argv: string[]): Promise<number> {
         allowlist: buildAllowlist(cfg),
         browsers,
         phones,
+        handlers: withRecipes(HANDLERS, loadRecipes(join(dirname(path), 'recipes.json'))),
         logger,
         deviceName: cfg.deviceName,
         platform: `${process.platform}-${process.arch}`,
