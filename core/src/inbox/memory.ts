@@ -8,7 +8,7 @@ export class MemoryInboxStore implements InboxStore {
   async insertDedup(item: InboxItem): Promise<{ item: InboxItem; created: boolean }> {
     if (item.related) {
       for (const r of this.#rows.values()) {
-        if (r.status === 'open' && r.kind === item.kind && r.related?.type === item.related.type && r.related.id === item.related.id) {
+        if (r.status === 'open' && r.userId === item.userId && r.kind === item.kind && r.related?.type === item.related.type && r.related.id === item.related.id) {
           return { item: clone(r), created: false };
         }
       }
@@ -22,13 +22,13 @@ export class MemoryInboxStore implements InboxStore {
   }
   async list(f: InboxListFilter): Promise<InboxItem[]> {
     return [...this.#rows.values()]
-      .filter((r) => (!f.group || r.group === f.group) && (!f.status || r.status === f.status))
+      .filter((r) => (r.userId === f.userId) && (!f.group || r.group === f.group) && (!f.status || r.status === f.status))
       .sort(compareInbox)
       .map(clone);
   }
-  async openCounts(): Promise<Record<InboxGroup, number>> {
+  async openCounts(userId?: string): Promise<Record<InboxGroup, number>> {
     const out = Object.fromEntries(INBOX_GROUPS.map((g) => [g, 0])) as Record<InboxGroup, number>;
-    for (const r of this.#rows.values()) if (r.status === 'open') out[r.group] += 1;
+    for (const r of this.#rows.values()) if (r.status === 'open' && r.userId === userId) out[r.group] += 1;
     return out;
   }
   async resolveIfOpen(
