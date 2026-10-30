@@ -4,10 +4,10 @@ name: Executor
 on:
   pull_request:
     branches: [dev, main]
-    paths: ['executor/**', 'docs/executor-protocol.md', '.github/workflows/executor.yml']
+    paths: ['executor/**', 'core/src/executor/**', 'docs/executor-protocol.md', '.github/workflows/executor.yml']
   push:
     branches: [dev]
-    paths: ['executor/**', 'docs/executor-protocol.md', '.github/workflows/executor.yml']
+    paths: ['executor/**', 'core/src/executor/**', 'docs/executor-protocol.md', '.github/workflows/executor.yml']
   workflow_dispatch:
 
 permissions:
@@ -47,6 +47,22 @@ jobs:
         run: |
           node dist/cli.js init
           node dist/cli.js check-url https://example.com/ && exit 1 || echo "空白名单正确拒绝"
+
+  e2e-core:
+    name: 联调（真实 Core + 执行员，含越权）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: npm ci
+        working-directory: core
+      - run: npm ci
+        working-directory: executor
+      - run: npm run test:e2e
+        working-directory: executor
 
   windows-install:
     name: Executor Windows 安装脚本（PSScriptAnalyzer + 实跑）
