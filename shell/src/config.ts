@@ -26,6 +26,8 @@ export interface ShellConfig {
   defaultLocale: string;
   /** 静态资源目录（图标 / Aroomo 页面） */
   publicDir: string;
+  /** 控制台（web/console/dist）目录；不存在时 /console 返回 404 提示 */
+  consoleDir: string;
   /** 会话校验结果缓存时长 */
   sessionCacheMs: number;
   /**
@@ -93,6 +95,7 @@ export function loadConfig(env: Env = process.env): ShellConfig {
     auth,
     defaultLocale: str(env, 'SHELL_DEFAULT_LOCALE') ?? 'zh-CN',
     publicDir: str(env, 'SHELL_PUBLIC_DIR') ?? defaultPublicDir(),
+    consoleDir: str(env, 'SHELL_CONSOLE_DIR') ?? '/app/console',
     sessionCacheMs: 30_000,
     localOwner,
     allowedHosts,

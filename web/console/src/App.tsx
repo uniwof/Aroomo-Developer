@@ -9,12 +9,12 @@ import { Settings } from '@/pages/Settings';
 import { Tools } from '@/pages/Tools';
 import { Library } from '@/pages/Library';
 import { Executors } from '@/pages/Executors';
-import { session } from '@/lib/api';
+import { session, viaShell } from '@/lib/api';
 
 
 export function App() {
   const token = useSyncExternalStore(session.subscribe, () => session.token);
-  if (!token) return <Login />;
+  if (!token && !viaShell) return <Login />;
   return (
     <Routes>
       <Route element={<Layout />}>

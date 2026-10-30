@@ -252,6 +252,9 @@ services:
       CORE_OWNER_TOKEN: ${CORE_OWNER_TOKEN:-}
       SHELL_AUTH: lobe-session
       SHELL_DEFAULT_LOCALE: zh-CN
+    # 控制台静态文件（同 core 的挂载）
+    volumes:
+      - ../web/console/dist:/app/console:ro
     healthcheck:
       test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3000/aroomo/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
