@@ -424,6 +424,7 @@ export class ExecutorService {
     const nowMs = this.now().getTime();
     return (await this.store.listExecutors(userId)).map((e) => ({
       id: e.id,
+      clientId: e.clientId,
       deviceName: e.deviceName,
       platform: e.platform,
       version: e.version,
