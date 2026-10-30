@@ -143,7 +143,7 @@ P2–P7 的功能开发在阶段 C 之后照常在网页版上推进，离线版
 | 需要 | 用在哪页 | 说明 | 状态 |
 |---|---|---|---|
 | 控制台会话：/auth/login 可选写 HttpOnly + SameSite=Strict Cookie（Path=/），/api 同时接受该 Cookie；改动类请求校验 X-Aroomo-Request 头 | 登录 | 现在只返回 Bearer 令牌，控制台暂存 sessionStorage；Cookie 更安全 | 待后台线 |
-| GET /api/capabilities（能力清单：成员、工具、技能、额度） | 能力地图与成员 | D157–D172 第 2 步 | 待后台线 |
+| GET /api/capabilities?kind=&access=（能力清单第一版：items 文本/生图/视频 + counts + summary「文本 N · 生图 N · 视频 N」；每项 access=free/trial/paid、status=ready/unverified/failed/missing/keyless、quota{used,limit,unit}、quotaKnown=false 显示「未知」；tools 为算力/沙盒/云手机等；library 技能 148/资源 45 分组计数） | 能力地图与成员 | D157–D172 第 2 步 / M1 | ✅ PR p1/capabilities-api（种子来自资源清单，不含 Key；实时额度待后续） |
 | GET /api/tools、工具开关与额度 | 工具 | 工具网关 | 待后台线 |
 | GET /api/library（资源库列表、搜索） | 资源库 | | 待后台线 |
 | GET /api/inbox?type=confirm\|takeover\|brief | 收件箱 | 接管卡、简报分类 | 待后台线 |
