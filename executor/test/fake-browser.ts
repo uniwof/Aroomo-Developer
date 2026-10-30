@@ -12,6 +12,8 @@ export interface FakeScript {
   actReplies?: Record<string, string>;
   /** goto 之后实际落在的 URL（模拟跳转） */
   redirectTo?: string;
+  /** act 指令包含这个关键字时一直不返回（模拟浏览器卡死），直到会话被关闭 */
+  hangOn?: string;
 }
 
 export class FakeSession implements BrowserSession {
@@ -21,6 +23,7 @@ export class FakeSession implements BrowserSession {
   closed = false;
   handOffs = 0;
   #blockers: (Blocker | null)[];
+  #onClose: (() => void)[] = [];
 
   constructor(private readonly script: FakeScript) {
     this.#blockers = [...(script.blockers ?? [])];
@@ -37,6 +40,12 @@ export class FakeSession implements BrowserSession {
   }
   async act(instruction: string) {
     this.actions.push(instruction);
+    if (this.script.hangOn && instruction.includes(this.script.hangOn)) {
+      await new Promise<void>((resolve) => {
+        this.#onClose.push(resolve);
+      });
+      throw new Error('会话已关闭');
+    }
     for (const [k, v] of Object.entries(this.script.actReplies ?? {})) if (instruction.includes(k)) return v;
     return '好的';
   }
@@ -52,6 +61,7 @@ export class FakeSession implements BrowserSession {
   }
   async close() {
     this.closed = true;
+    for (const f of this.#onClose.splice(0)) f();
   }
 }
 

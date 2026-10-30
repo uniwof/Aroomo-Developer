@@ -31,6 +31,10 @@ export interface RunnerOptions {
   backoff?: Backoff;
   /** 接管卡最长等待（默认 24 小时；超时按取消处理） */
   takeoverMaxWaitMs?: number;
+  /** 单个任务的最长「实际操作」时间（不含等你处理接管卡的时间），默认 10 分钟；超时按失败回报，避免浏览器卡住时一直占着租约 */
+  taskActiveMaxMs?: number;
+  /** 看门狗检查间隔，测试可调小 */
+  watchdogTickMs?: number;
 }
 
 export type RunnerState = 'starting' | 'online' | 'reconnecting' | 'auth_failed' | 'stopped';
@@ -199,6 +203,30 @@ export class Runner {
       },
     };
 
+    // 看门狗：只数实际操作的时间，等所有者处理接管卡不算
+    const activeMax = this.#o.taskActiveMaxMs ?? 10 * 60_000;
+    const tickMs = this.#o.watchdogTickMs ?? 1000;
+    let activeMs = 0;
+    let lastTick = Date.now();
+    let fireTimeout: (e: Error) => void = () => undefined;
+    const timeoutP = new Promise<never>((_, rej) => {
+      fireTimeout = rej;
+    });
+    timeoutP.catch(() => undefined);
+    const watchdog = setInterval(() => {
+      const now = Date.now();
+      if (!pausedForOwner) activeMs += now - lastTick;
+      lastTick = now;
+      if (activeMs > activeMax) {
+        clearInterval(watchdog);
+        fireTimeout(new TaskFailed('TASK_TIMEOUT', `任务操作超过 ${Math.round(activeMax / 60_000)} 分钟没有结束，已停止`));
+      }
+    }, tickMs);
+    const guarded = <T>(p: Promise<T>): Promise<T> => {
+      p.catch(() => undefined);
+      return Promise.race([p, timeoutP]);
+    };
+
     // 心跳：每 leaseSec/3 续租一次；等所有者处理时 Core 冻结租约，不必发
     const hb = setInterval(
       () => {
@@ -222,13 +250,14 @@ export class Runner {
           }
         }
         if (!phone) throw new TaskFailed('NO_PHONE', '本机没有可用的云手机 / 安卓适配器（DroidRun 未安装或未启用）');
-        out = await runPhoneTask(ctx, phone);
+        out = await guarded(runPhoneTask(ctx, phone));
       } else {
         const handler = this.#handlers[task.kind];
         const port = await pickBrowser(this.#o.browsers);
         if (!port) throw new TaskFailed('NO_BROWSER', '本机没有可用的浏览器适配器（ego lite / Playwright 都不可用）');
-        session = await port.open({ label: task.id.slice(0, 8), redact: (s) => redactor.redact(s) });
-        out = await handler(ctx, session);
+        const opened = await guarded(port.open({ label: task.id.slice(0, 8), redact: (s) => redactor.redact(s) }));
+        session = opened;
+        out = await guarded(handler(ctx, opened));
       }
       result = { status: 'succeeded', summary: out.summary, ...(out.screenshot ? { screenshot: out.screenshot } : {}) };
     } catch (e) {
@@ -245,6 +274,7 @@ export class Runner {
       }
     } finally {
       clearInterval(hb);
+      clearInterval(watchdog);
       if (session) await session.close().catch(() => undefined);
     }
 
