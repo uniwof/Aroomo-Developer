@@ -47,6 +47,8 @@ export interface ChatDeps {
   rules?: () => Promise<string | null>;
   /** 每次调用上游后记一笔（额度圆环用）；账号成员（有 upstreamModel）不记到所有者名下 */
   onCall?: (member: string, outcome: 'ok' | 'error' | 'limited') => void;
+  /** 供应商返回了用量（token 数）时记一笔；只记数字，不记内容 */
+  onTokens?: (member: string, tokens: number) => void;
   fetchImpl?: typeof fetch;
 }
 
@@ -277,7 +279,9 @@ export class ChatService {
       return textReply(stream, prefix + `${model} 暂时没有回应（${why}）。${mention ? '不会自动换人；去掉 @ 再发一次即可交给负责人。' : '请到「成员 → Key 与接入」检查 Key。'}`);
     }
     if (!stream) {
-      const j = (await res.json()) as { choices?: Array<{ message?: { content?: unknown } }> };
+      const j = (await res.json()) as { choices?: Array<{ message?: { content?: unknown } }>; usage?: { total_tokens?: unknown } };
+      const total = j.usage?.total_tokens;
+      if (!this.d.upstreamModel && typeof total === 'number' && Number.isFinite(total) && total > 0) this.d.onTokens?.(model, Math.floor(total));
       const msg = j.choices?.[0]?.message;
       if (msg && typeof msg.content === 'string') msg.content = prefix + msg.content + footer;
       return { status: 200, headers: { 'content-type': 'application/json' }, json: j };

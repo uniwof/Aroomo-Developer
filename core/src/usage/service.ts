@@ -14,6 +14,8 @@ export interface Counter {
   requests: number;
   errors: number;
   limited: number;
+  /** 供应商返回过用量时累计的 token 数；没返回过 = 没有这个字段（显示「未知」） */
+  tokens?: number;
 }
 type Day = Record<string, Counter>;
 
@@ -61,6 +63,20 @@ export class UsageService {
       .catch(() => undefined);
   }
 
+  /** 记一次调用用掉的 token 数（只有供应商返回了 usage 才有；流式回答目前不统计） */
+  recordTokens(member: string, tokens: number): void {
+    this.#chain = this.#chain
+      .then(async () => {
+        const key = keyOf(dayKey(this.now()));
+        const day = (await this.settings.get<Day>(key)) ?? {};
+        const c = day[member] ?? { requests: 0, errors: 0, limited: 0 };
+        c.tokens = (c.tokens ?? 0) + tokens;
+        day[member] = c;
+        await this.settings.set(key, day, this.now());
+      })
+      .catch(() => undefined);
+  }
+
   /** 等排队的写入落盘（测试和读取前用） */
   async flush(): Promise<void> {
     await this.#chain;
@@ -93,7 +109,9 @@ export class UsageService {
     const limits = await this.limits();
     const zero = (): Counter => ({ requests: 0, errors: 0, limited: 0 });
     const rows = activeMembers(members).map((m) => {
-      const t = days[0]?.[m.name] ?? zero();
+      const raw = days[0]?.[m.name];
+      const t = raw ? { requests: raw.requests, errors: raw.errors, limited: raw.limited } : zero();
+      const tokensToday = raw?.tokens ?? null; // null = 未知（供应商没返回用量）
       const week = days.reduce((s, d) => s + (d[m.name]?.requests ?? 0), 0);
       const limit = limits[m.id] ?? null;
       return {
@@ -101,6 +119,7 @@ export class UsageService {
         name: m.name,
         today: t,
         last7DaysRequests: week,
+        tokensToday,
         quota: { used: t.requests, limit, unit: '次/天' },
         // 上限没填 = 未知，圆环不画比例
         quotaKnown: limit != null,
