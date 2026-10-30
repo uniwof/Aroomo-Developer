@@ -102,6 +102,8 @@ jobs:
         run: node scripts/license-gate/check-npm.mjs
       - name: Python（所有 requirements*.txt，pip-licenses）
         run: bash scripts/license-gate/check-python.sh
+      - name: 检查 third-party.md 与依赖一致
+        run: node scripts/generate-third-party.mjs --check
 
   compose:
     name: Compose 配置校验 + 脚本检查
