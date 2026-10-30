@@ -17,6 +17,7 @@ const toEx = (r: Record<string, unknown>): ExecutorRecord => ({
   platform: r.platform as string,
   version: r.version as string,
   adapters: r.adapters as string[],
+  allowlistHash: (r.allowlist_hash as string | null) ?? null,
   createdAt: toDate(r.created_at),
   lastSeenAt: toDate(r.last_seen_at),
 });
@@ -94,10 +95,11 @@ export class PgExecutorStore implements ExecutorStore {
 
   async upsertExecutor(r: ExecutorRecord): Promise<ExecutorRecord> {
     const { rows } = await this.db.query<Record<string, unknown>>(
-      `INSERT INTO executors (id, user_id, client_id, device_name, platform, version, adapters, created_at, last_seen_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      `INSERT INTO executors (id, user_id, client_id, device_name, platform, version, adapters, created_at, last_seen_at, allowlist_hash)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
        ON CONFLICT (user_id, client_id) DO UPDATE SET device_name = EXCLUDED.device_name, platform = EXCLUDED.platform,
-         version = EXCLUDED.version, adapters = EXCLUDED.adapters, last_seen_at = EXCLUDED.last_seen_at
+         version = EXCLUDED.version, adapters = EXCLUDED.adapters, last_seen_at = EXCLUDED.last_seen_at,
+         allowlist_hash = EXCLUDED.allowlist_hash
        RETURNING *`,
       [
         r.id,
@@ -109,6 +111,7 @@ export class PgExecutorStore implements ExecutorStore {
         r.adapters,
         r.createdAt,
         r.lastSeenAt,
+        r.allowlistHash,
       ],
     );
     return toEx(rows[0] as Record<string, unknown>);

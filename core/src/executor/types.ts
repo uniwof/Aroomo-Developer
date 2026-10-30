@@ -11,6 +11,8 @@ export interface ExecutorRecord {
   platform: string;
   version: string;
   adapters: string[];
+  /** 执行员上报的本机白名单指纹（没报为 null） */
+  allowlistHash: string | null;
   createdAt: Date;
   lastSeenAt: Date;
 }

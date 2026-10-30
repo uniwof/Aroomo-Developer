@@ -52,6 +52,7 @@ export class MemoryExecutorStore implements ExecutorStore {
           platform: r.platform,
           version: r.version,
           adapters: [...r.adapters],
+          allowlistHash: r.allowlistHash,
           lastSeenAt: r.lastSeenAt,
         });
         return { ...e };

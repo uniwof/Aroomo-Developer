@@ -39,6 +39,7 @@ export function registerExecutorRoutes(
       platform: string;
       version: string;
       adapters?: string[];
+      allowlistHash?: string;
     };
   }>(
     "/api/executor/hello",
@@ -365,6 +366,28 @@ export function registerExecutorRoutes(
     { ...human, schema: { params: uuidParam } },
     async (req) => ({
       task: taskJson(await svc.cancel(scopeOf(req), req.params.id, req.audit)),
+    }),
+  );
+  const allowBody = {
+    schema: {
+      body: {
+        type: "object",
+        required: ["sites"],
+        additionalProperties: false,
+        properties: {
+          sites: { type: "array", maxItems: 100, items: { type: "string", maxLength: 300 } },
+        },
+      },
+    },
+  };
+  app.get("/api/executor-allowlist", human, async (req) => ({
+    sites: await svc.getAllowlist(scopeOf(req)),
+  }));
+  app.put<{ Body: { sites: string[] } }>(
+    "/api/executor-allowlist",
+    { ...human, ...allowBody },
+    async (req) => ({
+      sites: await svc.setAllowlist(scopeOf(req), req.body.sites, req.audit),
     }),
   );
   app.get("/api/executors", human, async (req) => ({
