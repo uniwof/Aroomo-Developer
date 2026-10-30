@@ -12,6 +12,7 @@ interface Action {
 interface Item {
   id: string;
   group: 'decision' | 'candidate' | 'brief';
+  kind?: string;
   title: string;
   summary?: string;
   urgency?: 'urgent' | 'normal' | 'low';
@@ -31,7 +32,8 @@ export function Inbox() {
 
   const load = useCallback(() => {
     api<{ groups: Record<string, Item[]> }>('GET', '/api/inbox?status=open')
-      .then((r) => setData(r.groups))
+      // 接管卡已由上面的 TakeoverCards 显示，收件箱里同一张卡不再重复出现
+      .then((r) => setData(Object.fromEntries(Object.entries(r.groups).map(([k, v]) => [k, v.filter((i) => i.kind !== 'executor.takeover')]))))
       .catch((e) => setMsg(e instanceof ApiError && e.status === 403 ? '这个账号还不能查看收件箱' : '加载失败，请稍后再试'));
   }, []);
   useEffect(load, [load]);
