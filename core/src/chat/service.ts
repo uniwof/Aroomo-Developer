@@ -27,6 +27,8 @@ export interface ChatDeps {
   lead: LeadService;
   /** 敏感内容保护开关（D38）；不传 = 开 */
   security?: SecurityService;
+  /** 账号成员的上游模型名映射（如 u<hex>/名字）；不传 = 原名（所有者共享池） */
+  upstreamModel?: (name: string) => string;
   fetchImpl?: typeof fetch;
 }
 
@@ -141,7 +143,7 @@ export class ChatService {
     return this.#fetch(`${this.d.litellmBaseUrl.replace(/\/+$/, '')}/v1/chat/completions`, {
       method: 'POST',
       headers: { authorization: `Bearer ${this.d.litellmKey}`, 'content-type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify(this.d.upstreamModel && typeof body.model === 'string' ? { ...body, model: this.d.upstreamModel(body.model) } : body),
       signal,
     });
   }
