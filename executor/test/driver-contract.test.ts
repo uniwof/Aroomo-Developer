@@ -194,6 +194,20 @@ describe('规则规划器', () => {
     expect(detectBlockerInSnapshot('@1 textbox "Card number"')?.blocker).toBe('payment');
     expect(detectBlockerInSnapshot('@1 button "签到"')).toBeNull();
   });
+
+  it('识别 Cloudflare 等人机检查', () => {
+    expect(detectBlockerInSnapshot('- heading "Just a moment..." [ref=e1]')?.blocker).toBe('captcha');
+    expect(detectBlockerInSnapshot('@2 text "Performing security verification"')?.blocker).toBe('captcha');
+    expect(detectBlockerInSnapshot('@2 text "请完成安全验证"')?.blocker).toBe('captcha');
+    expect(detectBlockerInSnapshot('@3 textbox "Security code"')?.blocker).toBe('2fa');
+  });
+
+  it('菜单链接里的付款 / 验证码字样不误报；输入框和按钮里的照常识别', () => {
+    expect(detectBlockerInSnapshot('@1 link "Payment settings"\n@2 link "支付记录"\n@3 button "签到"')).toBeNull();
+    expect(detectBlockerInSnapshot('- link "付款方式" [ref=e4]\n- button "每日签到" [ref=e5]')).toBeNull();
+    expect(detectBlockerInSnapshot('@1 link "付款方式"\n@2 button "立即支付"')?.blocker).toBe('payment');
+    expect(detectBlockerInSnapshot('- textbox "邮箱验证码" [ref=e9]')?.blocker).toBe('2fa');
+  });
   it('登录页：先填字段再点登录', async () => {
     const steps = await new RuleBasedPlanner().plan({
       instruction: '点击登录按钮',
