@@ -16,3 +16,6 @@ services:
   backup: { mem_limit: 256m }
   restore: { mem_limit: 512m }
   gateway: { mem_limit: 128m }
+  gatus: { mem_limit: 128m }
+  beszel: { mem_limit: 128m }
+  beszel-agent: { mem_limit: 64m }
