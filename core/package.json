@@ -1,0 +1,35 @@
+{
+  "name": "@aroomo/core",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Aroomo Core：唯一的「大脑服务」（PRODUCT §5.2、§11.2）",
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "check": "npm run lint && npm run typecheck && npm run test"
+  },
+  "dependencies": {
+    "fastify": "^5.12.7",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.12",
+    "@eslint/js": "^9.39.5",
+    "@types/node": "^22.20.5",
+    "@types/pg": "^8.23.1",
+    "eslint": "^9.39.5",
+    "globals": "^17.13.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.72.1",
+    "vitest": "^3.2.7"
+  }
+}

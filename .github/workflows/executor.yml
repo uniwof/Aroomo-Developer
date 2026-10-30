@@ -1,0 +1,96 @@
+name: Executor
+
+# 本机执行员（executor/）单独一个工作流，避免与其他线修改 ci.yml 冲突
+on:
+  pull_request:
+    branches: [dev, main]
+    paths: ['executor/**', 'core/src/executor/**', 'docs/executor-protocol.md', '.github/workflows/executor.yml']
+  push:
+    branches: [dev]
+    paths: ['executor/**', 'core/src/executor/**', 'docs/executor-protocol.md', '.github/workflows/executor.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: executor-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  executor:
+    name: Executor（lint + typecheck + test + build）
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: executor
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: executor/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: CLI 冒烟（init / check-url）
+        shell: bash
+        env:
+          AROOMO_EXECUTOR_CONFIG: ${{ runner.temp }}/exec/config.json
+        run: |
+          node dist/cli.js init
+          node dist/cli.js check-url https://example.com/ && exit 1 || echo "空白名单正确拒绝"
+
+  e2e-core:
+    name: 联调（真实 Core + 执行员，含越权）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: npm ci
+        working-directory: core
+      - run: npm ci
+        working-directory: executor
+      - run: npm run test:e2e
+        working-directory: executor
+
+  windows-install:
+    name: Executor Windows 安装脚本（PSScriptAnalyzer + 实跑）
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: PSScriptAnalyzer
+        shell: powershell
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser -Force
+          $r = Invoke-ScriptAnalyzer -Path executor/scripts -Recurse -ExcludeRule PSAvoidUsingWriteHost,PSUseBOMForUnicodeEncodedFile
+          $r | Format-Table -AutoSize RuleName, Severity, ScriptName, Line, Message | Out-String -Width 250
+          if (@($r | Where-Object Severity -in 'Error','Warning').Count -gt 0) { exit 1 }
+      - name: 实跑安装脚本（Windows PowerShell 5.1，不注册自启）
+        shell: powershell
+        env:
+          AROOMO_EXECUTOR_CONFIG: ${{ runner.temp }}\exec\config.json
+          AROOMO_EXECUTOR_TOKEN: ci-placeholder-not-a-secret
+        run: |
+          powershell -ExecutionPolicy Bypass -File executor\scripts\install-windows.ps1 -NoAutostart
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          if (-not (Test-Path "$env:RUNNER_TEMP\exec\device-token")) { throw '令牌文件没生成' }
+          if (-not (Test-Path "$env:RUNNER_TEMP\exec\config.json")) { throw '配置没生成' }
+          Remove-Item Env:AROOMO_EXECUTOR_TOKEN
+          node executor\dist\cli.js check
+          if ($LASTEXITCODE -ne 0) { throw 'check 没通过（令牌文件应可读）' }
