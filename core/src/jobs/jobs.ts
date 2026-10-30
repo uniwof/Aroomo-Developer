@@ -15,6 +15,7 @@ import type { KeyStore } from '../keys/types.js';
 import type { MembersService } from '../members/service.js';
 import { refreshModelCaps } from '../members/caps.js';
 import type { MemberStore } from '../members/types.js';
+import type { ExecutorStore } from '../executor/types.js';
 import type { Job } from './scheduler.js';
 
 const HOUR = 60 * 60 * 1000;
@@ -113,6 +114,20 @@ export function keyReconcileJob(keys: KeyStore, litellm: LiteLLMAdmin, inbox: In
         );
       }
       return [missing && `missing=${missing}`, restored && `restored=${restored}`, orphans.length && `orphans=${orphans.length}`].filter(Boolean).join(' ');
+    },
+  };
+}
+
+/** 任务队列清扫（M3）：租约过期的退回队列；排队超过 maxQueuedHours 没人领的置失败，免得永远挂在「排队中」。 */
+export function taskTimeoutJob(store: ExecutorStore, now: () => Date, maxQueuedHours = 24): Job {
+  return {
+    name: 'task-timeout',
+    intervalMs: 5 * 60 * 1000,
+    firstDelayMs: 60_000,
+    async run() {
+      const at = now();
+      const r = await store.sweep(at, new Date(at.getTime() - maxQueuedHours * HOUR));
+      return r.requeued || r.expired ? `requeued=${r.requeued} expired=${r.expired}` : '';
     },
   };
 }
