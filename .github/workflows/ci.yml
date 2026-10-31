@@ -390,6 +390,7 @@ jobs:
           call tools\restore-drill\Test-AroomoBackup.cmd > NUL 2> "%RUNNER_TEMP%\rd-err.txt"
           if not errorlevel 1 (echo wrong key was accepted & exit /b 1)
           echo wrong key rejected ok
+          exit /b 0
       - name: 删除测试私钥
         if: always()
         shell: powershell
