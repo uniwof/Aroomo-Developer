@@ -184,3 +184,5 @@ P2–P7 的功能开发在阶段 C 之后照常在网页版上推进，离线版
 - 2026-10-27：完成旧项目审计（docs/AUDIT.md）。
 - 2026-10-27：负责人 v4.3 裁决入档（D30–D61）；P0 开始；新增 KEY-STORAGE.md、SEQUENCES.md。
 - 2026-10-27：Core 模块：审计日志（#18）、成员（#20）、收件箱（#22）合并到 dev；Key 管理（#24）合并到 dev；点名解析（#8）PR 提交。Jules 对 #11/#5/#6/#8 的重复 PR（#13/#15/#16/#14）已留言建议关闭。
+
+- 兜底审查 CI 已上线（.github/workflows/adversarial-review.yml）：PR 带 needs-leader-review 标签自动评论，各线停用手动 run_subagent。
