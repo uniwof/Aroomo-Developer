@@ -1,7 +1,8 @@
-/** Key 与接入：列表与新增（/api/keys）。只显示末 4 位，Key 原文提交后不再回显。删除/换 Key 需要两步确认卡，待确认卡组件完成后接入。 */
+/** Key 与接入：列表与新增（/api/keys）。只显示末 4 位，Key 原文提交后不再回显。删除 Key 走两步确认卡（涉及凭据）。 */
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Button } from '@/components/ui/button';
-import { ApiError, api } from '@/lib/api';
+import { ApiError, api, type Challenge } from '@/lib/api';
+import { ConfirmCard } from '@/components/ConfirmCard';
 
 interface KeyItem {
   id: string;
@@ -18,6 +19,7 @@ export function Keys() {
   const [keys, setKeys] = useState<KeyItem[] | null>(null);
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<{ key: KeyItem; challenge: Challenge } | null>(null);
 
   const load = useCallback(() => {
     api<{ keys: KeyItem[] }>('GET', '/api/keys')
@@ -49,6 +51,20 @@ export function Keys() {
     }
   }
 
+  async function remove(k: KeyItem, confirmToken?: string) {
+    setMsg('');
+    try {
+      await api('DELETE', `/api/keys/${k.id}`, confirmToken ? { confirmToken } : undefined);
+      setPending(null);
+      setMsg(`已删除「${k.name}」`);
+      load();
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 428 && e.confirm) setPending({ key: k, challenge: e.confirm });
+      else if (confirmToken) throw e;
+      else setMsg(e instanceof ApiError ? e.message : '删除失败，请稍后再试');
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <h1 className="text-xl font-semibold">Key 与接入</h1>
@@ -62,6 +78,14 @@ export function Keys() {
             <div className="text-[var(--muted)]">
               ••••{k.last4} · {k.status}
             </div>
+            <Button variant="outline" className="mt-2" aria-label={`删除 Key「${k.name}」`} onClick={() => void remove(k)}>
+              删除
+            </Button>
+            {pending?.key.id === k.id && (
+              <div className="mt-2">
+                <ConfirmCard challenge={pending.challenge} onCancel={() => setPending(null)} onToken={(t) => remove(pending.key, t)} />
+              </div>
+            )}
           </li>
         ))}
       </ul>

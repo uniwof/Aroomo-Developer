@@ -1,7 +1,8 @@
-/** 收件箱：待决定 / 候选 / 简报（/api/inbox）。需要两步确认的动作先提示，待确认卡组件接入。 */
+/** 收件箱：待决定 / 候选 / 简报（/api/inbox）。重要动作走两步确认卡。 */
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { ApiError, api } from '@/lib/api';
+import { ApiError, api, type Challenge } from '@/lib/api';
+import { ConfirmCard } from '@/components/ConfirmCard';
 import { TakeoverCards } from '@/components/TakeoverCards';
 
 interface Action {
@@ -37,6 +38,8 @@ function formatTime(iso: string): string {
 export function Inbox() {
   const [data, setData] = useState<Record<string, Item[]> | null>(null);
   const [msg, setMsg] = useState('');
+  // 正在两步确认的动作：重要动作第一次点会拿到 428 + 确认卡
+  const [pending, setPending] = useState<{ item: Item; action: Action; challenge: Challenge } | null>(null);
 
   const load = useCallback(() => {
     api<{ groups: Record<string, Item[]> }>('GET', '/api/inbox?status=open')
@@ -46,14 +49,17 @@ export function Inbox() {
   }, []);
   useEffect(load, [load]);
 
-  async function act(item: Item, a: Action) {
+  async function act(item: Item, a: Action, confirmToken?: string) {
     setMsg('');
     try {
-      await api('POST', `/api/inbox/${item.id}/actions/${a.id}`, {});
+      await api('POST', `/api/inbox/${item.id}/actions/${a.id}`, confirmToken ? { confirmToken } : {});
+      setPending(null);
       setMsg('已处理');
       load();
     } catch (e) {
-      setMsg(e instanceof ApiError ? e.message : '操作失败，请稍后再试');
+      if (e instanceof ApiError && e.status === 428 && e.confirm) setPending({ item, action: a, challenge: e.confirm });
+      else if (confirmToken) throw e;
+      else setMsg(e instanceof ApiError ? e.message : '操作失败，请稍后再试');
     }
   }
 
@@ -102,23 +108,24 @@ export function Inbox() {
                   {i.summary && <p className="whitespace-pre-wrap text-[var(--muted)]">{i.summary}</p>}
                   <p className="text-[14px] text-[var(--muted)]">{formatTime(i.createdAt)}</p>
                   <div className="flex flex-wrap gap-2">
-                    {(i.actions ?? []).map((a) =>
-                      a.confirm ? (
-                        <span key={a.id} className="min-h-11 content-center text-[var(--muted)]">
-                          「{a.label}」需要两步确认，确认卡正在接入
-                        </span>
-                      ) : (
-                        <Button key={a.id} className="min-h-11" onClick={() => act(i, a)}>
-                          {a.label}
-                        </Button>
-                      ),
-                    )}
+                    {(i.actions ?? []).map((a) => (
+                      <Button key={a.id} className="min-h-11" variant={a.confirm && a.confirm.kind !== 'normal' ? 'outline' : 'default'} onClick={() => void act(i, a)}>
+                        {a.label}
+                      </Button>
+                    ))}
                     {canDismiss(i) && (
                       <Button variant="outline" className="min-h-11" aria-label={`知道了：${i.title}`} onClick={() => dismiss([i.id])}>
                         知道了
                       </Button>
                     )}
                   </div>
+                  {pending?.item.id === i.id && (
+                    <ConfirmCard
+                      challenge={pending.challenge}
+                      onCancel={() => setPending(null)}
+                      onToken={(t) => act(pending.item, pending.action, t)}
+                    />
+                  )}
                 </li>
               ))}
             </ul>
