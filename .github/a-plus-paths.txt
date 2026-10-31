@@ -42,3 +42,7 @@ core/migrations/*grant*
 # 主密钥小工具（所有者电脑上生成主密钥，D64）
 tools/master-key/**
 docs/ops/MASTER-KEY.md
+
+# 备份本机核对小工具（所有者用主密钥在本机解密核对，D64；红线 3）
+tools/restore-drill/**
+docs/ops/RESTORE-DRILL-OWNER.md
