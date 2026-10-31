@@ -14,6 +14,20 @@ export function registerUsageRoutes(app: FastifyInstance, usage: UsageService, m
     return usage.report(await membersFor(scope).listAll(), scope === 'owner');
   });
 
+  app.get<{ Params: { id: string } }>(
+    '/api/members/:id/card',
+    {
+      ...guard('members:read', { user: true }),
+      schema: { params: { type: 'object', required: ['id'], properties: { id: { type: 'string', minLength: 1, maxLength: 64 } } } },
+    },
+    async (req) => {
+      const scope = scopeOf(req);
+      const member = (await membersFor(scope).listAll()).find((m) => m.id === req.params.id && !m.deletedAt);
+      if (!member) throw new HttpError(404, 'NOT_FOUND', '没有这位成员');
+      return usage.card(member, scope === 'owner');
+    },
+  );
+
   app.put<{ Params: { memberId: string }; Body: { dailyLimit: number | null } }>(
     '/api/usage/limits/:memberId',
     {

@@ -135,4 +135,27 @@ export class UsageService {
       members: rows,
     };
   }
+
+  /**
+   * 悬停卡 3 行版（#174）：英文名+类型、状态一句话、余量+来源。只读库里已有数据，不调供应商。
+   * 余量只有「你填了每天上限」时才有（今天剩几次，来源=估算：Core 自己数的）；否则「未知」。没有实查来源。
+   */
+  async card(member: Member, tracked: boolean) {
+    await this.flush();
+    const raw = tracked ? (await this.settings.get<Day>(keyOf(dayKey(this.now()))))?.[member.name] : undefined;
+    const limit = (await this.limits())[member.id] ?? null;
+    const used = raw?.requests ?? 0;
+    let state: string;
+    if (member.status === 'candidate') state = '候选';
+    else if (!member.enabled) state = '休眠';
+    else if ((raw?.limited ?? 0) > 0) state = '限流';
+    else state = '可用';
+    const known = tracked && limit != null;
+    return {
+      name: member.name,
+      type: member.capabilityTags.length ? member.capabilityTags : ['text'],
+      status: state,
+      remaining: known ? { value: Math.max(0, (limit as number) - used), unit: '次/天', source: '估算' } : { value: null, unit: null, source: '未知' },
+    };
+  }
 }
