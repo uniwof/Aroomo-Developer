@@ -76,6 +76,8 @@ jobs:
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           gemini_model: ${{ vars.GEMINI_MODEL }}
           gemini_cli_version: ${{ vars.GEMINI_CLI_VERSION }}
+          # 公开仓库日志可见；只会输出仓库代码与工单内容，Key 由 Actions 自动打码。试跑期打开便于排查卡住原因。
+          gemini_debug: true
           workflow_name: gemini-task
           github_issue_number: ${{ steps.gate.outputs.number }}
           settings: |-
@@ -119,8 +121,12 @@ jobs:
         with:
           ref: dev
           fetch-depth: 0
+      - name: 删掉队列分支（只是触发器）
+        if: always() && startsWith(github.ref_name, 'queue/')
+        run: git push -q origin --delete "${{ github.ref_name }}" || true
       - uses: actions/download-artifact@v4
         if: needs.code.outputs.ok == 'true'
+        continue-on-error: true
         with:
           name: gemini-patch
           path: /tmp/gemini
@@ -128,13 +134,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          NUM: ${{ needs.code.outputs.number || github.event.issue.number || inputs.issue_number }}
+          NUM: ${{ needs.code.outputs.number || github.event.issue.number || inputs.issue_number || (startsWith(github.ref_name, 'queue/gemini-') && github.ref_name) }}
           QUEUE_REF: ${{ startsWith(github.ref_name, 'queue/') && github.ref_name || '' }}
           OK: ${{ needs.code.outputs.ok }}
           REASON: ${{ needs.code.outputs.reason }}
           GEMINI: ${{ needs.code.outputs.gemini }}
         run: |
           set -uo pipefail
+          NUM="${NUM#queue/gemini-}"
           # 队列分支只是触发器：先删掉，失败也不影响后续
           if [ -n "$QUEUE_REF" ]; then git push -q origin --delete "$QUEUE_REF" || true; fi
           api() { curl -sS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$@"; }
