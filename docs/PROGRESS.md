@@ -156,6 +156,13 @@ P2–P7 的功能开发在阶段 C 之后照常在网页版上推进，离线版
 | GET /api/members 每位成员多 online（布尔：在职 + 启用 + 未删除 + 有一把状态正常的 Key 对着它） | 成员头像彩色 / 黑白（D7） | 只在列表接口带；其他接口不带 | ✅ PR p1/member-online |
 | GET/PUT /api/settings/security、GET /api/audit 对 owner/admin 账号开放（现在只认所有者令牌，账号登录会 403） | 设置 → 安全 | 控制台用账号登录 | 待后台线 |
 
+## 两个账号与隔离（隔离线约定；D205、D206；2026-10-31 起）
+
+- **小号 seed 由隔离线负责**：`core/src/users/seed.ts`（幂等函数 `seedXiaohao`）+ CLI `node dist/seed/xiaohao.js`。凭据只经环境变量 `XIAOHAO_EMAIL`、`XIAOHAO_PASSWORD` 注入（staging 的 .env 或保险箱），不进仓库/日志；`NODE_ENV=production` 时默认拒绝。staging 部署后由控制台线在 compose 里跑一次：`docker compose exec core node dist/seed/xiaohao.js`（可重复跑）。
+- **测试夹具（各线复用）**：`core/test/helpers/two-accounts.ts`——`twoAccounts(env)` 返回所有者 `owner(...)` 与小号 `xiao(...)` 两个调用器；`twoAccountEnvs` 覆盖 memory / PGlite / CI PostgreSQL。断言：`expectHidden`（403/404 或不含所有者标记）、`expectDenied`（改删必须 403/404）、`expectSameAsMissing`（所有者 id 与不存在 id 结果一致，看不出存在）、`expectEmptyList`（列表/计数为空）。
+- **完成定义**：每个新功能 PR 至少加一条用 `twoAccounts` 的用例：小号看不到、改不了、看不出存在；小号自己的同一功能可用。
+- **RLS（D206）**：按模块逐个开（A+，每模块一个 PR，等负责人审）；按用户开事务的助手接口届时在本节登记。
+
 ## 阻塞
 
 | 阻塞项 | 卡住什么 | 需要谁 |
