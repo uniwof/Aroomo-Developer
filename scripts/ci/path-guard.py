@@ -8,6 +8,10 @@
 2. Gemini 自动程序员的改动（分支 gemini/*，或带 gemini-task 标签）：
    只要有一个文件不在 .github/gemini-allowed-paths.txt 白名单内，或触及 A+ → 失败。
 
+改名/挪动：列文件和取 diff 都用 --no-renames，改名按「删旧 + 加新」处理，旧路径新路径都参与判断
+（把 A+ 文件挪出 A+ 目录同样判 A+；负责人 2026-10-31 审 #187 必改 1）。
+测试：python3 scripts/ci/test_path_guard.py
+
 用法：path-guard.py <base-ref>   环境变量 HEAD_REF（分支名）、PR_LABELS（逗号分隔）
 """
 import fnmatch, os, re, subprocess, sys
@@ -51,11 +55,10 @@ def git(*args):
     return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
 
 
-def main():
-    base = sys.argv[1] if len(sys.argv) > 1 else "origin/dev"
-    head_ref = os.environ.get("HEAD_REF", "")
-    labels = {l.strip() for l in os.environ.get("PR_LABELS", "").split(",") if l.strip()}
-    files = [f for f in git("diff", "--name-only", f"{base}...HEAD").splitlines() if f]
+def evaluate(base, head_ref, labels):
+    """返回 (files, aplus, robot, errors, notes)。"""
+    # --no-renames：改名/挪动拆成「删除旧路径 + 新增新路径」，两边都进名单
+    files = [f for f in git("diff", "--no-renames", "--name-only", f"{base}...HEAD").splitlines() if f]
     aplus_pats = patterns(".github/a-plus-paths.txt")
     allow_pats = patterns(".github/gemini-allowed-paths.txt")
 
@@ -66,7 +69,7 @@ def main():
             continue
         hit = set()
         cur = None
-        for l in git("diff", f"{base}...HEAD", "--", *scoped).splitlines():
+        for l in git("diff", "--no-renames", f"{base}...HEAD", "--", *scoped).splitlines():
             if l.startswith("diff --git "):
                 cur = l.split(" b/", 1)[-1]
                 continue
@@ -89,6 +92,14 @@ def main():
         notes.append("触及 A+：" + ", ".join(aplus[:20]) + " —— 必须等负责人审，绝不兜底合并。")
         if "needs-leader-review" not in labels:
             errors.append("触及 A+ 却没有 needs-leader-review 标签：请加标签并在日志写「需要负责人审」。")
+    return files, aplus, robot, errors, notes
+
+
+def main():
+    base = sys.argv[1] if len(sys.argv) > 1 else "origin/dev"
+    head_ref = os.environ.get("HEAD_REF", "")
+    labels = {l.strip() for l in os.environ.get("PR_LABELS", "").split(",") if l.strip()}
+    files, aplus, robot, errors, notes = evaluate(base, head_ref, labels)
 
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     lines = [f"### 路径闸门：{'失败' if errors else '通过'}", f"改动文件 {len(files)} 个；自动程序员={'是' if robot else '否'}"]

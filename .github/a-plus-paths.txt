@@ -7,6 +7,11 @@
 .github/a-plus-paths.txt
 .github/workflows/path-guard.yml
 scripts/ci/path-guard.py
+scripts/ci/test_path_guard.py
+# 自动程序员白名单与对抗式审查（改它们 = 能放宽 Gemini 越界或审查结论；#187 必改 2）
+.github/gemini-allowed-paths.txt
+.github/workflows/adversarial-review.yml
+scripts/ci/adversarial-review.py
 
 # 确认服务本身
 core/src/confirm/**
