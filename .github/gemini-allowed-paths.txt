@@ -1,0 +1,7 @@
+# Gemini 自动程序员（gemini-task）只能改这些路径；其余一律 CI 失败。
+# 只接 B/C 类小任务；A 类、A+ 类路径永远不在这里。
+docs/**
+web/console/src/**
+core/test/**
+executor/test/**
+README.md

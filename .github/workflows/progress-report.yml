@@ -1,0 +1,21 @@
+name: progress-report
+# 每天 07:00（北京时间）从 PR、标签、工单生成进度摘要 + D213 进度表，写进带 progress-report 标签的 Issue。不调用模型。
+# 注意：定时触发只从仓库默认分支运行；默认分支仍是 main 时，由 Hark 的每日派工任务在沙盒里跑同一个脚本代替。
+on:
+  schedule:
+    - cron: '0 23 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/progress/gen-progress.py --update-issue

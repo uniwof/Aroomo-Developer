@@ -1,0 +1,33 @@
+name: path-guard
+# 改动路径闸门（不调用模型）：A+ 必须带 needs-leader-review；Gemini 自动程序员只能改白名单。
+on:
+  pull_request:
+    branches: [dev, main]
+    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: '要检查的分支（gemini-task 推送后用它补跑；GITHUB_TOKEN 建的 PR 不会自动触发 CI）'
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: path-guard-${{ github.event.pull_request.number || inputs.branch }}
+  cancel-in-progress: true
+jobs:
+  guard:
+    name: 路径闸门（A+ / 自动程序员白名单）
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || inputs.branch }}
+      - name: guard
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref || inputs.branch }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          BASE: ${{ github.event.pull_request.base.ref || 'dev' }}
+        run: |
+          git fetch -q origin "$BASE"
+          python3 scripts/ci/path-guard.py "origin/$BASE"

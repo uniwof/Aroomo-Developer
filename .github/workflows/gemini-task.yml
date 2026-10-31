@@ -1,0 +1,171 @@
+name: gemini-task
+# Gemini 自动程序员：给工单贴 gemini-task 标签（工单还须有 risk:B 或 risk:C），它读工单、改代码、开 PR 到 dev。
+# 安全：模型那一步只有只读令牌、只开文件读写工具（没有 shell、没有联网）；提交/推送/开 PR 在不带模型 Key 的第二步做，
+# 先过路径闸门（白名单 .github/gemini-allowed-paths.txt，碰 A+ 一律失败）。
+# 用法依据官方 google-github-actions/run-gemini-cli（v0，API Key 方式，内部以 --yolo 非交互运行）。
+# 触发：①工单贴 gemini-task 标签（只在默认分支为 dev 后生效）；②从 dev 建分支 queue/gemini-<工单号>（现在就能用，
+#   因为 push 触发用分支自己的工作流文件；Hark 用 git_ref_create 一次调用即可派单，跑完自动删掉队列分支）。
+on:
+  issues:
+    types: [labeled]
+  push:
+    branches: ['queue/gemini-*']
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: '工单 Issue 号'
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: gemini-task-${{ github.event.issue.number || inputs.issue_number || github.ref_name }}
+  cancel-in-progress: false
+jobs:
+  code:
+    if: github.event_name != 'issues' || github.event.label.name == 'gemini-task'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      ok: ${{ steps.gate.outputs.ok }}
+      reason: ${{ steps.gate.outputs.reason }}
+      number: ${{ steps.gate.outputs.number }}
+      gemini: ${{ steps.gemini.outcome }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          persist-credentials: false
+      - name: gate（只接 B/C 类、开放中的工单）
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUM: ${{ github.event.issue.number || inputs.issue_number }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "$NUM" ]; then NUM="${REF_NAME#queue/gemini-}"; fi
+          case "$NUM" in ''|*[!0-9]*) echo "队列分支名应为 queue/gemini-<工单号>"; exit 1;; esac
+          curl -sSf -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/${{ github.repository }}/issues/$NUM" > issue.json
+          python3 - <<'PY'
+          import json, os
+          i = json.load(open("issue.json"))
+          labels = {l["name"] for l in i["labels"]}
+          ok, reason = True, ""
+          if i.get("pull_request"): ok, reason = False, "这是 PR，不是工单"
+          elif i["state"] != "open": ok, reason = False, "工单已关闭"
+          elif labels & {"risk:A", "risk:A+"}: ok, reason = False, "A/A+ 类工单不交给自动程序员"
+          elif not labels & {"risk:B", "risk:C"}: ok, reason = False, "工单缺 risk:B 或 risk:C 标签"
+          os.makedirs(".gemini-task", exist_ok=True)
+          open(".gemini-task/ISSUE.md", "w", encoding="utf-8").write(f"# #{i['number']} {i['title']}\n\n{i.get('body') or ''}\n")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"ok={'true' if ok else 'false'}\nreason={reason}\nnumber={i['number']}\n")
+          print("gate:", ok, reason)
+          PY
+          rm -f issue.json
+      - name: Run Gemini CLI
+        id: gemini
+        if: steps.gate.outputs.ok == 'true'
+        continue-on-error: true
+        uses: google-github-actions/run-gemini-cli@v0
+        env:
+          GEMINI_CLI_TRUST_WORKSPACE: 'true'
+        with:
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          gemini_model: ${{ vars.GEMINI_MODEL }}
+          gemini_cli_version: ${{ vars.GEMINI_CLI_VERSION }}
+          workflow_name: gemini-task
+          github_issue_number: ${{ steps.gate.outputs.number }}
+          settings: |-
+            {
+              "model": { "maxSessionTurns": 40 },
+              "telemetry": { "enabled": false },
+              "tools": { "core": ["read_file", "read_many_files", "write_file", "replace", "glob", "grep_search", "list_directory"] }
+            }
+          prompt: |-
+            先读仓库根目录 GEMINI.md（规则）和 .gemini-task/ISSUE.md（工单）。按工单的目标、文件边界、验收标准完成改动，
+            只改白名单路径，改动尽量小。不要提交、不要推送。最后用三行中文总结：改了什么、怎么测、风险。
+      - name: 收集改动
+        if: steps.gate.outputs.ok == 'true'
+        env:
+          SUMMARY: ${{ steps.gemini.outputs.summary }}
+        run: |
+          rm -rf .gemini-task .gemini gemini-artifacts
+          git add -A
+          git diff --cached --binary > ../patch.diff || true
+          mkdir -p out && mv ../patch.diff out/patch.diff
+          printf '%s' "${SUMMARY:-（无总结）}" | head -c 4000 > out/summary.txt
+          echo "patch bytes: $(wc -c < out/patch.diff)"
+      - uses: actions/upload-artifact@v4
+        if: steps.gate.outputs.ok == 'true'
+        with:
+          name: gemini-patch
+          path: out/
+          retention-days: 7
+
+  pr:
+    needs: code
+    if: always() && needs.code.result != 'skipped'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        if: needs.code.outputs.ok == 'true'
+        with:
+          name: gemini-patch
+          path: /tmp/gemini
+      - name: 推送分支、过路径闸门、开 PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUM: ${{ needs.code.outputs.number || github.event.issue.number || inputs.issue_number }}
+          QUEUE_REF: ${{ startsWith(github.ref_name, 'queue/') && github.ref_name || '' }}
+          OK: ${{ needs.code.outputs.ok }}
+          REASON: ${{ needs.code.outputs.reason }}
+          GEMINI: ${{ needs.code.outputs.gemini }}
+        run: |
+          set -uo pipefail
+          # 队列分支只是触发器：先删掉，失败也不影响后续
+          if [ -n "$QUEUE_REF" ]; then git push -q origin --delete "$QUEUE_REF" || true; fi
+          api() { curl -sS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$@"; }
+          comment() { python3 -c 'import json,sys;print(json.dumps({"body":sys.stdin.read()}))' | api -X POST "https://api.github.com/repos/$REPO/issues/$NUM/comments" -d @- >/dev/null; }
+          unlabel() { api -X DELETE "https://api.github.com/repos/$REPO/issues/$NUM/labels/gemini-task" >/dev/null || true; }
+          if [ "$OK" != "true" ]; then printf '🤖 Gemini 自动程序员未接单：%s。工单交回原线处理。' "${REASON:-门禁未通过}" | comment; unlabel; exit 0; fi
+          if [ "$GEMINI" != "success" ] || [ ! -s /tmp/gemini/patch.diff ]; then
+            printf '🤖 Gemini 自动程序员没有产出改动（运行结果：%s；常见原因：免费额度用完/限流、模型拒绝或工单不清楚）。已记录，工单交回原线；不回退 Groq（Groq 没有可用的官方编码代理）。' "$GEMINI" | comment
+            api -X POST "https://api.github.com/repos/$REPO/issues/$NUM/labels" -d '{"labels":["status:blocked"]}' >/dev/null
+            unlabel; exit 0
+          fi
+          BR="gemini/issue-$NUM"
+          git checkout -q -b "$BR"
+          git apply --index /tmp/gemini/patch.diff || { echo "补丁应用失败" | comment; unlabel; exit 1; }
+          git -c user.name="gemini-task[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -q -m "gemini-task: #$NUM"
+          if ! HEAD_REF="$BR" PR_LABELS="gemini-task" python3 scripts/ci/path-guard.py origin/dev; then
+            printf '🤖 Gemini 的改动越过白名单或触及 A+，已丢弃（没有推送）。详见本次 Actions 日志。' | comment; unlabel; exit 1
+          fi
+          git push -q -f origin "$BR"
+          SUMMARY=$(cat /tmp/gemini/summary.txt)
+          BODY=$(printf '工单 #%s（Gemini 自动程序员，B/C 类）。\n\n%s\n\n由负责该工单的线按 B/C 规则审合：CI 全绿 + 路径闸门通过才合 dev；合并后手动关闭 #%s（dev 不是默认分支）。' "$NUM" "$SUMMARY" "$NUM")
+          TITLE=$(api "https://api.github.com/repos/$REPO/issues/$NUM" | python3 -c 'import json,sys;print(json.load(sys.stdin)["title"][:80])')
+          RESP=$(python3 -c 'import json,sys;print(json.dumps({"title":"[gemini] "+sys.argv[1],"head":sys.argv[2],"base":"dev","body":sys.argv[3],"draft":False}))' "$TITLE" "$BR" "$BODY" | api -X POST "https://api.github.com/repos/$REPO/pulls" -d @-)
+          PR=$(printf '%s' "$RESP" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("html_url",""))')
+          # GITHUB_TOKEN 建的 PR 不会自动触发其它工作流：手动派发 CI 到这个分支，结果显示在 PR 上
+          for wf in ci.yml security.yml path-guard.yml; do
+            if [ "$wf" = path-guard.yml ]; then d="{\"ref\":\"$BR\",\"inputs\":{\"branch\":\"$BR\"}}"; else d="{\"ref\":\"$BR\"}"; fi
+            api -X POST "https://api.github.com/repos/$REPO/actions/workflows/$wf/dispatches" -d "$d" >/dev/null || true
+          done
+          if [ -n "$PR" ]; then
+            printf '🤖 Gemini 已开 PR：%s（CI 已派发）。' "$PR" | comment
+          else
+            printf '🤖 Gemini 改动已推送到分支 %s，但仓库设置不允许 Actions 开 PR。请负责该工单的线用连接器开 PR 到 dev：https://github.com/%s/compare/dev...%s' "$BR" "$REPO" "$BR" | comment
+          fi
+          unlabel
