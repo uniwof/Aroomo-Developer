@@ -5,7 +5,7 @@
 
 1. **插上存主密钥的 U 盘**（里面有 `aroomo-master-key.txt`）。
 2. **点 Hark 发给你的备份下载链接**。文件自动存进「下载」文件夹，名字像 `aroomo-aroomo-20261031T100028Z.tar.zst.age`。
-3. **下载小工具**：Hark 发给你的 Releases 页附件 `Test-AroomoBackup.cmd`（核对 SHA-256 与 Hark 给的一致；不要从分支 raw 地址下载）。
+3. **下载小工具**：Hark 发给你的 Releases 页附件 `Test-AroomoBackup.cmd`（核对 SHA-256 与下面「发布版本」一致；不要从分支 raw 地址下载）。
 4. **双击运行** `Test-AroomoBackup.cmd`（Windows 提示「已保护你的电脑」时，点「更多信息」→「仍要运行」）。它会自己找 U 盘里的主密钥和「下载」里的备份，然后朗读结果。如果它说要你选文件却没看到选择窗口，按 Alt+Tab 切换过去。
 5. **结果已经复制好了**，直接粘贴给 Hark，再点「好了」。听到「核对通过」就完成了。
 
@@ -19,3 +19,11 @@
 - 结果（不含任何密钥）复制到剪贴板；临时目录在结束时删除。
 - 这一段不做 `pg_restore`：真实数据库重建由 CI `backup-e2e`（测试主密钥）和将来的 `scripts/restore-drill.sh`（新机器 / 隔离环境，需所有者在场输入主密钥）覆盖。
 - CI：`restore-drill-tool` 用主密钥小工具生成两把测试主密钥，做一份同格式假备份，验证对的主密钥输出正确计数、错的主密钥被拒。
+
+## 发布版本
+
+| Release | 附件 | 大小 | SHA-256 |
+| --- | --- | --- | --- |
+| [restore-drill-v1](https://github.com/uniwof/Aroomo-Developer/releases/tag/restore-drill-v1)（prerelease，提交 `dd00e57`） | `Test-AroomoBackup.cmd` | 16192 字节 | `d2f5bf487657d2b827ab799deb4fd7929d7022019490e35e9f3cf0a0c71779fd` |
+
+上表哈希由 Hark 从 Release 下载附件后核对，与合并提交里的文件一致（2026-10-31）。
