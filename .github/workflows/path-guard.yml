@@ -23,6 +23,8 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || inputs.branch }}
+      - name: 闸门自测（改名/挪动、A+ 名单）
+        run: python3 -B scripts/ci/test_path_guard.py
       - name: guard
         env:
           HEAD_REF: ${{ github.event.pull_request.head.ref || inputs.branch }}
