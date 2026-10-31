@@ -124,6 +124,11 @@ export function hostAllowed(hostHeader: string | undefined, allowed: string[]): 
   return allowed.includes(name);
 }
 
+const SEC_HEADERS = {
+  'content-security-policy': "frame-ancestors 'none'; default-src 'self'",
+  'x-frame-options': 'DENY',
+};
+
 export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
   const session: SessionChecker =
     deps.session ?? (cfg.auth === 'off' ? allowAll : new LobeSessionChecker(cfg.lobeUpstream, cfg.sessionCacheMs));
@@ -133,9 +138,17 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
   const appHtml = path.resolve(cfg.publicDir, 'app.html');
   const consoleRoot = path.resolve(cfg.consoleDir);
 
+  /** 已登录且是所有者邮箱才算（其他账号不能拿到所有者令牌） */
+  async function ownerOk(cookie: string | undefined): Promise<boolean> {
+    if (!(await session.check(cookie))) return false;
+    if (cfg.auth === 'off' || !session.email) return true;
+    const e = await session.email(cookie);
+    return Boolean(e && cfg.ownerEmail && e === cfg.ownerEmail);
+  }
+
   const clientFor = (u: URL) => (u.protocol === 'https:' ? https : http);
 
-  async function serveFile(res: ServerResponse, file: string, cache: string, method = 'GET') {
+  async function serveFile(res: ServerResponse, file: string, cache: string, method = 'GET', sec = false) {
     try {
       const st = await stat(file);
       if (!st.isFile()) throw new Error('not a file');
@@ -144,6 +157,7 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
         'content-length': String(st.size),
         'cache-control': cache,
         'x-content-type-options': 'nosniff',
+        ...(sec ? SEC_HEADERS : {}),
       });
       if (method === 'HEAD') return res.end();
       createReadStream(file).pipe(res);
@@ -153,19 +167,31 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
   }
 
   async function serveStatic(req: IncomingMessage, res: ServerResponse, rel: string) {
-    const file = path.resolve(staticRoot, '.' + path.posix.normalize('/' + decodeURIComponent(rel)));
+    let dec: string;
+    try {
+      dec = decodeURIComponent(rel);
+    } catch {
+      return sendJson(res, 404, { error: { code: 'NOT_FOUND', message: '找不到' } });
+    }
+    const file = path.resolve(staticRoot, '.' + path.posix.normalize('/' + dec));
     if (!file.startsWith(staticRoot + path.sep)) return sendJson(res, 404, { error: { code: 'NOT_FOUND', message: '找不到' } });
     return serveFile(res, file, 'public, max-age=300', req.method);
   }
 
   /** 控制台（D195）：登录 LobeHub 后才能打开；页面里加一个标记，让它改走 /aroomo/api（令牌由这里附加，浏览器不拿令牌） */
   async function serveConsole(req: IncomingMessage, res: ServerResponse, rel: string) {
-    const file = path.resolve(consoleRoot, '.' + path.posix.normalize('/' + decodeURIComponent(rel)));
+    let dec: string;
+    try {
+      dec = decodeURIComponent(rel);
+    } catch {
+      return sendJson(res, 404, { error: { code: 'NOT_FOUND', message: '找不到' } });
+    }
+    const file = path.resolve(consoleRoot, '.' + path.posix.normalize('/' + dec));
     if (file !== consoleRoot && !file.startsWith(consoleRoot + path.sep)) return sendJson(res, 404, { error: { code: 'NOT_FOUND', message: '找不到' } });
-    if (path.extname(file)) return serveFile(res, file, 'public, max-age=300', req.method);
+    if (path.extname(file)) return serveFile(res, file, 'public, max-age=300', req.method, true);
     try {
       const html = (await readFile(path.join(consoleRoot, 'index.html'), 'utf8')).replace('</head>', '<meta name="aroomo-shell" content="1"></head>');
-      res.writeHead(200, { 'content-type': MIME['.html']!, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+      res.writeHead(200, { 'content-type': MIME['.html']!, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...SEC_HEADERS });
       res.end(req.method === 'HEAD' ? undefined : html);
     } catch {
       sendJson(res, 404, { error: { code: 'NOT_FOUND', message: '控制台还没有部署（先跑 scripts/build-console.sh）' } });
@@ -265,6 +291,7 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
     if (p === '/aroomo/api' || p.startsWith('/aroomo/api/')) {
       if (!csrfOk(req)) return sendJson(res, 403, { error: { code: 'CSRF', message: '请求来源不对' } });
       if (!(await session.check(req.headers.cookie))) return sendJson(res, 401, { error: { code: 'LOGIN_REQUIRED', message: '请先登录' } });
+      if (!(await ownerOk(req.headers.cookie))) return sendJson(res, 403, { error: { code: 'NOT_OWNER', message: '这个账号没有权限使用所有者的控制台' } });
       return proxyCore(req, res, url);
     }
 
@@ -273,6 +300,7 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
         res.writeHead(302, { location: `/signin?callbackUrl=${encodeURIComponent(p + url.search)}`, 'cache-control': 'no-store' });
         return res.end();
       }
+      if (!(await ownerOk(req.headers.cookie))) return sendJson(res, 403, { error: { code: 'NOT_OWNER', message: '这个账号没有权限使用所有者的控制台' } });
       return serveConsole(req, res, p.slice('/console'.length));
     }
 
@@ -281,7 +309,8 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
         res.writeHead(302, { location: `/signin?callbackUrl=${encodeURIComponent(p + url.search)}`, 'cache-control': 'no-store' });
         return res.end();
       }
-      return serveFile(res, appHtml, 'no-store', req.method);
+      if (!(await ownerOk(req.headers.cookie))) return sendJson(res, 403, { error: { code: 'NOT_OWNER', message: '这个账号没有权限使用所有者的控制台' } });
+      return serveFile(res, appHtml, 'no-store', req.method, true);
     }
 
     return proxyLobe(req, res, url);

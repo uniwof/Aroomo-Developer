@@ -251,6 +251,7 @@ services:
       CORE_UPSTREAM: http://core:8080
       CORE_OWNER_TOKEN: ${CORE_OWNER_TOKEN:-}
       SHELL_AUTH: lobe-session
+      SHELL_OWNER_EMAIL: ${SHELL_OWNER_EMAIL:-${AUTH_ALLOWED_EMAILS:-}}
       SHELL_DEFAULT_LOCALE: zh-CN
     # 控制台静态文件（同 core 的挂载）
     volumes:
