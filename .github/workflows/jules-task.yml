@@ -1,0 +1,63 @@
+name: jules-task
+# 用 Jules API 把工单交给 Jules（控制台界面样式打磨类，D216），起点分支固定 dev、自动开 PR 到 dev。
+# 不用 Jules 原生的 jules 标签：它从默认分支 main 起步，以前的 PR（#103/#107）因此带了几百个无关文件。
+# 触发：从 dev 建分支 queue/jules-<工单号>（现在就能用）；或工单贴 jules-task 标签（默认分支为 dev 后生效）。
+# Jules 的 PR 照常过 CI、路径闸门和审查，由负责该工单的线按风险等级审合。密钥只从 Secrets 读取，不打印。
+on:
+  push:
+    branches: ['queue/jules-*']
+  issues:
+    types: [labeled]
+permissions:
+  contents: write
+  issues: write
+concurrency:
+  group: jules-task-${{ github.event.issue.number || github.ref_name }}
+jobs:
+  send:
+    if: github.event_name != 'issues' || github.event.label.name == 'jules-task'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 建 Jules 会话
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JULES_API_KEY: ${{ secrets.JULES_API_KEY }}
+          REPO: ${{ github.repository }}
+          NUM: ${{ github.event.issue.number }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -uo pipefail
+          if [ -z "$NUM" ]; then NUM="${REF_NAME#queue/jules-}"; fi
+          case "$NUM" in ''|*[!0-9]*) echo "队列分支名应为 queue/jules-<工单号>"; exit 1;; esac
+          api() { curl -sS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$@"; }
+          comment() { python3 -c 'import json,sys;print(json.dumps({"body":sys.stdin.read()}))' | api -X POST "https://api.github.com/repos/$REPO/issues/$NUM/comments" -d @- >/dev/null; }
+          if [[ "$REF_NAME" == queue/* ]]; then api -X DELETE "https://api.github.com/repos/$REPO/git/refs/heads/$REF_NAME" >/dev/null || true; fi
+          api "https://api.github.com/repos/$REPO/issues/$NUM" > issue.json
+          if [ -z "${JULES_API_KEY:-}" ]; then echo "🤖 未配置 JULES_API_KEY，未派给 Jules，工单交回原线。" | comment; exit 0; fi
+          python3 - <<'PY' > req.json
+          import json, os
+          i = json.load(open("issue.json"))
+          labels = {l["name"] for l in i["labels"]}
+          if labels & {"risk:A", "risk:A+"} or i["state"] != "open":
+              raise SystemExit("A/A+ 或已关闭的工单不派给 Jules")
+          rules = ("规则：起点分支 dev，PR 目标 dev；只改工单「文件边界」内的文件，改动尽量小；不加新依赖；"
+                   "不修改 LobeHub；不写入任何密码/Key/Token/cookie；界面正文 14px、点击区≥44px、保留读屏 aria、只用一个强调色；"
+                   "文字用简体中文；绝不碰 core/src/confirm、core/src/auth、core/src/vault、core/src/db、core/migrations、.github、deploy、installer。"
+                   f"PR 正文三行（改了什么、怎么测、风险）并写「工单 #{i['number']}」。")
+          print(json.dumps({
+            "title": f"#{i['number']} {i['title']}"[:100],
+            "prompt": f"{rules}\n\n工单 #{i['number']}：{i['title']}\n\n{i.get('body') or ''}",
+            "sourceContext": {"source": f"sources/github/{os.environ['REPO']}", "githubRepoContext": {"startingBranch": "dev"}},
+            "automationMode": "AUTO_CREATE_PR"}))
+          PY
+          if [ ! -s req.json ]; then echo "🤖 A/A+ 或已关闭的工单不派给 Jules。" | comment; exit 0; fi
+          code=$(curl -sS -o resp.json -w '%{http_code}' -X POST https://jules.googleapis.com/v1alpha/sessions \
+            -H "Content-Type: application/json" -H "X-Goog-Api-Key: $JULES_API_KEY" -d @req.json)
+          if [ "$code" = 200 ]; then
+            id=$(python3 -c 'import json;print(json.load(open("resp.json")).get("id",""))')
+            printf '🤖 已派给 Jules（起点 dev，自动开 PR 到 dev）：https://jules.google.com/session/%s 。PR 进来后由负责该工单的线按风险等级审合。' "$id" | comment
+          else
+            msg=$(python3 -c 'import json;d=json.load(open("resp.json"));print((d.get("error") or {}).get("status","")+" "+str((d.get("error") or {}).get("message",""))[:160])' 2>/dev/null)
+            printf '🤖 派给 Jules 失败（HTTP %s %s），已记录，工单交回原线。' "$code" "$msg" | comment
+          fi
+          rm -f issue.json req.json resp.json

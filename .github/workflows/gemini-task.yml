@@ -3,9 +3,13 @@ name: gemini-task
 # 安全：模型那一步只有只读令牌、只开文件读写工具（没有 shell、没有联网）；提交/推送/开 PR 在不带模型 Key 的第二步做，
 # 先过路径闸门（白名单 .github/gemini-allowed-paths.txt，碰 A+ 一律失败）。
 # 用法依据官方 google-github-actions/run-gemini-cli（v0，API Key 方式，内部以 --yolo 非交互运行）。
+# 触发：①工单贴 gemini-task 标签（只在默认分支为 dev 后生效）；②从 dev 建分支 queue/gemini-<工单号>（现在就能用，
+#   因为 push 触发用分支自己的工作流文件；Hark 用 git_ref_create 一次调用即可派单，跑完自动删掉队列分支）。
 on:
   issues:
     types: [labeled]
+  push:
+    branches: ['queue/gemini-*']
   workflow_dispatch:
     inputs:
       issue_number:
@@ -14,11 +18,11 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: gemini-task-${{ github.event.issue.number || inputs.issue_number }}
+  group: gemini-task-${{ github.event.issue.number || inputs.issue_number || github.ref_name }}
   cancel-in-progress: false
 jobs:
   code:
-    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'gemini-task'
+    if: github.event_name != 'issues' || github.event.label.name == 'gemini-task'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -38,8 +42,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           NUM: ${{ github.event.issue.number || inputs.issue_number }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          if [ -z "$NUM" ]; then NUM="${REF_NAME#queue/gemini-}"; fi
+          case "$NUM" in ''|*[!0-9]*) echo "队列分支名应为 queue/gemini-<工单号>"; exit 1;; esac
           curl -sSf -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/${{ github.repository }}/issues/$NUM" > issue.json
           python3 - <<'PY'
           import json, os
@@ -121,11 +128,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           NUM: ${{ needs.code.outputs.number || github.event.issue.number || inputs.issue_number }}
+          QUEUE_REF: ${{ startsWith(github.ref_name, 'queue/') && github.ref_name || '' }}
           OK: ${{ needs.code.outputs.ok }}
           REASON: ${{ needs.code.outputs.reason }}
           GEMINI: ${{ needs.code.outputs.gemini }}
         run: |
           set -uo pipefail
+          # 队列分支只是触发器：先删掉，失败也不影响后续
+          if [ -n "$QUEUE_REF" ]; then git push -q origin --delete "$QUEUE_REF" || true; fi
           api() { curl -sS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$@"; }
           comment() { python3 -c 'import json,sys;print(json.dumps({"body":sys.stdin.read()}))' | api -X POST "https://api.github.com/repos/$REPO/issues/$NUM/comments" -d @- >/dev/null; }
           unlabel() { api -X DELETE "https://api.github.com/repos/$REPO/issues/$NUM/labels/gemini-task" >/dev/null || true; }
