@@ -18,7 +18,7 @@ M2 工单（含 #173、#170、#171）、after-M2、deferred、POOL.md 里的项�
 
 ## 风险分级
 - A+（只开 PR、加 needs-leader-review、等负责人亲审）：主密钥与备份加密、保险箱加解密、core/src/confirm、core/src/auth/plugin.ts 与 tokens、forUser/RLS 底层、D207 长期授权、路径闸门本身。清单：.github/a-plus-paths.txt + scripts/ci/path-guard.py。
-- A（鉴权、Key、确认、工具网关花钱/危险、隔离、凭据、接管）：自动测试含反例；加 needs-leader-review；#170+#171 都完成前按 #156 24 小时兜底，之后按 D235（CI 全绿 + 审查判「通过」，Groq 不算）可先合 dev。有带该标签的 PR 时不合 main、不打生产标签。
+- A（鉴权、Key、确认、工具网关花钱/危险、隔离、凭据、接管）：自动测试含反例；加 needs-leader-review；#170+#171 都完成前按 #156 24 小时兜底，之后按 D235（CI 全绿 + 审查判「通过」，Groq 不算）可先合 dev。有 needs-leader-review 但没有 leader-approved 的 PR 时不合 main、不打生产标签（「已审」以 leader-approved 为准，needs-leader-review 留给路径闸门）。
 - B：关键路径单测，CI 绿 squash 合 dev。
 - C（界面）：冒烟 + 手机试；14px、点击区 ≥44px、aria。
 
