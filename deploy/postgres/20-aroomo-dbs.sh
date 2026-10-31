@@ -12,6 +12,9 @@ CREATE ROLE litellm LOGIN PASSWORD :'litellm_pw';
 CREATE DATABASE litellm OWNER litellm;
 CREATE ROLE aroomo_core LOGIN PASSWORD :'core_pw';
 CREATE DATABASE aroomo_core OWNER aroomo_core;
+-- D206：应用角色（不能登录、不是表所有者、不是超级用户）；Core 连接后 SET ROLE 到它，RLS 才对业务查询生效
+CREATE ROLE aroomo_core_app NOLOGIN NOSUPERUSER NOBYPASSRLS;
+GRANT aroomo_core_app TO aroomo_core;
 REVOKE ALL ON DATABASE litellm FROM PUBLIC;
 REVOKE ALL ON DATABASE aroomo_core FROM PUBLIC;
 SQL
