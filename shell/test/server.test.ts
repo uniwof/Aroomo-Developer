@@ -181,10 +181,10 @@ describe('Aroomo 页面与 /aroomo/api', () => {
     expect(a.status).toBe(401);
   });
 
-  it('已登录：页面可打开', async () => {
-    const r = await fetch(`${base}/aroomo/settings/lead`, { headers: { cookie: 'session=good' } });
-    expect(r.status).toBe(200);
-    expect(await r.text()).toContain('/aroomo/static/app.js');
+  it('已登录：旧 /aroomo 页面跳转到 /console/', async () => {
+    const r = await fetch(`${base}/aroomo/settings/lead`, { headers: { cookie: 'session=good' }, redirect: 'manual' });
+    expect(r.status).toBe(302);
+    expect(r.headers.get('location')).toBe('/console/');
   });
 
   it('转发到 Core：附加主人令牌，去掉 Cookie 和浏览器自带的 Authorization，保留 Access 头', async () => {
