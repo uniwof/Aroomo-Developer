@@ -154,9 +154,12 @@ function Invoke-AroomoRestoreDrill {
         $want = @($entries | ForEach-Object { if ($_ -match '(backup-stage/(manifest\.json|db/[^/\s]+\.counts\.tsv))$') { $Matches[1] } })
         if ($want.Count -eq 0) { throw '备份里没有清单文件（不是 Aroomo 服务器备份？）。请告诉 Hark。' }
         $names = ($want | ForEach-Object { '"' + $_ + '"' }) -join ' '
-        $rc2 = Invoke-Cmd "$dec | `"$tar`" -xf - -C `"$out`" $names 2>>`"$err`""
+        $err2 = Join-Path $work 'err2.txt'
+        $line2 = "$dec | `"$tar`" -xf - -C `"$out`" $names 2>`"$err2`""
+        $rc2 = Invoke-Cmd $line2
         if ($rc2 -ne 0) {
-            $errText = if (Test-Path -LiteralPath $err) { (Get-Content -LiteralPath $err -Raw -ErrorAction SilentlyContinue) } else { '' }
+            $errText = if (Test-Path -LiteralPath $err2) { (Get-Content -LiteralPath $err2 -Raw -ErrorAction SilentlyContinue) } else { '' }
+            if ($quiet) { [Console]::Error.WriteLine("debug: $line2") }
             throw "取出清单失败（$rc2）。请告诉 Hark。$($errText)"
         }
         $manifestPath = Join-Path $out 'backup-stage\manifest.json'
