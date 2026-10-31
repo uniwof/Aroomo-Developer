@@ -135,7 +135,6 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
   const autoLogin: AutoLogin | undefined =
     deps.autoLogin ?? (cfg.localOwner ? new LobeLocalAutoLogin(cfg.lobeUpstream, cfg.localOwner) : undefined);
   const staticRoot = path.resolve(cfg.publicDir, 'static');
-  const appHtml = path.resolve(cfg.publicDir, 'app.html');
   const consoleRoot = path.resolve(cfg.consoleDir);
 
   /** 已登录且是所有者邮箱才算（其他账号不能拿到所有者令牌） */
@@ -310,7 +309,9 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
         return res.end();
       }
       if (!(await ownerOk(req.headers.cookie))) return sendJson(res, 403, { error: { code: 'NOT_OWNER', message: '这个账号没有权限使用所有者的控制台' } });
-      return serveFile(res, appHtml, 'no-store', req.method, true);
+      // 旧 Shell 页面已被新控制台取代：跳转到 /console
+      res.writeHead(302, { location: '/console/', 'cache-control': 'no-store' });
+      return res.end();
     }
 
     return proxyLobe(req, res, url);

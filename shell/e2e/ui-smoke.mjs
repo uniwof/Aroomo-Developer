@@ -144,88 +144,9 @@ for (const [label, viewport, isMobile] of [
   }
   await shoot(page, `${label}-chat`);
 
-  // Aroomo 设置页（迁到控制台 /console 之前仍在 /aroomo）
-  await page.goto(base + '/aroomo/settings', { waitUntil: 'domcontentloaded' });
-  await shoot(page, `${label}-settings`);
-  const tabs = await page.locator('.vtabs a').allInnerTexts();
-  check(`${label} 设置 6 个 Tab`, tabs.join('/') === '通用/负责人/账号/通知/安全/高级', tabs.join('/'));
-  for (const p of ['members', 'inbox', 'favorites']) {
-    await page.goto(`${base}/aroomo/${p}`, { waitUntil: 'domcontentloaded' });
-    await shoot(page, `${label}-aroomo-${p}`);
-  }
-  if (!isMobile) {
-    // —— 功能：填 Key → 进入候选 → 一键入职后成为负责人（§9.1）；收件箱重要确认；删 Key 走确认卡（D63/D73）——
-    const fakeKey = ['placeholder', 'sk', 'uie2e', 'ABCDEFGHIJKLMNOP'].join('-');
-    await page.goto(`${base}/aroomo/members/keys`, { waitUntil: 'domcontentloaded' });
-    await page.fill('input[name=sourceUrl]', 'https://platform.openai.com/api-keys');
-    await page.fill('input[name=name]', '测试 Key');
-    await page.fill('input[name=model]', 'openai/gpt-4o-mini');
-    await page.fill('input[name=apiKey]', fakeKey);
-    await page.click('#add-key summary');
-    await page.fill('input[name=modelName]', 'GPT-4o mini');
-    await page.click('#add-key button.primary');
-    const keyRow = page.locator('.row', { hasText: '测试 Key' });
-    await keyRow.waitFor({ timeout: 20000 }).catch(() => {});
-    check('填 Key：列表只显示末 4 位', (await keyRow.count()) === 1 && (await keyRow.innerText()).includes('…' + fakeKey.slice(-4)), await page.locator('#tab').innerText().catch(() => ''));
-    check('Key 明文不出现在页面', !(await page.content()).includes(fakeKey));
-    await shoot(page, 'desktop-aroomo-keys');
-    await page.goto(`${base}/aroomo/members`, { waitUntil: 'domcontentloaded' });
-    const candRow = page.locator('#clist .row', { hasText: 'GPT-4o mini' });
-    await candRow.waitFor({ timeout: 10000 }).catch(() => {});
-    check('填 Key 后模型进入候选（§9.1 入职流程）', (await candRow.count()) === 1 && (await page.locator('#mlist .row', { hasText: 'GPT-4o mini' }).count()) === 0, await page.locator('#tab').innerText().catch(() => ''));
-    check('候选卡片显示上下文 / 工具调用（后端判定）', /上下文 \d+k/.test(await candRow.innerText().catch(() => '')), await candRow.innerText().catch(() => ''));
-    await shoot(page, 'desktop-aroomo-members-candidate');
-    await candRow.locator('[data-onboard]').click({ timeout: 10000 }).catch(() => {});
-    const memberRow = page.locator('#mlist .row', { hasText: 'GPT-4o mini' });
-    await memberRow.waitFor({ timeout: 10000 }).catch(() => {});
-    check('一键入职后成为负责人（合格：对话 + ≥32k + 工具调用）', (await memberRow.count()) === 1 && (await memberRow.innerText()).includes('负责人'), await page.locator('#tab').innerText().catch(() => ''));
-    await shoot(page, 'desktop-aroomo-members-filled');
-    await page.goto(`${base}/aroomo/settings/account`, { waitUntil: 'domcontentloaded' });
-    check('设置 → 账号有「退出登录」', (await page.locator('#logout').count()) === 1);
-    await page.goto(`${base}/aroomo/settings/security`, { waitUntil: 'domcontentloaded' });
-    const sens = page.locator('#sens');
-    await sens.waitFor({ timeout: 10000 }).catch(() => {});
-    check('设置 → 安全有敏感内容保护开关（默认开）', (await sens.count()) === 1 && (await sens.isChecked().catch(() => false)));
-    await shoot(page, 'desktop-settings-security');
-
-    const posted = await page.evaluate(() =>
-      fetch('/aroomo/api/inbox', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-aroomo-request': '1' },
-        body: JSON.stringify({
-          group: 'decision', kind: 'ui-e2e', title: '测试：要不要清空回收站', summary: '界面冒烟发的卡片',
-          related: { type: 'test', id: 'ui-e2e' },
-          actions: [{ id: 'yes', label: '清空', confirm: { kind: 'irreversible', consequences: ['回收站里的成员会被彻底删除，不能恢复。'] } }, { id: 'no', label: '不了' }],
-        }),
-      }).then((r) => r.status),
-    );
-    check('发收件箱卡片', posted === 201, posted);
-    await page.goto(`${base}/aroomo/inbox`, { waitUntil: 'domcontentloaded' });
-    await page.locator('.card', { hasText: '测试：要不要清空回收站' }).waitFor({ timeout: 10000 }).catch(() => {});
-    await shoot(page, 'desktop-aroomo-inbox-card');
-    await page.click('.card [data-action=yes]');
-    const dialog = page.locator('.confirm');
-    await dialog.waitFor({ timeout: 10000 }).catch(() => {});
-    check('重要动作弹出确认卡并写明后果', (await dialog.count()) === 1 && (await dialog.innerText()).includes('不能恢复'));
-    await shoot(page, 'desktop-confirm-card');
-    await page.click('.confirm [data-step1]').catch(() => {});
-    await page.waitForTimeout(500);
-    const step2Disabled = await page.locator('.confirm [data-step2]').isDisabled().catch(() => false);
-    check('第二次点击有 3 秒倒计时', step2Disabled);
-    await page.waitForTimeout(3500);
-    await page.click('.confirm [data-step2]').catch(() => {});
-    await page.waitForTimeout(2000);
-    check('确认后卡片处理完毕', (await page.locator('.card', { hasText: '测试：要不要清空回收站' }).count()) === 0, await page.locator('#page').innerText().catch(() => ''));
-
-    await page.goto(`${base}/aroomo/members/keys`, { waitUntil: 'domcontentloaded' });
-    await page.locator('.row [data-del]').first().click({ timeout: 10000 }).catch(() => {});
-    await page.locator('.confirm').waitFor({ timeout: 10000 }).catch(() => {});
-    await page.click('.confirm [data-step1]').catch(() => {});
-    await page.waitForTimeout(3500);
-    await page.click('.confirm [data-step2]').catch(() => {});
-    await page.waitForTimeout(2500);
-    check('删除 Key 走重要确认后删掉', (await page.locator('.row', { hasText: '测试 Key' }).count()) === 0);
-  }
+  // 旧 /aroomo 页面已被控制台取代：必须跳转到 /console/（旧页面逐页点测随旧页面删除，控制台页面由 web/console 自己的测试负责）
+  await page.goto(base + '/aroomo/members', { waitUntil: 'domcontentloaded' });
+  check(`${label} 旧 /aroomo 跳转到 /console`, new URL(page.url()).pathname.startsWith('/console'), page.url());
 
   if (!isMobile) {
     // —— 对话：填一个指向假模型的 Key，在 LobeHub 里说一句话（LobeHub → Core → LiteLLM → 模型，PRODUCT 16.1）——
