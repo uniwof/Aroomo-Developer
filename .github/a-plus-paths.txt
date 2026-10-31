@@ -1,0 +1,13 @@
+# A+ 路径（负责人必审，绝不兜底合并；D205–D216 第一部分 / Issue #156）
+# 一行一个 glob；以 /** 结尾表示整个目录。改这个文件本身也算 A+。
+core/src/confirm/**
+core/src/auth/plugin.ts
+core/src/auth/tokens.ts
+core/src/vault/crypto.ts
+core/src/db/**
+core/src/grants/**
+core/src/users/rls*
+scripts/backup.sh
+scripts/restore.sh
+deploy/backup/**
+installer/windows/Get-AgeKeygen.ps1

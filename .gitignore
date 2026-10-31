@@ -33,3 +33,8 @@ Thumbs.db
 installer/windows/Output/
 .restore/
 installer/windows/bin/
+
+# gemini-cli（gemini-task 工作流运行时生成，不提交）
+.gemini/
+.gemini-task/
+gha-creds-*.json

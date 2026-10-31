@@ -1,37 +1,39 @@
 name: adversarial-review
+# A 类 PR 自动反对式审查（Gemini 优先、Groq 备用）。省额度规则：
+# - 只对带 needs-leader-review 的本仓库分支 PR；Gemini 自动程序员的 PR（gemini/*）不审（只接 B/C）。
+# - 同一份 diff 只审一次（评论里记 diff 哈希）；每个 PR 最多 3 次，加 re-review 标签可再审。
+# - 这是仓库里唯一的模型审查；Gemini Code Assist 个人免费版已于 2026-07-17 停服，不再并行装第二个审查机器人。
 on:
   pull_request:
-    types: [opened, synchronize, labeled]
+    types: [labeled, synchronize, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR 号（手动补审，例如负责人 24 小时未审时）'
+        required: true
 permissions:
   contents: read
   pull-requests: write
+concurrency:
+  group: adversarial-review-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
 jobs:
   review:
     if: >-
+      github.event_name == 'workflow_dispatch' || (
       github.event.pull_request.head.repo.full_name == github.repository &&
-      contains(github.event.pull_request.labels.*.name, 'needs-leader-review')
+      !startsWith(github.event.pull_request.head.ref, 'gemini/') &&
+      contains(github.event.pull_request.labels.*.name, 'needs-leader-review') &&
+      (github.event.action != 'labeled' || github.event.label.name == 'needs-leader-review' || github.event.label.name == 're-review'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: diff
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          curl -sSf -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github.v3.diff" \
-            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" -o pr.diff
       - name: review
         env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
         run: python3 scripts/ci/adversarial-review.py
-      - name: comment
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python3 - <<'PY'
-          import json,os,urllib.request
-          body=open("review.md",encoding="utf-8").read()
-          req=urllib.request.Request("https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments",
-            json.dumps({"body":body}).encode(),{"Authorization":"Bearer "+os.environ["GH_TOKEN"],"Content-Type":"application/json"})
-          urllib.request.urlopen(req)
-          PY
