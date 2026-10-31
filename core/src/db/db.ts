@@ -27,17 +27,30 @@ export interface PgDbOptions {
   /** 指定 search_path（测试时每个用例一个 schema）。只允许 [a-z0-9_]。 */
   schema?: string;
   max?: number;
+  /** D206：每个连接建立后先 SET ROLE 到这个应用角色（非表所有者、非超级用户），RLS 才对它生效。只允许 [a-z0-9_]。 */
+  role?: string;
 }
 
 export function createPgDb(connectionString: string, opts: PgDbOptions = {}): Db {
   if (opts.schema !== undefined && !/^[a-z0-9_]+$/.test(opts.schema)) {
     throw new Error('schema 名只允许小写字母、数字、下划线');
   }
+  if (opts.role !== undefined && !/^[a-z_][a-z0-9_]{0,62}$/.test(opts.role)) {
+    throw new Error('角色名只允许小写字母、数字、下划线');
+  }
   const pool = new pg.Pool({
     connectionString,
     max: opts.max ?? 10,
     ...(opts.schema ? { options: `-c search_path=${opts.schema}` } : {}),
   });
+  if (opts.role) {
+    const role = opts.role;
+    // 同一个连接上的查询按顺序执行，SET ROLE 一定先于该连接的第一条业务查询
+    pool.on('connect', (client) => {
+      // 失败时断开这个连接（默认拒绝）：排在后面的查询直接报错，绝不以表所有者身份继续执行
+      client.query(`SET ROLE ${role}`).catch(() => void client.end());
+    });
+  }
 
   const wrap = (c: pg.Pool | pg.PoolClient): Queryable => ({
     async query<T>(sql: string, params?: unknown[]) {
