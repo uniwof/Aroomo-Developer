@@ -109,10 +109,21 @@ function Invoke-AroomoMasterKeyTool {
             if (-not $path) { throw '无交互模式需要 AROOMO_MK_OUT' }
         } else {
             Say '第 3 步：选一个地方保存私钥。最好直接存到 U 盘。' 'Yellow'
+            Say '如果没看到保存窗口，按 Alt+Tab 切换过去。' 'Yellow'
             Speak '请选择保存私钥的位置，最好是 U 盘。'
             $usb = [IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Removable' -and $_.IsReady } | Select-Object -First 1
             $dir = if ($usb) { $usb.RootDirectory.FullName } else { [Environment]::GetFolderPath('Desktop') }
             $path = $null
+            # 保存对话框挂到一个置顶的隐藏窗体上，避免它出现在控制台窗口后面
+            $owner = New-Object System.Windows.Forms.Form
+            $owner.TopMost = $true
+            $owner.ShowInTaskbar = $false
+            $owner.StartPosition = 'CenterScreen'
+            $owner.FormBorderStyle = 'None'
+            $owner.Opacity = 0
+            $owner.Size = New-Object System.Drawing.Size(1, 1)
+            try {
+            [void]$owner.Show(); $owner.Activate()
             for ($try = 0; $try -lt 3 -and -not $path; $try++) {
                 $dlg = New-Object System.Windows.Forms.SaveFileDialog
                 $dlg.Title = '保存 Aroomo 主密钥（私钥）'
@@ -120,9 +131,10 @@ function Invoke-AroomoMasterKeyTool {
                 $dlg.FileName = 'aroomo-master-key.txt'
                 $dlg.Filter = '文本文件 (*.txt)|*.txt'
                 $dlg.OverwritePrompt = $true
-                if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $path = $dlg.FileName }
+                if ($dlg.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) { $path = $dlg.FileName }
                 else { Say '还没有保存。私钥必须先存好，才会给你公钥。' 'Yellow'; Speak '还没有保存，请再选一次。' }
             }
+            } finally { $owner.Dispose() }
             if (-not $path) { throw '没有保存私钥，已放弃这次生成（什么都没留下）。可以再运行一次。' }
         }
         $utf8 = New-Object System.Text.UTF8Encoding($false)
