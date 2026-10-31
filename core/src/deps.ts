@@ -8,6 +8,7 @@ import type { AuditLog } from './audit/types.js';
 import { MemoryOperatorTokenStore, type OperatorTokenStore } from './auth/tokens.js';
 import type { CoreConfig } from './config.js';
 import type { LiteLLMAdmin } from './keys/litellm.js';
+import { assertAppRoleSafe, grantAppRole } from './db/app-role.js';
 import { createPgDb, type Db } from './db/db.js';
 import { migrate } from './db/migrate.js';
 import type { AccessVerifier } from './confirm/access.js';
@@ -108,7 +109,21 @@ export function pgDeps(db: Db, now: () => Date = () => new Date()): CoreDeps {
 
 export async function createDeps(cfg: CoreConfig): Promise<{ deps: CoreDeps; migrated: string[]; storage: 'postgres' | 'memory' }> {
   if (!cfg.databaseUrl) return { deps: memoryDeps(), migrated: [], storage: 'memory' };
-  const db = createPgDb(cfg.databaseUrl);
-  const migrated = cfg.autoMigrate ? await migrate(db) : [];
+  if (!cfg.dbAppRole) {
+    const db = createPgDb(cfg.databaseUrl);
+    const migrated = cfg.autoMigrate ? await migrate(db) : [];
+    return { deps: pgDeps(db), migrated, storage: 'postgres' };
+  }
+  // D206：迁移与授权用登录角色（表所有者）；业务连接池切到应用角色，并确认它受 RLS 约束
+  const owner = createPgDb(cfg.databaseUrl, { max: 1 });
+  let migrated: string[] = [];
+  try {
+    migrated = cfg.autoMigrate ? await migrate(owner) : [];
+    await grantAppRole(owner, cfg.dbAppRole);
+  } finally {
+    await owner.close();
+  }
+  const db = createPgDb(cfg.databaseUrl, { role: cfg.dbAppRole });
+  await db.tx((q) => assertAppRoleSafe(q));
   return { deps: pgDeps(db), migrated, storage: 'postgres' };
 }
