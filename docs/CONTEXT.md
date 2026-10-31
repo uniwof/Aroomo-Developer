@@ -1,9 +1,9 @@
-# CONTEXT（开工只读这份 + 自己的工单，D227）
+# CONTEXT（开工只读这份 + 自己的工单，D239）
 
-## 当前里程碑：M2（D228，串行 M2→M3→M4）
+## 当前里程碑：M2（D240：多条线可并行，但只领当前里程碑工单；M2→M3→M4）
 内容：工具网关 + 1–2 个外部工具；Core /mcp 接入 LobeHub；资源库最小版 + 规矩注入。
-顺序：#111 → #120 → #115 → #117（见 #173）。另有 #171 生产只部署 main 标签版（先于 B 类）。
-M2 期间空闲只做：①所有者验收报的问题 ②本里程碑 C 类打磨。下个里程碑的工单不派。
+工单 = GitHub Milestone「M2」。A 类顺序 #111 → #120 → #115 → #117（#173）；#170 staging + #171 标签发版先于 B 类。
+没有 M2 工单就记一行收工。空闲只做：①所有者验收问题 ②本里程碑 C 类打磨。带 after-M2 的不领。
 验收：CI 全绿；两个账号（所有者 + 小号）各测一遍，小号看不到/改不了所有者数据；所有者手机按 docs/acceptance/M2.md 测 10 分钟。
 
 ## D199 红线（永远）
@@ -16,12 +16,12 @@ M2 期间空闲只做：①所有者验收报的问题 ②本里程碑 C 类打�
 
 ## 风险分级
 - A+（只开 PR、加 needs-leader-review、等负责人亲审）：主密钥与备份加密、保险箱加解密、core/src/confirm、core/src/auth/plugin.ts 与 tokens、forUser/RLS 底层、D207 长期授权、路径闸门本身。清单：.github/a-plus-paths.txt + scripts/ci/path-guard.py。
-- A（鉴权、Key、确认、工具网关花钱/危险、隔离、凭据、接管）：自动测试含反例；加 needs-leader-review；#171 上线前按 #156 24 小时兜底，上线后按 D223（CI 全绿 + 审查判「通过」，Groq 不算）可先合 dev。有带该标签的 PR 时不合 main、不打生产标签。
+- A（鉴权、Key、确认、工具网关花钱/危险、隔离、凭据、接管）：自动测试含反例；加 needs-leader-review；#170+#171 都完成前按 #156 24 小时兜底，之后按 D235（CI 全绿 + 审查判「通过」，Groq 不算）可先合 dev。有带该标签的 PR 时不合 main、不打生产标签。
 - B：关键路径单测，CI 绿 squash 合 dev。
 - C（界面）：冒烟 + 手机试；14px、点击区 ≥44px、aria。
 
 ## 目录与边界
-core/src 业务 | core/migrations 迁移 | web/console 控制台 | shell 薄层 | deploy、scripts 部署 | executor 本机执行员 | .github、scripts/ci 流程（冻结：只修不加）| docs 文档。只改工单写明的文件。
+后台线 core/src 业务 | 隔离线 core/migrations RLS、core/src/db、seed | 控制台线 web/console、shell、deploy | 执行员线 executor、.github、scripts/ci | 流程工具冻结：只修不加 | installer 独立版冻结（只保留执行员安装/更新）| docs 文档。只改工单写明的文件。
 
 ## 规矩
 一单一会话，PR 提交即结束。PR 说明三行（改了什么/怎么测/风险）+「工单 #N」。dev→main 只由所有者合。
