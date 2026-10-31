@@ -72,6 +72,17 @@ describe('HTTP 外部工具适配器', () => {
     expect(() => new HttpToolAdapter({ ...def, baseUrl: 'https://user:pw@api.example.com' }, { resolveSecret: async () => null })).toThrow();
   });
 
+  it('198.18.0.0/15 基准测试网段', () => {
+    for (const ip of ['198.18.0.1', '198.19.255.254']) expect(isPrivateAddress(ip)).toBe(true);
+    expect(isPrivateAddress('198.20.0.1')).toBe(false);
+  });
+  it('NAT64 64:ff9b::/96', () => {
+    for (const ip of ['64:ff9b::7f00:1', '64:ff9b::a00:1']) expect(isPrivateAddress(ip)).toBe(true);
+  });
+  it('6to4 2002::/16', () => {
+    for (const ip of ['2002:7f00:1::1', '2002:c0a8:101::1']) expect(isPrivateAddress(ip)).toBe(true);
+  });
+
   it('私网地址判断', () => {
     for (const ip of ['127.0.0.1', '10.1.2.3', '172.16.0.1', '192.168.1.1', '169.254.169.254', '100.64.0.1', '::1', 'fd00::1', 'fe80::1', '::ffff:10.0.0.1'])
       expect(isPrivateAddress(ip)).toBe(true);
