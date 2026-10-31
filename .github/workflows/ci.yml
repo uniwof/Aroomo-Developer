@@ -370,7 +370,7 @@ jobs:
           [IO.File]::WriteAllText("$src\backup-stage\db\lobechat.dump", 'PGDMP fake', $u)
           [IO.File]::WriteAllText("$src\backup-stage\db\aroomo_core.dump", 'PGDMP fake', $u)
           [IO.File]::WriteAllText("$src\data\secrets\aroomo.env", 'X=1', $u)
-          $pub = (Get-Content "$t\rd-pub.txt" | Where-Object { $_.Trim() })[0].Trim()
+          $pub = @(Get-Content "$t\rd-pub.txt" | Where-Object { $_.Trim() })[0].Trim()
           $out = "$t\aroomo-ci-20261031T000000Z.tar.zst.age"
           cmd /d /c "$env:SystemRoot\System32\tar.exe -cf - -C $src backup-stage data | $t\zstdbin\zstd-v1.5.7-win64\zstd.exe -q -c | $t\agebin\age\age.exe -r $pub -o $out"
           if ($LASTEXITCODE -ne 0 -or -not (Test-Path $out)) { throw 'fake backup failed' }
