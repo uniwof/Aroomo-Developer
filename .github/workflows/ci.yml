@@ -327,6 +327,75 @@ jobs:
           }
           if (Test-Path -LiteralPath $key) { throw 'key file was not deleted' }
 
+  restore-drill-tool:
+    name: 备份本机核对小工具冒烟（测试主密钥加密假备份 → 核对行数；错的主密钥被拒；D64，A+）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: 文件格式与 age 哈希一致（与主密钥小工具同版本同 SHA-256）
+        shell: powershell
+        run: |
+          $f = 'tools/restore-drill/Test-AroomoBackup.cmd'
+          $b = [IO.File]::ReadAllBytes($f)
+          if ($b[0] -eq 0xEF) { throw 'cmd file must not have a BOM' }
+          if (-not ([Text.Encoding]::UTF8.GetString($b)).Contains("`r`n")) { throw 'cmd file must use CRLF' }
+          $rx = "AgeZipSha256 = '([0-9a-f]{64})'"
+          $a = [regex]::Match((Get-Content $f -Raw -Encoding UTF8), $rx).Groups[1].Value
+          $m = [regex]::Match((Get-Content tools/master-key/New-AroomoMasterKey.cmd -Raw -Encoding UTF8), $rx).Groups[1].Value
+          if (-not $a -or $a -ne $m) { throw "age sha256 mismatch: $a / $m" }
+      - name: 两把测试主密钥（主密钥小工具无交互生成）
+        shell: cmd
+        env:
+          AROOMO_MK_NONINTERACTIVE: '1'
+        run: |
+          set AROOMO_MK_OUT=%RUNNER_TEMP%\rd-key.txt
+          call tools\master-key\New-AroomoMasterKey.cmd > "%RUNNER_TEMP%\rd-pub.txt"
+          if errorlevel 1 exit /b 1
+          set AROOMO_MK_OUT=%RUNNER_TEMP%\rd-wrong-key.txt
+          call tools\master-key\New-AroomoMasterKey.cmd > NUL
+          if errorlevel 1 exit /b 1
+      - name: 做一份与服务器同格式的假备份（manifest + counts.tsv + dump + .env，公钥加密）
+        shell: powershell
+        run: |
+          $t = $env:RUNNER_TEMP
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest -UseBasicParsing -OutFile "$t\age.zip" https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-windows-amd64.zip
+          Invoke-WebRequest -UseBasicParsing -OutFile "$t\zstd.zip" https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-v1.5.7-win64.zip
+          Expand-Archive "$t\age.zip" "$t\agebin"; Expand-Archive "$t\zstd.zip" "$t\zstdbin"
+          $src = "$t\fake"; New-Item -ItemType Directory "$src\backup-stage\db", "$src\data\secrets" -Force | Out-Null
+          $u = New-Object System.Text.UTF8Encoding($false)
+          [IO.File]::WriteAllText("$src\backup-stage\manifest.json", '{"format":2,"created_at":"ci","host_tag":"ci","databases":[{"name":"lobechat","tables":2},{"name":"aroomo_core","tables":1}],"pg_dump":"ci"}', $u)
+          [IO.File]::WriteAllText("$src\backup-stage\db\lobechat.counts.tsv", "public.users`t3`npublic.messages`t40`n", $u)
+          [IO.File]::WriteAllText("$src\backup-stage\db\aroomo_core.counts.tsv", "public.members`t5`n", $u)
+          [IO.File]::WriteAllText("$src\backup-stage\db\lobechat.dump", 'PGDMP fake', $u)
+          [IO.File]::WriteAllText("$src\backup-stage\db\aroomo_core.dump", 'PGDMP fake', $u)
+          [IO.File]::WriteAllText("$src\data\secrets\aroomo.env", 'X=1', $u)
+          $pub = (Get-Content "$t\rd-pub.txt" | Where-Object { $_.Trim() })[0].Trim()
+          $out = "$t\aroomo-ci-20261031T000000Z.tar.zst.age"
+          cmd /d /c "$env:SystemRoot\System32\tar.exe -cf - -C $src backup-stage data | $t\zstdbin\zstd-v1.5.7-win64\zstd.exe -q -c | $t\agebin\age\age.exe -r $pub -o $out"
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $out)) { throw 'fake backup failed' }
+      - name: 核对：对的主密钥通过并输出正确计数；错的主密钥被拒
+        shell: cmd
+        env:
+          AROOMO_RD_NONINTERACTIVE: '1'
+        run: |
+          set AROOMO_RD_FILE=%RUNNER_TEMP%\aroomo-ci-20261031T000000Z.tar.zst.age
+          set AROOMO_RD_KEY=%RUNNER_TEMP%\rd-key.txt
+          call tools\restore-drill\Test-AroomoBackup.cmd > "%RUNNER_TEMP%\rd-out.txt"
+          if errorlevel 1 (type "%RUNNER_TEMP%\rd-out.txt" & exit /b 1)
+          type "%RUNNER_TEMP%\rd-out.txt"
+          findstr /b /c:"ok databases=2 tables=3 rows=48 files=" "%RUNNER_TEMP%\rd-out.txt" || exit /b 1
+          findstr /c:"env=true" "%RUNNER_TEMP%\rd-out.txt" || exit /b 1
+          set AROOMO_RD_KEY=%RUNNER_TEMP%\rd-wrong-key.txt
+          call tools\restore-drill\Test-AroomoBackup.cmd > NUL 2> "%RUNNER_TEMP%\rd-err.txt"
+          if not errorlevel 1 (echo wrong key was accepted & exit /b 1)
+          echo wrong key rejected ok
+      - name: 删除测试私钥
+        if: always()
+        shell: powershell
+        run: |
+          Remove-Item "$env:RUNNER_TEMP\rd-key.txt", "$env:RUNNER_TEMP\rd-wrong-key.txt" -Force -ErrorAction SilentlyContinue
+
   secrets:
     name: 密钥扫描（gitleaks）
     runs-on: ubuntu-24.04
