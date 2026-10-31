@@ -14,3 +14,4 @@
 *.isl -text
 # 主密钥小工具：.cmd 与 PowerShell 双用文件，仓库里原样存 CRLF（raw 下载即可双击）
 tools/master-key/*.cmd -text
+tools/restore-drill/*.cmd -text
