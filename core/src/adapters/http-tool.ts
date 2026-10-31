@@ -57,13 +57,14 @@ export function isPrivateAddress(ip: string): boolean {
     const [a, b] = p;
     return (
       a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 192 && b === 0) || a >= 224
+      (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 192 && b === 0) || (a === 198 && (b === 18 || b === 19)) || a >= 224
     );
   }
   if (v === 6) {
     const s = ip.toLowerCase();
     if (s === '::' || s === '::1') return true;
     if (s.startsWith('::ffff:')) return isPrivateAddress(s.slice(7));
+    if (/^0{0,3}64:ff9b:(:|0{0,4}:)/.test(s) || /^2002:/.test(s)) return true; // NAT64 / 6to4
     return /^f[cd]/.test(s) || /^fe[89ab]/.test(s) || s.startsWith('ff');
   }
   return true; // 不是 IP 就按不安全处理

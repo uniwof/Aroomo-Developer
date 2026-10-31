@@ -72,7 +72,7 @@ export class ExecutorAgentAdapter implements ToolAdapter {
   readonly id = 'executor';
   constructor(
     private readonly tasks: TaskPort,
-    private readonly secretExists: SecretExists = async () => true,
+    private readonly secretExists: SecretExists,
   ) {}
 
   tools(): ToolSpec[] {
