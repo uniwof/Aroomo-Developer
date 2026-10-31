@@ -60,4 +60,21 @@ describe('parseMentions', () => {
   it('孤立的 @ 不算点名', () => {
     expect(parseMentions('@ 你好', members).hasMention).toBe(false);
   });
+
+  it('LobeHub 提及标签与手打 @ 等效（#210）', () => {
+    const a = parseMentions('<mention name="@Groq" id="agt_1"/> 翻译这句话', members);
+    expect(a.memberIds).toEqual(['groq']);
+    expect(a.body).toBe('翻译这句话');
+    const b = parseMentions('你好 <mention name="@Gemini 2.5 Pro" id="x"/>，帮忙看看', members);
+    expect(b.memberIds).toEqual(['gemini-pro']);
+    const c = parseMentions('<mention name="@gpro" id="x"></mention> hi', members);
+    expect(c.memberIds).toEqual(['gemini-pro']);
+  });
+
+  it('提及标签匹配不到成员记为 unknown；代码块里的标签不动', () => {
+    const r = parseMentions('<mention name="@gemini-38flash" id="agt_9"/> 在吗', members);
+    expect(r.unknown).toEqual(['gemini-38flash']);
+    const code = parseMentions('`<mention name="@Groq" id="1"/>` 这是代码', members);
+    expect(code.hasMention).toBe(false);
+  });
 });
