@@ -149,10 +149,16 @@ function Invoke-AroomoRestoreDrill {
         $errText = if (Test-Path -LiteralPath $err) { (Get-Content -LiteralPath $err -Raw -ErrorAction SilentlyContinue) } else { '' }
         if ($errText -match 'no identity matched') { throw '主密钥和这份备份不配对（这份备份是用另一把主密钥加密的）。请告诉 Hark。' }
         if ($rc1 -ne 0 -or $errText -match 'age: error') { throw "解密或解压失败，备份文件可能损坏。请告诉 Hark。（$($errText.Trim())）" }
-        $rc2 = Invoke-Cmd "$dec | `"$tar`" -xf - -C `"$out`" --include `"*/manifest.json`" --include `"*.counts.tsv`" 2>>`"$err`""
-        if ($rc2 -ne 0) { throw '取出清单失败。请告诉 Hark。' }
-
         $entries = @(Get-Content -LiteralPath $list -Encoding UTF8 | Where-Object { $_.Trim() })
+        # 只取出清单和行数文件：按名字点名（不用 --include，各版本 bsdtar 行为不一）
+        $want = @($entries | ForEach-Object { if ($_ -match '(backup-stage/(manifest\.json|db/[^/\s]+\.counts\.tsv))$') { $Matches[1] } })
+        if ($want.Count -eq 0) { throw '备份里没有清单文件（不是 Aroomo 服务器备份？）。请告诉 Hark。' }
+        $names = ($want | ForEach-Object { '"' + $_ + '"' }) -join ' '
+        $rc2 = Invoke-Cmd "$dec | `"$tar`" -xf - -C `"$out`" $names 2>>`"$err`""
+        if ($rc2 -ne 0) {
+            $errText = if (Test-Path -LiteralPath $err) { (Get-Content -LiteralPath $err -Raw -ErrorAction SilentlyContinue) } else { '' }
+            throw "取出清单失败（$rc2）。请告诉 Hark。$($errText)"
+        }
         $manifestPath = Join-Path $out 'backup-stage\manifest.json'
         if (-not (Test-Path -LiteralPath $manifestPath)) { throw '备份里没有 manifest.json。请告诉 Hark。' }
         $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
