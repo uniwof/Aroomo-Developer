@@ -4,7 +4,7 @@
 1. 任何 PR 触及 A+ 路径（.github/a-plus-paths.txt），或改动行（新增或删除）命中下面的
    A+ 内容规则（RLS / forUser 底层、保险箱密钥、主密钥与备份加密、D207 长期授权），
    却没有 needs-leader-review 标签 → 失败（防止 A+ 改动被当成 B/C 直接合并）。
-   A+ 范围以 Issue #156 第 2 条 + D207 为准（D223 复核，2026-10-31）。
+   A+ 范围以 Issue #156 第 2 条 + D207 为准（D235（原 D223）复核，2026-10-31）。
 2. Gemini 自动程序员的改动（分支 gemini/*，或带 gemini-task 标签）：
    只要有一个文件不在 .github/gemini-allowed-paths.txt 白名单内，或触及 A+ → 失败。
 

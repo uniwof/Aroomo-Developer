@@ -1,4 +1,4 @@
-# A+ 路径（负责人必审，绝不兜底合并；Issue #156 第 2 条 + D207；D223 复核 2026-10-31）
+# A+ 路径（负责人必审，绝不兜底合并；Issue #156 第 2 条 + D207；D235（原 D223）复核 2026-10-31）
 # 一行一个 glob（fnmatch，* 可跨目录）；以 /** 结尾表示整个目录。
 # 只靠路径抓不准的（forUser 定义、RLS 语句、VAULT_KEY、age 主密钥调用、长期授权）由
 # scripts/ci/path-guard.py 的 CONTENT_RULES 按改动行内容判定。
