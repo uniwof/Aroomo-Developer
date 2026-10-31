@@ -47,6 +47,9 @@ describe('/v1 对话入口（LobeHub → Core → LiteLLM，D31）', () => {
         if (body.stream) {
           res.writeHead(200, { 'content-type': 'text/event-stream' });
           res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: text } }] })}\n\n`);
+          // 和真实供应商一样：先发 finish_reason 分片，再发用量分片，最后 [DONE]
+          res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`);
+          res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {} }], usage: { total_tokens: 3 } })}\n\n`);
           res.end('data: [DONE]\n\n');
         } else {
           res.writeHead(200, { 'content-type': 'application/json' });
@@ -118,9 +121,14 @@ describe('/v1 对话入口（LobeHub → Core → LiteLLM，D31）', () => {
     expect(seen[0]).toMatchObject({ model: 'GPT-4o mini', stream: true });
     expect(r.body).toContain('我是 GPT-4o mini');
     const doneAt = r.body.indexOf('[DONE]');
+    const finishAt = r.body.indexOf('"finish_reason":"stop"');
     const footerAt = r.body.indexOf('GPT-4o mini（负责人）');
     expect(footerAt).toBeGreaterThan(0);
     expect(footerAt).toBeLessThan(doneAt);
+    // LobeHub 读到 finish_reason 就收尾：署名必须在结束分片之前（#191）
+    expect(finishAt).toBeGreaterThan(0);
+    expect(footerAt).toBeLessThan(finishAt);
+    expect(r.body.split('GPT-4o mini（负责人）').length).toBe(2);
   });
 
   it('@ 一个成员 → 点名：直接交给他，@ 从正文去掉；负责人不介入', async () => {

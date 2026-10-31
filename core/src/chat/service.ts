@@ -153,6 +153,21 @@ function textReply(stream: boolean, text: string): ChatResult {
   return { status: 200, headers: sseHeaders(), stream: body };
 }
 
+/** SSE 事件里是否有一个 choice 带了 finish_reason（结束分片） */
+export function isFinishEvent(event: string): boolean {
+  for (const line of event.split('\n')) {
+    const m = /^data:\s*(\{.*\})\s*$/.exec(line);
+    if (!m) continue;
+    try {
+      const j = JSON.parse(m[1]!) as { choices?: Array<{ finish_reason?: unknown }> };
+      if (j.choices?.some((ch) => ch.finish_reason !== null && ch.finish_reason !== undefined)) return true;
+    } catch {
+      // 不是 JSON 的分片原样转发
+    }
+  }
+  return false;
+}
+
 const sseHeaders = () => ({ 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', 'x-accel-buffering': 'no' });
 
 const hintText = (hints: Hint[]) => hints.map((h) => `> ${h.text}${h.actions.length ? '（去掉 @ 再发一次即可交给负责人）' : ''}`).join('\n');
@@ -292,25 +307,42 @@ export class ChatService {
     const dec = new TextDecoder();
     let buf = '';
     let sentPrefix = false;
+    let sentFooter = false;
+    // 署名要放在第一个带 finish_reason 的分片之前：LobeHub 读到 finish_reason 就收尾，放在 [DONE] 前会被丢掉（#191 V3 复测）
+    const putFooter = (c: ReadableStreamDefaultController<Uint8Array>) => {
+      if (!footer || sentFooter) return;
+      sentFooter = true;
+      c.enqueue(chunk(model, footer));
+    };
     const out = new ReadableStream<Uint8Array>({
       async pull(c) {
         if (!sentPrefix) {
           sentPrefix = true;
           if (prefix) c.enqueue(chunk(model, prefix));
         }
-        const { done, value } = await reader.read();
-        if (done) {
-          if (buf.trim()) c.enqueue(enc.encode(buf.endsWith('\n\n') ? buf : buf + '\n\n'));
-          c.close();
-          return;
-        }
-        buf += dec.decode(value, { stream: true });
-        let i: number;
-        while ((i = buf.indexOf('\n\n')) >= 0) {
-          const event = buf.slice(0, i + 2);
-          buf = buf.slice(i + 2);
-          if (/^data:\s*\[DONE\]/m.test(event) && footer) c.enqueue(chunk(model, footer));
-          c.enqueue(enc.encode(event));
+        // 一次 pull 必须至少放出一个分片：读到半个事件时继续读，否则流会停住（#191）
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) {
+            if (buf.trim()) {
+              if (isFinishEvent(buf) || /^data:\s*\[DONE\]/m.test(buf)) putFooter(c);
+              c.enqueue(enc.encode(buf.endsWith('\n\n') ? buf : buf + '\n\n'));
+            }
+            putFooter(c);
+            c.close();
+            return;
+          }
+          let emitted = false;
+          buf += dec.decode(value, { stream: true });
+          let i: number;
+          while ((i = buf.indexOf('\n\n')) >= 0) {
+            const event = buf.slice(0, i + 2);
+            buf = buf.slice(i + 2);
+            if (isFinishEvent(event) || /^data:\s*\[DONE\]/m.test(event)) putFooter(c);
+            c.enqueue(enc.encode(event));
+            emitted = true;
+          }
+          if (emitted) return;
         }
       },
       cancel() {
