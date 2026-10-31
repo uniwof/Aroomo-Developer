@@ -38,3 +38,7 @@ installer/windows/Get-AgeKeygen.ps1
 core/src/grants/**
 core/src/*grant*
 core/migrations/*grant*
+
+# 主密钥小工具（所有者电脑上生成主密钥，D64）
+tools/master-key/**
+docs/ops/MASTER-KEY.md

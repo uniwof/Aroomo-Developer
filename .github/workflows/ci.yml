@@ -282,6 +282,51 @@ jobs:
           path: installer/windows/Output/*.exe
           if-no-files-found: error
 
+  master-key-tool:
+    name: 主密钥小工具冒烟（无交互：只输出 age1 公钥，结束删私钥；D64，A+）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: 文件格式与 age 哈希一致（与 Get-AgeKeygen.ps1 同版本同 SHA-256）
+        shell: powershell
+        run: |
+          $f = 'tools/master-key/New-AroomoMasterKey.cmd'
+          $b = [IO.File]::ReadAllBytes($f)
+          if ($b[0] -eq 0xEF) { throw 'cmd file must not have a BOM' }
+          if (-not ([Text.Encoding]::UTF8.GetString($b)).Contains("`r`n")) { throw 'cmd file must use CRLF' }
+          $rx = "'([0-9a-f]{64})'"
+          $a = [regex]::Match((Get-Content $f -Raw -Encoding UTF8), $rx).Groups[1].Value
+          $g = [regex]::Match((Get-Content installer/windows/Get-AgeKeygen.ps1 -Raw -Encoding UTF8), $rx).Groups[1].Value
+          if (-not $a -or $a -ne $g) { throw "age sha256 mismatch: $a / $g" }
+          $va = [regex]::Match((Get-Content $f -Raw -Encoding UTF8), "AgeVersion = '(v[0-9.]+)'").Groups[1].Value
+          $vg = [regex]::Match((Get-Content installer/windows/Get-AgeKeygen.ps1 -Raw -Encoding UTF8), "version = '(v[0-9.]+)'").Groups[1].Value
+          if ($va -ne $vg) { throw "age version mismatch: $va / $vg" }
+      - name: 双击入口（cmd）无交互生成
+        shell: cmd
+        env:
+          AROOMO_MK_NONINTERACTIVE: '1'
+        run: |
+          set AROOMO_MK_OUT=%RUNNER_TEMP%\mk-test.txt
+          call tools\master-key\New-AroomoMasterKey.cmd > "%RUNNER_TEMP%\mk-out.txt"
+          if errorlevel 1 exit /b 1
+      - name: 核对输出只有公钥、私钥文件有效，然后删除私钥
+        shell: powershell
+        run: |
+          $out = @(Get-Content "$env:RUNNER_TEMP\mk-out.txt" | Where-Object { $_.Trim() })
+          $key = "$env:RUNNER_TEMP\mk-test.txt"
+          try {
+            if ($out.Count -ne 1 -or $out[0] -cnotmatch '^age1[0-9a-z]{58}$') { throw "stdout is not exactly one age1 public key line ($($out.Count) lines)" }
+            if ((Get-Content "$env:RUNNER_TEMP\mk-out.txt" -Raw) -match 'AGE-SECRET-KEY') { throw 'secret key leaked to stdout' }
+            $t = Get-Content $key -Raw -Encoding UTF8
+            if ($t -cnotmatch '(?m)^AGE-SECRET-KEY-1[0-9A-Z]{58}\r?$') { throw 'key file has no secret key' }
+            if (-not $t.Contains("# public key: $($out[0])")) { throw 'key file does not match printed public key' }
+            Write-Output 'smoke ok: only the public key was printed; key file valid'
+          } finally {
+            Remove-Item -LiteralPath $key -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath "$env:RUNNER_TEMP\mk-out.txt" -Force -ErrorAction SilentlyContinue
+          }
+          if (Test-Path -LiteralPath $key) { throw 'key file was not deleted' }
+
   secrets:
     name: 密钥扫描（gitleaks）
     runs-on: ubuntu-24.04
