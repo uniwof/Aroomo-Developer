@@ -13,7 +13,8 @@ exit /b %AROOMO_MK_RC%
 #   2. 在本机用官方 age-keygen 生成主密钥（这一步不联网）。
 #   3. 私钥保存到所有者自己选的位置；屏幕上只显示公钥 age1…，并复制到剪贴板。
 # 私钥永不上传、不显示、不进日志、不进聊天。
-# 用法：双击本文件；或在 PowerShell 里：irm <本文件 raw 地址> | iex
+# 用法：从 GitHub Releases 的 master-key-v1 下载本文件，核对 SHA-256（见 docs/ops/MASTER-KEY.md）后双击。
+#   不要从分支 raw 地址下载执行（分支内容会变）。
 # 无交互（CI 冒烟）：AROOMO_MK_NONINTERACTIVE=1，AROOMO_MK_OUT=私钥文件完整路径；
 #   标准输出只有一行公钥。
 # 文件必须是 UTF-8 不带 BOM（带 BOM 会让 .cmd 第一行失效）。
@@ -66,7 +67,8 @@ function Invoke-AroomoMasterKeyTool {
         $keygen = Join-Path $work 'age\age-keygen.exe'
         if (-not (Test-Path -LiteralPath $keygen)) { throw '压缩包里没有 age-keygen.exe' }
 
-        # 2. 本机生成（不联网；私钥只在内存里）
+        # 2. 本机生成（不联网）。age-keygen 不带 -o：私钥只从 stdout 管道读进内存，
+#    从不写进临时目录（临时目录里只有 age.zip 和解压出的程序）；唯一落盘处是第 3 步所有者选的位置。
         Say '第 2 步：在这台电脑上生成主密钥（不联网）……' 'Cyan'
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName = $keygen
