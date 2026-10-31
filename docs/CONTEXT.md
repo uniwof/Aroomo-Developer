@@ -1,10 +1,12 @@
 # CONTEXT（开工只读这份 + 自己的工单，D239）
 
-## 当前里程碑：M1 验收 → M2（D240：多条线可并行，只领当前里程碑与 D213 工单）
-先让 M1 通过验收：V2/V3 实测（VERIFY.md，用保险箱已有的测试模型 Key），结论记入 DECISIONS（LobeHub 或 Open WebUI）。GitHub Milestone「M1」。
-再按 #173 完成 M2（工具网关 + 外部工具、/mcp 接 LobeHub、资源库 + 规矩注入）：#111 → #120 → #115 → #117。Milestone「M2」。
-#170 staging + #171 标签发版先于 B 类。没有 M1/M2 工单就记一行收工；空闲只做所有者验收问题和本里程碑 C 类打磨。带 after-M2 的不领。
-验收：CI 全绿；两个账号（所有者 + 小号）各测一遍；所有者手机按 docs/acceptance/M<n>.md 测 10 分钟。
+## 当前里程碑：M1（D244：一次只推一个，M1 经所有者验收确认前不派 M2）
+只做 M1：#191 V2/V3 实测（VERIFY.md，用保险箱已有的测试模型 Key），结论记入 DECISIONS（LobeHub 或 Open WebUI）；修所有者 M1 验收问题。GitHub Milestone「M1」。
+M2 工单（含 #173、#170、#171）、after-M2、deferred、POOL.md 里的项一律不领；后台/执行员/隔离三线暂停。没有 M1 工单就记一行收工。
+验收：CI 全绿；两个账号各测一遍；所有者手机按 docs/acceptance/M1.md 测 10 分钟。
+
+## 文档（D244）
+以五件套为准：PROJECT.md、CONTEXT.md、DECISIONS.md、POOL.md（新想法先进池子）、PROGRESS.md。PRODUCT/HANDOFF/TICKETS 降为只查不读。
 
 ## D199 红线（永远）
 1 密钥、cookie、验证码不进仓库/日志/模型上下文
