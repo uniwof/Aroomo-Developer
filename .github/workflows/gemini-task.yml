@@ -68,6 +68,7 @@ jobs:
         id: gemini
         if: steps.gate.outputs.ok == 'true'
         continue-on-error: true
+        timeout-minutes: 25
         uses: google-github-actions/run-gemini-cli@v0
         env:
           GEMINI_CLI_TRUST_WORKSPACE: 'true'
