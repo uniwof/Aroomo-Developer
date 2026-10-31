@@ -1,5 +1,6 @@
 import type { Db } from '../db/db.js';
 import { toDate, toDateOrNull } from '../db/db.js';
+import { systemScoped, userScoped } from '../db/scope.js';
 import { OWNER_SCOPE, sameSet } from './memory.js';
 import { type CapabilityTag, type MemberStatus, type ModelCaps, DuplicateIdError, DuplicateNameError, InvalidOrderError, type Member, type MemberStore } from './types.js';
 
@@ -48,16 +49,22 @@ function mapUnique(err: unknown): never {
 const COLS = 'id, name, aliases, capability_tags, enabled, pinned, sort_order, status, model_caps, deleted_at, created_at, updated_at';
 
 export class PgMemberStore implements MemberStore {
+  /** 本用户范围的连接：每个事务开头设置 app.user_id（D206 RLS） */
+  private readonly db: Db;
+
   constructor(
-    private readonly db: Db,
+    private readonly raw: Db,
     private readonly userId: string = OWNER_SCOPE,
-  ) {}
+  ) {
+    this.db = userScoped(raw, userId);
+  }
 
   forUser(userId: string): MemberStore {
-    return new PgMemberStore(this.db, userId);
+    return new PgMemberStore(this.raw, userId);
   }
+  /** 跨用户：只给系统定时任务列出有成员的用户（systemScoped） */
   async userIds(): Promise<string[]> {
-    const { rows } = await this.db.query<{ user_id: string }>('SELECT DISTINCT user_id FROM members ORDER BY user_id');
+    const { rows } = await systemScoped(this.raw).query<{ user_id: string }>('SELECT DISTINCT user_id FROM members ORDER BY user_id');
     return rows.map((r) => r.user_id);
   }
 
