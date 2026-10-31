@@ -1,13 +1,35 @@
-# A+ 路径（负责人必审，绝不兜底合并；D205–D216 第一部分 / Issue #156）
-# 一行一个 glob；以 /** 结尾表示整个目录。改这个文件本身也算 A+。
+# A+ 路径（负责人必审，绝不兜底合并；Issue #156 第 2 条 + D207；D223 复核 2026-10-31）
+# 一行一个 glob（fnmatch，* 可跨目录）；以 /** 结尾表示整个目录。
+# 只靠路径抓不准的（forUser 定义、RLS 语句、VAULT_KEY、age 主密钥调用、长期授权）由
+# scripts/ci/path-guard.py 的 CONTENT_RULES 按改动行内容判定。
+
+# 路径闸门本身（改闸门 = 改 A+ 的边界）
+.github/a-plus-paths.txt
+.github/workflows/path-guard.yml
+scripts/ci/path-guard.py
+
+# 确认服务本身
 core/src/confirm/**
+
+# 鉴权插件本身与令牌
 core/src/auth/plugin.ts
 core/src/auth/tokens.ts
+
+# 保险箱加解密（VAULT_KEY 的读取/指纹校验另由内容规则覆盖 vault/service.ts、config.ts）
 core/src/vault/crypto.ts
+
+# 多用户隔离底层（D206：连接/事务里设置 app.user_id、角色；forUser 定义与 RLS 语句由内容规则覆盖）
 core/src/db/**
-core/src/grants/**
 core/src/users/rls*
+
+# 主密钥与备份加密（服务器 + Windows 安装器；独立版 psm1 里的备份加密由内容规则覆盖）
 scripts/backup.sh
 scripts/restore.sh
+scripts/lib/backup-common.sh
 deploy/backup/**
 installer/windows/Get-AgeKeygen.ps1
+
+# D207 长期授权（目录尚未建；按名称预先占位）
+core/src/grants/**
+core/src/*grant*
+core/migrations/*grant*
