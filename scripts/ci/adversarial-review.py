@@ -52,6 +52,9 @@ def main():
     n = os.environ["PR_NUMBER"]
     pr = gh(f"/pulls/{n}")
     labels = {l["name"] for l in pr["labels"]}
+    if "needs-leader-review" not in labels:
+        print("没有 needs-leader-review 标签，不审");
+        return
     if pr["head"]["ref"].startswith("gemini/"):
         print("自动程序员 PR 不做 A 类审查");
         return

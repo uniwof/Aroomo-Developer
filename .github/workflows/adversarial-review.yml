@@ -4,8 +4,9 @@ name: adversarial-review
 # - 同一份 diff 只审一次（评论里记 diff 哈希）；每个 PR 最多 3 次，加 re-review 标签可再审。
 # - 这是仓库里唯一的模型审查；Gemini Code Assist 个人免费版已于 2026-07-17 停服，不再并行装第二个审查机器人。
 on:
+  # 实测：Hark 连接器加标签不会产生 labeled 触发，所以每次 push 都跑，在脚本里实时读标签判断（没标签几秒就退出）。
   pull_request:
-    types: [labeled, synchronize, ready_for_review]
+    types: [opened, reopened, labeled, synchronize, ready_for_review]
   workflow_dispatch:
     inputs:
       pr_number:
@@ -23,9 +24,9 @@ jobs:
       github.event_name == 'workflow_dispatch' || (
       github.event.pull_request.head.repo.full_name == github.repository &&
       !startsWith(github.event.pull_request.head.ref, 'gemini/') &&
-      contains(github.event.pull_request.labels.*.name, 'needs-leader-review') &&
       (github.event.action != 'labeled' || github.event.label.name == 'needs-leader-review' || github.event.label.name == 're-review'))
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: review
