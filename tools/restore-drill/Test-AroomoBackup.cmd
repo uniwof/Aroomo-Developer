@@ -7,7 +7,7 @@ if not "%AROOMO_RD_NONINTERACTIVE%"=="1" pause
 exit /b %AROOMO_RD_RC%
 #>
 # ---------------------------------------------------------------------------
-# Aroomo 备份本机核对（A+，D64；红线 3「R2 加密备份能恢复」的所有者侧演练）。
+# Aroomo 备份本机核对（A+，D64；D199 红线第 4 条「R2 加密备份能恢复」的所有者侧演练）。
 # 用 U 盘里的主密钥（私钥）在本机解开一份服务器备份，只取出清单和逐表行数，显示核对结果。
 #   1. 从官方发布页下载 age（与主密钥小工具同版本同 SHA-256）和 zstd，核对 SHA-256。
 #   2. 找私钥：U 盘根目录的 aroomo-master-key.txt（找不到就弹窗让所有者选）。
@@ -27,7 +27,7 @@ $script:AgeZipUrl = "https://github.com/FiloSottile/age/releases/download/$($scr
 $script:AgeZipSha256 = '46db0db71f146061f7c8fffa912cb806aef1bc8450e27a3abc1744f0591b89fb'
 $script:ZstdVersion = 'v1.5.7'
 $script:ZstdZipUrl = "https://github.com/facebook/zstd/releases/download/$($script:ZstdVersion)/zstd-$($script:ZstdVersion)-win64.zip"
-# zstd v1.5.7 win64 zip 的 SHA-256（2026-10-31 计算）
+# zstd v1.5.7 win64 zip 的 SHA-256：由 Hark 和负责人各自从官方发布页下载核对（2026-10-31，结果一致）；官方未公布此文件的哈希
 $script:ZstdZipSha256 = 'acb4e8111511749dc7a3ebedca9b04190e37a17afeb73f55d4425dbf0b90fad9'
 
 function Invoke-AroomoRestoreDrill {
@@ -109,8 +109,8 @@ function Invoke-AroomoRestoreDrill {
             }
         }
         if (-not $key) {
-            Say '没在 U 盘根目录找到 aroomo-master-key.txt，请在弹出的窗口里选它。' 'Yellow'
-            Speak '没找到主密钥文件，请在窗口里选择。'
+            Say '没在 U 盘根目录找到 aroomo-master-key.txt，请在弹出的窗口里选它。如果没看到选择窗口，按 Alt+Tab 切换过去。' 'Yellow'
+            Speak '没找到主密钥文件，请在窗口里选择。如果没看到选择窗口，按 Alt+Tab 切换过去。'
             $key = Pick-File '选择 Aroomo 主密钥文件（aroomo-master-key.txt）' '主密钥 (*.txt)|*.txt|所有文件 (*.*)|*.*' ''
         }
         if (-not $key -or -not (Test-Path -LiteralPath $key)) { throw '没有主密钥文件，已停止。插上 U 盘后再运行一次。' }
@@ -128,8 +128,8 @@ function Invoke-AroomoRestoreDrill {
             }
         }
         if (-not $file) {
-            Say '没在「下载」文件夹找到备份文件，请在弹出的窗口里选它。' 'Yellow'
-            Speak '没找到备份文件，请在窗口里选择。'
+            Say '没在「下载」文件夹找到备份文件，请在弹出的窗口里选它。如果没看到选择窗口，按 Alt+Tab 切换过去。' 'Yellow'
+            Speak '没找到备份文件，请在窗口里选择。如果没看到选择窗口，按 Alt+Tab 切换过去。'
             $file = Pick-File '选择 Aroomo 备份文件（aroomo-…tar.zst.age）' 'Aroomo 备份 (*.age)|*.age|所有文件 (*.*)|*.*' $downloads
         }
         if (-not $file -or -not (Test-Path -LiteralPath $file)) { throw '没有备份文件，已停止。先点 Hark 发的链接下载备份。' }
@@ -187,13 +187,13 @@ function Invoke-AroomoRestoreDrill {
             ("备份：{0}（{1}）" -f $name, $manifest.created_at)
             ("SHA-256：{0}" -f $sha)
             ("主密钥：正确（解密成功）")
-            ("数据库 {0} 个，共 {1} 张表、{2} 行；文件共 {3} 个；含 .env：{4}" -f @($manifest.databases).Count, $totalTables, $totalRows, $entries.Count, $(if ($hasEnv) { '是' } else { '否' }))
+            ("数据库 {0} 个，共 {1} 张表、{2} 行；条目共 {3} 个（含目录）；含 .env：{4}" -f @($manifest.databases).Count, $totalTables, $totalRows, $entries.Count, $(if ($hasEnv) { '是' } else { '否' }))
         ) + $dbLines + ($problems | ForEach-Object { "问题：$_" })
         $text = $summary -join "`r`n"
 
         # 5. 结果
         if ($quiet) {
-            [Console]::Out.WriteLine(("{0} databases={1} tables={2} rows={3} files={4} env={5} sha256={6}" -f $(if ($ok) { 'ok' } else { 'fail' }), @($manifest.databases).Count, $totalTables, $totalRows, $entries.Count, $hasEnv.ToString().ToLower(), $sha))
+            [Console]::Out.WriteLine(("{0} databases={1} tables={2} rows={3} entries={4} env={5} sha256={6}" -f $(if ($ok) { 'ok' } else { 'fail' }), @($manifest.databases).Count, $totalTables, $totalRows, $entries.Count, $hasEnv.ToString().ToLower(), $sha))
             if ($ok) { return 0 } else { return 1 }
         }
         try { Set-Clipboard -Value $text } catch { Write-Verbose 'clipboard' }

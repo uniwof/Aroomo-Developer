@@ -384,7 +384,7 @@ jobs:
           call tools\restore-drill\Test-AroomoBackup.cmd > "%RUNNER_TEMP%\rd-out.txt" 2> "%RUNNER_TEMP%\rd-err1.txt"
           if errorlevel 1 (type "%RUNNER_TEMP%\rd-out.txt" & type "%RUNNER_TEMP%\rd-err1.txt" & exit /b 1)
           type "%RUNNER_TEMP%\rd-out.txt"
-          findstr /b /c:"ok databases=2 tables=3 rows=48 files=" "%RUNNER_TEMP%\rd-out.txt" || exit /b 1
+          findstr /b /c:"ok databases=2 tables=3 rows=48 entries=" "%RUNNER_TEMP%\rd-out.txt" || exit /b 1
           findstr /c:"env=true" "%RUNNER_TEMP%\rd-out.txt" || exit /b 1
           set AROOMO_RD_KEY=%RUNNER_TEMP%\rd-wrong-key.txt
           call tools\restore-drill\Test-AroomoBackup.cmd > NUL 2> "%RUNNER_TEMP%\rd-err.txt"
