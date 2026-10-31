@@ -3,7 +3,7 @@ import { NavLink, Outlet } from 'react-router-dom';
 import { Inbox, LogOut, KeyRound, Library, Map, Monitor, Settings, Wrench } from 'lucide-react';
 import { Brand, QuotaRing } from './brand';
 import { Button } from './ui/button';
-import { api, logout } from '@/lib/api';
+import { api, logout, viaShell } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useUsage, worstRow } from '@/lib/usage';
 
@@ -51,10 +51,12 @@ export function Layout() {
           <div className="flex items-center gap-1">
             {/* 额度圆环（D7）：取上限已填的成员里最满的一位；都没填上限=空圆环 */}
             <QuotaRing used={worst?.quota.used} limit={worst?.quota.limit} />
-            <Button variant="ghost" aria-label="退出登录" onClick={() => void logout()}>
-              <LogOut className="size-5" aria-hidden="true" />
-              <span className="sr-only md:not-sr-only">退出</span>
-            </Button>
+            {!viaShell && (
+              <Button variant="ghost" aria-label="退出登录" onClick={() => void logout()}>
+                <LogOut className="size-5" aria-hidden="true" />
+                <span className="sr-only md:not-sr-only">退出</span>
+              </Button>
+            )}
           </div>
         </div>
         <nav aria-label="控制台" className="flex gap-1 overflow-x-auto px-2 pb-2 md:flex-col md:overflow-visible">

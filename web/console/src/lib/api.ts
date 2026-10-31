@@ -13,6 +13,17 @@ export interface User {
   status?: string;
 }
 
+/**
+ * 从 Shell（/console，已登录 LobeHub）打开时，页面带 aroomo-shell 标记：API 走同源 /aroomo/api（Shell 附加令牌），不再单独登录。
+ * 直接从 Core 打开时仍用 Core 的会话令牌。
+ */
+export const viaShell = typeof document !== 'undefined' && document.querySelector('meta[name="aroomo-shell"]') !== null;
+
+export function apiUrl(path: string): string {
+  const p = path.startsWith('/') ? path : `/api/${path}`;
+  return viaShell && p.startsWith('/api/') ? '/aroomo' + p : p;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -67,7 +78,7 @@ export async function api<T>(method: string, path: string, body?: unknown, fetch
   if (token) headers.authorization = `Bearer ${token}`;
   if (method !== 'GET' && method !== 'HEAD') headers['x-aroomo-request'] = '1';
   if (body !== undefined) headers['content-type'] = 'application/json';
-  const res = await fetchImpl(path.startsWith('/') ? path : `/api/${path}`, {
+  const res = await fetchImpl(apiUrl(path), {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
