@@ -11,7 +11,7 @@ import type { GatewayService } from './service.js';
 
 export function registerGatewayRoutes(app: FastifyInstance, svc: GatewayService): void {
   const cfg = {
-    config: { userRoute: true as const },
+    config: { userRoute: true as const, capability: 'settings:write' as const },
     preHandler: async (req: FastifyRequest) => {
       const p = req.principal;
       if (!p || (p.type !== 'owner' && p.type !== 'user')) throw new HttpError(403, 'FORBIDDEN', '只有本人登录后可以使用工具网关');
