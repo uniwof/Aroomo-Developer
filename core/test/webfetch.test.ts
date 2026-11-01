@@ -95,5 +95,6 @@ describe('读网页（内置工具，B/A 边界：SSRF）', () => {
 
   it('htmlToText 基本行为', () => {
     expect(htmlToText('<div>a</div><div>b</div>')).toBe('a\nb');
+    expect(htmlToText('<p>&amp;lt;b&amp;gt; &amp;amp; &lt;i&gt;</p>')).toBe('&lt;b&gt; &amp; <i>');
   });
 });

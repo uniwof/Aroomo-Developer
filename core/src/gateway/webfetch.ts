@@ -37,11 +37,12 @@ export function htmlToText(html: string): string {
     .replace(/<\/(p|div|li|h[1-6]|tr|br|section|article)>|<br\s*\/?>/gi, '\n')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+    // &amp; 必须最后解，否则 "&amp;lt;" 会被二次解成 "<"（CodeQL：double unescaping）
+    .replace(/&amp;/g, '&')
     .replace(/[ \t\f\v]+/g, ' ')
     .replace(/ *\n */g, '\n')
     .replace(/\n{3,}/g, '\n\n')
