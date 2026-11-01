@@ -1,0 +1,86 @@
+# Aroomo staging 覆盖文件（工单 #170 / D209）
+#
+# 用法（只在服务器 /opt/aroomo-staging 上，由 deploy-staging.sh 调用）：
+#   docker compose -p aroomo-staging --project-directory deploy \
+#     -f deploy/docker-compose.yml -f deploy/staging/compose.staging.yml up -d <服务…>
+#
+# 与生产（/opt/aroomo，compose 项目 aroomo）的隔离：
+# - 项目名 aroomo-staging → 数据卷、网络、容器名全部带 aroomo-staging 前缀，和生产互不共用。
+# - .env 是 /opt/aroomo-staging/deploy/.env（600，只在服务器，由 init-env.sh 生成），与生产 .env 无关。
+# - Core / Shell 镜像标签用 staging（AROOMO_CORE_TAG / AROOMO_SHELL_TAG），不覆盖生产的 :dev 镜像。
+# - 不发布任何宿主机端口。对外只经生产的 cloudflared：deploy-staging.sh 在 up 之后用
+#   `docker network connect --alias aroomo-staging-shell aroomo_aroomo <staging shell 容器>`
+#   把 staging Shell 单独接进生产网络（只有这一个别名，不带服务名 shell，避免和生产 Shell 抢 DNS）。
+#   Tunnel aroomo-app：staging.pcmanai.com → http://aroomo-staging-shell:3000（Cloudflare Access 只允许所有者邮箱）。
+# - 内存：4 GB 机器上生产已用约 2 GB。staging 只起 postgres、redis、rustfs、core、lobe、shell，
+#   不起 litellm（约 0.6–0.8 GB，装不下）→ staging 里不能真正对话，登录/控制台/各页面可用。
+#   每个容器都有 mem_limit，并且全部放进 systemd 切片 aroomo-staging.slice（总上限见 aroomo-staging.slice），
+#   staging 再怎么涨也挤不掉生产。
+
+services:
+  postgres:
+    mem_limit: 256m
+    cgroup_parent: aroomo-staging.slice
+    # staging 数据量很小：把共享缓冲压小一点
+    command: ['postgres', '-c', 'shared_preload_libraries=pg_search,pg_cron,pg_stat_statements', '-c', 'shared_buffers=48MB', '-c', 'max_connections=40']
+
+  redis:
+    mem_limit: 48m
+    cgroup_parent: aroomo-staging.slice
+
+  rustfs:
+    mem_limit: 128m
+    cgroup_parent: aroomo-staging.slice
+
+  rustfs-init:
+    mem_limit: 64m
+    cgroup_parent: aroomo-staging.slice
+
+  # 不起 litellm；为满足 compose 校验仍给 mem_limit
+  litellm:
+    mem_limit: 512m
+    cgroup_parent: aroomo-staging.slice
+
+  core:
+    mem_limit: 192m
+    cgroup_parent: aroomo-staging.slice
+    labels:
+      org.aroomo.commit: ${STAGING_COMMIT:-unknown}
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+    networks: !override
+      aroomo:
+        aliases: [aroomo-staging-core]
+
+  lobe:
+    mem_limit: 768m
+    cgroup_parent: aroomo-staging.slice
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rustfs:
+        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
+    networks: !override
+      aroomo:
+        aliases: [aroomo-staging-lobe]
+
+  shell:
+    mem_limit: 96m
+    cgroup_parent: aroomo-staging.slice
+    labels:
+      org.aroomo.commit: ${STAGING_COMMIT:-unknown}
+    environment:
+      # staging Shell 同时在生产网络里（只为让 cloudflared 找到它），所以上游用 staging 独有的别名，
+      # 绝不能用 lobe / core 这种在生产网络里也存在的名字。
+      LOBE_UPSTREAM: http://aroomo-staging-lobe:3210
+      CORE_UPSTREAM: http://aroomo-staging-core:8080
+    depends_on: !override
+      lobe:
+        condition: service_started
+      core:
+        condition: service_started

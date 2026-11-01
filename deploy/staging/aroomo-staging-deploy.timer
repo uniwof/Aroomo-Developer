@@ -1,0 +1,12 @@
+[Unit]
+Description=Aroomo staging: check origin/dev every 2 minutes
+
+[Timer]
+OnBootSec=3min
+OnActiveSec=1min
+OnUnitInactiveSec=2min
+AccuracySec=10s
+Persistent=false
+
+[Install]
+WantedBy=timers.target
