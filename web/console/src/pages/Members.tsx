@@ -3,7 +3,6 @@ import { MemberAvatar, QuotaRing } from '@/components/brand';
 import { useUsage, type UsageRow } from '@/lib/usage';
 import { api, type Member } from '@/lib/api';
 import { HoverCard } from '@/components/HoverCard';
-import { statusFromText } from '@/components/brand';
 import { CapabilityMap } from '@/components/CapabilityMap';
 
 /** 今天几次 + 每天上限（所有者自己填；没填 = 未知）。PUT /api/usage/limits/:memberId */
@@ -101,7 +100,7 @@ export function Members() {
                   <MemberAvatar
                     name={m.name}
                     online={online}
-                    status={m.status === 'candidate' ? statusFromText('候选') : online ? 'available' : 'sleeping'}
+                    status={!m.enabled ? 'paused' : online ? 'available' : 'sleeping'}
                     used={usage?.find((u) => u.memberId === m.id)?.quota.used}
                     limit={usage?.find((u) => u.memberId === m.id)?.quota.limit}
                   />
