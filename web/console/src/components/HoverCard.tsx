@@ -31,6 +31,19 @@ export function HoverCard({ memberId, children, delay = 300 }: { memberId: strin
     setOpen(false);
   }
   useEffect(() => () => clearTimeout(timer.current), []);
+  const rootRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: Event) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) hide();
+    };
+    document.addEventListener('touchstart', away);
+    document.addEventListener('mousedown', away);
+    return () => {
+      document.removeEventListener('touchstart', away);
+      document.removeEventListener('mousedown', away);
+    };
+  }, [open]);
   useEffect(() => {
     if (!open || card) return;
     let alive = true;
@@ -45,6 +58,7 @@ export function HoverCard({ memberId, children, delay = 300 }: { memberId: strin
   const lines = card ? cardLines(card) : null;
   return (
     <span
+      ref={rootRef}
       className="relative inline-flex min-h-11 min-w-11 items-center justify-center"
       tabIndex={0}
       aria-describedby={open ? id : undefined}
@@ -54,6 +68,7 @@ export function HoverCard({ memberId, children, delay = 300 }: { memberId: strin
       onBlur={hide}
       onTouchStart={() => show(500)}
       onTouchEnd={() => clearTimeout(timer.current)}
+      onTouchMove={() => clearTimeout(timer.current)}
       onContextMenu={(e) => e.preventDefault()}
       onKeyDown={(e) => e.key === 'Escape' && hide()}
     >
