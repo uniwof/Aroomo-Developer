@@ -25,10 +25,10 @@ describe('悬停卡与头像', () => {
     expect(tip.textContent).toContain('状态：休眠');
   });
   it('头像：永久免费实线、试用虚线、状态图标、aria', () => {
-    const { container } = render(<><MemberAvatar name="A" online used={5} limit={10} free="trial" status="cooldown" working /><MemberAvatar name="B" online free="permanent" /></>);
+    const { container } = render(<><MemberAvatar name="A" online used={5} limit={10} free="trial" status="trial" /><MemberAvatar name="B" online free="permanent" /></>);
     const [a, b] = container.querySelectorAll('[role=img]');
     expect(a!.getAttribute('aria-label')).toContain('试用');
-    expect(a!.getAttribute('aria-label')).toContain('额度已用 50%');
+    expect(a!.getAttribute('aria-label')).toContain('额度剩余 50%');
     expect(a!.querySelector('[data-testid=avatar-status]')!.textContent).toBe('⌛');
     expect(a!.querySelector('circle')!.getAttribute('stroke-dasharray')).toBe('4 3');
     expect(b!.querySelector('circle')!.getAttribute('stroke-dasharray')).toBeNull();
