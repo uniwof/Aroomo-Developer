@@ -51,6 +51,8 @@ import { registerMcpRoutes } from "./mcp/server.js";
 import { ClientTokenService } from "./clients/service.js";
 import { registerClientRoutes } from "./clients/routes.js";
 import { ExecutorService } from "./executor/service.js";
+import { GatewayService } from "./gateway/service.js";
+import { registerGatewayRoutes } from "./gateway/routes.js";
 import { registerExecutorRoutes } from "./executor/routes.js";
 import {
   InterruptBudget,
@@ -241,6 +243,17 @@ export function buildServer(
     (u, id) => vaultSvc.resolveForGateway(u, id),
     (u) => scopedSettings(deps.settings, u),
     takeoverHooks(inbox, interruptBudget, deps.now),
+  );
+  registerGatewayRoutes(
+    app,
+    new GatewayService(
+      deps.settings,
+      confirm,
+      deps.now,
+      executorSvc,
+      (u, id) => vaultSvc.exists(u, id),
+      (u, id) => vaultSvc.resolveForGateway(u, id),
+    ),
   );
   registerTakeoverHandler(inbox, executorSvc);
   registerInterruptBudgetRoutes(app, interruptBudget, inbox);
