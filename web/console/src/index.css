@@ -68,3 +68,20 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* D217：干活时流动高光（只用强调色；减少动效时不播放） */
+.avatar-working::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 30%, rgba(255, 255, 255, 0.55) 50%, transparent 70%);
+  background-size: 200% 100%;
+  animation: avatar-flow 1.8s linear infinite;
+}
+@keyframes avatar-flow {
+  from { background-position: 200% 0; }
+  to { background-position: -100% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .avatar-working::after { animation: none; display: none; }
+}

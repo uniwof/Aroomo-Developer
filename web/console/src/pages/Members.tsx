@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { MemberAvatar, QuotaRing } from '@/components/brand';
 import { useUsage, type UsageRow } from '@/lib/usage';
 import { api, type Member } from '@/lib/api';
+import { HoverCard } from '@/components/HoverCard';
+import { statusFromText } from '@/components/brand';
 import { CapabilityMap } from '@/components/CapabilityMap';
 
 /** 今天几次 + 每天上限（所有者自己填；没填 = 未知）。PUT /api/usage/limits/:memberId */
@@ -95,7 +97,15 @@ export function Members() {
             const online = m.online ?? (m.enabled && m.status === 'active');
             return (
               <li key={m.id} className="flex min-h-14 items-center gap-3 px-4 py-2">
-                <MemberAvatar name={m.name} online={online} />
+                <HoverCard memberId={m.id}>
+                  <MemberAvatar
+                    name={m.name}
+                    online={online}
+                    status={m.status === 'candidate' ? statusFromText('候选') : online ? 'available' : 'sleeping'}
+                    used={usage?.find((u) => u.memberId === m.id)?.quota.used}
+                    limit={usage?.find((u) => u.memberId === m.id)?.quota.limit}
+                  />
+                </HoverCard>
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-medium">{m.name}</div>
                   <div className="truncate text-[var(--muted)]">
