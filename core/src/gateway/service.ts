@@ -11,7 +11,7 @@ import { ExecutorAgentAdapter, type SecretExists, type TaskPort } from '../adapt
 import type { ToolResult, ToolRisk, ToolSpec } from '../adapters/types.js';
 import { WebFetchAdapter } from './webfetch.js';
 import { type ConfirmCtx, type ConfirmKind, ConfirmService } from '../confirm/confirm.js';
-import { badRequest, notFound } from '../http/errors.js';
+import { HttpError, badRequest, notFound } from '../http/errors.js';
 import { type SettingsStore, scopedSettings } from '../settings/store.js';
 
 const SETTINGS_KEY = 'gateway.http_tools';
@@ -100,6 +100,17 @@ export class GatewayService {
       await audit('gateway.call', { type: 'tool', id: tool }, 'failed', 'adapter error');
       return { content: [{ type: 'text', text: '工具调用失败了（详情已记入审计）。' }], isError: true };
     }
+  }
+
+  /** 给 /mcp 用：只放行 read 级工具（不需要确认）；其余一律拒绝，让本人去控制台确认。 */
+  async callRead(userId: string, tool: string, args: Record<string, unknown>, audit: AuditFn): Promise<ToolResult> {
+    const reg = await this.#registry(userId);
+    if (!reg.find(tool)) throw notFound('没有这个工具');
+    if (reg.riskOf(tool, args) !== 'read') {
+      await audit('gateway.call', { type: 'tool', id: tool }, 'denied', 'mcp: 只开放 read 级工具');
+      throw new HttpError(403, 'FORBIDDEN', '这个工具需要本人在控制台确认，不能经 MCP 调用');
+    }
+    return this.call(userId, tool, args, {} as ConfirmCtx, audit);
   }
 
   // ---- HTTP 工具登记 ----

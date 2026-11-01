@@ -84,3 +84,39 @@ describe('Core /mcp（资源库与公共记忆）', () => {
     expect(logs).toContain('denied');
   });
 });
+
+describe('Core /mcp 工具网关（list_tools / call_tool）', () => {
+  const app = buildServer(loadConfig({ CORE_LOG_LEVEL: 'silent', CORE_OWNER_TOKEN: OWNER_TOKEN, CORE_ACCESS_REAUTH: 'off' }), memoryDeps(fakeClock().now));
+  afterAll(() => app.close());
+  const rpc = (headers: Record<string, string>, method: string, params?: object) =>
+    app.inject({ method: 'POST', url: '/mcp', headers, payload: { jsonrpc: '2.0', id: 1, method, ...(params ? { params } : {}) } });
+  const client = async (scopes: string[]) => ({
+    authorization: `Bearer ${(await app.inject({ method: 'POST', url: '/api/clients', headers: ownerAuth, payload: { name: 'g', scopes } })).json().token}`,
+  });
+  const names = async (h: Record<string, string>) => (await rpc(h, 'tools/list')).json().result.tools.map((t: { name: string }) => t.name);
+
+  it('无 tools 范围看不到、也调不到；有范围才出现', async () => {
+    const none = await client(['library:read']);
+    expect(await names(none)).toEqual(['search_library', 'get_library_item']);
+    expect((await rpc(none, 'tools/call', { name: 'call_tool', arguments: { tool: 'read_webpage' } })).json().error.code).toBe(-32602);
+    const g = await client(['tools:list', 'tools:call']);
+    expect(await names(g)).toEqual(['list_tools', 'call_tool']);
+  });
+
+  it('list_tools 只列 read 级；call_tool 拒非 read 与不存在的工具；read_webpage 的非 https 被拒', async () => {
+    const g = await client(['tools:list', 'tools:call']);
+    const list = (await rpc(g, 'tools/call', { name: 'list_tools' })).json().result.content[0].text;
+    expect(list).toContain('read_webpage');
+    expect(list).not.toContain('executor');
+    const bad = (await rpc(g, 'tools/call', { name: 'call_tool', arguments: { tool: 'nope' } })).json().result;
+    expect(bad.isError).toBe(true);
+    const http = (await rpc(g, 'tools/call', { name: 'call_tool', arguments: { tool: 'read_webpage', args: { url: 'http://example.com/' } } })).json().result;
+    expect(http.isError).toBe(true);
+    expect(http.content[0].text).toContain('https');
+  });
+
+  it('网关工具列表接口仍可用（账号隔离由 gateway.test 覆盖）', async () => {
+    const reg = await app.inject({ method: 'GET', url: '/api/gateway/tools', headers: ownerAuth });
+    expect(reg.statusCode).toBe(200);
+  });
+});

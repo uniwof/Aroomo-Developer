@@ -13,6 +13,7 @@ import type { Principal } from '../auth/tokens.js';
 import { HttpError } from '../http/errors.js';
 import type { LibraryService } from '../library/service.js';
 import { LIBRARY_KINDS, type LibraryItem, type LibraryKind } from '../library/types.js';
+import type { GatewayService } from '../gateway/service.js';
 import type { PubMemService } from '../pubmem/service.js';
 
 export const MCP_PROTOCOL = '2025-03-26';
@@ -42,8 +43,36 @@ interface RpcReq {
 const str = (v: unknown, max = 2000): string | undefined => (typeof v === 'string' && v.length <= max ? v : undefined);
 const line = (i: LibraryItem) => `- [${i.kind}] ${i.title}${i.url ? ` ${i.url}` : ''}${i.tags.length ? ` #${i.tags.join(' #')}` : ''}（id: ${i.id}）${i.body ? `\n  ${i.body.replace(/\s+/g, ' ').slice(0, 160)}` : ''}`;
 
-export function buildTools(lib: LibraryService, mem: PubMemService): Tool[] {
+export function buildTools(lib: LibraryService, mem: PubMemService, gw?: GatewayService): Tool[] {
+  const gwTools: Tool[] = gw
+    ? [
+        {
+          name: 'list_tools',
+          description: '列出工具网关里可以直接调用的外部工具（只含读取类，如 read_webpage）。',
+          scope: 'tools:list',
+          inputSchema: { type: 'object', properties: {} },
+          async run(ctx) {
+            const t = (await gw.list(ctx.userId)).filter((x) => x.risk === 'read');
+            return t.length ? t.map((x) => `- ${x.name}：${x.description}`).join('\n') : '暂时没有可用的外部工具。';
+          },
+        },
+        {
+          name: 'call_tool',
+          description: '调用工具网关里的一个读取类外部工具（先用 list_tools 看有哪些）。花钱或不可逆的工具不能在这里调用。',
+          scope: 'tools:call',
+          inputSchema: { type: 'object', properties: { tool: { type: 'string' }, args: { type: 'object' } }, required: ['tool'] },
+          async run(ctx, a) {
+            const args = a.args && typeof a.args === 'object' && !Array.isArray(a.args) ? (a.args as Record<string, unknown>) : {};
+            const r = await gw.callRead(ctx.userId, str(a.tool, 64) ?? '', args, ctx.audit);
+            const t = r.content.map((c) => (c.type === 'text' ? c.text : '')).join('\n');
+            if (r.isError) throw new HttpError(502, 'TOOL_ERROR', t || '工具调用失败');
+            return t;
+          },
+        },
+      ]
+    : [];
   return [
+    ...gwTools,
     {
       name: 'search_library',
       description: '在资源库里按关键词搜索文章、技能、方法、素材、工具线索、链接和点子。多个词要同时命中。',
@@ -126,8 +155,8 @@ const hasScope = (p: Principal, scope: string): boolean => (p.type === 'client' 
 const ok = (id: RpcReq['id'], result: unknown) => ({ jsonrpc: '2.0', id: id ?? null, result });
 const fail = (id: RpcReq['id'], code: number, message: string) => ({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
 
-export function registerMcpRoutes(app: FastifyInstance, lib: LibraryService, mem: PubMemService): void {
-  const tools = buildTools(lib, mem);
+export function registerMcpRoutes(app: FastifyInstance, lib: LibraryService, mem: PubMemService, gw?: GatewayService): void {
+  const tools = buildTools(lib, mem, gw);
   const byName = new Map(tools.map((t) => [t.name, t]));
 
   async function handle(req: RpcReq, p: Principal, userId: string, audit: AuditFn): Promise<unknown | null> {
