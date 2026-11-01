@@ -16,6 +16,8 @@ set -Eeuo pipefail
 
 STAGING_ROOT="${STAGING_ROOT:-/opt/aroomo-staging}"
 PROD_NETWORK="${STAGING_PROD_NETWORK:-aroomo_aroomo}"
+# 只跟 dev；STAGING_BRANCH 仅供首次安装/排障时临时试别的分支
+BRANCH="${STAGING_BRANCH:-dev}"
 SHELL_ALIAS=aroomo-staging-shell
 PROJECT=aroomo-staging
 SERVICES=(postgres redis rustfs rustfs-init core lobe shell)
@@ -62,8 +64,8 @@ fi
 exec 9>"$state/lock"
 if ! flock -n 9; then echo "另一个部署正在进行，跳过"; exit 0; fi
 
-git_ fetch -q origin dev
-target="$(git_ rev-parse origin/dev)"
+git_ fetch -q origin "$BRANCH"
+target="$(git_ rev-parse "origin/$BRANCH")"
 current="$(cat "$state/current" 2>/dev/null || true)"
 
 if [ "$mode" != force ] && [ "$target" = "$current" ]; then
