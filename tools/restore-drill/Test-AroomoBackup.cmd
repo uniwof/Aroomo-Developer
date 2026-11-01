@@ -72,8 +72,15 @@ function Invoke-AroomoRestoreDrill {
         $dlg.Title = $title
         $dlg.Filter = $filter
         if ($dir -and (Test-Path -LiteralPath $dir)) { $dlg.InitialDirectory = $dir }
-        if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { return $dlg.FileName }
-        return $null
+        # 置顶的隐藏父窗口，避免对话框被压在控制台后面（负责人审查 2026-11-01 必改 1）
+        $owner = New-Object System.Windows.Forms.Form
+        $owner.TopMost = $true; $owner.ShowInTaskbar = $false; $owner.FormBorderStyle = 'None'
+        $owner.StartPosition = 'CenterScreen'; $owner.Size = New-Object System.Drawing.Size(1, 1); $owner.Opacity = 0
+        try {
+            $owner.Show(); $owner.Activate()
+            if ($dlg.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) { return $dlg.FileName }
+            return $null
+        } finally { $owner.Close(); $owner.Dispose(); $dlg.Dispose() }
     }
 
     try {
@@ -149,6 +156,7 @@ function Invoke-AroomoRestoreDrill {
         $rc1 = Invoke-Cmd "$dec | `"$tar`" -tvf - >`"$list`" 2>`"$errT`""
         $errText = (@($errA, $errZ, $errT) | ForEach-Object { if (Test-Path -LiteralPath $_) { [string](Get-Content -LiteralPath $_ -Raw -ErrorAction SilentlyContinue) } }) -join ' '
         $errText = "$errText".Trim()
+        if ($errText.Length -gt 500) { $errText = $errText.Substring(0, 500) + '…' }
         if ($errText -match 'no identity matched') { throw '主密钥和这份备份不配对（这份备份是用另一把主密钥加密的）。请告诉 Hark。' }
         if ($rc1 -ne 0 -or $errText -match 'age: error') {
             # 分段诊断（输出都丢进 NUL，不写硬盘）：看是哪一步坏了
