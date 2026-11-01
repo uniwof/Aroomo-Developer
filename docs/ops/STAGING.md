@@ -98,3 +98,7 @@ sudo systemctl enable --now aroomo-staging-deploy.timer
 服务器上已有一把只能运行部署脚本的 SSH 密钥（`authorized_keys` 里 `command="/opt/aroomo-staging/deploy/staging/deploy-staging.sh",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding`），
 私钥只在 Hark 工作区。需要主会话派浏览器把它存为仓库 Actions Secret `STAGING_SSH_KEY`，另存 `STAGING_HOST`、`STAGING_KNOWN_HOSTS`。
 存好后 `deploy-staging` 工作流自动生效；timer 可以保留做兜底（脚本有锁，不会重复部署）。
+
+## 验收记录
+
+- 2026-11-01：合并本说明的一次小文档 PR 作为验收提交，由服务器 timer 自动拉取部署（不手动触发），结果与耗时记录在工单 #170 评论。
