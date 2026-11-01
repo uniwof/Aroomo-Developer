@@ -26,6 +26,12 @@ export interface PublicTool {
 
 export const confirmKindOf = (risk: ToolRisk): ConfirmKind | null => (risk === 'spend' ? 'payment' : risk === 'danger' ? 'irreversible' : null);
 
+/** MCP 只放行的内置只读工具（M2）。放开要所有者批准。 */
+const MCP_BUILTIN_READ: ReadonlySet<string> = new Set(['read_webpage']);
+const MCP_DENIED_MSG = '工具不存在或当前客户端不可用';
+/** MCP 路径的确认上下文：明确写出全部字段，什么都不能确认。 */
+const MCP_READ_ONLY_CTX: ConfirmCtx = Object.freeze({ actor: 'mcp', canConfirmImportant: false });
+
 export class GatewayService {
   readonly #counter = new MemoryDayCounter();
   readonly #web: WebFetchAdapter;
@@ -102,15 +108,21 @@ export class GatewayService {
     }
   }
 
-  /** 给 /mcp 用：只放行 read 级工具（不需要确认）；其余一律拒绝，让本人去控制台确认。 */
+  /** /mcp 能看到、能调的工具：只有内置只读工具（M2 = read_webpage）。用户登记的 HTTP 工具不经 MCP 开放。列表和调用共用这一处。 */
+  async listMcpReadable(userId: string): Promise<PublicTool[]> {
+    return (await this.list(userId)).filter((x) => x.risk === 'read' && MCP_BUILTIN_READ.has(x.name));
+  }
+
+  /** 给 /mcp 用：不在放行清单里一律返回同一条错误（审计记真实原因）；用「什么都不能确认」的上下文调用。 */
   async callRead(userId: string, tool: string, args: Record<string, unknown>, audit: AuditFn): Promise<ToolResult> {
-    const reg = await this.#registry(userId);
-    if (!reg.find(tool)) throw notFound('没有这个工具');
-    if (reg.riskOf(tool, args) !== 'read') {
-      await audit('gateway.call', { type: 'tool', id: tool }, 'denied', 'mcp: 只开放 read 级工具');
-      throw new HttpError(403, 'FORBIDDEN', '这个工具需要本人在控制台确认，不能经 MCP 调用');
+    const visible = await this.listMcpReadable(userId);
+    if (!visible.some((x) => x.name === tool)) {
+      const reg = await this.#registry(userId);
+      const reason = !reg.find(tool) ? 'not_found' : MCP_BUILTIN_READ.has(tool) ? 'not_read' : 'not_exposed';
+      await audit('gateway.call', { type: 'tool', id: tool.slice(0, 64) }, 'denied', `mcp: ${reason}`);
+      throw new HttpError(403, 'FORBIDDEN', MCP_DENIED_MSG);
     }
-    return this.call(userId, tool, args, {} as ConfirmCtx, audit);
+    return this.call(userId, tool, args, MCP_READ_ONLY_CTX, audit);
   }
 
   // ---- HTTP 工具登记 ----

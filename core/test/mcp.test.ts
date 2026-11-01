@@ -115,6 +115,21 @@ describe('Core /mcp 工具网关（list_tools / call_tool）', () => {
     expect(http.content[0].text).toContain('https');
   });
 
+  it('反向：非只读 / 不存在 / 未放行的工具返回逐字相同的错误；只有 tools:list 调不了', async () => {
+    const g = await client(['tools:list', 'tools:call']);
+    const call = async (tool: string) => (await rpc(g, 'tools/call', { name: 'call_tool', arguments: { tool } })).json().result;
+    const tools = (await app.inject({ method: 'GET', url: '/api/gateway/tools', headers: ownerAuth })).json().tools as { name: string; risk: string }[];
+    const nonRead = tools.find((x) => x.risk !== 'read');
+    const missing = await call('does_not_exist');
+    expect(missing.isError).toBe(true);
+    if (nonRead) expect(await call(nonRead.name)).toEqual(missing);
+    const listOnly = await client(['tools:list']);
+    expect(await names(listOnly)).toEqual(['list_tools']);
+    expect((await rpc(listOnly, 'tools/call', { name: 'call_tool', arguments: { tool: 'read_webpage' } })).json().error.code).toBe(-32602);
+    const callOnly = await client(['tools:call']);
+    expect(await names(callOnly)).toEqual(['call_tool']);
+  });
+
   it('网关工具列表接口仍可用（账号隔离由 gateway.test 覆盖）', async () => {
     const reg = await app.inject({ method: 'GET', url: '/api/gateway/tools', headers: ownerAuth });
     expect(reg.statusCode).toBe(200);

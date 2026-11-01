@@ -52,7 +52,7 @@ export function buildTools(lib: LibraryService, mem: PubMemService, gw?: Gateway
           scope: 'tools:list',
           inputSchema: { type: 'object', properties: {} },
           async run(ctx) {
-            const t = (await gw.list(ctx.userId)).filter((x) => x.risk === 'read');
+            const t = await gw.listMcpReadable(ctx.userId);
             return t.length ? t.map((x) => `- ${x.name}：${x.description}`).join('\n') : '暂时没有可用的外部工具。';
           },
         },
