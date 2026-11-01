@@ -75,6 +75,34 @@ describe.each(rlsTargets)('RLS 成员表（$name）', (target) => {
     expect((await systemScoped(db).query<{ n: number }>('SELECT count(*)::int AS n FROM members')).rows[0]?.n).toBe(2);
   });
 
+  it('系统范围只读：INSERT 被拒，UPDATE/DELETE 碰不到行', async () => {
+    const { db } = await seeded();
+    const sys = systemScoped(db);
+    await expect(
+      sys.query(`INSERT INTO members (user_id, id, name, created_at, updated_at) VALUES ('owner', 'sys-sneak', 'S', now(), now())`),
+    ).rejects.toThrow(/row-level security/);
+    expect((await sys.query("UPDATE members SET name = 'x' WHERE id = 'owner-secret' RETURNING id")).rows).toEqual([]);
+    expect((await sys.query("DELETE FROM members WHERE id = 'owner-secret' RETURNING id")).rows).toEqual([]);
+  });
+
+  it("user_id 为空串：手动 set_config('app.user_id','') 后插入被拒；userScoped 空串直接抛错", async () => {
+    const { db } = await seeded();
+    await expect(
+      db.tx(async (q) => {
+        await q.query("SELECT set_config('app.user_id', '', true)");
+        await q.query(`INSERT INTO members (user_id, id, name, created_at, updated_at) VALUES ('', 'blank', 'B', now(), now())`);
+      }),
+    ).rejects.toThrow();
+    expect(() => userScoped(db, '')).toThrow();
+  });
+
+  it('小号可新建与所有者同名的成员，互不影响', async () => {
+    const { owner, xiao } = await seeded();
+    await xiao.insert(mk('owner-secret', 'Owner Secret'));
+    expect((await owner.listAll()).map((m) => m.name)).toEqual(['Owner Secret']);
+    expect((await xiao.listAll()).map((m) => m.name)).toEqual(['Owner Secret']);
+  });
+
   it('重排在同一事务里完成，且只动自己的行', async () => {
     const { owner, xiao } = await seeded();
     await owner.insert(mk('owner-two', 'Owner Two'));
