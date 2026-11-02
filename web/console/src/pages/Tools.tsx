@@ -47,7 +47,7 @@ export function Tools() {
       <h1 className="text-xl font-semibold">工具</h1>
       {error && <p role="alert">{error}</p>}
       {!error && !tools && <p className="text-[var(--muted)]">正在加载…</p>}
-      {tools?.length === 0 && <p className="text-[var(--muted)]">还没有工具。</p>}
+      {tools?.length === 0 && <p role="status" className="text-[var(--muted)]">还没有接入工具</p>}
       {tools &&
         groupTools(tools).map(([g, rows]) => (
           <section key={g} aria-label={g} className="space-y-2">
