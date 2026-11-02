@@ -27,16 +27,27 @@ export interface PgDbOptions {
   /** 指定 search_path（测试时每个用例一个 schema）。只允许 [a-z0-9_]。 */
   schema?: string;
   max?: number;
+  /** D206：每个连接在启动参数里就设为这个应用角色（非表所有者、非超级用户），RLS 才对它生效。只允许 [a-z0-9_]。 */
+  role?: string;
 }
 
 export function createPgDb(connectionString: string, opts: PgDbOptions = {}): Db {
   if (opts.schema !== undefined && !/^[a-z0-9_]+$/.test(opts.schema)) {
     throw new Error('schema 名只允许小写字母、数字、下划线');
   }
+  if (opts.role !== undefined && !/^[a-z_][a-z0-9_]{0,62}$/.test(opts.role)) {
+    throw new Error('角色名只允许小写字母、数字、下划线');
+  }
+  // D206：角色放进连接的启动参数（-c role=…），由服务器在握手时设置：角色不存在 / 无权切换时连接直接失败，
+  // 不存在「先以表所有者身份建好连接、再异步 SET ROLE」的空窗。
+  const startupOptions = [
+    ...(opts.schema ? [`-c search_path=${opts.schema}`] : []),
+    ...(opts.role ? [`-c role=${opts.role}`] : []),
+  ].join(' ');
   const pool = new pg.Pool({
     connectionString,
     max: opts.max ?? 10,
-    ...(opts.schema ? { options: `-c search_path=${opts.schema}` } : {}),
+    ...(startupOptions ? { options: startupOptions } : {}),
   });
 
   const wrap = (c: pg.Pool | pg.PoolClient): Queryable => ({
