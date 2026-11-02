@@ -87,6 +87,44 @@ afterAll(async () => {
 
 const html = { accept: 'text/html,application/xhtml+xml' };
 
+describe('/mcp 转发给 Core（#235）', () => {
+  it('不要 LobeHub 登录；原样带客户端自己的 Authorization，不附加主人令牌、不转发 Cookie', async () => {
+    const n = coreSeen.length;
+    const r = await fetch(`${base}/mcp`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer arc_client_token_for_test', cookie: 'session=good', 'content-type': 'application/json' },
+      body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}',
+    });
+    expect(r.status).toBe(200);
+    expect(coreSeen.length).toBe(n + 1);
+    expect(coreSeen.at(-1)?.url).toBe('/mcp');
+    expect(coreSeen.at(-1)?.auth).toBe('Bearer arc_client_token_for_test');
+    expect(coreSeen.at(-1)?.cookie).toBeUndefined();
+    expect(r.headers.getSetCookie()).toEqual([]);
+  });
+
+  it('没带令牌就不带令牌：绝不替客户端补主人令牌（也包括配了主人令牌的 Shell）', async () => {
+    const r = await fetch(`${base}/mcp`, { method: 'POST', body: '{}' });
+    expect(r.status).toBe(200); // 假 Core 不校验；这里只看 Shell 转发了什么
+    expect(coreSeen.at(-1)?.auth).toBeUndefined();
+  });
+
+  it('只转发 POST/GET：PUT/DELETE 405，不到 Core', async () => {
+    const n = coreSeen.length;
+    for (const method of ['PUT', 'DELETE', 'PATCH']) {
+      const r = await fetch(`${base}/mcp`, { method });
+      expect(r.status, method).toBe(405);
+    }
+    expect(coreSeen.length).toBe(n);
+  });
+
+  it('/mcp 之外的路径不受影响：/mcp-x 仍交给 LobeHub', async () => {
+    const n = lobeSeen.length;
+    await (await fetch(`${base}/mcp-x`, { headers: html })).text();
+    expect(lobeSeen.length).toBe(n + 1);
+  });
+});
+
 describe('LobeHub 页面', () => {
   it('D190：HTML 原样转发——不注入、不换品牌和图标；只补默认简体中文 Cookie', async () => {
     const res = await fetch(`${base}/`, { headers: { ...html, 'accept-encoding': 'gzip, br' } });

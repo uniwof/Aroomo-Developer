@@ -49,9 +49,13 @@ services:
     depends_on: !override
       postgres:
         condition: service_healthy
+    environment:
+      CORE_MCP_LOBEHUB_URL: http://172.29.78.2:8080/mcp
     networks: !override
       aroomo:
         aliases: [aroomo-staging-core]
+      aroomo-mcp:
+        ipv4_address: 172.29.78.2
 
   lobe:
     mem_limit: 768m
@@ -65,9 +69,12 @@ services:
         condition: service_healthy
       rustfs-init:
         condition: service_completed_successfully
+    environment:
+      SSRF_ALLOW_IP_ADDRESS_LIST: 172.29.78.2
     networks: !override
       aroomo:
         aliases: [aroomo-staging-lobe]
+      aroomo-mcp: {}
 
   shell:
     mem_limit: 96m
@@ -84,3 +91,10 @@ services:
         condition: service_started
       core:
         condition: service_started
+
+# #235：core↔lobe 专用小网络。staging 与生产在同一台机器，网段必须不同（生产默认 172.29.77.0/29）。
+networks:
+  aroomo-mcp:
+    ipam: !override
+      config:
+        - subnet: 172.29.78.0/29
