@@ -48,6 +48,22 @@ describe.each(rlsTargets)('RLS 收件箱（$name）', (target) => {
     expect((await store.list({ userId: XIAO })).map((i) => i.id)).toEqual([XIT]);
     expect((await store.openCounts(XIAO)).decision).toBe(1);
     expect((await store.list({})).map((i) => i.id)).toEqual([OWN]);
-    expect((await store.get(OWN))?.userId).toBeUndefined();
+    expect((await store.get('owner', OWN))?.userId).toBeUndefined();
+  });
+
+  it('小号 get / resolveIfOpen 所有者的卡片：返回 null，所有者卡片状态不变（D63 把关点）', async () => {
+    const { store } = await seeded();
+    await store.insertDedup(item(XIT, XIAO));
+    expect(await store.get(XIAO, OWN)).toBeNull();
+    expect(await store.resolveIfOpen(XIAO, OWN, { status: 'done', resolvedAt: at, resolvedAction: 'ok' })).toBeNull();
+    const own = await store.get('owner', OWN);
+    expect(own?.status).toBe('open');
+    expect(own?.resolvedAction).toBeUndefined();
+    // 反向：所有者也拿不到小号的卡片
+    expect(await store.get('owner', XIT)).toBeNull();
+    expect(await store.resolveIfOpen('owner', XIT, { status: 'done', resolvedAt: at })).toBeNull();
+    // 各自处理自己的卡片成功
+    expect((await store.resolveIfOpen(XIAO, XIT, { status: 'done', resolvedAt: at, resolvedAction: 'ok' }))?.status).toBe('done');
+    expect((await store.resolveIfOpen('owner', OWN, { status: 'done', resolvedAt: at, resolvedAction: 'ok' }))?.status).toBe('done');
   });
 });

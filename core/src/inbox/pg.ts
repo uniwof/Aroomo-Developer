@@ -1,6 +1,6 @@
 import type { Db } from '../db/db.js';
 import { toDate, toDateOrNull } from '../db/db.js';
-import { systemScoped, userScoped } from '../db/scope.js';
+import { userScoped } from '../db/scope.js';
 
 /** D206：所有者的条目 user_id 存为 'owner'（接口里仍是 undefined）。 */
 const OWNER = 'owner';
@@ -92,8 +92,8 @@ export class PgInboxStore implements InboxStore {
     return { item: toItem(rows[0]), created: false };
   }
 
-  async get(id: string): Promise<InboxItem | null> {
-    const { rows } = await systemScoped(this.db).query<Row>(`SELECT ${COLS} FROM inbox_items WHERE id = $1`, [id]);
+  async get(userId: string, id: string): Promise<InboxItem | null> {
+    const { rows } = await userScoped(this.db, userId).query<Row>(`SELECT ${COLS} FROM inbox_items WHERE id = $1 AND user_id = $2`, [id, userId]);
     return rows[0] ? toItem(rows[0]) : null;
   }
 
@@ -128,13 +128,14 @@ export class PgInboxStore implements InboxStore {
   }
 
   async resolveIfOpen(
+    userId: string,
     id: string,
     next: { status: Exclude<InboxStatus, 'open'>; resolvedAt: Date; resolvedAction?: string },
   ): Promise<InboxItem | null> {
-    const { rows } = await systemScoped(this.db).query<Row>(
+    const { rows } = await userScoped(this.db, userId).query<Row>(
       `UPDATE inbox_items SET status = $2, resolved_at = $3, resolved_action = $4
-        WHERE id = $1 AND status = 'open' RETURNING ${COLS}`,
-      [id, next.status, next.resolvedAt, next.resolvedAction ?? null],
+        WHERE id = $1 AND status = 'open' AND user_id = $5 RETURNING ${COLS}`,
+      [id, next.status, next.resolvedAt, next.resolvedAction ?? null, userId],
     );
     return rows[0] ? toItem(rows[0]) : null;
   }
