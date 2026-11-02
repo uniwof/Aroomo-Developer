@@ -72,8 +72,15 @@ function Invoke-AroomoRestoreDrill {
         $dlg.Title = $title
         $dlg.Filter = $filter
         if ($dir -and (Test-Path -LiteralPath $dir)) { $dlg.InitialDirectory = $dir }
-        if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { return $dlg.FileName }
-        return $null
+        # 置顶的隐藏父窗口，避免对话框被压在控制台后面（负责人审查 2026-11-01 必改 1）
+        $owner = New-Object System.Windows.Forms.Form
+        $owner.TopMost = $true; $owner.ShowInTaskbar = $false; $owner.FormBorderStyle = 'None'
+        $owner.StartPosition = 'CenterScreen'; $owner.Size = New-Object System.Drawing.Size(1, 1); $owner.Opacity = 0
+        try {
+            $owner.Show(); $owner.Activate()
+            if ($dlg.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) { return $dlg.FileName }
+            return $null
+        } finally { $owner.Close(); $owner.Dispose(); $dlg.Dispose() }
     }
 
     try {
@@ -142,13 +149,22 @@ function Invoke-AroomoRestoreDrill {
         Say '第 4 步：用主密钥解开备份并核对（数据库内容不会写到硬盘上）……' 'Cyan'
         Speak '正在解开备份，请稍等。'
         $out = Join-Path $work 'out'; New-Item -ItemType Directory -Path $out -Force | Out-Null
-        $err = Join-Path $work 'err.txt'
+        # 每个程序的错误各写一个文件：cmd 管道两端同时写同一个文件会「另一个程序正在使用此文件」而失败
+        $errA = Join-Path $work 'err-age.txt'; $errZ = Join-Path $work 'err-zstd.txt'; $errT = Join-Path $work 'err-tar.txt'
         $list = Join-Path $work 'list.txt'
-        $dec = "`"$age`" -d -i `"$key`" `"$file`" 2>`"$err`" | `"$zstd`" -d -q -c"
-        $rc1 = Invoke-Cmd "$dec | `"$tar`" -tvf - >`"$list`" 2>>`"$err`""
-        $errText = if (Test-Path -LiteralPath $err) { (Get-Content -LiteralPath $err -Raw -ErrorAction SilentlyContinue) } else { '' }
+        $dec = "`"$age`" -d -i `"$key`" `"$file`" 2>`"$errA`" | `"$zstd`" -d -q -c 2>`"$errZ`""
+        $rc1 = Invoke-Cmd "$dec | `"$tar`" -tvf - >`"$list`" 2>`"$errT`""
+        $errText = (@($errA, $errZ, $errT) | ForEach-Object { if (Test-Path -LiteralPath $_) { [string](Get-Content -LiteralPath $_ -Raw -ErrorAction SilentlyContinue) } }) -join ' '
+        $errText = "$errText".Trim()
+        if ($errText.Length -gt 500) { $errText = $errText.Substring(0, 500) + '…' }
         if ($errText -match 'no identity matched') { throw '主密钥和这份备份不配对（这份备份是用另一把主密钥加密的）。请告诉 Hark。' }
-        if ($rc1 -ne 0 -or $errText -match 'age: error') { throw "解密或解压失败，备份文件可能损坏。请告诉 Hark。（$($errText.Trim())）" }
+        if ($rc1 -ne 0 -or $errText -match 'age: error') {
+            # 分段诊断（输出都丢进 NUL，不写硬盘）：看是哪一步坏了
+            $rcA = Invoke-Cmd "`"$age`" -d -i `"$key`" `"$file`" >NUL 2>NUL"
+            $rcZ = Invoke-Cmd "`"$age`" -d -i `"$key`" `"$file`" 2>NUL | `"$zstd`" -t -q 2>NUL"
+            $diag = "解密 $rcA，解压 $rcZ，列表 $rc1，tar 存在 $(Test-Path -LiteralPath $tar)"
+            throw "解密或解压失败。请把这一整段告诉 Hark。（$diag；$errText）"
+        }
         $entries = @(Get-Content -LiteralPath $list -Encoding UTF8 | Where-Object { $_.Trim() })
         # 只取出清单和行数文件：按名字点名（不用 --include，各版本 bsdtar 行为不一）
         $want = @($entries | ForEach-Object { if ($_ -match '(backup-stage/(manifest\.json|db/[^/\s]+\.counts\.tsv))$') { $Matches[1] } })
