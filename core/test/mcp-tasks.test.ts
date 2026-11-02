@@ -9,7 +9,7 @@ const A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 function setup() {
   const store = new MemoryChallengeStore();
   const insert = vi.spyOn(store, 'insert');
-  const now = () => new Date('Mon 2026-11-02 8:00 AM CST (UTC+08:00)');
+  const now = () => new Date('2026-11-02T08:00:00+08:00');
   const confirm = new ConfirmService(store, { now, access: { verify: async () => null } });
   const create = vi.fn(async (_u: string, i: { kind: string; site: string }) => ({ id: 't1', kind: i.kind, site: i.site, status: 'queued', lastStage: null, lastMessage: null, resultSummary: null, resultError: null }));
   const gw = new GatewayService(new MemorySettingsStore(), confirm, now, { create, get: vi.fn(), cancel: vi.fn() } as never, async (u, id) => u === A && id === 'mine', async () => null);
@@ -69,7 +69,7 @@ describe('MCP 任务工具：必改补测（网关层）', () => {
     const fetchImpl = vi.fn(async () => new Response('x'));
     const create = vi.fn();
     const store = new MemoryChallengeStore();
-    const now = () => new Date('Mon 2026-11-02 8:00 AM CST (UTC+08:00)');
+    const now = () => new Date('2026-11-02T08:00:00+08:00');
     const confirm = new ConfirmService(store, { now, access: { verify: async () => null } });
     const gw = new GatewayService(settings, confirm, now, { create, get: vi.fn(), cancel: vi.fn() } as never, async () => false, async () => null, fetchImpl as unknown as typeof fetch, async () => ['93.184.216.34']);
     const { scopedSettings } = await import('../src/settings/store.js');
@@ -93,6 +93,15 @@ describe('MCP 任务工具：必改补测（网关层）', () => {
     expect(await denied(t.gw.callTask(A, 'browser_task_create', { kind: 'browse', site: 'https://example.com' }, t.audit))).toBe(403);
     expect(t.create).not.toHaveBeenCalled();
     expect(t.audits.some((a) => a.includes('mcp: kind_not_allowed'))).toBe(true);
+  });
+
+  it('签到带 instruction / options / secrets 等额外字段 → 403 field_not_allowed，create 0 次', async () => {
+    const t = setup();
+    for (const extra of [{ instruction: '顺便下单' }, { options: { a: 1 } }, { secrets: [] }, { foo: 1 }]) {
+      expect(await denied(t.gw.callTask(A, 'browser_task_create', { kind: 'checkin', site: 'https://example.com', ...extra }, t.audit))).toBe(403);
+    }
+    expect(t.create).not.toHaveBeenCalled();
+    expect(t.audits.some((a) => a.includes('mcp: field_not_allowed'))).toBe(true);
   });
 
   it('格式不对的 secrets 一律按 danger：403，create 0 次', async () => {

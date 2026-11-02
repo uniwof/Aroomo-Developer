@@ -63,16 +63,13 @@ function taskTools(gw: GatewayService, ex: ExecutorService, now: () => Date): To
   return [
     {
       name: 'create_task',
-      description: '派一个任务给用户电脑上的本机执行员：这里只能派签到 checkin。浏览、登录、注册、带保险箱凭据的任务请所有者在手机 / 控制台发起。签到同一网站当天只派一次。secrets 只写条目 id 和字段名。',
+      description: '派一个任务给用户电脑上的本机执行员：这里只能派签到 checkin。浏览、登录、注册、带保险箱凭据的任务请所有者在手机 / 控制台发起。签到同一网站当天只派一次；只接受 kind 和 site 两个字段。',
       scope: 'tasks:create',
       inputSchema: {
         type: 'object',
         properties: {
           kind: { type: 'string', enum: [...TASK_KINDS] },
           site: { type: 'string', description: 'https:// 网址，或 android-app://包名' },
-          instruction: { type: 'string' },
-          secrets: { type: 'array', maxItems: 10, items: { type: 'object', properties: { secretId: { type: 'string' }, field: { type: 'string' } }, required: ['secretId', 'field'] } },
-          options: { type: 'object' },
         },
         required: ['kind', 'site'],
       },

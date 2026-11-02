@@ -150,6 +150,11 @@ export class GatewayService {
       await audit('gateway.call', { type: 'tool', id: tool }, 'denied', 'mcp: kind_not_allowed');
       throw new HttpError(403, 'FORBIDDEN', '这里只能派签到任务；登录 / 注册 / 浏览 / 带凭据的任务请在手机或控制台发起。');
     }
+    // 签到只许带 kind 和 site：instruction / options / secrets 等一律拒（防提示注入借「签到」夹带指令）
+    if (tool === 'browser_task_create' && Object.keys(args).some((k) => k !== 'kind' && k !== 'site')) {
+      await audit('gateway.call', { type: 'tool', id: tool }, 'denied', 'mcp: field_not_allowed');
+      throw new HttpError(403, 'FORBIDDEN', '这里派签到任务只能带 kind 和 site；其他字段请在手机或控制台发起。');
+    }
     return this.call(userId, tool, args, MCP_READ_ONLY_CTX, audit);
   }
 
