@@ -11,7 +11,7 @@ import { ExecutorAgentAdapter, type SecretExists, type TaskPort } from '../adapt
 import type { ToolResult, ToolRisk, ToolSpec } from '../adapters/types.js';
 import { WebFetchAdapter } from './webfetch.js';
 import { type ConfirmCtx, type ConfirmKind, ConfirmService } from '../confirm/confirm.js';
-import { badRequest, notFound } from '../http/errors.js';
+import { HttpError, badRequest, notFound } from '../http/errors.js';
 import { type SettingsStore, scopedSettings } from '../settings/store.js';
 
 const SETTINGS_KEY = 'gateway.http_tools';
@@ -25,6 +25,12 @@ export interface PublicTool {
 }
 
 export const confirmKindOf = (risk: ToolRisk): ConfirmKind | null => (risk === 'spend' ? 'payment' : risk === 'danger' ? 'irreversible' : null);
+
+/** MCP 只放行的内置只读工具（M2）。放开要所有者批准。 */
+const MCP_BUILTIN_READ: ReadonlySet<string> = new Set(['read_webpage']);
+const MCP_DENIED_MSG = '工具不存在或当前客户端不可用';
+/** MCP 路径的确认上下文：明确写出全部字段，什么都不能确认。 */
+export const MCP_READ_ONLY_CTX: ConfirmCtx = Object.freeze({ actor: 'mcp', canConfirmImportant: false });
 
 export class GatewayService {
   readonly #counter = new MemoryDayCounter();
@@ -100,6 +106,36 @@ export class GatewayService {
       await audit('gateway.call', { type: 'tool', id: tool }, 'failed', 'adapter error');
       return { content: [{ type: 'text', text: '工具调用失败了（详情已记入审计）。' }], isError: true };
     }
+  }
+
+  /** 列表和调用共用：必须是内置适配器提供的、白名单里的、静态与实际风险都是 read 的工具。 */
+  #mcpCheck(reg: AdapterRegistry, name: string, args?: Record<string, unknown>): 'not_found' | 'not_read' | 'not_exposed' | null {
+    const adapter = reg.find(name);
+    if (!adapter) return 'not_found';
+    const spec = reg.tools().find((t) => t.name === name);
+    if (spec?.risk !== 'read' || (args && reg.riskOf(name, args) !== 'read')) return 'not_read';
+    if (!MCP_BUILTIN_READ.has(name) || adapter !== this.#web) return 'not_exposed';
+    return null;
+  }
+
+  /** /mcp 能看到、能调的工具：只有内置只读工具（M2 = read_webpage）。用户登记的 HTTP 工具（含重名）不经 MCP 开放。 */
+  async listMcpReadable(userId: string): Promise<PublicTool[]> {
+    const reg = await this.#registry(userId);
+    return reg
+      .tools()
+      .filter((t) => this.#mcpCheck(reg, t.name) === null)
+      .map(({ name, description, inputSchema, risk }: ToolSpec) => ({ name, description, inputSchema, risk }));
+  }
+
+  /** 给 /mcp 用：不在放行清单里一律返回同一条错误（审计记真实原因）；用「什么都不能确认」的上下文调用。 */
+  async callRead(userId: string, tool: string, args: Record<string, unknown>, audit: AuditFn): Promise<ToolResult> {
+    const reg = await this.#registry(userId);
+    const reason = this.#mcpCheck(reg, tool, args);
+    if (reason) {
+      await audit('gateway.call', { type: 'tool', id: tool.slice(0, 64) }, 'denied', `mcp: ${reason}`);
+      throw new HttpError(403, 'FORBIDDEN', MCP_DENIED_MSG);
+    }
+    return this.call(userId, tool, args, MCP_READ_ONLY_CTX, audit);
   }
 
   // ---- HTTP 工具登记 ----

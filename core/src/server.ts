@@ -244,17 +244,15 @@ export function buildServer(
     (u) => scopedSettings(deps.settings, u),
     takeoverHooks(inbox, interruptBudget, deps.now),
   );
-  registerGatewayRoutes(
-    app,
-    new GatewayService(
+  const gatewayService = new GatewayService(
       deps.settings,
       confirm,
       deps.now,
       executorSvc,
       (u, id) => vaultSvc.exists(u, id),
       (u, id) => vaultSvc.resolveForGateway(u, id),
-    ),
-  );
+    );
+  registerGatewayRoutes(app, gatewayService);
   registerTakeoverHandler(inbox, executorSvc);
   registerInterruptBudgetRoutes(app, interruptBudget, inbox);
   registerExecutorRoutes(app, executorSvc);
@@ -262,7 +260,7 @@ export function buildServer(
   registerPubMemRoutes(app, pubMemService);
   const libraryService = new LibraryService(deps.library, deps.now);
   registerLibraryRoutes(app, libraryService);
-  registerMcpRoutes(app, libraryService, pubMemService);
+  registerMcpRoutes(app, libraryService, pubMemService, gatewayService);
   registerAuditRoutes(app, deps.auditLog);
   registerMcpConfigRoutes(app);
   registerCapabilityRoutes(app, new CapabilityService(), (u) => new TrialService(scopedSettings(deps.settings, u), deps.now));
