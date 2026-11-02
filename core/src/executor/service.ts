@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { AuditFn } from "../audit/types.js";
 import { badRequest, HttpError, notFound } from "../http/errors.js";
+import type { SettingsStore } from "../settings/store.js";
+import { MAX_ALLOWLIST, normalizeList, siteAllowed } from "./allowlist.js";
 import {
   TASK_KINDS,
   type ExecutorRecord,
@@ -9,6 +11,21 @@ import {
   type TaskKind,
   type TaskRecord,
 } from "./types.js";
+
+export interface TakeoverHooks {
+  opened?: (
+    userId: string,
+    info: { taskId: string; site: string; takeoverId: string; reason: string; message: string },
+    audit: AuditFn,
+  ) => Promise<void>;
+  closed?: (userId: string, taskId: string, takeoverId: string, audit: AuditFn) => Promise<void>;
+  /** 任务结束（成功/失败）时给收件箱留一张结果卡；失败不影响任务本身 */
+  finished?: (
+    userId: string,
+    info: { taskId: string; kind: string; site: string; status: "succeeded" | "failed"; summary: string; error: string | null },
+    audit: AuditFn,
+  ) => Promise<void>;
+}
 
 export const LEASE_SEC = 600;
 export const POLL_WAIT_SEC = 30;
@@ -52,7 +69,26 @@ export class ExecutorService {
       userId: string,
       secretId: string,
     ) => Promise<string | null> = async () => null,
+    /** 某用户的设置视图（服务器端站点白名单存在这里） */
+    private readonly settingsFor: (userId: string) => SettingsStore | null = () => null,
+    /** 接管卡进收件箱 / 处理后收回的钩子（server.ts 接线；失败不影响任务本身） */
+    private readonly hooks: TakeoverHooks = {},
   ) {}
+
+  async getAllowlist(userId: string): Promise<string[]> {
+    const v = await this.settingsFor(userId)?.get<{ sites?: string[] }>("executor_allowlist");
+    return Array.isArray(v?.sites) ? v.sites : [];
+  }
+  async setAllowlist(userId: string, sites: unknown[], audit: AuditFn): Promise<string[]> {
+    if (sites.length > MAX_ALLOWLIST) throw badRequest("白名单最多 100 条", "TOO_MANY");
+    const { list, bad } = normalizeList(sites);
+    if (bad.length) throw badRequest(`这些条目不对：${bad.join("、")}`, "BAD_ENTRY");
+    const st = this.settingsFor(userId);
+    if (!st) throw new HttpError(500, "NO_SETTINGS", "设置不可用");
+    await st.set("executor_allowlist", { sites: list }, this.now());
+    await audit("executor.allowlist", { type: "executor", id: "allowlist" }, "ok", `${list.length} 条`);
+    return list;
+  }
 
   async hello(
     userId: string,
@@ -62,6 +98,7 @@ export class ExecutorService {
       platform: string;
       version: string;
       adapters?: string[];
+      allowlistHash?: string;
     },
     audit: AuditFn,
   ) {
@@ -74,6 +111,7 @@ export class ExecutorService {
       platform: clip(input.platform, 32),
       version: clip(input.version, 32),
       adapters: (input.adapters ?? []).slice(0, 10).map((a) => clip(a, 32)),
+      allowlistHash: input.allowlistHash ? clip(input.allowlistHash, 128) : null,
       createdAt: at,
       lastSeenAt: at,
     });
@@ -179,6 +217,17 @@ export class ExecutorService {
       await this.#lost(userId, id);
     }
     await audit("executor.result", { type: "task", id }, "ok", input.status);
+    if (t && input.status !== "cancelled") {
+      try {
+        await this.hooks.finished?.(
+          userId,
+          { taskId: id, kind: t.kind, site: t.site, status: input.status, summary: t.resultSummary ?? "", error: t.resultError },
+          audit,
+        );
+      } catch {
+        // 结果卡只是通知，写不进去不能让任务回报失败
+      }
+    }
   }
 
   /** 运行时取凭据：只能取本任务声明过的 secretId，只给持有租约的执行员；明文只在响应里，永不落库、不进审计 */
@@ -236,7 +285,7 @@ export class ExecutorService {
     audit: AuditFn,
   ): Promise<{ takeoverId: string }> {
     const ex = await this.#me(userId, clientId);
-    this.#held(await this.store.getTask(userId, id), ex.id);
+    const task = this.#held(await this.store.getTask(userId, id), ex.id);
     const rec: TakeoverRecord = {
       id: randomUUID(),
       userId,
@@ -250,6 +299,15 @@ export class ExecutorService {
     };
     await this.store.insertTakeover(rec);
     await audit("executor.takeover", { type: "task", id }, "ok", rec.reason);
+    try {
+      await this.hooks.opened?.(
+        userId,
+        { taskId: id, site: task.site, takeoverId: rec.id, reason: rec.reason, message: rec.message },
+        audit,
+      );
+    } catch (e) {
+      await audit("executor.takeover.card", { type: "task", id }, "failed", String((e as Error)?.message ?? e).slice(0, 100));
+    }
     return { takeoverId: rec.id };
   }
 
@@ -305,6 +363,8 @@ export class ExecutorService {
     tid: string,
     input: { cancel?: boolean; note?: string },
     audit: AuditFn,
+    /** 从收件箱卡片来的：卡片由收件箱自己收，不再触发收回钩子 */
+    fromInbox = false,
   ) {
     const t = await this.store.resolveTakeover(
       userId,
@@ -325,6 +385,12 @@ export class ExecutorService {
       "ok",
       t.status,
     );
+    if (!fromInbox)
+      try {
+        await this.hooks.closed?.(userId, id, tid, audit);
+      } catch {
+        /* 收件箱卡片收不回不影响处理结果 */
+      }
     return { status: t.status };
   }
 
@@ -353,6 +419,8 @@ export class ExecutorService {
         "网址不对：需要 https:// 开头的网址，或 android-app://包名",
         "BAD_SITE",
       );
+    if (!siteAllowed(input.site, await this.getAllowlist(userId)))
+      throw new HttpError(403, "SITE_NOT_ALLOWED", "这个网站不在你设置的白名单里");
     const queued = (await this.store.listTasks(userId, 500)).filter(
       (t) => t.status === "queued",
     ).length;
@@ -401,10 +469,12 @@ export class ExecutorService {
     const nowMs = this.now().getTime();
     return (await this.store.listExecutors(userId)).map((e) => ({
       id: e.id,
+      clientId: e.clientId,
       deviceName: e.deviceName,
       platform: e.platform,
       version: e.version,
       adapters: e.adapters,
+      allowlistHash: e.allowlistHash,
       lastSeenAt: e.lastSeenAt.toISOString(),
       online: nowMs - e.lastSeenAt.getTime() < 90_000,
     }));

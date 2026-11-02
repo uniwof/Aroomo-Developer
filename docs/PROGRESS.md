@@ -89,17 +89,17 @@ P0 范围与验收见 PRODUCT 16.1。分支规则：CI 通过后主程序员可�
 
 | 需要 | 说明 | 状态 |
 |---|---|---|
-| 客户端令牌新 scope：`tasks:pull`、`tasks:secret` | D162；令牌归属 user_id，只能领 / 取本用户的任务与凭据（越权测试） | 待后台线 |
+| 客户端令牌新 scope：`tasks:pull`、`tasks:secret` | D162；令牌归属 user_id，只能领 / 取本用户的任务与凭据（越权测试） | ✅ 已在 dev |
 | 执行员令牌同时可授 `models:chat`（已有 scope） | 执行员的模型规划器经 Core /v1/chat/completions 规划网页操作（默认模型 aroomo/auto）；只发脱敏后的快照与字段名，不发凭据值 | 已有 scope，需在控制台「本机执行员」生成令牌时默认勾上 |
-| 任务队列表 + MCP `create_task` / `get_task`（给 LobeHub 负责人用） | 任务类型 checkin / login / signup / browse；字段见合同 3.1；定时触发用 pg-boss（D173） | ✅ 任务队列与 /api/tasks 已有；MCP 工具 create_task/get_task/list_tasks/cancel_task 在 PR p1/mcp-tasks（客户端范围 tasks:create / tasks:read；当天同 kind+site 去重） |
-| `POST /api/executor/hello` | 上线登记，返回 executorId、pollWaitSec、leaseSec；控制台据此显示「电脑在线 / 离线」 | 待后台线 |
-| `POST /api/executor/tasks/claim`（长轮询 ≤30 秒） | 一个任务只能领一次；租约 600 秒，过期退回队列（D162） | 待后台线 |
-| `POST /api/executor/tasks/:id/progress` | 进度 + 心跳续租；响应带 `cancel` | 待后台线 |
-| `POST /api/executor/tasks/:id/takeover`、`GET …/takeover/:tid`（长轮询） | 推接管卡到收件箱（captcha / 2fa / payment / login_failed / not_allowed），计入打扰预算 D100；等待期间租约冻结 | 待后台线 |
-| `POST /api/executor/tasks/:id/secret` | 按任务声明的 secretId + field 从保险箱取值；未声明返回 422 SECRET_NOT_DECLARED；每次审计 | 待后台线 |
-| `POST /api/executor/tasks/:id/result` | 结束任务，幂等；租约已收回返回 409 LEASE_LOST | 待后台线 |
-| Core `/mcp` 工具 `create_task` / `get_task` / `list_tasks` / `cancel_task`（包一层 `/api/tasks`，同令牌隔离；同 kind+site+当天去重） | 工具定义与 LobeHub 定时任务写法见 [executor-schedule.md](executor-schedule.md)；`POST /api/tasks` 已在 dev，MCP 层待后台线（V4 依赖） | ✅ 任务队列与 /api/tasks 已有；MCP 工具 create_task/get_task/list_tasks/cancel_task 在 PR p1/mcp-tasks（客户端范围 tasks:create / tasks:read；当天同 kind+site 去重） |
-| 服务器端站点白名单（派任务前校验） | 与执行员本机白名单双重校验；hello 上报本机名单指纹 `allowlistHash` 供控制台比对 | 待后台线 |
+| 任务队列表 + MCP `create_task` / `get_task`（给 LobeHub 负责人用） | 任务类型 checkin / login / signup / browse；字段见合同 3.1；定时触发用 pg-boss（D173） | ✅ 已在 dev |
+| `POST /api/executor/hello` | 上线登记，返回 executorId、pollWaitSec、leaseSec；控制台据此显示「电脑在线 / 离线」 | ✅ 已在 dev |
+| `POST /api/executor/tasks/claim`（长轮询 ≤30 秒） | 一个任务只能领一次；租约 600 秒，过期退回队列（D162） | ✅ 已在 dev |
+| `POST /api/executor/tasks/:id/progress` | 进度 + 心跳续租；响应带 `cancel` | ✅ 已在 dev |
+| `POST /api/executor/tasks/:id/takeover`、`GET …/takeover/:tid`（长轮询） | 推接管卡到收件箱（captcha / 2fa / payment / login_failed / not_allowed），计入打扰预算 D100；等待期间租约冻结 | ✅ 已在 dev；接管卡同时进收件箱（kind executor.takeover，「我处理好了」「取消这个任务」），任务页处理后自动收卡 |
+| `POST /api/executor/tasks/:id/secret` | 按任务声明的 secretId + field 从保险箱取值；未声明返回 422 SECRET_NOT_DECLARED；每次审计 | ✅ 已在 dev |
+| `POST /api/executor/tasks/:id/result` | 结束任务，幂等；租约已收回返回 409 LEASE_LOST | ✅ 已在 dev |
+| Core `/mcp` 工具 `create_task` / `get_task` / `list_tasks` / `cancel_task`（包一层 `/api/tasks`，同令牌隔离；同 kind+site+当天去重） | 工具定义与 LobeHub 定时任务写法见 [executor-schedule.md](executor-schedule.md)；`POST /api/tasks` 已在 dev，MCP 层待后台线（V4 依赖） | ✅ 已在 dev |
+| 服务器端站点白名单（派任务前校验） | 已实现（PR p1/server-allowlist）：`GET/PUT /api/executor-allowlist`（{sites:[域名或 android-app://包名]}，空=不限制）；创建任务不命中返回 403 SITE_NOT_ALLOWED；hello 的 `allowlistHash` 出现在 `GET /api/executors` | 已做 |
 
 ## 分期总览（2026-10-28 起按 DECISIONS D114 / 第 7.6 节第三部分）
 
@@ -142,19 +142,27 @@ P2–P7 的功能开发在阶段 C 之后照常在网页版上推进，离线版
 
 | 需要 | 用在哪页 | 说明 | 状态 |
 |---|---|---|---|
-| 控制台会话：/auth/login 可选写 HttpOnly + SameSite=Strict Cookie（Path=/），/api 同时接受该 Cookie；改动类请求校验 X-Aroomo-Request 头 | 登录 | 现在只返回 Bearer 令牌，控制台暂存 sessionStorage；Cookie 更安全 | 待后台线 |
+| 控制台会话 Cookie：POST /auth/login、/auth/accept 带 `cookie:true` → 令牌只放 HttpOnly + SameSite=Strict（https 时加 Secure）的 aroomo_session Cookie，响应里不再有 token；/api 在没有 Bearer 时认该 Cookie（只认账号会话），改动类请求（POST/PUT/PATCH/DELETE）必须带 `X-Aroomo-Request: 1` 头否则 403 CSRF；/api/auth/logout、logout-all 会清 Cookie | 登录 | A 类，已提 PR p1/session-cookie（待负责人审）；控制台改用时 fetch 带 credentials:'same-origin' 和该头 |
 | GET /api/capabilities?kind=&access=（能力清单第一版：items 文本/生图/视频 + counts + summary「文本 N · 生图 N · 视频 N」；每项 access=free/trial/paid、status=ready/unverified/failed/missing/keyless、quota{used,limit,unit}、quotaKnown=false 显示「未知」；tools 为算力/沙盒/云手机等；library 技能 148/资源 45 分组计数） | 能力地图与成员 | D157–D172 第 2 步 / M1 | ✅ PR p1/capabilities-api（种子来自资源清单，不含 Key；实时额度待后续） |
+| PUT /api/capabilities/:id/trial {endsAt:"2026-12-31"\|null}（填试用到期日；GET /api/capabilities 的 items/tools 多 trialEndsAt、trialDaysLeft；≤3 天或已过期每 6 小时检查并发收件箱提醒） | 能力地图（试用徽标旁显示剩余天数 + 到期日输入） | M4 | ✅ PR p1/trial-expiry |
 | /v1 模型别名（LobeHub 群组同步用）：`aroomo/auto` = 负责人入口（@成员 则该成员答，不 @ 负责人答，与 `aroomo` 同义）；`aroomo/<成员id>` = 直接由该成员答（不解析 @、不署名；名字空格换 - 也认）；`GET /v1/models` 列出这些别名 | LobeHub 群组：负责人智能体用 aroomo/auto，每个成员智能体用 aroomo/<成员id> | M1 第 3 项 | ✅ PR p1/lead-routing |
 | /api/library 资源库最小版：POST（只给 url 也行；同链接去重；像密码/Key 的内容拒收）、GET ?q=&kind=&limit=（关键词检索，多词都要命中，标题>标签>链接>正文）、GET/:id、DELETE/:id（仅本人）。客户端范围 library:read / library:write（MCP submit_resource 用 write）。检索先 ILIKE，接口后可换 PGroonga | 资源库页（丢链接+搜索） | M2 | ✅ PR p1/library |
 | POST /mcp（Core 对外 MCP，JSON-RPC 2.0；Authorization: Bearer 所有者/账号/arc_ 令牌）：工具 search_library、get_library_item、submit_resource、list_memory_topics、get_memory；tools/list 按客户端范围动态返回，无范围=工具不存在；输出打码；每次调用审计 mcp.call。GET /mcp = 405。LobeHub 设置→MCP 里用 /api/mcp/config 的配置 | LobeHub 接入 Core MCP | M2 | ✅ PR p1/mcp-readonly（A 类，needs-leader-review） |
 | GET /api/tools、工具开关与额度 | 工具 | 工具网关 | 待后台线 |
 | GET /api/library（资源库列表、搜索） | 资源库 | | 待后台线 |
-| GET /api/inbox?type=confirm\|takeover\|brief | 收件箱 | 接管卡、简报分类 | 待后台线 |
+| GET /api/inbox?type=confirm\|takeover\|brief（可与 group/status 组合；confirm = 含重要确认动作的卡） | 收件箱 | 接管卡、简报分类 | ✅ PR p1/inbox-type |
 | GET /api/executors、任务队列只读列表 | 本机执行员 | | 待后台线 |
-| GET /api/usage（额度圆环：已用 / 上限） | 顶栏（D7） | | 待后台线 |
+| GET /api/usage（额度圆环：每位在职成员 today{requests,errors,limited}、last7DaysRequests、tokensToday（供应商返回过用量才有数字，非流式回答；否则 null=未知）、quota{used,limit,unit:"次/天"}、quotaKnown、ratio、state=unknown/ok/warn/full/limited；total）；PUT /api/usage/limits/:memberId {dailyLimit:整数\|null}（所有者自己填每天次数上限，没填=未知） | 顶栏/成员头像圆环（D7） | Core 自己数经 /v1 的调用（北京时间按天，只记次数）；账号用户 tracked=false | ✅ PR p1/usage |
 | GET /api/mcp/config（按当前用户生成 MCP 连接配置，不含明文令牌，令牌另走一次性显示） | 设置 | D195 MCP 配置复制 | 已做（PR 待合并）|
-| GET /api/members 返回 online（布尔） | 成员头像彩色 / 黑白（D7） | | 待后台线 |
+| GET /api/members 每位成员多 online（布尔：在职 + 启用 + 未删除 + 有一把状态正常的 Key 对着它） | 成员头像彩色 / 黑白（D7） | 只在列表接口带；其他接口不带 | ✅ PR p1/member-online |
 | GET/PUT /api/settings/security、GET /api/audit 对 owner/admin 账号开放（现在只认所有者令牌，账号登录会 403） | 设置 → 安全 | 控制台用账号登录 | 待后台线 |
+
+## 两个账号与隔离（隔离线约定；D205、D206；2026-10-31 起）
+
+- **小号 seed 由隔离线负责**：`core/src/users/seed.ts`（幂等函数 `seedXiaohao`）+ CLI `node dist/seed/xiaohao.js`。凭据只经环境变量 `XIAOHAO_EMAIL`、`XIAOHAO_PASSWORD` 注入（staging 的 .env 或保险箱），不进仓库/日志；`NODE_ENV=production` 时默认拒绝。staging 部署后由控制台线在 compose 里跑一次：`docker compose exec core node dist/seed/xiaohao.js`（可重复跑）。
+- **测试夹具（各线复用）**：`core/test/helpers/two-accounts.ts`——`twoAccounts(env)` 返回所有者 `owner(...)` 与小号 `xiao(...)` 两个调用器；`twoAccountEnvs` 覆盖 memory / PGlite / CI PostgreSQL。断言：`expectHidden`（403/404 或不含所有者标记）、`expectDenied`（改删必须 403/404）、`expectSameAsMissing`（所有者 id 与不存在 id 结果一致，看不出存在）、`expectEmptyList`（列表/计数为空）。
+- **完成定义**：每个新功能 PR 至少加一条用 `twoAccounts` 的用例：小号看不到、改不了、看不出存在；小号自己的同一功能可用。
+- **RLS（D206）**：按模块逐个开（A+，每模块一个 PR，等负责人审）；按用户开事务的助手接口届时在本节登记。
 
 ## 阻塞
 
@@ -170,6 +178,7 @@ P2–P7 的功能开发在阶段 C 之后照常在网页版上推进，离线版
 | Muse 1–15 清单与负责人裁决表 | D39 细节 | 用户转达 |
 
 ## 变更
+- **2026-11-01：staging 自动部署已上线**（#170 / D209）：dev 合并后 2–5 分钟内自动部署到 https://staging.pcmanai.com（Access 只允许所有者），各线从此不手动部署。说明与「怎么查当前提交」见 docs/ops/STAGING.md。
 - 2026-10-28：#38 Aroomo 页面接 Core、#39 对话经 Core /v1 → LiteLLM（含 Responses API 转换、冒烟修复）、#40 Core 定时任务合并到 dev；服务器更新到 `f349d90`，Tunnel 改指 `shell:3000`。
 - 2026-10-28：#33 修复 AGENT_GATEWAY_URL 空值 + D66–D75 入档；#36 Aroomo Shell 界面薄层 + D76–D80 入档、提议 H1/H2。
 - 2026-10-28：负责人裁决 D62–D65 入档（#26）并实现：操作员白名单 + 统一确认服务（#27）、备份公钥加密（#28）、安装器主密钥窗口与电脑版备份（#29）、测试版发布流程（#30）。
@@ -177,3 +186,5 @@ P2–P7 的功能开发在阶段 C 之后照常在网页版上推进，离线版
 - 2026-10-27：完成旧项目审计（docs/AUDIT.md）。
 - 2026-10-27：负责人 v4.3 裁决入档（D30–D61）；P0 开始；新增 KEY-STORAGE.md、SEQUENCES.md。
 - 2026-10-27：Core 模块：审计日志（#18）、成员（#20）、收件箱（#22）合并到 dev；Key 管理（#24）合并到 dev；点名解析（#8）PR 提交。Jules 对 #11/#5/#6/#8 的重复 PR（#13/#15/#16/#14）已留言建议关闭。
+
+- 兜底审查 CI 已上线（.github/workflows/adversarial-review.yml）：PR 带 needs-leader-review 标签自动评论，各线停用手动 run_subagent。

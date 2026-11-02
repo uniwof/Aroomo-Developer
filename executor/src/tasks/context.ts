@@ -73,6 +73,8 @@ export async function handleBlockers(ctx: TaskContext, session: BrowserSession, 
     if (!b) return;
     const shot = await session.screenshot();
     await ctx.progress('waiting_owner', `需要你处理：${b.message}`, shot);
+    // 先把窗口交给所有者（ego lite handOff），失败不影响接管卡：她仍可在已开的窗口里处理
+    await session.handOff?.().catch(() => false);
     await ctx.takeover(b.reason, b.message, shot);
     await assertStillAllowed(ctx, session);
   }

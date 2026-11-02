@@ -26,6 +26,10 @@ export interface ShellConfig {
   defaultLocale: string;
   /** 静态资源目录（图标 / Aroomo 页面） */
   publicDir: string;
+  /** 控制台（web/console/dist）目录；不存在时 /console 返回 404 提示 */
+  consoleDir: string;
+  /** 所有者邮箱：只有这个邮箱登录 LobeHub 才附加所有者令牌；其他人 403（未设置时一律 403） */
+  ownerEmail: string | undefined;
   /** 会话校验结果缓存时长 */
   sessionCacheMs: number;
   /**
@@ -93,6 +97,8 @@ export function loadConfig(env: Env = process.env): ShellConfig {
     auth,
     defaultLocale: str(env, 'SHELL_DEFAULT_LOCALE') ?? 'zh-CN',
     publicDir: str(env, 'SHELL_PUBLIC_DIR') ?? defaultPublicDir(),
+    consoleDir: str(env, 'SHELL_CONSOLE_DIR') ?? '/app/console',
+    ownerEmail: (str(env, 'SHELL_OWNER_EMAIL') ?? ownerEmail)?.split(',')[0]?.trim().toLowerCase() || undefined,
     sessionCacheMs: 30_000,
     localOwner,
     allowedHosts,

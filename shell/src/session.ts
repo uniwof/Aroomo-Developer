@@ -7,10 +7,12 @@ import { createHash } from 'node:crypto';
 
 export interface SessionChecker {
   check(cookie: string | undefined): Promise<boolean>;
+  /** 当前会话的登录邮箱（小写）；没登录或取不到返回 undefined */
+  email?(cookie: string | undefined): Promise<string | undefined>;
 }
 
 export class LobeSessionChecker implements SessionChecker {
-  readonly #cache = new Map<string, { ok: boolean; until: number }>();
+  readonly #cache = new Map<string, { ok: boolean; email?: string; until: number }>();
 
   constructor(
     private readonly lobe: URL,
@@ -20,28 +22,39 @@ export class LobeSessionChecker implements SessionChecker {
   ) {}
 
   async check(cookie: string | undefined): Promise<boolean> {
-    if (!cookie) return false;
+    return (await this.#lookup(cookie)).ok;
+  }
+
+  async email(cookie: string | undefined): Promise<string | undefined> {
+    return (await this.#lookup(cookie)).email;
+  }
+
+  async #lookup(cookie: string | undefined): Promise<{ ok: boolean; email?: string }> {
+    if (!cookie) return { ok: false };
     const key = createHash('sha256').update(cookie).digest('hex');
     const hit = this.#cache.get(key);
     const t = this.now();
-    if (hit && hit.until > t) return hit.ok;
+    if (hit && hit.until > t) return hit;
     let ok = false;
+    let email: string | undefined;
     try {
       const res = await this.fetchImpl(new URL('/api/auth/get-session', this.lobe), {
         headers: { cookie, accept: 'application/json' },
         signal: AbortSignal.timeout(5000),
       });
       if (res.ok) {
-        const body = (await res.json().catch(() => null)) as { user?: { id?: string } } | null;
+        const body = (await res.json().catch(() => null)) as { user?: { id?: string; email?: string } } | null;
         ok = Boolean(body?.user?.id);
+        email = body?.user?.email?.trim().toLowerCase() || undefined;
       }
     } catch {
       ok = false;
     }
     if (this.#cache.size > 200) this.#cache.clear();
     // 失败结果只缓存很短时间，登录后马上能用
-    this.#cache.set(key, { ok, until: t + (ok ? this.cacheMs : 2000) });
-    return ok;
+    const entry = { ok, email, until: t + (ok ? this.cacheMs : 2000) };
+    this.#cache.set(key, entry);
+    return entry;
   }
 }
 

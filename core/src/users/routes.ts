@@ -4,11 +4,12 @@
  * 本人：GET /api/auth/me、POST /api/auth/logout、/logout-all、/password。
  * 管理员（所有者令牌或 admin 账号）：/api/users 系列。
  */
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { adminGuard, userGuard } from '../auth/plugin.js';
 import type { AuditLog } from '../audit/types.js';
 import { bindAudit } from '../audit/common.js';
 import { HttpError } from '../http/errors.js';
+import { clearSessionCookie, isSecureRequest, readSessionCookie, sessionCookie } from '../auth/session-cookie.js';
 import type { UsersService } from './service.js';
 import type { UserRole } from './types.js';
 
@@ -34,7 +35,15 @@ const loginOut = {
 export function registerUserRoutes(app: FastifyInstance, svc: UsersService, auditLog: AuditLog): void {
   const sysAudit = bindAudit(auditLog, { type: 'system', id: 'auth' });
 
-  app.post<{ Body: { email: string; password: string } }>(
+  /** body.cookie=true：令牌只放进 HttpOnly Cookie，响应里不再带 token（页面脚本拿不到） */
+  const viaCookie = <T extends { token: string; expiresAt: string }>(req: FastifyRequest, reply: FastifyReply, on: boolean, out: T): Omit<T, 'token'> | T => {
+    if (!on) return out;
+    const { token, ...rest } = out;
+    void reply.header('set-cookie', sessionCookie(token, new Date(out.expiresAt), new Date(), isSecureRequest(req)));
+    return rest;
+  };
+
+  app.post<{ Body: { email: string; password: string; cookie?: boolean } }>(
     '/auth/login',
     {
       schema: {
@@ -42,15 +51,15 @@ export function registerUserRoutes(app: FastifyInstance, svc: UsersService, audi
           type: 'object',
           required: ['email', 'password'],
           additionalProperties: false,
-          properties: { email: { type: 'string', maxLength: 254 }, password: { type: 'string', maxLength: 400 } },
+          properties: { email: { type: 'string', maxLength: 254 }, password: { type: 'string', maxLength: 400 }, cookie: { type: 'boolean' } },
         },
         response: { 200: loginOut },
       },
     },
-    async (req) => svc.login(req.body.email, req.body.password, req.ip, sysAudit),
+    async (req, reply) => viaCookie(req, reply, req.body.cookie === true, await svc.login(req.body.email, req.body.password, req.ip, sysAudit)),
   );
 
-  app.post<{ Body: { token: string; password: string; displayName?: string } }>(
+  app.post<{ Body: { token: string; password: string; displayName?: string; cookie?: boolean } }>(
     '/auth/accept',
     {
       schema: {
@@ -62,12 +71,13 @@ export function registerUserRoutes(app: FastifyInstance, svc: UsersService, audi
             token: { type: 'string', maxLength: 200 },
             password: { type: 'string', maxLength: 400 },
             displayName: { type: 'string', maxLength: 64 },
+            cookie: { type: 'boolean' },
           },
         },
         response: { 200: loginOut },
       },
     },
-    async (req) => svc.accept(req.body.token, req.body.password, req.body.displayName, sysAudit),
+    async (req, reply) => viaCookie(req, reply, req.body.cookie === true, await svc.accept(req.body.token, req.body.password, req.body.displayName, sysAudit)),
   );
 
   // ---- 本人 ----
@@ -85,10 +95,12 @@ export function registerUserRoutes(app: FastifyInstance, svc: UsersService, audi
 
   app.post('/api/auth/logout', { ...userGuard() }, async (req, reply) => {
     await svc.logout(needUser(req), req.audit);
+    if (readSessionCookie(req.headers.cookie)) void reply.header('set-cookie', clearSessionCookie(isSecureRequest(req)));
     return reply.status(204).send();
   });
   app.post('/api/auth/logout-all', { ...userGuard() }, async (req, reply) => {
     await svc.logoutAll(needUser(req), req.audit);
+    if (readSessionCookie(req.headers.cookie)) void reply.header('set-cookie', clearSessionCookie(isSecureRequest(req)));
     return reply.status(204).send();
   });
   app.post<{ Body: { currentPassword: string; newPassword: string } }>(

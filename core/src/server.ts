@@ -4,6 +4,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { registerMcpConfigRoutes } from "./mcpconfig/routes.js";
 import { CapabilityService } from "./capabilities/service.js";
 import { registerCapabilityRoutes } from "./capabilities/routes.js";
+import { TrialService, trialExpiryJob } from "./capabilities/trials.js";
 import { registerAuditRoutes } from "./audit/routes.js";
 import { installAuth } from "./auth/plugin.js";
 import { createTokenVerifier } from "./auth/tokens.js";
@@ -24,12 +25,16 @@ import { MembersService } from "./members/service.js";
 import { route } from "./router/route.js";
 import { LeadService } from "./settings/lead.js";
 import { ChatService } from "./chat/service.js";
+import { UsageService } from "./usage/service.js";
+import { registerUsageRoutes } from "./usage/routes.js";
 import { registerChatRoutes } from "./chat/routes.js";
 import { Scheduler } from "./jobs/scheduler.js";
+import { inboxTidyJob } from "./inbox/tidy.js";
 import {
   confirmCleanupJob,
   keyReconcileJob,
   modelCapsJob,
+  taskTimeoutJob,
   recycleBinJob,
 } from "./jobs/jobs.js";
 import { CandidateFlow } from "./members/candidates.js";
@@ -46,7 +51,16 @@ import { registerMcpRoutes } from "./mcp/server.js";
 import { ClientTokenService } from "./clients/service.js";
 import { registerClientRoutes } from "./clients/routes.js";
 import { ExecutorService } from "./executor/service.js";
+import { GatewayService } from "./gateway/service.js";
+import { registerGatewayRoutes } from "./gateway/routes.js";
 import { registerExecutorRoutes } from "./executor/routes.js";
+import {
+  InterruptBudget,
+  quietTakeoverExpiryJob,
+  registerInterruptBudgetRoutes,
+  registerTakeoverHandler,
+  takeoverHooks,
+} from "./executor/takeover-inbox.js";
 import { UsersService } from "./users/service.js";
 import { registerUserRoutes } from "./users/routes.js";
 import { registerConsole } from "./console/static.js";
@@ -221,18 +235,35 @@ export function buildServer(
   );
   registerVaultRoutes(app, vaultSvc);
   registerClientRoutes(app, clients);
-  const executorService = new ExecutorService(deps.executor, deps.now, (u, id) =>
-    vaultSvc.resolveForGateway(u, id),
+  const inbox = new InboxService(deps.inbox, confirm, deps.now);
+  const interruptBudget = new InterruptBudget((u) => scopedSettings(deps.settings, u), deps.now);
+  const executorSvc = new ExecutorService(
+    deps.executor,
+    deps.now,
+    (u, id) => vaultSvc.resolveForGateway(u, id),
+    (u) => scopedSettings(deps.settings, u),
+    takeoverHooks(inbox, interruptBudget, deps.now),
   );
-  registerExecutorRoutes(app, executorService);
+  const gatewayService = new GatewayService(
+      deps.settings,
+      confirm,
+      deps.now,
+      executorSvc,
+      (u, id) => vaultSvc.exists(u, id),
+      (u, id) => vaultSvc.resolveForGateway(u, id),
+    );
+  registerGatewayRoutes(app, gatewayService);
+  registerTakeoverHandler(inbox, executorSvc);
+  registerInterruptBudgetRoutes(app, interruptBudget, inbox);
+  registerExecutorRoutes(app, executorSvc);
   const pubMemService = new PubMemService(deps.pubmem, deps.now);
   registerPubMemRoutes(app, pubMemService);
   const libraryService = new LibraryService(deps.library, deps.now);
   registerLibraryRoutes(app, libraryService);
-  registerMcpRoutes(app, libraryService, pubMemService, executorService, deps.now);
+  registerMcpRoutes(app, libraryService, pubMemService, gatewayService, executorSvc, deps.now);
   registerAuditRoutes(app, deps.auditLog);
   registerMcpConfigRoutes(app);
-  registerCapabilityRoutes(app, new CapabilityService());
+  registerCapabilityRoutes(app, new CapabilityService(), (u) => new TrialService(scopedSettings(deps.settings, u), deps.now));
   const litellm =
     deps.litellm ??
     new LiteLLMAdmin({
@@ -240,7 +271,6 @@ export function buildServer(
       masterKey: cfg.litellmMasterKey,
     });
   const members = new MembersService(deps.members, deps.now, confirm);
-  const inbox = new InboxService(deps.inbox, confirm, deps.now);
   // 供其他模块调用 createInboxItem()
   app.decorate("inbox", inbox);
   registerInboxRoutes(app, inbox);
@@ -275,6 +305,10 @@ export function buildServer(
       },
     },
     membersForUser,
+    async (scope) =>
+      (await deps.keys.list(scope === "owner" ? undefined : scope))
+        .filter((k) => k.status === "active")
+        .map((k) => k.modelName),
   );
   const lead = new LeadService(deps.settings, deps.members, deps.now);
   const security = new SecurityService(deps.settings, deps.now);
@@ -292,6 +326,8 @@ export function buildServer(
     return svc;
   };
   registerSettingsRoutes(app, lead, security, leadForUser);
+  const usage = new UsageService(deps.settings, deps.now);
+  registerUsageRoutes(app, usage, (u) => (u === "owner" ? deps.members : deps.members.forUser(u)));
   // 对话入口（提议 H5）：LobeHub → Core /v1（D31 点名 / 交给负责人）→ LiteLLM
   registerChatRoutes(
     app,
@@ -303,6 +339,8 @@ export function buildServer(
       security,
       // 规矩 = 所有者公共记忆的 rules 主题（B6）；没有就不注入
       rules: async () => (await deps.pubmem.get('owner', 'rules'))?.body ?? null,
+      onCall: (m, o) => usage.record(m, o),
+      onTokens: (m, n) => usage.recordTokens(m, n),
       ...(deps.chatFetch ? { fetchImpl: deps.chatFetch } : {}),
     }),
     cfg.chatToken,
@@ -345,6 +383,11 @@ export function buildServer(
   jobs.add(confirmCleanupJob(deps.confirmChallenges, deps.now));
   jobs.add(keyReconcileJob(deps.keys, litellm, inbox, deps.now));
   jobs.add(modelCapsJob(deps.members, litellm, deps.now));
+  jobs.add(taskTimeoutJob(deps.executor, deps.now));
+  jobs.add(quietTakeoverExpiryJob(inbox, executorSvc, deps.now));
+  // 快跑阶段只有所有者：试用到期提醒只看所有者的设置（加固阶段再按用户遍历）
+  jobs.add(trialExpiryJob(new TrialService(deps.settings, deps.now), inbox));
+  jobs.add(inboxTidyJob(inbox, deps.now));
   app.decorate("jobs", jobs);
   if (opts.startJobs ?? cfg.jobs) {
     app.addHook("onReady", async () => jobs.start());

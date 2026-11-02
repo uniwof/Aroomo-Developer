@@ -4,7 +4,17 @@ import { guard } from '../auth/plugin.js';
 import { actorKey, principalCan } from '../auth/tokens.js';
 import { CONFIRM_KINDS } from '../confirm/confirm.js';
 import type { CreateInboxInput, InboxService } from './service.js';
-import { INBOX_GROUPS, type InboxGroup, type InboxItem, type InboxStatus, URGENCIES } from './types.js';
+import { actionKind, INBOX_GROUPS, type InboxGroup, type InboxItem, type InboxStatus, URGENCIES } from './types.js';
+
+/** 控制台按类型过滤：confirm = 带重要确认动作的卡；takeover = 执行员接管卡；brief = 简报组。 */
+export const INBOX_TYPES = ['confirm', 'takeover', 'brief'] as const;
+export type InboxType = (typeof INBOX_TYPES)[number];
+
+export function matchesInboxType(i: InboxItem, type: InboxType): boolean {
+  if (type === 'brief') return i.group === 'brief';
+  if (type === 'takeover') return i.kind === 'executor.takeover';
+  return i.actions.some((a) => actionKind(a) !== 'normal');
+}
 
 export function inboxJson(i: InboxItem) {
   return {
@@ -69,7 +79,7 @@ export function registerInboxRoutes(app: FastifyInstance, svc: InboxService): vo
     },
   );
 
-  app.get<{ Querystring: { group?: InboxGroup; status?: InboxStatus } }>(
+  app.get<{ Querystring: { group?: InboxGroup; status?: InboxStatus; type?: InboxType } }>(
     '/api/inbox',
     {
       ...guard('inbox:read'),
@@ -80,14 +90,16 @@ export function registerInboxRoutes(app: FastifyInstance, svc: InboxService): vo
           properties: {
             group: { type: 'string', enum: [...INBOX_GROUPS] },
             status: { type: 'string', enum: ['open', 'done', 'dismissed', 'expired'] },
+            type: { type: 'string', enum: [...INBOX_TYPES] },
           },
         },
       },
     },
     async (req) => {
-      const { group, status } = req.query;
-      if (group) return { items: (await svc.list({ group, ...(status ? { status } : {}) })).map(inboxJson) };
-      const all = await svc.list(status ? { status } : {});
+      const { group, status, type } = req.query;
+      const keep = (list: InboxItem[]) => (type ? list.filter((i) => matchesInboxType(i, type)) : list);
+      if (group) return { items: keep(await svc.list({ group, ...(status ? { status } : {}) })).map(inboxJson) };
+      const all = keep(await svc.list(status ? { status } : {}));
       const groups = Object.fromEntries(INBOX_GROUPS.map((g) => [g, all.filter((i) => i.group === g).map(inboxJson)]));
       return { groups };
     },

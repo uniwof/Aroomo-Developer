@@ -52,6 +52,7 @@ export class MemoryExecutorStore implements ExecutorStore {
           platform: r.platform,
           version: r.version,
           adapters: [...r.adapters],
+          allowlistHash: r.allowlistHash,
           lastSeenAt: r.lastSeenAt,
         });
         return { ...e };
@@ -143,6 +144,20 @@ export class MemoryExecutorStore implements ExecutorStore {
     if (!t.leaseExpiresAt || t.leaseExpiresAt.getTime() <= now.getTime())
       return null;
     return t;
+  }
+  async sweep(now: Date, queuedBefore: Date) {
+    let requeued = 0;
+    let expired = 0;
+    for (const t of this.#tasks.values()) {
+      if (t.status === "running" && t.leaseExpiresAt && t.leaseExpiresAt.getTime() <= now.getTime()) {
+        Object.assign(t, { status: t.cancelRequested ? "cancelled" : "queued", executorId: null, leaseExpiresAt: null, updatedAt: now });
+        requeued++;
+      } else if (t.status === "queued" && t.createdAt.getTime() < queuedBefore.getTime()) {
+        Object.assign(t, { status: "failed", resultError: "NO_EXECUTOR", resultSummary: "超过时限没有执行员领取，已过期", updatedAt: now });
+        expired++;
+      }
+    }
+    return { requeued, expired };
   }
   async renew(
     userId: string,

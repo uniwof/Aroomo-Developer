@@ -1,0 +1,6 @@
+title = "aroomo"
+[extend]
+useDefault = true
+[allowlist]
+description = "测试夹具里的假值（非真实密钥）"
+paths = ['''core/test/.*''', '''executor/test/.*''', '''shell/test/.*''']

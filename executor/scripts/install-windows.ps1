@@ -17,6 +17,7 @@
 [CmdletBinding()]
 param(
   [switch]$NoAutostart,
+  [switch]$NoAutoUpdate,
   [switch]$SkipToken,
   [string]$TaskName = 'Aroomo Executor'
 )
@@ -77,6 +78,16 @@ if (-not $NoAutostart) {
   $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
   $settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
   Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Description 'Aroomo 本机执行员' -Force | Out-Null
+
+  if (-not $NoAutoUpdate) {
+    # 简化版自动更新：每天 04:00（错过则开机后补跑）拉取最新代码，有变化才重建并重启
+    Write-Step '注册每日自动更新'
+    $updScript = Join-Path $PSScriptRoot 'update-windows.ps1'
+    $updAction = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$updScript`" -TaskName `"$TaskName`""
+    $updTrigger = New-ScheduledTaskTrigger -Daily -At '04:00'
+    $updSettings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    Register-ScheduledTask -TaskName "$TaskName Update" -Action $updAction -Trigger $updTrigger -Settings $updSettings -Description 'Aroomo 本机执行员自动更新' -Force | Out-Null
+  }
 }
 
 Write-Step '检查'

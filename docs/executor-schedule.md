@@ -1,6 +1,6 @@
 # 定时签到 / 派任务：LobeHub Tasks → Core → 本机执行员
 
-> 执行员线写；M3 的「LobeHub 定时签到」用。Core 现状（dev）：`POST /api/tasks` 已有（人类令牌），`/mcp` 的 `create_task` 还没有（已登记给后台线）。
+> 执行员线写；M3 的「LobeHub 定时签到」用。Core 现状：`POST /api/tasks` 已在 dev；`/mcp` 的 `create_task / get_task / list_tasks / cancel_task` 在 PR #117（待负责人审，合并后可用）。
 
 ## 一图
 
@@ -47,20 +47,22 @@ secrets 用保险箱条目「example 账号」。创建后不用等结果；
 
 负责人通过 Core 的 MCP 调用（工具定义见下）。**不改 LobeHub**（D199 红线），只用它原有的「定时任务 + MCP 工具」。
 
-### Core MCP 工具定义（登记给后台线）
+### Core MCP 工具（PR #117 的实现，以此为准）
 
-| 工具 | 入参 | 返回 | 说明 |
+接入：控制台「设置 → MCP 配置」一键复制（地址 `<Core>/mcp`，Bearer 为客户端令牌）。令牌要勾范围 `tasks:create`（派/取消）和 `tasks:read`（查）。
+
+| 工具 | 入参 | 返回（文本一行） | 范围 |
 |---|---|---|---|
-| `create_task` | `kind`(checkin/login/signup/browse), `site`, `instruction?`, `secrets?[{secretId,field}]`, `options?` | `{id, status}` | 等价 `POST /api/tasks`，同样按调用者 user_id 隔离、写审计 |
-| `get_task` | `id` | `{id, status, summary?, error?}` | 等价 `GET /api/tasks/:id`；只能看自己的 |
-| `list_tasks` | `status?` | 最近 20 条 | 给「今天签到了吗」这类追问用 |
-| `cancel_task` | `id` | `{status}` | 重要确认不需要（取消可逆性低风险）；只能取消自己的 |
+| `create_task` | `kind`(checkin/login/signup/browse)、`site`、`instruction?`、`secrets?[{secretId,field}]`、`options?` | `已派给本机执行员。- checkin <site> 状态 queued（id: …）` | `tasks:create` |
+| `get_task` | `id` | `- <kind> <site> 状态 <status>：<摘要>（id: …）` | `tasks:read` |
+| `list_tasks` | `status?` | 最近 20 条，每条一行 | `tasks:read` |
+| `cancel_task` | `id` | 同上，状态变 cancelled | `tasks:create` |
 
-约束：MCP 用的是调用者自己的令牌，**不能**列出或使用别人的 secretId；`secretId` 不属于调用者 → 422（沿用 `SECRET_NOT_DECLARED` / 越权测试）。
+约束：只用调用者自己的令牌和 user_id，看不到别人的任务和 secretId；`secrets` 只传保险箱条目 id 和字段名，不传值。
 
 ## 3. 重复触发的去重（建议）
 
-同一 `kind + site + 当天日期` 已有 queued/running 任务时，`create_task` 返回已有任务而不是再建一个（避免 LobeHub 重试造成重复签到）。这是 Core 端行为，登记给后台线；执行员端不依赖它。
+同一 `kind + site + 当天日期`（北京时间）已有未取消、未失败的任务时，`create_task` 回「今天已经派过」并给出已有任务（避免 LobeHub 重试造成重复签到）。这是 Core 端行为（#117 已实现）；执行员端不依赖它。
 
 ## 4. 备选：Core 自带定时
 

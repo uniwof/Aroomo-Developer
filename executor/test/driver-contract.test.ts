@@ -3,6 +3,7 @@
  * 接 Playwright MCP 时，把它加进 DRIVERS 即可。
  */
 
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -172,6 +173,15 @@ describe('Playwright MCP 响应解析', () => {
     expect(snapshotBody(t)).toBe('- button "登录" [ref=e3]\n');
     expect(findRef(snapshotBody(t), ['button'], ['登录'])).toBe('e3');
   });
+  it('截图指纹：本机对图片字节算 sha256，不返回图片', async () => {
+    const s = await new PlaywrightMcpDriver({ command: process.execPath, args: [FAKE_PW] }).open('sha');
+    await s.goto('https://example.com/home');
+    const info = await s.screenshotInfo();
+    const want = createHash('sha256').update('fake-png-https://example.com/home').digest('hex');
+    expect(info.sha256).toBe(want);
+    expect(Object.keys(info).sort()).toEqual(['height', 'sha256', 'width']);
+    await s.close();
+  });
   it('没装时 available() 为 false', async () => {
     expect(await new PlaywrightMcpDriver({ command: 'definitely-not-npx-xyz', args: [] }).available()).toBe(false);
   });
@@ -183,6 +193,20 @@ describe('规则规划器', () => {
     expect(detectBlockerInSnapshot('@1 textbox "短信验证码"')?.blocker).toBe('2fa');
     expect(detectBlockerInSnapshot('@1 textbox "Card number"')?.blocker).toBe('payment');
     expect(detectBlockerInSnapshot('@1 button "签到"')).toBeNull();
+  });
+
+  it('识别 Cloudflare 等人机检查', () => {
+    expect(detectBlockerInSnapshot('- heading "Just a moment..." [ref=e1]')?.blocker).toBe('captcha');
+    expect(detectBlockerInSnapshot('@2 text "Performing security verification"')?.blocker).toBe('captcha');
+    expect(detectBlockerInSnapshot('@2 text "请完成安全验证"')?.blocker).toBe('captcha');
+    expect(detectBlockerInSnapshot('@3 textbox "Security code"')?.blocker).toBe('2fa');
+  });
+
+  it('菜单链接里的付款 / 验证码字样不误报；输入框和按钮里的照常识别', () => {
+    expect(detectBlockerInSnapshot('@1 link "Payment settings"\n@2 link "支付记录"\n@3 button "签到"')).toBeNull();
+    expect(detectBlockerInSnapshot('- link "付款方式" [ref=e4]\n- button "每日签到" [ref=e5]')).toBeNull();
+    expect(detectBlockerInSnapshot('@1 link "付款方式"\n@2 button "立即支付"')?.blocker).toBe('payment');
+    expect(detectBlockerInSnapshot('- textbox "邮箱验证码" [ref=e9]')?.blocker).toBe('2fa');
   });
   it('登录页：先填字段再点登录', async () => {
     const steps = await new RuleBasedPlanner().plan({

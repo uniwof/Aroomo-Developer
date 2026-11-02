@@ -16,6 +16,8 @@ export interface CapabilityItem {
   quota?: { used: number | null; limit: number | null; unit: string; resets?: string } | null;
   /** 试用到期（ISO 日期）；未公布时缺省 */
   trialEndsAt?: string | null;
+  /** 距到期整天数（北京时间日历日）；今天到期 = 0，已过期为负；没填到期日为 null */
+  trialDaysLeft?: number | null;
 }
 
 export interface CapabilityList {
@@ -54,3 +56,14 @@ export const SAMPLE_ITEMS: CapabilityItem[] = [
   { id: 's-agnes-img', name: 'agnes-image-2.5', kind: 'image', provider: 'Agnes AI', access: 'trial', quota: null, trialEndsAt: null },
   { id: 's-agnes-img-flash', name: 'agnes-image-2.1-flash', kind: 'image', provider: 'Agnes AI', access: 'trial', quota: null, trialEndsAt: null },
 ];
+
+/** 试用状态一句话：未填到期日 / 还剩 N 天 / 今天到期 / 已过期 N 天；非试用返回 null */
+export function trialText(i: Pick<CapabilityItem, 'access' | 'trialEndsAt' | 'trialDaysLeft'>): string | null {
+  if (i.access !== 'trial') return null;
+  if (!i.trialEndsAt) return '到期日未填';
+  const d = i.trialDaysLeft;
+  if (d == null) return `试用到 ${i.trialEndsAt}`;
+  if (d < 0) return `试用已过期 ${-d} 天（${i.trialEndsAt}）`;
+  if (d === 0) return `试用今天到期（${i.trialEndsAt}）`;
+  return `试用还剩 ${d} 天（${i.trialEndsAt}）`;
+}

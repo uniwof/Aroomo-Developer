@@ -83,36 +83,58 @@ describe('Core /mcp（资源库与公共记忆）', () => {
     expect(logs).toContain('mcp.call');
     expect(logs).toContain('denied');
   });
+});
 
-  it('任务工具：create_task 按范围、当天去重；账号看不到别人的任务；cancel_task', async () => {
-    const maker = await clientHeaders(['tasks:create']);
-    const viewer = await clientHeaders(['tasks:read']);
-    const none = await clientHeaders(['library:read']);
-    expect((await rpc(maker, 'tools/list')).json().result.tools.map((t: { name: string }) => t.name).sort()).toEqual(['cancel_task', 'create_task']);
-    expect((await call(none, 'create_task', { kind: 'checkin', site: 'https://a.example.com/' })).json().error.code).toBe(-32602);
-    expect((await call(viewer, 'create_task', { kind: 'checkin', site: 'https://a.example.com/' })).json().error.code).toBe(-32602);
-    const made = text(await call(maker, 'create_task', { kind: 'checkin', site: 'https://a.example.com/', instruction: '签到' }));
-    expect(made).toContain('已派给本机执行员');
-    const id = /id: ([0-9a-f-]{36})/.exec(made)?.[1] ?? '';
-    expect(id).toHaveLength(36);
-    // 当天同 kind+site 不重复派
-    expect(text(await call(maker, 'create_task', { kind: 'checkin', site: 'https://a.example.com/' }))).toContain('今天已经派过');
-    expect((await owner('GET', '/api/tasks')).json().tasks).toHaveLength(1);
-    // 错误参数是工具内错误，不是协议错误
-    expect((await call(maker, 'create_task', { kind: 'nuke', site: 'https://a.example.com/' })).json().result.isError).toBe(true);
-    expect((await call(maker, 'create_task', { kind: 'login', site: 'ftp://x' })).json().result.isError).toBe(true);
-    expect(text(await call(viewer, 'get_task', { id }))).toContain('状态 queued');
-    expect(text(await call(viewer, 'list_tasks', { status: 'queued' }))).toContain(id);
-    expect(text(await call(viewer, 'list_tasks', { status: 'succeeded' }))).toContain('没有符合');
-    // 别的账号看不到
-    const inv = await owner('POST', '/api/users/invites', { email: 'b@example.com' });
-    const acc = await app.inject({ method: 'POST', url: '/auth/accept', payload: { token: inv.json().token, password: PW } });
-    const b = { authorization: `Bearer ${acc.json().token}` };
-    expect((await call(b, 'get_task', { id })).json().result.isError).toBe(true);
-    expect((await call(b, 'cancel_task', { id })).json().result.isError).toBe(true);
-    expect(text(await call(b, 'list_tasks'))).toContain('没有符合');
-    expect(text(await call(maker, 'cancel_task', { id }))).toContain('cancelled');
-    // 取消后当天可以重新派
-    expect(text(await call(maker, 'create_task', { kind: 'checkin', site: 'https://a.example.com/' }))).toContain('已派给');
+describe('Core /mcp 工具网关（list_tools / call_tool）', () => {
+  const app = buildServer(loadConfig({ CORE_LOG_LEVEL: 'silent', CORE_OWNER_TOKEN: OWNER_TOKEN, CORE_ACCESS_REAUTH: 'off' }), memoryDeps(fakeClock().now));
+  afterAll(() => app.close());
+  const rpc = (headers: Record<string, string>, method: string, params?: object) =>
+    app.inject({ method: 'POST', url: '/mcp', headers, payload: { jsonrpc: '2.0', id: 1, method, ...(params ? { params } : {}) } });
+  const client = async (scopes: string[]) => ({
+    authorization: `Bearer ${(await app.inject({ method: 'POST', url: '/api/clients', headers: ownerAuth, payload: { name: 'g', scopes } })).json().token}`,
+  });
+  const names = async (h: Record<string, string>) => (await rpc(h, 'tools/list')).json().result.tools.map((t: { name: string }) => t.name);
+
+  it('无 tools 范围看不到、也调不到；有范围才出现', async () => {
+    const none = await client(['library:read']);
+    expect(await names(none)).toEqual(['search_library', 'get_library_item']);
+    expect((await rpc(none, 'tools/call', { name: 'call_tool', arguments: { tool: 'read_webpage' } })).json().error.code).toBe(-32602);
+    const g = await client(['tools:list', 'tools:call']);
+    expect(await names(g)).toEqual(['list_tools', 'call_tool']);
+  });
+
+  it('list_tools 只列 read 级；call_tool 拒非 read 与不存在的工具；read_webpage 的非 https 被拒', async () => {
+    const g = await client(['tools:list', 'tools:call']);
+    const list = (await rpc(g, 'tools/call', { name: 'list_tools' })).json().result.content[0].text;
+    expect(list).toContain('read_webpage');
+    expect(list).not.toContain('executor');
+    const bad = (await rpc(g, 'tools/call', { name: 'call_tool', arguments: { tool: 'nope' } })).json().result;
+    expect(bad.isError).toBe(true);
+    const http = (await rpc(g, 'tools/call', { name: 'call_tool', arguments: { tool: 'read_webpage', args: { url: 'http://example.com/' } } })).json().result;
+    expect(http.isError).toBe(true);
+    expect(http.content[0].text).toContain('https');
+  });
+
+  it('反向：非只读 / 不存在 / 未放行的工具返回逐字相同的错误；只有 tools:list 调不了', async () => {
+    const g = await client(['tools:list', 'tools:call']);
+    const call = async (tool: string) => (await rpc(g, 'tools/call', { name: 'call_tool', arguments: { tool } })).json().result;
+    const tools = (await app.inject({ method: 'GET', url: '/api/gateway/tools', headers: ownerAuth })).json().tools as { name: string; risk: string }[];
+    expect(tools.find((x) => x.name === 'browser_task_create' && x.risk !== 'read')).toBeTruthy();
+    const missing = await call('does_not_exist');
+    expect(missing.isError).toBe(true);
+    expect(await call('browser_task_create')).toEqual(missing);
+    const logs = JSON.stringify((await app.inject({ method: 'GET', url: '/api/audit?limit=100', headers: ownerAuth })).json());
+    expect(logs).toContain('mcp: not_read');
+    expect(logs).toContain('mcp: not_found');
+    const listOnly = await client(['tools:list']);
+    expect(await names(listOnly)).toEqual(['list_tools']);
+    expect((await rpc(listOnly, 'tools/call', { name: 'call_tool', arguments: { tool: 'read_webpage' } })).json().error.code).toBe(-32602);
+    const callOnly = await client(['tools:call']);
+    expect(await names(callOnly)).toEqual(['call_tool']);
+  });
+
+  it('网关工具列表接口仍可用（账号隔离由 gateway.test 覆盖）', async () => {
+    const reg = await app.inject({ method: 'GET', url: '/api/gateway/tools', headers: ownerAuth });
+    expect(reg.statusCode).toBe(200);
   });
 });

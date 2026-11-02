@@ -219,7 +219,7 @@ services:
       AGENT_GATEWAY_SERVICE_TOKEN: ${GATEWAY_SERVICE_TOKEN:-}
       # LobeHub 官方功能开关（运行时生效，不改镜像）：隐藏 PRODUCT §8 没有的功能（D68 隐藏不删除；清单见 DECISIONS 提议 H2）
       # 市场 / 更新日志 / 检查更新 / 欢迎页推荐 / 画图 / 知识库 / 服务商设置与 Key 输入（Key 只在 Aroomo「Key 与接入」里填，写入 LiteLLM）
-      FEATURE_FLAGS: '-speech_to_text,-voice_dictation,-market,-changelog,-check_updates,-welcome_suggest,-ai_image,-knowledge_base,-rag_eval,-provider_settings,-openai_api_key,-openai_proxy_url,-agent_share,-dashboard,-cloud_promotion'
+      FEATURE_FLAGS: '-speech_to_text,-voice_dictation,-market,-changelog,-check_updates,-welcome_suggest,-ai_image,-knowledge_base,-rag_eval,-provider_settings,-openai_api_key,-openai_proxy_url,-agent_share,-dashboard,-cloud_promotion,+api_key_manage'
       TZ: ${TZ:-Asia/Shanghai}
     healthcheck:
       test: ['CMD', '/bin/node', '-e', "fetch('http://127.0.0.1:3210/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
@@ -251,7 +251,11 @@ services:
       CORE_UPSTREAM: http://core:8080
       CORE_OWNER_TOKEN: ${CORE_OWNER_TOKEN:-}
       SHELL_AUTH: lobe-session
+      SHELL_OWNER_EMAIL: ${SHELL_OWNER_EMAIL:-${AUTH_ALLOWED_EMAILS:-}}
       SHELL_DEFAULT_LOCALE: zh-CN
+    # 控制台静态文件（同 core 的挂载）
+    volumes:
+      - ../web/console/dist:/app/console:ro
     healthcheck:
       test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3000/aroomo/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
@@ -356,6 +360,67 @@ services:
       - ./.restore:/restore-secrets
     networks: [aroomo]
 
+  # ---------------------------------------------------------------------------
+  # Gatus 服务健康检查（profile: monitoring）
+  # ---------------------------------------------------------------------------
+  gatus:
+    <<: *restart
+    image: twinproduction/gatus:v5.16.0
+    profiles: [monitoring]
+    environment:
+      GATUS_USER: ${GATUS_USER:-admin}
+      GATUS_PASSWORD: ${GATUS_PASSWORD:-}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - ./gatus/config.yaml:/config/config.yaml:ro
+    healthcheck:
+      test: ['CMD-SHELL', "wget -qO- http://localhost:8080/health | grep -q '\"status\":200' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [aroomo]
+
+  # ---------------------------------------------------------------------------
+  # Beszel Hub 资源监控（profile: monitoring）
+  # ---------------------------------------------------------------------------
+  beszel:
+    <<: *restart
+    image: henrygf/beszel:v0.10.0
+    profiles: [monitoring]
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - beszel-data:/beszel_data
+    healthcheck:
+      test: ['CMD-SHELL', "wget -qO- http://localhost:8090/api/health | grep -q '\"status\":200' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [aroomo]
+
+  # ---------------------------------------------------------------------------
+  # Beszel Agent 主机/容器采集 Agent（profile: monitoring）
+  # ---------------------------------------------------------------------------
+  beszel-agent:
+    <<: *restart
+    image: henrygf/beszel-agent:v0.10.0
+    profiles: [monitoring]
+    environment:
+      PORT: '45876'
+      KEY: ${BESZEL_AGENT_KEY:-}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    healthcheck:
+      test: ['CMD-SHELL', "nc -z 127.0.0.1 45876 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [aroomo]
+
 networks:
   aroomo:
     driver: bridge
@@ -366,3 +431,4 @@ volumes:
   pg-data:
   redis-data:
   rustfs-data:
+  beszel-data:

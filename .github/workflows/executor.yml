@@ -94,3 +94,8 @@ jobs:
           Remove-Item Env:AROOMO_EXECUTOR_TOKEN
           node executor\dist\cli.js check
           if ($LASTEXITCODE -ne 0) { throw 'check 没通过（令牌文件应可读）' }
+      - name: 自动更新脚本（检出为游离 HEAD，应安全跳过）
+        shell: powershell
+        run: |
+          powershell -ExecutionPolicy Bypass -File executor\scripts\update-windows.ps1 -NoRestart
+          if ($LASTEXITCODE -ne 0) { throw '更新脚本应安全退出' }

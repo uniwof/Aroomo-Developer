@@ -45,6 +45,10 @@ export interface ChatDeps {
   upstreamModel?: (name: string) => string;
   /** 规矩（公共记忆 topic rules）：对话转发前拼进系统提示；不传或返回 null = 不注入 */
   rules?: () => Promise<string | null>;
+  /** 每次调用上游后记一笔（额度圆环用）；账号成员（有 upstreamModel）不记到所有者名下 */
+  onCall?: (member: string, outcome: 'ok' | 'error' | 'limited') => void;
+  /** 供应商返回了用量（token 数）时记一笔；只记数字，不记内容 */
+  onTokens?: (member: string, tokens: number) => void;
   fetchImpl?: typeof fetch;
 }
 
@@ -149,6 +153,21 @@ function textReply(stream: boolean, text: string): ChatResult {
   return { status: 200, headers: sseHeaders(), stream: body };
 }
 
+/** SSE 事件里是否有一个 choice 带了 finish_reason（结束分片） */
+export function isFinishEvent(event: string): boolean {
+  for (const line of event.split('\n')) {
+    const m = /^data:\s*(\{.*\})\s*$/.exec(line);
+    if (!m) continue;
+    try {
+      const j = JSON.parse(m[1]!) as { choices?: Array<{ finish_reason?: unknown }> };
+      if (j.choices?.some((ch) => ch.finish_reason !== null && ch.finish_reason !== undefined)) return true;
+    } catch {
+      // 不是 JSON 的分片原样转发
+    }
+  }
+  return false;
+}
+
 const sseHeaders = () => ({ 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', 'x-accel-buffering': 'no' });
 
 const hintText = (hints: Hint[]) => hints.map((h) => `> ${h.text}${h.actions.length ? '（去掉 @ 再发一次即可交给负责人）' : ''}`).join('\n');
@@ -176,12 +195,20 @@ export class ChatService {
 
   async #upstream(body: Json, signal: AbortSignal): Promise<Response> {
     if (!this.d.litellmKey) throw new Error('litellm_not_configured');
-    return this.#fetch(`${this.d.litellmBaseUrl.replace(/\/+$/, '')}/v1/chat/completions`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${this.d.litellmKey}`, 'content-type': 'application/json' },
-      body: JSON.stringify(this.d.upstreamModel && typeof body.model === 'string' ? { ...body, model: this.d.upstreamModel(body.model) } : body),
-      signal,
-    });
+    const count = !this.d.upstreamModel && typeof body.model === 'string' ? this.d.onCall : undefined;
+    try {
+      const res = await this.#fetch(`${this.d.litellmBaseUrl.replace(/\/+$/, '')}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${this.d.litellmKey}`, 'content-type': 'application/json' },
+        body: JSON.stringify(this.d.upstreamModel && typeof body.model === 'string' ? { ...body, model: this.d.upstreamModel(body.model) } : body),
+        signal,
+      });
+      count?.(body.model as string, res.ok ? 'ok' : res.status === 429 ? 'limited' : 'error');
+      return res;
+    } catch (e) {
+      count?.(body.model as string, 'error');
+      throw e;
+    }
   }
 
   /** 按调用者的上下文（成员名前缀映射/成员列表）处理一次对话；不传 ctx = 用全局依赖 */
@@ -267,7 +294,9 @@ export class ChatService {
       return textReply(stream, prefix + `${model} 暂时没有回应（${why}）。${mention ? '不会自动换人；去掉 @ 再发一次即可交给负责人。' : '请到「成员 → Key 与接入」检查 Key。'}`);
     }
     if (!stream) {
-      const j = (await res.json()) as { choices?: Array<{ message?: { content?: unknown } }> };
+      const j = (await res.json()) as { choices?: Array<{ message?: { content?: unknown } }>; usage?: { total_tokens?: unknown } };
+      const total = j.usage?.total_tokens;
+      if (!this.d.upstreamModel && typeof total === 'number' && Number.isFinite(total) && total > 0) this.d.onTokens?.(model, Math.floor(total));
       const msg = j.choices?.[0]?.message;
       if (msg && typeof msg.content === 'string') msg.content = prefix + msg.content + footer;
       return { status: 200, headers: { 'content-type': 'application/json' }, json: j };
@@ -278,25 +307,42 @@ export class ChatService {
     const dec = new TextDecoder();
     let buf = '';
     let sentPrefix = false;
+    let sentFooter = false;
+    // 署名要放在第一个带 finish_reason 的分片之前：LobeHub 读到 finish_reason 就收尾，放在 [DONE] 前会被丢掉（#191 V3 复测）
+    const putFooter = (c: ReadableStreamDefaultController<Uint8Array>) => {
+      if (!footer || sentFooter) return;
+      sentFooter = true;
+      c.enqueue(chunk(model, footer));
+    };
     const out = new ReadableStream<Uint8Array>({
       async pull(c) {
         if (!sentPrefix) {
           sentPrefix = true;
           if (prefix) c.enqueue(chunk(model, prefix));
         }
-        const { done, value } = await reader.read();
-        if (done) {
-          if (buf.trim()) c.enqueue(enc.encode(buf.endsWith('\n\n') ? buf : buf + '\n\n'));
-          c.close();
-          return;
-        }
-        buf += dec.decode(value, { stream: true });
-        let i: number;
-        while ((i = buf.indexOf('\n\n')) >= 0) {
-          const event = buf.slice(0, i + 2);
-          buf = buf.slice(i + 2);
-          if (/^data:\s*\[DONE\]/m.test(event) && footer) c.enqueue(chunk(model, footer));
-          c.enqueue(enc.encode(event));
+        // 一次 pull 必须至少放出一个分片：读到半个事件时继续读，否则流会停住（#191）
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) {
+            if (buf.trim()) {
+              if (isFinishEvent(buf) || /^data:\s*\[DONE\]/m.test(buf)) putFooter(c);
+              c.enqueue(enc.encode(buf.endsWith('\n\n') ? buf : buf + '\n\n'));
+            }
+            putFooter(c);
+            c.close();
+            return;
+          }
+          let emitted = false;
+          buf += dec.decode(value, { stream: true });
+          let i: number;
+          while ((i = buf.indexOf('\n\n')) >= 0) {
+            const event = buf.slice(0, i + 2);
+            buf = buf.slice(i + 2);
+            if (isFinishEvent(event) || /^data:\s*\[DONE\]/m.test(event)) putFooter(c);
+            c.enqueue(enc.encode(event));
+            emitted = true;
+          }
+          if (emitted) return;
         }
       },
       cancel() {

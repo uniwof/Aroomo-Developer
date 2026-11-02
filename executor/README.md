@@ -26,7 +26,7 @@
 powershell -ExecutionPolicy Bypass -File executor\scripts\install-windows.ps1
 ```
 
-它会检查 Node.js、构建、生成配置、让你安全输入令牌（不显示，保存为只有你可读的 device-token）、注册登录后自启。加 `-NoAutostart` 不注册自启。下面是等价的手动步骤：
+它会检查 Node.js、构建、生成配置、让你安全输入令牌（不显示，保存为只有你可读的 device-token）、注册登录后自启。加 `-NoAutostart` 不注册自启；默认还会注册「Aroomo Executor Update」，每天 04:00 自动 `git pull`，有新版本才重建并重启（失败回到旧版本），不要自动更新加 `-NoAutoUpdate`。手动更新：`powershell -ExecutionPolicy Bypass -File executor\scripts\update-windows.ps1`。下面是等价的手动步骤：
 
 ```powershell
 # 1. 构建
@@ -80,6 +80,7 @@ Register-ScheduledTask -TaskName "Aroomo Executor" -Action $act -Trigger $trg -S
 | `init` | 生成默认配置（白名单为空） |
 | `check` | 检查配置和令牌是否就绪（不显示令牌） |
 | `status` | 检查配置、令牌并试连 Core |
+| `doctor` | 逐项排查（Node、令牌、白名单、Core、浏览器），每项给下一步 |
 | `allow <网站>` / `disallow <网站>` | 加入 / 移除白名单（接受主机名、`*.域名` 或完整网址），不用手改 JSON |
 | `sites` | 列出白名单 |
 | `check-url <网址>` | 看某个网址是否允许 |

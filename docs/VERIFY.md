@@ -8,8 +8,8 @@
 | # | 验证什么 | 通过标准 | 状态 | 证据 / 结论 |
 | --- | --- | --- | --- | --- |
 | V1 | 自托管版有智能体群组、任务、外部智能体、执行设备，不需付费 Workspace | 四项都能在自托管版里打开 | 静态通过（待界面实测） | 镜像内有对应模块：群组 `builtin-tool-group-management` / CLI `lh agent-group`；任务 `builtin-tool-task` / `lh task`；外部智能体 `heterogeneous-agents`、`builtin-tool-claude-code` / `lh hetero`；执行设备 `device-gateway-client`、`builtin-tool-remote-device` / `lh connect`、`lh device`。是否被付费开关挡住要在界面里打开确认 |
-| V2 | 群组里各成员保持自己的模型（issue 18246） | 3 个成员用 3 个不同 Core 别名，请求日志里也是 3 个不同模型 | 待测 | 需 B4 成员别名或先用 3 个现有 LiteLLM 模型名；看 Core /v1 请求日志的 model 字段 |
-| V3 | 群组里 @某成员只有它答；不 @ 由监督者分派（D31） | 两种情况都符合 | 待测 | |
+| V2 | 群组里各成员保持自己的模型（issue 18246） | 3 个成员用 3 个不同 Core 别名，请求日志里也是 3 个不同模型 | Core 层通过；群组界面未证 | 2026-10-31 实测。①LobeHub API 密钥（保险箱「LobeHub API Key (aroomo-cli)」，经一次性填写页直填服务器 `/opt/aroomo/deploy/.lobehub-cli-key`，600，未经沙盒/聊天）能用：Core 容器内 `GET http://lobe:3210/api/v1/users/me` 200、tRPC `user.getUserState`（X-API-Key）200、不带密钥 401；官方 CLI `lh whoami` / `agent list` / `agent create` ×3 / `agent-group create` / `add-agents` 全部成功，建成群组「Aroomo M1 验收群」cg_ub49GudewEGN（成员 gpt-oss-20b→aroomo/openai-gpt-oss-20b、groq-oss120b→aroomo/groq-openai-gpt-oss-120b、gemini-38flash→aroomo/gemini-gemini-3-8-flash，Supervisor 自动建，模型 aroomo）。②Core /v1 三个成员别名各自到 LiteLLM 的不同模型：响应 model 字段 openai/gpt-oss-20b、groq/openai/gpt-oss-120b，gemini/gemini-3.8-flash 已到达 Google 但免费额度当天用完（429，每天 20 次）。③群组界面里成员智能体没有被单独调用：LobeHub 监督者（模型 aroomo）把所有发言都交给 Core，一个「主管」气泡回答，所以 issue 18246 的「各成员自己的模型」在界面里未证 |
+| V3 | 群组里 @某成员只有它答；不 @ 由监督者分派（D31） | 两种情况都符合 | **通过**（2026-10-31 复测，D247） | 群组「Aroomo M1 验收群」新话题 tpc_qeCewSBEOUGA：不 @「你好，用一句话说你是谁。」→ 回答末行「— gemini/gemini-3.5-flash-lite（负责人）」，LiteLLM 日志只有负责人一次调用（约 2.3 万 token，成功）；「@gemini-31lite 用一句话说你是谁。」→ 末行「— gemini/gemini-3.1-flash-lite」，日志只有该成员一次调用（约 2.3 万 token，成功），负责人未介入。做法：①只改 LobeHub 设置不可行（2.2.20 主持人无系统提示词 / 智能体模式 / 历史条数开关，技能已是 0/8）；②负责人换成免费大额度的 Gemini 3.5 Flash-Lite，加成员 Gemini 3.1 Flash-Lite（别名 gemini-35lite、gemini-31lite，同一 Gemini Key）；③修 Core 流式：署名原在 finish_reason 之后被 LobeHub 丢掉、无文字分片让流停住（#199 / PR #200，已部署）。限制：Groq 免费档每分钟 8000 token，装不下群组一次约 2.2 万 token，@groq-oss120b 仍回「暂时没有回应」（Core 直调正常）；气泡标签仍是「主管」，谁答的看末行署名 |
 | V4 | 任务定时触发并调用 Core MCP 的 create_task | 定时任务出现在 Core 任务队列 | 待测（依赖后台线 Core /mcp 与任务队列） | |
 | V5 | 外部智能体（Claude Code 或 Hark）能作为成员接入 | 群组里能被分派任务 | 待测 | 官方 `lh hetero` 支持 Claude Code、Codex 等 CLI |
 | V6 | 智能体头像接受外部图片地址（Core 生成的 SVG） | 能显示且能刷新 | 待测 | |
@@ -26,9 +26,18 @@
 
 LobeHub 2.2.20 官方 FEATURE_FLAGS 里与语音相关的只有 `speech_to_text`、`voice_dictation`，服务器版已关（独立版早已关）。没有朗读（TTS）开关；LobeHub 里不填任何供应商 Key，OpenAI 朗读调用不通，但浏览器内置朗读入口仍可能显示——按 D190 不再用注入隐藏。
 
+## 2026-10-31 实测小结（#191）
+
+- 通过：LobeHub API 密钥可从 Core 与命令行调用；Core 的 @ 点名 / 不 @ 交负责人路由正确，群组界面的请求也确实经过 Core。
+- 未通过：群组界面里看不到成员的回答。原因是免费额度装不下：LobeHub 群组一次请求约 2.2 万 token，Groq 免费档每分钟只给 8000；Gemini 3.8 Flash 免费档每天 20 次，当天已用完。
+- 复测（同日晚）：方案③（只改设置）在 2.2.20 无对应开关；用方案①换免费大额度 Gemini Flash-Lite 当负责人和成员，V3 通过（见上表，D247）。方案②（Core 裁剪长提示）未做，Groq 成员在群组里仍答不出。
+- 不改用 Open WebUI：失败在模型额度，不在 LobeHub 群组本身；换模型后 V3 通过。
+
 ## 结论（暂定）
 
 - V8、V9 不阻塞；V9 去掉了对 ParadeDB（AGPL）的需要，不必再问所有者 ParadeDB 例外。
 - V1 静态看齐全；V1 界面实测与 V2、V3 完成后在 DECISIONS 记最终结论（LobeHub 或 Open WebUI）。
 
 - V1–V3 自动脚本：scripts/verify-d189.mjs（只读 GET）。无 LOBE_URL/LOBE_TOKEN 时 V1–V3 记「待测」并以退出码 2 结束，绝不当作通过；V3 为对话行为，需 CI 假模型界面测试。结论待全部实测后写入 DECISIONS。
+
+- V8 同步脚本：scripts/lobe-sync.mjs（官方 CLI lh，环境变量 LOBEHUB_SERVER + LOBEHUB_CLI_API_KEY，不打印）。lh 能 agent create / agent-group create / add-agents；设置群组负责人（supervisor）没有 CLI 参数，需在 LobeHub 群组设置里选一次。Core /v1 目前只露出 aroomo 一个模型，@ 点名与负责人兜底由 Core 路由，所以 V3 现状是「一个 aroomo 智能体内 @ 成员→成员答，不 @→负责人答」；成员别名（aroomo/<名字>）等后台线露出后脚本自动改用。待 V2 令牌实测。

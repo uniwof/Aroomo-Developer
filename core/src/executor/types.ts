@@ -11,6 +11,8 @@ export interface ExecutorRecord {
   platform: string;
   version: string;
   adapters: string[];
+  /** 执行员上报的本机白名单指纹（没报为 null） */
+  allowlistHash: string | null;
   createdAt: Date;
   lastSeenAt: Date;
 }
@@ -106,6 +108,11 @@ export interface ExecutorStore {
     error: string | null,
     now: Date,
   ): Promise<TaskRecord | null>;
+  /**
+   * 全用户清扫（定时任务用）：租约过期的 running 退回 queued（已请求取消的变 cancelled）；
+   * 创建早于 queuedBefore 仍在 queued 的置 failed（没人领取）。返回两类各多少条。
+   */
+  sweep(now: Date, queuedBefore: Date): Promise<{ requeued: number; expired: number }>;
   /** 所有者取消：queued 直接变 cancelled；running 标记 cancel_requested */
   cancel(userId: string, id: string, now: Date): Promise<TaskRecord | null>;
 }

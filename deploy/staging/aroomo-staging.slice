@@ -1,0 +1,13 @@
+# staging 所有容器的总内存上限（工单 #170）。安装：sudo cp 到 /etc/systemd/system/ 后 daemon-reload。
+# compose.staging.yml 里每个服务 cgroup_parent: aroomo-staging.slice。
+# 4 GB 机器：生产约 2 GB；staging 超过 MemoryHigh 先被回收/换出，超过 MemoryMax 由内核在切片内 OOM，不波及生产。
+[Unit]
+Description=Aroomo staging containers (memory cap)
+Before=slices.target
+
+[Slice]
+MemoryAccounting=yes
+MemoryHigh=1100M
+MemoryMax=1400M
+CPUWeight=50
+IOWeight=50

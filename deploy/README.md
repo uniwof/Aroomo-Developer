@@ -16,6 +16,8 @@
 | `litellm/config.yaml` | LiteLLM 配置（不含模型和 Key） |
 | `lobe/` | LobeHub 对象存储桶初始化 |
 | `backup/` | 备份 sidecar / 恢复镜像（PostgreSQL 17 客户端 + age + rclone + zstd + jq） |
+| `gatus/` | Gatus 健康检查配置文件 (`config.yaml`) |
+| `monitoring.yml` | 监控套件叠加 Compose (Gatus + Beszel) |
 | `test/e2e.yml` | 仅测试用：备份端到端测试接入测试 S3 目标的网络 |
 
 ## 服务与镜像（2026-10-27 核实）
@@ -31,6 +33,8 @@
 | gateway（profile `agent-gateway`） | `ghcr.io/lobehub/lobehub-gateway:0.3.2` | 可选，P0 默认关闭 |
 | cloudflared（profile `tunnel`） | `cloudflare/cloudflared:2026.10.5` | 服务器对外通道 |
 | backup（profile `backup`） | 本仓库 `deploy/backup/` 构建（`postgres:17.11-alpine3.24` + Alpine 的 age、rclone） | 备份到 AWS 之外 |
+| gatus（profile `monitoring`） | `twinproduction/gatus:v5.16.0` | 自动化健康检查 |
+| beszel / beszel-agent（profile `monitoring`） | `henrygf/beszel:v0.10.0` / `henrygf/beszel-agent:v0.10.0` | 资源与 Docker 监控 |
 
 以上镜像都有 linux/amd64 与 linux/arm64。
 
@@ -61,6 +65,10 @@ AROOMO_TIER=standard scripts/compose.sh config   # 指定档位并查看合并�
 ## 备份与恢复（公钥加密）
 
 见 [docs/ops/BACKUP.md](../docs/ops/BACKUP.md)。要点：目标为 AWS 之外的 S3 兼容存储（R2 / B2）；每库 `pg_dump` + 对象存储 + 配置 + `.env`，整个包用主密钥的公钥（age）加密，服务器上没有私钥；恢复用 `restore` 服务，需 `--yes-overwrite-database` 和临时提供的主密钥；演练用 `scripts/restore-drill.sh`。
+
+## 资源与健康监控（Gatus & Beszel）
+
+见 [docs/ops/MONITORING.md](../docs/ops/MONITORING.md)。要点：默认不对公网暴露任何端口，需使用 Cloudflare Tunnel + Cloudflare Access 控制登录；通过 `scripts/deploy-monitoring.sh` 手动部署或管理。
 
 ## 已验证 / 尚未验证
 

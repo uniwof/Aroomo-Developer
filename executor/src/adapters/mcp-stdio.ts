@@ -8,7 +8,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { DriverError } from '../ports/driver.js';
 
 export interface McpToolResult {
-  content?: { type: string; text?: string }[];
+  content?: { type: string; text?: string; data?: string; mimeType?: string }[];
   isError?: boolean;
 }
 

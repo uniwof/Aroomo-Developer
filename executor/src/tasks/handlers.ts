@@ -9,6 +9,12 @@ import { handleBlockers, safeGoto, secretFields, TaskFailed, type TaskHandler } 
 const LOGIN_FIELDS = ['username', 'email', 'phone', 'password'];
 const SIGNUP_FIELDS = ['username', 'email', 'phone', 'password', 'nickname'];
 
+/** 做完后让页面自己说结果，避免「点了按钮就算成功」；回答不明确时不当成失败 */
+function failedReply(reply: string): string | null {
+  const m = reply.trim().match(/^失败[:：]?\s*(.*)$/s);
+  return m ? (m[1] ?? '').slice(0, 120) || '页面没有说明原因' : null;
+}
+
 export const checkin: TaskHandler = async (ctx, s) => {
   await ctx.progress('open', '打开网站');
   await safeGoto(ctx, s, ctx.task.site);
@@ -28,6 +34,15 @@ export const checkin: TaskHandler = async (ctx, s) => {
   await ctx.progress('act', '签到');
   const said = await s.act(ctx.task.instruction ?? '找到签到按钮并点击；如果今天已签到，说明已签到');
   await handleBlockers(ctx, s);
+  const verdict = await s.act('判断签到结果，只回答「已签到」「今天已签到」「需要登录」「失败：原因」其中之一');
+  if (verdict.includes('需要登录')) {
+    await ctx.takeover('login_failed', '签到时发现还没登录，请在电脑浏览器里登录后点「我已处理」', await s.screenshot());
+    await handleBlockers(ctx, s);
+    const again = await s.act(ctx.task.instruction ?? '找到签到按钮并点击；如果今天已签到，说明已签到');
+    return { summary: `签到完成：${again}`, screenshot: await s.screenshot() };
+  }
+  const why = failedReply(verdict);
+  if (why) throw new TaskFailed('CHECKIN_FAILED', `签到没有成功：${why}`);
   const shot = await s.screenshot();
   return { summary: `签到完成：${said}`, screenshot: shot };
 };
@@ -60,6 +75,13 @@ export const signup: TaskHandler = async (ctx, s) => {
   ctx.throwIfCancelled();
   const said = await s.act(ctx.task.instruction ?? '填好其余必填项，勾选必要的同意项，点击注册');
   await handleBlockers(ctx, s);
+  const verdict = await s.act('判断注册结果，只回答「成功」「需要验证邮件或手机」「失败：原因」其中之一');
+  if (/验证邮件|验证邮箱|邮箱验证|手机验证|短信/.test(verdict)) {
+    await ctx.takeover('2fa', '注册需要验证邮件或手机，请在电脑上完成验证后点「我已处理」', await s.screenshot());
+  } else {
+    const why = failedReply(verdict);
+    if (why) throw new TaskFailed('SIGNUP_FAILED', `注册没有成功：${why}`);
+  }
   const tag = ctx.task.options?.markDisposable ? '（已按「封号即丢弃」登记）' : '';
   return { summary: `注册完成${tag}：${said}`, screenshot: await s.screenshot() };
 };

@@ -11,10 +11,11 @@ import type { AuditFn } from '../audit/types.js';
 import { scopeOf } from '../auth/plugin.js';
 import type { Principal } from '../auth/tokens.js';
 import { HttpError } from '../http/errors.js';
-import { type ExecutorService, taskJson } from '../executor/service.js';
-import { TASK_KINDS } from '../executor/types.js';
 import type { LibraryService } from '../library/service.js';
 import { LIBRARY_KINDS, type LibraryItem, type LibraryKind } from '../library/types.js';
+import type { GatewayService } from '../gateway/service.js';
+import { type ExecutorService, taskJson } from '../executor/service.js';
+import { TASK_KINDS } from '../executor/types.js';
 import type { PubMemService } from '../pubmem/service.js';
 
 export const MCP_PROTOCOL = '2025-03-26';
@@ -44,19 +45,24 @@ interface RpcReq {
 const str = (v: unknown, max = 2000): string | undefined => (typeof v === 'string' && v.length <= max ? v : undefined);
 const line = (i: LibraryItem) => `- [${i.kind}] ${i.title}${i.url ? ` ${i.url}` : ''}${i.tags.length ? ` #${i.tags.join(' #')}` : ''}（id: ${i.id}）${i.body ? `\n  ${i.body.replace(/\s+/g, ' ').slice(0, 160)}` : ''}`;
 
-/** 北京时间的日期（定时签到「同 kind+site+当天」去重用） */
+/** 北京时间的日期（签到去重用） */
 const cstDay = (d: Date) => new Date(d.getTime() + 8 * 3600_000).toISOString().slice(0, 10);
-
-function taskLine(t: ReturnType<typeof taskJson>): string {
+const taskLine = (t: ReturnType<typeof taskJson>): string => {
   const tail = t.resultSummary ? `：${t.resultSummary}` : t.resultError ? `（失败：${t.resultError}）` : t.lastMessage ? `（${t.lastMessage}）` : '';
   return `- ${t.kind} ${t.site} 状态 ${t.status}${tail}（id: ${t.id}）`;
-}
+};
+const textOf = (r: { content: { type: string; text?: string }[]; isError?: boolean }): string => {
+  const t = r.content.map((c) => (c.type === 'text' ? (c.text ?? '') : '')).join('\n');
+  if (r.isError) throw new HttpError(400, 'TOOL_ERROR', t || '任务工具失败');
+  return t;
+};
 
-function taskTools(ex: ExecutorService, now: () => Date): Tool[] {
+/** 任务工具：创建 / 取消一律经工具网关（同一套风险判断，只有一个把关点）。MCP 客户端令牌不能做重要确认，所以带凭据 / 登录 / 注册的任务在这里直接被拒。 */
+function taskTools(gw: GatewayService, ex: ExecutorService, now: () => Date): Tool[] {
   return [
     {
       name: 'create_task',
-      description: '派一个任务给用户电脑上的本机执行员（签到 checkin、登录 login、注册 signup、浏览 browse）。同一网站同一类型当天已派过就不重复派。secrets 只写保险箱条目 id 和字段名，不写值。',
+      description: '派一个任务给用户电脑上的本机执行员：签到 checkin、浏览 browse。登录 login、注册 signup、带保险箱凭据的任务需要所有者本人在手机 / 控制台确认，不能在这里创建。签到同一网站当天只派一次。secrets 只写条目 id 和字段名。',
       scope: 'tasks:create',
       inputSchema: {
         type: 'object',
@@ -72,22 +78,12 @@ function taskTools(ex: ExecutorService, now: () => Date): Tool[] {
       async run(ctx, a) {
         const kind = str(a.kind, 16) ?? '';
         const site = str(a.site, 2048) ?? '';
-        const today = cstDay(now());
-        const dup = (await ex.list(ctx.userId)).find((t) => t.kind === kind && t.site === site && t.status !== 'cancelled' && t.status !== 'failed' && cstDay(t.createdAt) === today);
-        if (dup) return `今天已经派过这个任务，不重复派。
-${taskLine(taskJson(dup))}`;
-        const secrets = Array.isArray(a.secrets)
-          ? a.secrets.flatMap((s) => {
-              const o = s as Json;
-              const secretId = str(o?.secretId, 64);
-              const field = str(o?.field, 64);
-              return secretId && field ? [{ secretId, field }] : [];
-            })
-          : [];
-        const options = a.options && typeof a.options === 'object' && !Array.isArray(a.options) ? (a.options as Record<string, unknown>) : undefined;
-        const t = await ex.create(ctx.userId, { kind, site, ...(str(a.instruction, 4000) ? { instruction: str(a.instruction, 4000)! } : {}), secrets, ...(options ? { options } : {}) }, ctx.audit);
-        return `已派给本机执行员。
-${taskLine(taskJson(t))}`;
+        if (kind === 'checkin') {
+          const today = cstDay(now());
+          const dup = (await ex.list(ctx.userId)).find((t) => t.kind === kind && t.site === site && t.status !== 'cancelled' && t.status !== 'failed' && cstDay(t.createdAt) === today);
+          if (dup) return `今天已经派过这个签到，不重复派。\n${taskLine(taskJson(dup))}`;
+        }
+        return textOf(await gw.callTask(ctx.userId, 'browser_task_create', a, ctx.audit));
       },
     },
     {
@@ -116,15 +112,43 @@ ${taskLine(taskJson(t))}`;
       scope: 'tasks:create',
       inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
       async run(ctx, a) {
-        return taskLine(taskJson(await ex.cancel(ctx.userId, str(a.id, 64) ?? '', ctx.audit)));
+        return textOf(await gw.callTask(ctx.userId, 'browser_task_cancel', { taskId: str(a.id, 64) ?? '' }, ctx.audit));
       },
     },
   ];
 }
 
-export function buildTools(lib: LibraryService, mem: PubMemService, ex?: ExecutorService, now: () => Date = () => new Date()): Tool[] {
+export function buildTools(lib: LibraryService, mem: PubMemService, gw?: GatewayService, ex?: ExecutorService, now: () => Date = () => new Date()): Tool[] {
+  const gwTools: Tool[] = gw
+    ? [
+        {
+          name: 'list_tools',
+          description: '列出工具网关里可以直接调用的外部工具（只含读取类，如 read_webpage）。',
+          scope: 'tools:list',
+          inputSchema: { type: 'object', properties: {} },
+          async run(ctx) {
+            const t = await gw.listMcpReadable(ctx.userId);
+            return t.length ? t.map((x) => `- ${x.name}：${x.description}`).join('\n') : '暂时没有可用的外部工具。';
+          },
+        },
+        {
+          name: 'call_tool',
+          description: '调用工具网关里的一个读取类外部工具（先用 list_tools 看有哪些）。花钱或不可逆的工具不能在这里调用。',
+          scope: 'tools:call',
+          inputSchema: { type: 'object', properties: { tool: { type: 'string' }, args: { type: 'object' } }, required: ['tool'] },
+          async run(ctx, a) {
+            const args = a.args && typeof a.args === 'object' && !Array.isArray(a.args) ? (a.args as Record<string, unknown>) : {};
+            const r = await gw.callRead(ctx.userId, str(a.tool, 64) ?? '', args, ctx.audit);
+            const t = r.content.map((c) => (c.type === 'text' ? c.text : '')).join('\n');
+            if (r.isError) throw new HttpError(502, 'TOOL_ERROR', t || '工具调用失败');
+            return t;
+          },
+        },
+      ]
+    : [];
   return [
-    ...(ex ? taskTools(ex, now) : []),
+    ...gwTools,
+    ...(gw && ex ? taskTools(gw, ex, now) : []),
     {
       name: 'search_library',
       description: '在资源库里按关键词搜索文章、技能、方法、素材、工具线索、链接和点子。多个词要同时命中。',
@@ -207,8 +231,8 @@ const hasScope = (p: Principal, scope: string): boolean => (p.type === 'client' 
 const ok = (id: RpcReq['id'], result: unknown) => ({ jsonrpc: '2.0', id: id ?? null, result });
 const fail = (id: RpcReq['id'], code: number, message: string) => ({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
 
-export function registerMcpRoutes(app: FastifyInstance, lib: LibraryService, mem: PubMemService, ex?: ExecutorService, now: () => Date = () => new Date()): void {
-  const tools = buildTools(lib, mem, ex, now);
+export function registerMcpRoutes(app: FastifyInstance, lib: LibraryService, mem: PubMemService, gw?: GatewayService, ex?: ExecutorService, now: () => Date = () => new Date()): void {
+  const tools = buildTools(lib, mem, gw, ex, now);
   const byName = new Map(tools.map((t) => [t.name, t]));
 
   async function handle(req: RpcReq, p: Principal, userId: string, audit: AuditFn): Promise<unknown | null> {

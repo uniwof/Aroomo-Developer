@@ -85,7 +85,7 @@ export class ModelPlanner implements Planner {
 
   async #ask(input: PlanInput): Promise<PlanStep[]> {
     const snap = input.snapshot.slice(0, this.#o.maxSnapshotChars ?? 12_000);
-    const user = [`动作说明：${input.instruction}`, `可填字段名：${input.availableFields.join(', ') || '（无）'}`, `第 ${input.round + 1} 轮`, '页面快照：', snap].join('\n');
+    const user = [`动作说明：${input.instruction}`, `可填字段名：${input.availableFields.join(', ') || '（无）'}`, `第 ${input.round + 1} 轮`, ...(input.history?.length ? ['前几轮已做：' + input.history.slice(-10).join('；').slice(0, 600)] : []), '页面快照：', snap].join('\n');
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), this.#o.timeoutMs ?? 45_000);
     try {

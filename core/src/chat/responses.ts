@@ -100,7 +100,9 @@ export function chatToResponses(res: ChatResult, model: string): ChatResult {
   let started = false;
   let finished = false;
   let usage: Json | undefined;
-  const handleEvent = (event: string, c: ReadableStreamDefaultController<Uint8Array>) => {
+  /** 处理一个 SSE 事件；放出了 Responses 事件返回 true */
+  const handleEvent = (event: string, c: ReadableStreamDefaultController<Uint8Array>): boolean => {
+    let emitted = false;
     for (const line of event.split('\n')) {
       const m = /^data:\s?(.*)$/.exec(line);
       if (!m) continue;
@@ -112,6 +114,7 @@ export function chatToResponses(res: ChatResult, model: string): ChatResult {
         if (typeof d === 'string' && d) {
           text += d;
           c.enqueue(ev('response.output_text.delta', { item_id: itemId, output_index: 0, content_index: 0, delta: d }));
+          emitted = true;
         }
         if (j.usage) {
           usage = { input_tokens: j.usage.prompt_tokens ?? 0, output_tokens: j.usage.completion_tokens ?? 0, total_tokens: j.usage.total_tokens ?? 0 };
@@ -120,6 +123,7 @@ export function chatToResponses(res: ChatResult, model: string): ChatResult {
         // 不是 JSON 的行：忽略
       }
     }
+    return emitted;
   };
   const finish = (c: ReadableStreamDefaultController<Uint8Array>) => {
     if (finished) return;
@@ -140,19 +144,24 @@ export function chatToResponses(res: ChatResult, model: string): ChatResult {
         c.enqueue(ev('response.output_item.added', { output_index: 0, item: { id: itemId, type: 'message', role: 'assistant', status: 'in_progress', content: [] } }));
         return;
       }
-      const { done, value } = await reader.read();
-      if (done) {
-        if (buf.trim()) handleEvent(buf, c);
-        buf = '';
-        finish(c);
-        return;
-      }
-      buf += dec.decode(value, { stream: true });
-      let i: number;
-      while ((i = buf.indexOf('\n\n')) >= 0) {
-        const event = buf.slice(0, i);
-        buf = buf.slice(i + 2);
-        handleEvent(event, c);
+      // 一次 pull 必须至少放出一个事件：只读到结束分片、用量分片这类没有文字的分片时继续读，否则流会停住（#191）
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) {
+          if (buf.trim()) handleEvent(buf, c);
+          buf = '';
+          finish(c);
+          return;
+        }
+        let emitted = false;
+        buf += dec.decode(value, { stream: true });
+        let i: number;
+        while ((i = buf.indexOf('\n\n')) >= 0) {
+          const event = buf.slice(0, i);
+          buf = buf.slice(i + 2);
+          if (handleEvent(event, c)) emitted = true;
+        }
+        if (emitted) return;
       }
     },
     cancel() {

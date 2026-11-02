@@ -45,7 +45,7 @@ class PlannedSession implements BrowserSession {
       const snapshot = await this.drv.snapshot();
       const blocked = detectBlockerInSnapshot(snapshot);
       if (blocked) return `需要你处理：${blocked.note}`;
-      const steps = validatePlan(await this.planner.plan({ instruction, snapshot: this.redact(snapshot), availableFields: [...this.#pending.keys()], round }));
+      const steps = validatePlan(await this.planner.plan({ instruction, snapshot: this.redact(snapshot), availableFields: [...this.#pending.keys()], round, history: [...done] }));
       let acted = false;
       for (const s of steps) {
         if (s.op === 'done') return done.length ? done.join('；') : (s.note ?? '完成');
@@ -84,6 +84,10 @@ class PlannedSession implements BrowserSession {
     const title = await this.drv.title().catch(() => '');
     const summary = `页面 ${url}${title ? `（${title.slice(0, 60)}）` : ''}`;
     return { summary: this.redact(summary), width: info.width, height: info.height, ...('sha256' in info && info.sha256 ? { sha256: info.sha256 } : {}) };
+  }
+
+  async handOff(): Promise<boolean> {
+    return this.drv.handOff();
   }
 
   async close() {

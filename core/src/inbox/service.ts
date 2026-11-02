@@ -66,8 +66,8 @@ export class InboxService {
    * 把与某个对象相关的未处理条目标记为已处理（例如候选在成员页直接入职后，收件箱里的候选卡片也随之处理）。
    * 返回处理掉的条数。
    */
-  async resolveRelated(kind: string, related: InboxRef, status: 'done' | 'dismissed', audit: AuditFn, resolvedAction?: string): Promise<number> {
-    const open = (await this.store.list({ status: 'open' })).filter((i) => i.kind === kind && i.related?.type === related.type && i.related.id === related.id);
+  async resolveRelated(kind: string, related: InboxRef, status: 'done' | 'dismissed', audit: AuditFn, resolvedAction?: string, userId?: string): Promise<number> {
+    const open = (await this.store.list({ status: 'open', ...(userId ? { userId } : {}) })).filter((i) => i.kind === kind && i.related?.type === related.type && i.related.id === related.id);
     let n = 0;
     for (const it of open) {
       const done = await this.store.resolveIfOpen(it.id, { status, resolvedAt: this.now(), ...(resolvedAction ? { resolvedAction } : {}) });
