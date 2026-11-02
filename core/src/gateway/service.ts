@@ -138,6 +138,26 @@ export class GatewayService {
     return this.call(userId, tool, args, MCP_READ_ONLY_CTX, audit);
   }
 
+  /** 给 /mcp 的任务工具用：只放行本机执行员的 browser_task_*，走同一套风险判断；带凭据 / 登录 / 注册 = danger，MCP 上下文不能确认 → 403 且不建任务。 */
+  async callTask(userId: string, tool: string, args: Record<string, unknown>, audit: AuditFn): Promise<ToolResult> {
+    const adapter = (await this.#registry(userId)).find(tool);
+    if ((tool !== 'browser_task_create' && tool !== 'browser_task_cancel') || !(adapter instanceof ExecutorAgentAdapter)) {
+      await audit('gateway.call', { type: 'tool', id: tool.slice(0, 64) }, 'denied', 'mcp: not_task_tool');
+      throw new HttpError(403, 'FORBIDDEN', MCP_DENIED_MSG);
+    }
+    // 浏览任务的执行员保护尚未证明，MCP 这条路只放行签到
+    if (tool === 'browser_task_create' && args.kind !== 'checkin') {
+      await audit('gateway.call', { type: 'tool', id: tool }, 'denied', 'mcp: kind_not_allowed');
+      throw new HttpError(403, 'FORBIDDEN', '这里只能派签到任务；登录 / 注册 / 浏览 / 带凭据的任务请在手机或控制台发起。');
+    }
+    // 签到只许带 kind 和 site：instruction / options / secrets 等一律拒（防提示注入借「签到」夹带指令）
+    if (tool === 'browser_task_create' && Object.keys(args).some((k) => k !== 'kind' && k !== 'site')) {
+      await audit('gateway.call', { type: 'tool', id: tool }, 'denied', 'mcp: field_not_allowed');
+      throw new HttpError(403, 'FORBIDDEN', '这里派签到任务只能带 kind 和 site；其他字段请在手机或控制台发起。');
+    }
+    return this.call(userId, tool, args, MCP_READ_ONLY_CTX, audit);
+  }
+
   // ---- HTTP 工具登记 ----
   async listHttpTools(userId: string): Promise<HttpToolDef[]> {
     return this.#defs(userId);

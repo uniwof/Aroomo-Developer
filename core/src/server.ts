@@ -260,7 +260,7 @@ export function buildServer(
   registerPubMemRoutes(app, pubMemService);
   const libraryService = new LibraryService(deps.library, deps.now);
   registerLibraryRoutes(app, libraryService);
-  registerMcpRoutes(app, libraryService, pubMemService, gatewayService);
+  registerMcpRoutes(app, libraryService, pubMemService, gatewayService, executorSvc, deps.now);
   registerAuditRoutes(app, deps.auditLog);
   registerMcpConfigRoutes(app);
   registerCapabilityRoutes(app, new CapabilityService(), (u) => new TrialService(scopedSettings(deps.settings, u), deps.now));

@@ -3,7 +3,7 @@
  */
 
 /** 目前可授予的范围。tools:call = 调用 MCP 白名单里的内置只读工具（M2 只有 read_webpage）。扩大白名单不能让已发的授权自动扩大：要么改成 tools:call:<id>，要么要求重新授权。 */
-export const CLIENT_SCOPES = ['bookmarks:read', 'library:read', 'library:write', 'memory:read', 'brief:read', 'tools:list', 'tools:call', 'models:chat', 'tasks:pull', 'tasks:secret'] as const;
+export const CLIENT_SCOPES = ['bookmarks:read', 'library:read', 'library:write', 'memory:read', 'brief:read', 'tools:list', 'tools:call', 'models:chat', 'tasks:pull', 'tasks:secret', 'tasks:create', 'tasks:read'] as const;
 export type ClientScope = (typeof CLIENT_SCOPES)[number];
 
 export interface ClientTokenRecord {
