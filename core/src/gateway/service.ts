@@ -30,7 +30,7 @@ export const confirmKindOf = (risk: ToolRisk): ConfirmKind | null => (risk === '
 const MCP_BUILTIN_READ: ReadonlySet<string> = new Set(['read_webpage']);
 const MCP_DENIED_MSG = '工具不存在或当前客户端不可用';
 /** MCP 路径的确认上下文：明确写出全部字段，什么都不能确认。 */
-const MCP_READ_ONLY_CTX: ConfirmCtx = Object.freeze({ actor: 'mcp', canConfirmImportant: false });
+export const MCP_READ_ONLY_CTX: ConfirmCtx = Object.freeze({ actor: 'mcp', canConfirmImportant: false });
 
 export class GatewayService {
   readonly #counter = new MemoryDayCounter();
