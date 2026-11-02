@@ -51,4 +51,12 @@ describe.each(rlsTargets)('RLS 资源库（$name）', (target) => {
     expect((await store.list(XIAO, { limit: 10 })).map((i) => i.title)).toEqual(['Xiao Copy']);
     expect((await store.list('owner', { limit: 10 })).map((i) => i.title)).toEqual(['Owner Private Note']);
   });
+
+  it('小号带 ON CONFLICT 插入所有者已存的链接：得到自己的新行，看不到所有者那一行', async () => {
+    const { store } = await seeded();
+    const r = await store.add(XIAO, item('Xiao Own', 'https://example.com/private'));
+    expect(r.existed).toBe(false);
+    expect(r.item.title).toBe('Xiao Own');
+    expect((await store.list(XIAO, { limit: 10 })).map((i) => i.title)).toEqual(['Xiao Own']);
+  });
 });
