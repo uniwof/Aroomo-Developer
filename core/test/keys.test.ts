@@ -362,11 +362,11 @@ for (const f of factories) {
         updatedAt: now,
       };
       await store.insert(rec);
-      expect(await store.get(rec.id)).toEqual(rec);
-      await store.update({ ...rec, name: 'n2', status: 'sync_failed' });
+      expect(await store.get('owner', rec.id)).toEqual(rec);
+      expect(await store.update('owner', { ...rec, name: 'n2', status: 'sync_failed' })).toBe(true);
       expect((await store.list()).map((r) => [r.name, r.status])).toEqual([['n2', 'sync_failed']]);
-      expect(await store.delete(rec.id)).toBe(true);
-      expect(await store.get(rec.id)).toBeNull();
+      expect(await store.delete('owner', rec.id)).toBe(true);
+      expect(await store.get('owner', rec.id)).toBeNull();
       if (db) {
         const { rows } = await db.query<{ column_name: string }>(
           `SELECT column_name FROM information_schema.columns WHERE table_name = 'provider_keys' AND table_schema = current_schema()`,
@@ -376,6 +376,32 @@ for (const f of factories) {
         expect(cols.some((c) => /api_key|secret|credential/.test(c))).toBe(false);
         await db.close();
       }
+    });
+
+    it('越权：小号 get / update / delete 所有者的 Key 都无效（api_base 不变），反向也一样', async () => {
+      const XIAO = '00000000-0000-4000-8000-00000000a11c';
+      const { store, db } = await f.make();
+      const now = new Date(Date.UTC(2026, 9, 27, 0, 0));
+      const mk = (id: string, userId?: string): KeyRecord => ({
+        id, name: id.slice(-4), sourceUrl: 'https://x.example', last4: 'abcd', model: 'openai/gpt', modelName: 'gpt',
+        apiBase: 'https://api.openai.com/v1', litellmModelId: `lm-${id}`, status: 'active', modelsSyncedAt: null,
+        createdAt: now, updatedAt: now, ...(userId ? { userId } : {}),
+      });
+      const own = mk('22222222-2222-4222-8222-222222222222');
+      const mine = mk('33333333-3333-4333-8333-333333333333', XIAO);
+      await store.insert(own);
+      await store.insert(mine);
+      expect(await store.get(XIAO, own.id)).toBeNull();
+      expect(await store.update(XIAO, { ...own, apiBase: 'https://evil.example', litellmModelId: 'lm-evil' })).toBe(false);
+      expect(await store.delete(XIAO, own.id)).toBe(false);
+      expect((await store.get('owner', own.id))?.apiBase).toBe('https://api.openai.com/v1');
+      expect((await store.get('owner', own.id))?.litellmModelId).toBe(`lm-${own.id}`);
+      expect(await store.get('owner', mine.id)).toBeNull();
+      expect(await store.update('owner', { ...mine, name: 'hijack' })).toBe(false);
+      expect(await store.delete('owner', mine.id)).toBe(false);
+      expect((await store.get(XIAO, mine.id))?.name).toBe(mine.name);
+      expect(await store.delete(XIAO, mine.id)).toBe(true);
+      await db?.close();
     });
   });
 }

@@ -1,7 +1,7 @@
 /** D206 RLS：provider_keys 表（A+）。 */
 import { afterAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/db.js';
-import { userScoped } from '../src/db/scope.js';
+import { systemScoped, userScoped } from '../src/db/scope.js';
 import { PgKeyStore } from '../src/keys/stores.js';
 import type { KeyRecord } from '../src/keys/types.js';
 import { rlsTargets } from './helpers/rls.js';
@@ -47,6 +47,29 @@ describe.each(rlsTargets)('RLS Key 元数据（$name）', (target) => {
     await expect(asXiao.query(`UPDATE provider_keys SET user_id='owner' WHERE id='${XIT}'`)).rejects.toThrow(/row-level security/);
     expect((await store.list(XIAO)).map((k) => k.id)).toEqual([XIT]);
     expect((await store.list()).map((k) => k.id)).toEqual([OWN]);
-    expect((await store.get(OWN))?.userId).toBeUndefined();
+    expect((await store.get('owner', OWN))?.userId).toBeUndefined();
+  });
+
+  it('小号 update 所有者那把 Key 的 api_base：影响 0 行，所有者的 api_base 不变；delete 返回 false', async () => {
+    const { store } = await seeded();
+    await store.insert(key(XIT, XIAO));
+    const own = (await store.get('owner', OWN))!;
+    expect(await store.get(XIAO, OWN)).toBeNull();
+    expect(await store.update(XIAO, { ...own, apiBase: 'https://evil.example' })).toBe(false);
+    expect(await store.delete(XIAO, OWN)).toBe(false);
+    expect((await store.get('owner', OWN))?.apiBase).toBeNull();
+    expect(await store.update('owner', { ...own, apiBase: 'https://evil.example' })).toBe(true);
+  });
+
+  it('系统范围只读：UPDATE / DELETE / INSERT 都被拒，所有者的 Key 不变', async () => {
+    const { db, store } = await seeded();
+    const sys = systemScoped(db);
+    expect((await sys.query('SELECT id FROM provider_keys')).rows).toHaveLength(1);
+    expect((await sys.query(`UPDATE provider_keys SET api_base='https://evil.example' WHERE id='${OWN}' RETURNING id`)).rows).toEqual([]);
+    expect((await sys.query(`DELETE FROM provider_keys WHERE id='${OWN}' RETURNING id`)).rows).toEqual([]);
+    await expect(
+      sys.query(`INSERT INTO provider_keys (id,name,source_url,last4,model,model_name,litellm_model_id,status,created_at,updated_at,user_id) VALUES ('00000000-0000-4000-8000-0000000000d4','nm','u','1234','m','m','lm-d4','active',now(),now(),'owner')`),
+    ).rejects.toThrow(/row-level security/);
+    expect((await store.get('owner', OWN))?.apiBase).toBeNull();
   });
 });
