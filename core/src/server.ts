@@ -19,6 +19,7 @@ import { registerInboxRoutes } from "./inbox/routes.js";
 import { InboxService } from "./inbox/service.js";
 import { LiteLLMAdmin } from "./keys/litellm.js";
 import { registerKeyRoutes } from "./keys/routes.js";
+import { upstreamNameFor } from "./keys/prefix.js";
 import { KeysService } from "./keys/service.js";
 import { registerMemberRoutes } from "./members/routes.js";
 import { MembersService } from "./members/service.js";
@@ -344,21 +345,38 @@ export function buildServer(
       ...(deps.chatFetch ? { fetchImpl: deps.chatFetch } : {}),
     }),
     cfg.chatToken,
+    // 账号走自己的客户端令牌（models:chat）：成员 / 负责人 / 规矩 / 上游前缀都是它自己的，看不到所有者的任何东西
+    {
+      verify: async (token) => {
+        const p = await clients.verify(token);
+        return p && p.scopes.has("models:chat") ? p.userId : null;
+      },
+      ctxFor: (userId) => ({
+        upstreamModel: upstreamNameFor(userId),
+        listMembers: () => deps.members.forUser(userId).listAll(),
+        lead: leadForUser(userId),
+        rules: async () => (await deps.pubmem.get(userId, "rules"))?.body ?? null,
+      }),
+    },
   );
   registerKeyRoutes(
     app,
     new KeysService(deps.keys, litellm, deps.now, confirm, {
       // 新 Key 的模型先进候选（名字 = LiteLLM 里对外的模型名），收件箱发「入职」卡片；同名成员已存在则只刷新模型事实
+      // 入职候选 / 成员联动目前只服务所有者；账号的 Key 带前缀，成员由账号自己在「成员」里手动添加
       afterCreate: async (rec, audit) => {
+        if (rec.userId) return;
         await candidates.propose(rec.modelName, audit);
       },
       afterReplace: async (rec) => {
+        if (rec.userId) return;
         await refreshModelCaps(deps.members, litellm, deps.now, [
           rec.modelName,
         ]);
       },
       // 这个模型已经没有任何 Key：停用对应成员（可以在成员页重新启用）
       afterDelete: async (rec, audit) => {
+        if (rec.userId) return;
         const same = (n: string) =>
           n.toLowerCase() === rec.modelName.toLowerCase();
         if ((await deps.keys.list()).some((k) => same(k.modelName))) return;

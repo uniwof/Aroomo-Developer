@@ -18,6 +18,7 @@ import type { AuditFn } from '../audit/types.js';
 import { type ConfirmCtx, ConfirmService, MemoryChallengeStore } from '../confirm/confirm.js';
 import { badRequest, HttpError, notFound } from '../http/errors.js';
 import { type LiteLLMAdmin, LiteLLMRejectedError, LiteLLMUnavailableError } from './litellm.js';
+import { upstreamNameFor } from './prefix.js';
 import type { KeyRecord, KeyStore } from './types.js';
 
 export interface CreateKeyInput {
@@ -85,20 +86,35 @@ export class KeysService {
     await this.confirm.require({ scope, kind: 'credential', title, consequences, confirmLabel: '确认', payload }, ctx, audit);
   }
 
+  /** 账号删自己的 Key：普通确认（账号做不了重要确认；这个 Key 只在它自己的前缀下） */
+  async #confirmOwn(scope: string, title: string, _c: string[], _p: unknown, ctx: ConfirmCtx, audit: AuditFn): Promise<void> {
+    await this.confirm.require({ scope, kind: 'normal', title }, ctx, audit);
+  }
+
   /** D73：主人手动新增 / 编辑 = 普通保存；其他发起方 = 涉及凭据的重要确认 */
-  async #confirmSave(scope: string, title: string, consequences: string[], payload: unknown, ctx: ConfirmCtx, audit: AuditFn): Promise<void> {
-    if (ctx.actor === 'owner') {
+  async #confirmSave(scope: string, title: string, consequences: string[], payload: unknown, ctx: ConfirmCtx, audit: AuditFn, owner = 'owner'): Promise<void> {
+    // 所有者本人，或账号本人在自己的数据范围内：普通保存（账号做不了重要确认，且这个 Key 只在它自己的前缀下可用）
+    if (ctx.actor === 'owner' || (owner !== 'owner' && ctx.actor === `user:${owner}`)) {
       await this.confirm.require({ scope, kind: 'normal', title }, ctx, audit);
       return;
     }
     await this.#confirmCredential(scope, title, consequences, payload, ctx, audit);
   }
 
-  list(): Promise<KeyRecord[]> {
-    return this.store.list();
+  /** scope 缺省 = 所有者；账号只列出自己的 */
+  list(scope = 'owner'): Promise<KeyRecord[]> {
+    return this.store.list(scope === 'owner' ? undefined : scope);
   }
 
-  async create(input: CreateKeyInput, ctx: ConfirmCtx, audit: AuditFn): Promise<KeyRecord> {
+  /** 别人的 Key 对你来说「不存在」：所有者看不到账号的，账号看不到所有者的和别的账号的（同一条 404，看不出存在） */
+  async #mine(id: string, scope: string): Promise<KeyRecord> {
+    const cur = await this.store.get(id);
+    if (!cur || (cur.userId ?? 'owner') !== scope) throw notFound('找不到这个 Key');
+    return cur;
+  }
+
+  async create(input: CreateKeyInput, ctx: ConfirmCtx, audit: AuditFn, scope = 'owner'): Promise<KeyRecord> {
+    const upstream = upstreamNameFor(scope);
     const name = input.name.trim();
     if (!name) throw badRequest('名称不能为空', 'INVALID_NAME');
     const apiKey = validateKey(input.apiKey);
@@ -109,6 +125,7 @@ export class KeysService {
       input,
       ctx,
       audit,
+      scope,
     );
     const id = randomUUID();
     const deploymentId = `aroomo-${randomUUID()}`;
@@ -116,7 +133,8 @@ export class KeysService {
     try {
       await this.litellm.addDeployment({
         id: deploymentId,
-        modelName,
+        // 账号的部署在 LiteLLM 里带 u<id> 前缀：只有 Core 按该账号路由时才叫得到，别的账号 / 所有者的请求不会落到它上面
+        modelName: upstream(modelName),
         model: input.model,
         apiKey,
         ...(input.apiBase ? { apiBase: input.apiBase } : {}),
@@ -129,6 +147,7 @@ export class KeysService {
     const now = this.now();
     const rec: KeyRecord = {
       id,
+      ...(scope !== 'owner' ? { userId: scope } : {}),
       name,
       sourceUrl: input.sourceUrl,
       last4: last4(apiKey),
@@ -159,9 +178,8 @@ export class KeysService {
     return synced;
   }
 
-  async update(id: string, patch: UpdateKeyInput, ctx: ConfirmCtx, audit: AuditFn): Promise<KeyRecord> {
-    const cur = await this.store.get(id);
-    if (!cur) throw notFound('找不到这个 Key');
+  async update(id: string, patch: UpdateKeyInput, ctx: ConfirmCtx, audit: AuditFn, scope = 'owner'): Promise<KeyRecord> {
+    const cur = await this.#mine(id, scope);
     if (patch.apiKey === undefined && (patch.apiBase !== undefined || patch.model !== undefined)) {
       throw badRequest('修改接口地址或模型时需要同时重新填写 Key（整条替换）', 'KEY_REQUIRED');
     }
@@ -189,12 +207,13 @@ export class KeysService {
       { id, ...patch },
       ctx,
       audit,
+      scope,
     );
     const newDeployment = `aroomo-${randomUUID()}`;
     try {
       await this.litellm.addDeployment({
         id: newDeployment,
-        modelName: cur.modelName,
+        modelName: upstreamNameFor(scope)(cur.modelName),
         model,
         apiKey,
         ...(apiBase ? { apiBase } : {}),
@@ -222,10 +241,10 @@ export class KeysService {
     return synced;
   }
 
-  async delete(id: string, ctx: ConfirmCtx, audit: AuditFn): Promise<void> {
-    const cur = await this.store.get(id);
-    if (!cur) throw notFound('找不到这个 Key');
-    await this.#confirmCredential(
+  async delete(id: string, ctx: ConfirmCtx, audit: AuditFn, scope = 'owner'): Promise<void> {
+    const cur = await this.#mine(id, scope);
+    const confirmDelete = scope !== 'owner' && ctx.actor === `user:${scope}` ? this.#confirmOwn.bind(this) : this.#confirmCredential.bind(this);
+    await confirmDelete(
       `keys:delete:${id}`,
       `删除 Key「${cur.name}」（末 4 位 ${cur.last4}）`,
       ['Key 会从模型网关里永久删除，不能恢复；要再用需要重新填写。', '正在用这个 Key 的成员会无法调用模型。'],

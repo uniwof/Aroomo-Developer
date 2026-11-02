@@ -4,7 +4,7 @@
  * 即使将来有人往记录里加了字段，也不会被带进响应。
  */
 import type { FastifyInstance } from 'fastify';
-import { confirmCtx, guard } from '../auth/plugin.js';
+import { confirmCtx, guard, scopeOf } from '../auth/plugin.js';
 import { type CreateKeyInput, keyJson, type KeysService, type UpdateKeyInput } from './service.js';
 
 const keyOut = {
@@ -30,16 +30,16 @@ export function registerKeyRoutes(app: FastifyInstance, svc: KeysService): void 
   app.get(
     '/api/keys',
     {
-      ...guard('keys:read'),
+      ...guard('keys:read', { user: true }),
       schema: { response: { 200: { type: 'object', properties: { keys: { type: 'array', items: keyOut } } } } },
     },
-    async () => ({ keys: (await svc.list()).map(keyJson) }),
+    async (req) => ({ keys: (await svc.list(scopeOf(req))).map(keyJson) }),
   );
 
   app.post<{ Body: CreateKeyInput & { confirmToken?: string } }>(
     '/api/keys',
     {
-      ...guard('keys:write'),
+      ...guard('keys:write', { user: true }),
       schema: {
         body: {
           type: 'object',
@@ -60,14 +60,14 @@ export function registerKeyRoutes(app: FastifyInstance, svc: KeysService): void 
     },
     async (req, reply) => {
       const { confirmToken: t, ...input } = req.body;
-      return reply.status(201).send({ key: keyJson(await svc.create(input, confirmCtx(req.principal!, t), req.audit)) });
+      return reply.status(201).send({ key: keyJson(await svc.create(input, confirmCtx(req.principal!, t), req.audit, scopeOf(req))) });
     },
   );
 
   app.patch<{ Params: { id: string }; Body: UpdateKeyInput & { confirmToken?: string } }>(
     '/api/keys/:id',
     {
-      ...guard('keys:write'),
+      ...guard('keys:write', { user: true }),
       schema: {
         params: idParam,
         body: {
@@ -88,18 +88,18 @@ export function registerKeyRoutes(app: FastifyInstance, svc: KeysService): void 
     },
     async (req) => {
       const { confirmToken: t, ...patch } = req.body;
-      return { key: keyJson(await svc.update(req.params.id, patch, confirmCtx(req.principal!, t), req.audit)) };
+      return { key: keyJson(await svc.update(req.params.id, patch, confirmCtx(req.principal!, t), req.audit, scopeOf(req))) };
     },
   );
 
   app.delete<{ Params: { id: string }; Body: { confirmToken?: string } | undefined }>(
     '/api/keys/:id',
     {
-      ...guard('keys:delete'),
+      ...guard('keys:delete', { user: true }),
       schema: { params: idParam, body: { type: ['object', 'null'], additionalProperties: false, properties: { confirmToken } } },
     },
     async (req, reply) => {
-      await svc.delete(req.params.id, confirmCtx(req.principal!, req.body?.confirmToken), req.audit);
+      await svc.delete(req.params.id, confirmCtx(req.principal!, req.body?.confirmToken), req.audit, scopeOf(req));
       return reply.status(204).send();
     },
   );
