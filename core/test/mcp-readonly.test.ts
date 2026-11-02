@@ -1,6 +1,7 @@
 /** #226 复审必改：MCP 只读放行边界的反向测试（直接对 GatewayService，注入假 fetch / 假时钟）。 */
 import { describe, expect, it, vi } from 'vitest';
 import type { AuditFn } from '../src/audit/types.js';
+import { ConfirmService, type ConfirmSpec, MemoryChallengeStore } from '../src/confirm/confirm.js';
 import { GatewayService, MCP_READ_ONLY_CTX } from '../src/gateway/service.js';
 import { WEB_PER_DAY } from '../src/gateway/webfetch.js';
 import { MemorySettingsStore, scopedSettings } from '../src/settings/store.js';
@@ -19,7 +20,12 @@ const httpTool = (toolId: string, risk = 'read') => ({
 function setup() {
   const settings = new MemorySettingsStore();
   const fetchImpl = vi.fn(async (_u: unknown) => new Response('hello world', { status: 200, headers: { 'content-type': 'text/plain' } }));
-  const confirm = { require: vi.fn(async () => undefined) };
+  // 默认直接抛错：凡是「不应走到确认」的测试，若真走到了确认，会立刻失败（负责人建议）
+  const confirm = {
+    require: vi.fn(async () => {
+      throw new Error('不应走到确认');
+    }),
+  };
   const tasks = { create: vi.fn() };
   const gw = new GatewayService(
     settings,
@@ -92,7 +98,8 @@ describe('MCP 只读放行边界', () => {
     const urls = t.fetchImpl.mock.calls.map((c) => String(c[0]));
     expect(urls.length).toBeGreaterThan(0);
     expect(urls.every((u) => u.startsWith('https://example.com/'))).toBe(true);
-    expect(urls.some((u) => u.includes('api.example.com'))).toBe(false);
+    // 按解析后的主机名精确比较（CodeQL js/incomplete-url-substring-sanitization）
+    expect(urls.some((u) => new URL(u).hostname === 'api.example.com')).toBe(false);
   });
 
   it('★6 MCP 上下文遇到 important 工具：不执行、不生成确认', async () => {
@@ -102,5 +109,25 @@ describe('MCP 只读放行边界', () => {
     expect(MCP_READ_ONLY_CTX.canConfirmImportant).toBe(false);
     expect(t.confirm.require).not.toHaveBeenCalled();
     expect(t.fetchImpl).not.toHaveBeenCalled();
+    // ★6-b：确认是被第一道锁（#mcpCheck → not_read）拦下，而不是定义写错被跳过成 not_found
+    expect(t.audits.join('\n')).toContain('mcp: not_read');
+  });
+
+  it('★6-a 第二道锁：真 ConfirmService 收到 MCP_READ_ONLY_CTX + payment → 403，不建 challenge，审计 confirm.denied', async () => {
+    const store = new MemoryChallengeStore();
+    const insert = vi.spyOn(store, 'insert');
+    const svc = new ConfirmService(store, { now: () => new Date('2026-11-02T00:00:00Z'), access: { verify: async () => null } });
+    const audits: string[] = [];
+    const audit: AuditFn = async (action, _t, outcome) => {
+      audits.push(`${action} ${outcome}`);
+    };
+    const spec: ConfirmSpec = { scope: 'gateway:pay_tool', kind: 'payment', title: '付款', consequences: ['会扣钱'] };
+    const err = await svc.require(spec, MCP_READ_ONLY_CTX, audit).then(
+      () => null,
+      (e: unknown) => e as { statusCode?: number },
+    );
+    expect(err?.statusCode).toBe(403);
+    expect(insert).not.toHaveBeenCalled();
+    expect(audits).toContain('confirm.denied denied');
   });
 });
