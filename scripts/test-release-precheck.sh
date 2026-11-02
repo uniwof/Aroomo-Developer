@@ -38,16 +38,21 @@ cat >"$bk" <<'B'
 #!/usr/bin/env bash
 echo run >>"$BK_CALLS"
 case "${BK_MODE:-ok}" in
-  ok) echo '{"event":"backup","status":"ok","snapshot_id":"aroomo-20261103T100000Z","sha256":"abc","size_bytes":1234,"databases":3,"offsite":true}' ;;
+  ok) echo '{"event":"backup","status":"ok","snapshot_id":"aroomo-20261103T100000Z","sha256":"abc","size_bytes":1234,"databases":3,"offsite":true,"checked":true}' ;;
+  unchecked) echo '{"event":"backup","status":"ok","snapshot_id":"aroomo-20261103T100000Z","size_bytes":1234,"offsite":true,"checked":false}' ;;
   fail) echo "备份失败：没有公钥" >&2; exit 1 ;;
   local) echo '{"event":"backup","status":"ok","snapshot_id":"aroomo-x","size_bytes":10,"offsite":false}' ;;
-  zero) echo '{"event":"backup","status":"ok","snapshot_id":"aroomo-x","size_bytes":0,"offsite":true}' ;;
+  zero) echo '{"event":"backup","status":"ok","snapshot_id":"aroomo-x","size_bytes":0,"offsite":true,"checked":true}' ;;
 esac
 B
 snaps="$work/snaps.sh"
 cat >"$snaps" <<'S'
 #!/usr/bin/env bash
-case "${SNAP_MODE:-has}" in has) echo "aroomo-20261103T100000Z.tar.zst.age" ;; *) echo "aroomo-other.tar.zst.age" ;; esac
+case "${SNAP_MODE:-has}" in
+  has) echo "aroomo-20261103T100000Z.tar.zst.age" ;;
+  substr) echo "aroomo-20261103T100000Z.tar.zst.age.partial"; echo "x-aroomo-20261103T100000Z.tar.zst.age" ;;
+  *) echo "aroomo-other.tar.zst.age" ;;
+esac
 S
 chmod +x "$bk" "$snaps"
 export BK_CALLS="$work/bk.calls"; : >"$BK_CALLS"
@@ -84,7 +89,9 @@ run "--no-backup 不备份" 0 --no-backup
 BK_MODE=fail run "备份失败则拒绝部署" 1
 BK_MODE=local run "备份没上传 R2 则拒绝" 1
 BK_MODE=zero run "备份大小为 0 则拒绝" 1
+BK_MODE=unchecked run "备份没从 R2 重新下载核对则拒绝" 1
 SNAP_MODE=none run "备份名不在列表里则拒绝" 1
+SNAP_MODE=substr run "列表里只有名字的子串（不完全相等）则拒绝" 1
 
 # 检查 2：NULL 与 'owner' 撞唯一索引
 adm "insert into inbox_items (user_id,kind,related_type,related_id,status) values ('owner','k','t','1','open')" >/dev/null
@@ -107,7 +114,15 @@ adm "update provider_keys set user_id = '' where name = 'a'" >/dev/null
 run "provider_keys 有空串 user_id → 失败" 1 --no-backup
 has "provider_keys=1"
 adm "update provider_keys set user_id = null" >/dev/null
-run "改回 NULL 后通过" 0 --no-backup
+run "改回 NULL 后通过（provider_keys 的 NULL 迁移 0024 会回填）" 0 --no-backup
+
+# 检查 1：不在回填清单里的表有 NULL → 失败（CHECK 放行 NULL，但 RLS 下这些行谁都看不见）
+adm "create table vault_secrets (id serial, user_id text, name text, deleted_at timestamptz)" >/dev/null
+adm "insert into vault_secrets (user_id,name) values (null,'a'),('u-b','b')" >/dev/null
+run "vault_secrets 有 NULL user_id（迁移不回填）→ 失败" 1 --no-backup
+has "vault_secrets=1"
+adm "update vault_secrets set user_id = 'owner' where user_id is null" >/dev/null
+run "NULL 改成 owner 后通过" 0 --no-backup
 
 # 连不上
 PGDATABASE=no_such_db_$$ run "连不上数据库 → 失败" 1 --no-backup

@@ -6,20 +6,26 @@
 #
 # 检查 1  所有带 user_id（文本列）的表里不能有空串 user_id（RLS 迁移会加 CHECK (user_id <> '')，空串行会让迁移失败，
 #         或在策略里被当作「未设置」）。有就列出表名 + 行数并失败。
+#         NULL 同样算失败：CHECK (user_id <> '') 对 NULL 放行，而 RLS 下 user_id = x 对 NULL 行永远不成立，
+#         行还在但谁都看不见。只有 NULL_BACKFILL_TABLES 里的表（迁移 0023 inbox_items、0024 provider_keys
+#         会先把 NULL 改成 'owner' 再加约束）可以有 NULL。以后新增「迁移里回填 NULL」的表要同步改这个清单。
 # 检查 2  『owner』与 NULL 会不会撞唯一索引：迁移 0023/0024 把 NULL 改成 'owner'。按迁移后的表达式
 #         （coalesce(user_id,'owner') + 各索引原有列和条件）试算重复，撞了就失败。表名 + 重复组数，不打印任何数据内容。
 # 检查 3  逐表行数可读（scripts/lib/table-counts.sql），结果存 $RELEASE_ROOT/.release/precheck-<时间>.counts.tsv，
 #         部署后可对照。
 # 备份    调用现有备份流程（scripts/backup.sh，主密钥公钥加密，异地 R2）做一次，核对：状态 ok、已上传异地、
-#         大小 > 0、备份名出现在 backup snapshots 的列表里。这台机器没有主密钥，能不能解开只靠恢复演练验证。
+#         大小 > 0、备份名在 R2 远端的列表里完全相等（backup snapshots --from offsite，不是本地目录，不做子串匹配）。
+#         备份本身带两道远端核对：上传后 backup.sh 比对 R2 上文件大小与本地 size_bytes（不等就失败）；这里还强制
+#         BACKUP_CHECK=always，从 R2 重新下载核对 SHA-256 和 age 文件头，结果里必须 checked:true。
+#         这台机器没有主密钥，能不能解开只靠恢复演练验证。
 #
 # 只读：数据库连接带 default_transaction_read_only=on，只有 SELECT。不改数据、不碰数据卷、不打印 .env。
 #
 # 环境变量（测试用，生产不用设）：
 #   RELEASE_ROOT（默认脚本所在仓库根）RELEASE_TIER（standard）
 #   RELEASE_PSQL        从 stdin 读一条 SQL、输出「制表符分隔、无表头」结果的命令；默认走 compose exec postgres psql
-#   RELEASE_BACKUP_CMD  立即备份命令（stdout 最后一行为 JSON）；默认 compose --profile backup run --rm -T backup now
-#   RELEASE_SNAPSHOTS_CMD 列出备份的命令；默认 compose --profile backup run --rm -T backup snapshots
+#   RELEASE_BACKUP_CMD  立即备份命令（stdout 最后一行为 JSON）；默认 compose --profile backup run --rm -T -e BACKUP_CHECK=always backup now
+#   RELEASE_SNAPSHOTS_CMD 列出 R2 远端备份的命令（每行一个文件名）；默认 compose --profile backup run --rm -T backup snapshots --from offsite
 set -Eeuo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -56,6 +62,9 @@ q() {
 }
 sql() { printf '%s\n' "$1" | q; }
 
+# 迁移会先把 NULL 回填成 'owner' 的表（0023 inbox_items、0024 provider_keys）
+NULL_BACKFILL_TABLES=" inbox_items provider_keys "
+
 ident_ok() { [[ "$1" =~ ^[a-z_][a-z0-9_]*$ ]]; }
 
 say "== 生产前检查 $(date '+%F %T %Z') =="
@@ -74,6 +83,7 @@ tables="$(sql "select c.table_name from information_schema.columns c
   where c.table_schema = 'public' and c.column_name = 'user_id' and c.data_type in ('text', 'character varying')
   order by 1")"
 bad_tables=""
+null_bad=""
 nullable_info=""
 while IFS= read -r t; do
   [ -n "$t" ] || continue
@@ -82,7 +92,10 @@ while IFS= read -r t; do
   if [ "$n" != 0 ]; then bad_tables="$bad_tables $t=$n"; fi
   nulls="$(sql "select count(*) from public.\"$t\" where user_id is null")" || nulls=0
   owners="$(sql "select count(*) from public.\"$t\" where user_id = 'owner'")" || owners=0
-  if [ "$nulls" != 0 ]; then nullable_info="$nullable_info $t(NULL=$nulls,owner=$owners)"; fi
+  if [ "$nulls" != 0 ]; then
+    if [[ "$NULL_BACKFILL_TABLES" == *" $t "* ]]; then nullable_info="$nullable_info $t(NULL=$nulls,owner=$owners)"
+    else null_bad="$null_bad $t=$nulls"; fi
+  fi
 done <<<"$tables"
 table_count="$(printf '%s\n' "$tables" | grep -c . || true)"
 if [ -n "$bad_tables" ]; then
@@ -90,7 +103,12 @@ if [ -n "$bad_tables" ]; then
 else
   pass "检查 1 空串 user_id：检查了 $table_count 张带 user_id 的表，没有空串"
 fi
-[ -z "$nullable_info" ] || say "信息  user_id 为 NULL 的行（迁移会改成 'owner'）：${nullable_info# }"
+if [ -n "$null_bad" ]; then
+  fail "检查 1 NULL user_id：${null_bad# }（表=行数；这些表的迁移不会回填 NULL，加了 RLS 后这些行谁都看不见；先改成 'owner' 或真实账号）"
+else
+  pass "检查 1 NULL user_id：除迁移会回填的表外没有 NULL"
+fi
+[ -z "$nullable_info" ] || say "信息  user_id 为 NULL 的行（迁移 0023/0024 会改成 'owner'）：${nullable_info# }"
 
 # ---------------------------------------------------------------------------
 # 检查 2：迁移后唯一索引试算。每行：表|其他键列|条件
@@ -144,8 +162,8 @@ else
   bk_err="$(mktemp)"; trap 'rm -f "$bk_err"' EXIT
   backup_cmd="${RELEASE_BACKUP_CMD:-}"
   snaps_cmd="${RELEASE_SNAPSHOTS_CMD:-}"
-  run_backup() { if [ -n "$backup_cmd" ]; then $backup_cmd; else compose --profile backup run --rm -T backup now; fi; }
-  run_snaps() { if [ -n "$snaps_cmd" ]; then $snaps_cmd; else compose --profile backup run --rm -T backup snapshots; fi; }
+  run_backup() { if [ -n "$backup_cmd" ]; then $backup_cmd; else compose --profile backup run --rm -T -e BACKUP_CHECK=always backup now; fi; }
+  run_snaps() { if [ -n "$snaps_cmd" ]; then $snaps_cmd; else compose --profile backup run --rm -T backup snapshots --from offsite; fi; }
   rc=0
   out="$(run_backup 2>"$bk_err")" || rc=$?
   if [ "$rc" != 0 ]; then
@@ -158,15 +176,17 @@ else
       fail "部署前备份：结果不是 ok（${last:0:120}）"
     elif ! printf '%s' "$last" | grep -q '"offsite":true'; then
       fail "部署前备份：没有上传到异地 R2（offsite 不是 true），不算数"
+    elif ! printf '%s' "$last" | grep -q '"checked":true'; then
+      fail "部署前备份：没有从 R2 重新下载核对（checked 不是 true），不算数"
     elif [ -z "$snap" ] || [ -z "$size" ] || [ "$size" -le 0 ]; then
       fail "部署前备份：结果里没有备份名或大小为 0"
     else
       listing="$(run_snaps 2>/dev/null || true)"
-      if printf '%s\n' "$listing" | grep -qF "$snap"; then
-        pass "部署前备份：$snap（$size 字节）已在 R2，列表里能看到"
+      if printf '%s\n' "$listing" | grep -qxF "$snap.tar.zst.age"; then
+        pass "部署前备份：$snap（$size 字节）已在 R2：上传后大小一致、重新下载校验通过、R2 列表里能看到"
         printf '%s %s\n' "$stamp" "$snap" >"$state/precheck.ok"
       else
-        fail "部署前备份：$snap 没有出现在备份列表里"
+        fail "部署前备份：$snap 没有出现在 R2 的备份列表里"
       fi
     fi
   fi

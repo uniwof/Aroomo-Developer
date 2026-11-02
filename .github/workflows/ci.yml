@@ -397,6 +397,43 @@ jobs:
         run: |
           Remove-Item "$env:RUNNER_TEMP\rd-key.txt", "$env:RUNNER_TEMP\rd-wrong-key.txt" -Force -ErrorAction SilentlyContinue
 
+  release-scripts:
+    name: 发布脚本测试（#171 / #229，不允许跳过）
+    runs-on: ubuntu-24.04
+    # 真 PostgreSQL：生产前检查的 SQL 在真库上跑
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: aroomo_test
+          POSTGRES_PASSWORD: placeholder-ci-only
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U aroomo_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: psql 客户端
+        run: command -v psql >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client)
+      - name: release-tag.sh（临时 git 仓库 + 假 compose）
+        run: |
+          scripts/test-release.sh | tee /tmp/test-release.log
+          grep -qx '全部通过' /tmp/test-release.log
+          ! grep -q '^FAIL' /tmp/test-release.log
+      - name: release-precheck.sh（真 PostgreSQL + 假备份命令）
+        env:
+          PGHOST: localhost
+          PGUSER: aroomo_test
+          PGPASSWORD: placeholder-ci-only
+          RELEASE_TEST_PSQL: psql -X -q -A -t -v ON_ERROR_STOP=1
+        run: |
+          scripts/test-release-precheck.sh | tee /tmp/test-precheck.log
+          # 跳过就算失败
+          ! grep -q '^跳过' /tmp/test-precheck.log
+          grep -qx '全部通过' /tmp/test-precheck.log
+          ! grep -q '^FAIL' /tmp/test-precheck.log
+
   secrets:
     name: 密钥扫描（gitleaks）
     runs-on: ubuntu-24.04
