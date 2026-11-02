@@ -33,9 +33,23 @@ STUB
 chmod +x "$seed/scripts/compose.sh"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$seed/scripts/build-console.sh"; chmod +x "$seed/scripts/build-console.sh"
 commit() { git -C "$seed" add -A && git -C "$seed" commit -q -m "$1"; }
-echo one >"$seed/a.txt"; commit "第一版"; git -C "$seed" tag v0.1.0
-echo two >"$seed/a.txt"; commit "第二版"; git -C "$seed" tag v0.2.0
-touch "$seed/FAIL_UP"; commit "坏版本（up 会失败）"; git -C "$seed" tag v0.3.0
+mkdir -p "$seed/core/migrations"
+echo one >"$seed/a.txt"; echo "select 1;" >"$seed/core/migrations/0001_a.sql"; commit "第一版"; git -C "$seed" tag v0.1.0
+# v0.2.0 起带合并闸门和生产前检查（桩）：它们必须取自目标版本，状态由 \$RELEASE_ROOT 下的文件控制
+cat >"$seed/scripts/merge-gate.sh" <<'G'
+#!/usr/bin/env bash
+[ -f "${RELEASE_ROOT:?}/GATE_FAIL" ] && { echo "闸门桩：不通过"; exit 1; }
+exit 0
+G
+cat >"$seed/scripts/release-precheck.sh" <<'G'
+#!/usr/bin/env bash
+echo "$*" >>"${RELEASE_ROOT:?}/precheck.args"
+[ -f "$RELEASE_ROOT/PRECHECK_FAIL" ] && { echo "检查桩：不通过"; exit 1; }
+exit 0
+G
+chmod +x "$seed/scripts/merge-gate.sh" "$seed/scripts/release-precheck.sh"
+echo two >"$seed/a.txt"; echo "select 2;" >"$seed/core/migrations/0002_b.sql"; commit "第二版"; git -C "$seed" tag v0.2.0
+touch "$seed/FAIL_UP"; echo "select 3;" >"$seed/core/migrations/0003_c.sql"; commit "坏版本（up 会失败）"; git -C "$seed" tag v0.3.0
 git -C "$seed" push -q "$origin" main --tags
 # dev 上有一个没进 main 的标签
 git -C "$seed" checkout -q -b dev; echo dev >"$seed/a.txt"; commit "只在 dev"; git -C "$seed" tag v0.9.0
@@ -49,13 +63,22 @@ mkdir -p "$root/deploy"
 echo local-secret >"$root/deploy/.lobehub-cli-key"
 
 export RELEASE_ROOT="$root" RELEASE_TEST_CALLS="$work/calls.log" RELEASE_SKIP_CONSOLE=1 RELEASE_HEALTH_POLL_S=0
-export RELEASE_HEALTH_TIMEOUT_S=2
+export RELEASE_HEALTH_TIMEOUT_S=2 RELEASE_REQUIRE_PRECHECK=1
 health="$work/health.sh"
 cat >"$health" <<'H'
 #!/usr/bin/env bash
 cd "$RELEASE_ROOT"; if [ -f FAIL_UP ]; then echo unhealthy; else echo healthy; fi
 H
 chmod +x "$health"; export RELEASE_HEALTH_CMD="$health"
+# 假数据库：已执行的迁移列在 \$applied 文件里（一行一个）
+applied="$work/applied"; printf '0001_a.sql\n0002_b.sql\n' >"$applied"
+dbcmd="$work/db.sh"
+cat >"$dbcmd" <<D
+#!/usr/bin/env bash
+q="\$(cat)"
+case "\$q" in *to_regclass*) echo core_schema_migrations ;; *) cat "$applied" ;; esac
+D
+chmod +x "$dbcmd"; export RELEASE_DB_CMD="$dbcmd"
 : >"$RELEASE_TEST_CALLS"
 rel="$here/release-tag.sh"
 head_tag() { git -C "$root" describe --tags --exact-match HEAD 2>/dev/null || echo none; }
@@ -80,32 +103,73 @@ expect "确认后切到 v0.2.0" 0 "$rel" deploy v0.2.0 --confirm v0.2.0
 [ -f "$root/deploy/.lobehub-cli-key" ] && ok "本地密钥文件未被动" || bad "本地密钥文件被删了"
 grep -q 'up -d' "$RELEASE_TEST_CALLS" && ok "调用了 compose up -d" || bad "没有 compose up"
 
-expect "切到坏版本 v0.3.0 失败并自动回到 v0.2.0" 1 "$rel" deploy v0.3.0 --confirm v0.3.0
+expect "切到坏版本 v0.3.0 失败并自动回到 v0.2.0（迁移没执行，数据库没变）" 1 "$rel" deploy v0.3.0 --confirm v0.3.0
 [ "$(head_tag)" = v0.2.0 ] && ok "失败后回到 v0.2.0" || bad "失败后检出：$(head_tag)"
 [ "$(cat "$root/.release/current")" = v0.2.0 ] && ok "失败后 current 仍是 v0.2.0" || bad "失败后 current 变了"
 
+# 回滚前先看数据库：已执行 0002，而回滚目标 v0.1.0 不认识它 → 拒绝（演练和确认都拒绝），代码不动
+expect "回滚演练：数据库已迁移到 0002 时拒绝" 1 "$rel" rollback
+echo "$LAST_OUT" | grep -q '需要人工处理' && echo "$LAST_OUT" | grep -q '0002_b.sql' && ok "拒绝理由写明迁移名和人工处理" || bad "拒绝理由不对：$LAST_OUT"
+expect "确认回滚也拒绝（迁移超前）" 1 "$rel" rollback --confirm "$(cat "$root/.release/previous")"
+[ "$(head_tag)" = v0.2.0 ] && ok "拒绝后仍是 v0.2.0" || bad "拒绝后检出变了：$(head_tag)"
+
+printf '0001_a.sql\n' >"$applied"   # 假设 v0.2.0 没有真正执行过 0002
 expect "回滚演练" 0 "$rel" rollback
 expect "一键回滚到上一个（v0.1.0 之前的记录是 v0.1.0 的提交）" 0 "$rel" rollback --confirm "$(cat "$root/.release/previous")"
 [ "$(git -C "$root" rev-parse HEAD)" = "$(git -C "$seed" rev-parse v0.1.0)" ] && ok "回滚后是 v0.1.0 的提交" || bad "回滚后检出不对"
 [ "$(cat "$root/.release/previous")" = v0.2.0 ] && ok "回滚后 previous=v0.2.0（可再切回）" || bad "previous 状态不对"
+printf '0001_a.sql\n0002_b.sql\n' >"$applied"
 
-# 没有 .env 必需项时拒绝（不自动生成）
+# 工作区里已跟踪的文件被手工改过：演练和确认都拒绝，不 --force，改动原样保留，输出只有文件名
+echo "手工修改" >>"$root/a.txt"
+expect "已跟踪文件有改动：演练拒绝" 1 "$rel" deploy v0.2.0
+echo "$LAST_OUT" | grep -q 'a.txt' && ! echo "$LAST_OUT" | grep -q '手工修改' && ok "只列文件名，不列内容" || bad "输出不对：$LAST_OUT"
+expect "已跟踪文件有改动：确认也拒绝" 1 "$rel" deploy v0.2.0 --confirm v0.2.0
+grep -q '手工修改' "$root/a.txt" && ok "手工修改原样保留" || bad "手工修改被丢了"
+[ "$(git -C "$root" rev-parse HEAD)" = "$(git -C "$seed" rev-parse v0.1.0)" ] && ok "没有切走" || bad "脏工作区却切走了"
+git -C "$root" checkout -q -- a.txt
+
+# 没有 .env 必需项时：演练就拒绝（不用等到切换），也不自动生成
 sed -i '/^CORE_CHAT_TOKEN=/d' "$root/deploy/.env"
-expect "缺 CORE_CHAT_TOKEN 时切换失败并回退" 1 "$rel" deploy v0.2.0 --confirm v0.2.0
+expect "缺 CORE_CHAT_TOKEN：演练就拒绝" 1 "$rel" deploy v0.2.0
+expect "缺 CORE_CHAT_TOKEN：确认也拒绝" 1 "$rel" deploy v0.2.0 --confirm v0.2.0
 [ "$(git -C "$root" rev-parse HEAD)" = "$(git -C "$seed" rev-parse v0.1.0)" ] && ok "缺 token 时没有切走" || bad "缺 token 却切走了"
 grep -q '^CORE_CHAT_TOKEN=' "$root/deploy/.env" && bad "脚本自动生成了 token" || ok "不自动生成 token"
-
-# 合并闸门：存在且失败时拒绝；hotfix 跳过
 echo "CORE_CHAT_TOKEN=abc" >>"$root/deploy/.env"
-printf '#!/usr/bin/env bash\nexit 1\n' >"$root/scripts/merge-gate.sh"; chmod +x "$root/scripts/merge-gate.sh"
-expect "合并闸门不过则拒绝" 1 "$rel" deploy v0.2.0 --confirm v0.2.0
-expect "hotfix 跳过闸门" 0 "$rel" deploy v0.2.0 --confirm v0.2.0 --hotfix
-rm -f "$root/scripts/merge-gate.sh"
 
-# 生产前检查脚本存在且失败时拒绝部署
-printf '#!/usr/bin/env bash\nexit 1\n' >"$root/scripts/release-precheck.sh"; chmod +x "$root/scripts/release-precheck.sh"
-expect "生产前检查失败则不切换" 1 "$rel" deploy v0.1.0 --confirm v0.1.0
+# 合并闸门取自目标版本（v0.2.0 带桩）：不过则拒绝；hotfix 跳过。生产现在的 v0.1.0 里根本没有这个脚本
+touch "$root/GATE_FAIL"
+expect "合并闸门（目标版本里的）不过则拒绝" 1 "$rel" deploy v0.2.0 --confirm v0.2.0
+[ "$(git -C "$root" rev-parse HEAD)" = "$(git -C "$seed" rev-parse v0.1.0)" ] && ok "闸门不过时没有切走" || bad "闸门不过却切走了"
+expect "hotfix 跳过闸门" 0 "$rel" deploy v0.2.0 --confirm v0.2.0 --hotfix
+rm -f "$root/GATE_FAIL"
+[ "$(head_tag)" = v0.2.0 ] && ok "现在是 v0.2.0" || bad "hotfix 后检出：$(head_tag)"
+
+# 生产前检查：目标版本里没有 → 拒绝；有但失败 → 拒绝；演练带 --no-backup，真切换不带
+RELEASE_REQUIRE_PRECHECK=1 expect "目标版本（v0.1.0）没有 release-precheck.sh：拒绝部署" 1 "$rel" deploy v0.1.0 --confirm v0.1.0
+touch "$root/PRECHECK_FAIL"
+expect "生产前检查（目标版本里的）失败则不切换" 1 "$rel" deploy v0.3.0 --confirm v0.3.0
 [ "$(head_tag)" = v0.2.0 ] && ok "检查失败后仍是 v0.2.0" || bad "检查失败却切换了"
+rm -f "$root/PRECHECK_FAIL"; : >"$root/precheck.args"
+expect "演练调用 precheck --no-backup" 0 "$rel" deploy v0.3.0
+grep -qx -- '--no-backup' "$root/precheck.args" && ok "演练只检查不备份" || bad "演练参数不对：$(cat "$root/precheck.args")"
+
+# 迁移已经执行（0003），随后健康检查失败：回退目标 v0.2.0 不认识 0003 → 不自动回退，写「需要人工处理」
+printf '0001_a.sql\n0002_b.sql\n0003_c.sql\n' >"$applied"
+expect "迁移执行后健康检查失败：不自动回退代码" 1 "$rel" deploy v0.3.0 --confirm v0.3.0
+echo "$LAST_OUT" | grep -q '需要人工处理' && echo "$LAST_OUT" | grep -q '0003_c.sql' && echo "$LAST_OUT" | grep -q 'BACKUP.md' && ok "日志写明先用备份恢复" || bad "日志不对：$LAST_OUT"
+[ "$(head_tag)" = v0.3.0 ] && ok "代码停在 v0.3.0，没有悄悄退回" || bad "检出不对：$(head_tag)"
+[ "$(cat "$root/.release/current")" = v0.2.0 ] && ok "current 仍记录 v0.2.0（没有假装成功）" || bad "current 被改了"
+echo "$LAST_OUT" | grep -q '已回到' && bad "却写了已回到旧版本" || ok "没有写已回到旧版本"
+
+# 读不出数据库迁移记录：同样保守处理
+git -C "$root" checkout -q -f "$(git -C "$seed" rev-parse v0.2.0)"
+printf '#!/usr/bin/env bash\nexit 3\n' >"$work/db-broken.sh"; chmod +x "$work/db-broken.sh"
+RELEASE_DB_CMD="$work/db-broken.sh" expect "读不出迁移记录：拒绝部署" 1 "$rel" deploy v0.3.0
+echo "$LAST_OUT" | grep -q '读不出数据库的迁移记录' && ok "说明读不出迁移记录" || bad "输出不对：$LAST_OUT"
+
+# compose 输出写进 600 权限的日志文件，不再丢掉
+[ "$(stat -c %a "$root/.release/compose.log")" = 600 ] && ok "compose.log 权限 600" || bad "compose.log 权限不对"
 
 if grep -rn 'AGE-SECRET-KEY\|CORE_CHAT_TOKEN=abc' "$root/.release" >/dev/null 2>&1; then bad "状态/日志里出现了密钥"; else ok "日志无密钥"; fi
 [ "$fail" = 0 ] && echo "全部通过" || { echo "有失败"; exit 1; }
