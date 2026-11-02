@@ -163,6 +163,29 @@ describe.each(envs)('Key 前缀路由 + 对话按用户路由（#179）[$name]',
     expect([...mock.deployments.values()].filter((d) => d.model_name === 'OwnerModel')).toHaveLength(ownerBefore);
   });
 
+  it('必改2：所有者删掉某模型最后一个 Key 后，同名成员被停用（PG 与本存储都一样）；账号删 Key 不动所有者成员', async () => {
+    const k = await t.owner('POST', '/api/keys', { name: '删除测试', sourceUrl: 'https://example.com', apiKey: fakeKey('del1'), model: 'openai/gpt-del', modelName: 'DelModel' });
+    expect(k.statusCode).toBe(201);
+    const found = (await t.owner('GET', '/api/members')).json().members.find((r: { name: string }) => r.name === 'DelModel');
+    if (!found) await t.owner('POST', '/api/members', { name: 'DelModel' });
+    const mid = ((await t.owner('GET', '/api/members')).json().members.find((r: { name: string }) => r.name === 'DelModel')).id as string;
+    const x = await t.xiao('POST', '/api/keys', { name: '小号同名', sourceUrl: 'https://example.com', apiKey: fakeKey('del2'), model: 'openai/gpt-del2', modelName: 'DelModel' });
+    expect(x.statusCode).toBe(201);
+    expect((await t.xiao('DELETE', `/api/keys/${x.json().key.id}`)).statusCode).toBeLessThan(300);
+    const enabledOf = async () => (await t.owner('GET', '/api/members')).json().members.find((r: { id: string }) => r.id === mid).enabled as boolean;
+    expect(await enabledOf()).toBe(true);
+    const kurl = `/api/keys/${k.json().key.id}`;
+    const r1 = await t.owner('DELETE', kurl);
+    expect(r1.statusCode).toBe(428);
+    const ch = r1.json().error.confirm;
+    expect((await t.owner('POST', ch.stepUrl, { step: 1 })).statusCode).toBe(200);
+    t.clock.advance(3000);
+    const s2 = await t.owner('POST', ch.stepUrl, { step: 2 }, { 'cf-access-jwt-assertion': 'fresh' });
+    expect(s2.statusCode).toBe(200);
+    expect((await t.owner('DELETE', kurl, { confirmToken: s2.json().confirmToken })).statusCode).toBeLessThan(300);
+    expect(await enabledOf()).toBe(false);
+  });
+
   it('必改5：所有者 list 不含账号的 Key，账号 list 不含所有者的（本存储）', async () => {
     const o = (await t.owner('GET', '/api/keys')).json().keys.map((k: { name: string }) => k.name);
     expect(o).not.toContain('小号的');

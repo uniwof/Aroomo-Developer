@@ -67,6 +67,12 @@ export interface ChatUserCtx {
   onTokens: undefined;
 }
 
+type ChatGlobalKeys = 'litellmBaseUrl' | 'litellmKey' | 'fetchImpl';
+// 编译期检查：ChatDeps 新增用户项而 ChatUserCtx 没跟上，这里会报错
+export const _userKeysCovered: Exclude<keyof ChatDeps, ChatGlobalKeys> extends keyof ChatUserCtx
+  ? (keyof ChatUserCtx extends Exclude<keyof ChatDeps, ChatGlobalKeys> ? true : never)
+  : never = true;
+
 export const RULES_MAX = 4000;
 
 /** 把规矩放进消息列表最前面的系统消息（已有的系统提示保留，规矩在它前面） */
