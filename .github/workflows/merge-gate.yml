@@ -1,0 +1,27 @@
+name: merge-gate
+# 合并闸门（#189 简化版）：有 needs-leader-review 且无 leader-approved 的 PR 时，禁止合 main 与发生产标签；hotfix 豁免。
+# 标签发布工作流（#171）的部署作业须 needs: gate 本作业（或调用 scripts/ci/merge-gate.py）。
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+jobs:
+  gate:
+    name: 合并闸门
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: 自测
+        run: MERGE_GATE_SELFTEST=1 python3 -B scripts/ci/merge-gate.py
+      - name: gate
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: python3 -B scripts/ci/merge-gate.py
