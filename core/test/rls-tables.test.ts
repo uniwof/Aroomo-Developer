@@ -1,4 +1,4 @@
-/** D206 RLS：按表循环的元数据检查（members / 公共记忆 / 资源库），防止以后某张表漏掉 FORCE、策略或 CHECK。 */
+/** D206 RLS：按表循环的元数据检查（members / 公共记忆 / 资源库 / 保险箱 / 收件箱），防止以后某张表漏掉 FORCE、策略或 CHECK。 */
 import { randomUUID } from 'node:crypto';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/db.js';
@@ -16,6 +16,8 @@ const TABLES: Record<string, (userIdSql: string) => string> = {
     `INSERT INTO public_memory_versions (user_id, topic, version, title, body, created_at) VALUES (${u}, 'topic-a', 1, 't', 'b', ${NOW})`,
   vault_secrets: (u) =>
     `INSERT INTO vault_secrets (id, user_id, name, kind, last4, ciphertext, dek_wrapped, nonce, created_at, updated_at) VALUES ('s-${randomUUID().slice(0, 8)}', ${u}, 'n', 'api_key', '1234', 'c', 'd', 'n', ${NOW}, ${NOW})`,
+  inbox_items: (u) =>
+    `INSERT INTO inbox_items (id, grp, kind, urgency, title, summary, actions, status, created_at, user_id) VALUES ('${randomUUID()}', 'decision', 'k', 'normal', 't', 's', '[]', 'open', now(), ${u})`,
   library_items: (u) =>
     `INSERT INTO library_items (id, user_id, kind, title, url, body, tags, source, created_at, updated_at) VALUES ('${randomUUID()}', ${u}, 'idea', 't', NULL, '', '', 'manual', ${NOW}, ${NOW})`,
 };

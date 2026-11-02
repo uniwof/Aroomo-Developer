@@ -103,7 +103,7 @@ export function quietTakeoverExpiryJob(inbox: InboxService, svc: ExecutorService
         } catch (e) {
           if (!(e instanceof HttpError)) throw e;
           // 已经被处理 / 任务没了：把卡收掉
-          await inbox.expire(it.id, audit);
+          await inbox.expire(it.userId ?? OWNER, it.id, audit);
         }
       }
       return n ? `cancelled=${n}` : "";
