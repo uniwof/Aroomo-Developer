@@ -27,3 +27,7 @@ migrate() 把整次迁移（所有未执行的文件）放在同一个事务里�
   然后 `.env` 加 `CORE_DB_APP_ROLE=aroomo_core_app`，重建 core 容器；日志里 `dbAppRole` 显示角色名且无「拒绝启动」即生效。
 - 回滚：去掉 `CORE_DB_APP_ROLE` 重建 core（FORCE RLS 下所有者同样受约束，隔离仍在）。
 - 带 needs-leader-review 且负责人未审的 RLS PR 不上生产（D202/D209）。
+- 角色在连接启动参数里设置（`options=-c role=…`），角色不存在 / 无权切换时连接直接失败，没有「先连上再 SET ROLE」的空窗。
+- 审计日志红线：每次启动授权后接着 `REVOKE UPDATE, DELETE ON audit_log`、`REVOKE INSERT, UPDATE, DELETE ON core_schema_migrations`（`core/src/db/app-role.ts`），应用角色只能追加审计。
+- pg-boss（若启用）用表所有者连接，但只用自己的 schema，不碰业务表。
+- 加固阶段前必须（D213 第 13 项）：SET ROLE / role 启动参数挡不住注入（会话内 `RESET ROLE` 回到表所有者再关 FORCE），要改成单独可登录的应用角色（密码由 Hark 在服务器生成直接写进 .env）；生产未设 `CORE_DB_APP_ROLE` 现在照常启动，加固阶段改成拒绝启动。

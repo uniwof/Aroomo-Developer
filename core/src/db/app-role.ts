@@ -2,7 +2,7 @@
  * D206：应用连接数据库的角色不能是表所有者、不能是超级用户 / BYPASSRLS，否则 RLS 形同虚设。
  *
  * 做法（不新增密码）：登录角色 aroomo_core 是表所有者，只用来跑迁移；
- * 应用连接池建立连接后 SET ROLE 到 NOLOGIN 角色（默认 aroomo_core_app，由数据库初始化脚本创建并授予 aroomo_core）。
+ * 应用连接池在连接启动参数里设 role=NOLOGIN 角色（默认 aroomo_core_app，由数据库初始化脚本创建并授予 aroomo_core）。
  * 启动时由所有者给应用角色授 DML 权限（幂等），再检查应用连接确实受 RLS 约束，不满足就拒绝启动。
  */
 import type { Queryable } from './db.js';
@@ -20,6 +20,9 @@ export async function grantAppRole(owner: Queryable, role: string): Promise<void
     GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${role};
     ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${role};
     ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO ${role};
+    -- 红线：审计日志只能追加；迁移记录应用不得改。授权之后每次启动都收回（上面的 ALL TABLES 会把它们带上）
+    REVOKE UPDATE, DELETE ON audit_log FROM ${role};
+    REVOKE INSERT, UPDATE, DELETE ON core_schema_migrations FROM ${role};
   `);
 }
 

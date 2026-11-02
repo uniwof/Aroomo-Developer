@@ -1,5 +1,5 @@
 /** D206：应用连接角色必须非超级用户、非 BYPASSRLS、非表所有者；启动时授权并自检。 */
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
@@ -22,6 +22,15 @@ describe('应用数据库角色（PGlite）', () => {
       expect(await assertAppRoleSafe(db)).toMatchObject({ currentUser: 'aroomo_core_app', superuser: false, bypassRls: false, ownedTables: 0 });
       expect((await db.query('SELECT id FROM members')).rows).toEqual([]);
       expect((await userScoped(db, 'owner').query('SELECT id FROM members')).rows).toEqual([{ id: 'm1' }]);
+      // 红线：应用角色只能追加审计、不能改删；迁移记录表应用角色完全不能写
+      await db.query(
+        `INSERT INTO audit_log (id, ts, actor_type, actor_id, action, target_type, target_id, result) VALUES ('${randomUUID()}', now(), 'system', 's', 'a', 't', 'x', 'ok')`,
+      );
+      expect((await db.query('SELECT count(*)::int AS n FROM audit_log')).rows).toEqual([{ n: 1 }]);
+      await expect(db.query('DELETE FROM audit_log')).rejects.toThrow(/permission denied for table audit_log/);
+      await expect(db.query(`UPDATE audit_log SET note = 'x'`)).rejects.toThrow(/permission denied for table audit_log/);
+      await expect(db.query('DELETE FROM core_schema_migrations')).rejects.toThrow(/permission denied for table core_schema_migrations/);
+      await expect(db.query(`INSERT INTO core_schema_migrations (version) VALUES ('9999_x.sql')`)).rejects.toThrow(/permission denied/);
     } finally {
       await db.close();
     }
@@ -30,7 +39,10 @@ describe('应用数据库角色（PGlite）', () => {
   it('表所有者（即使不是超级用户）被拒', async () => {
     const db = await openPglite();
     try {
+      await db.query(`INSERT INTO members (user_id, id, name, created_at, updated_at) VALUES ('owner','m1','M1',now(),now())`);
       await db.exec('CREATE ROLE tbl_owner NOLOGIN; ALTER TABLE members OWNER TO tbl_owner; SET ROLE tbl_owner');
+      // FORCE 下表所有者同样受 RLS 约束：不设 app.user_id 时什么都看不到
+      expect((await db.query('SELECT id FROM members')).rows).toEqual([]);
       expect((await checkAppRole(db)).ownedTables).toBe(1);
       await expect(assertAppRoleSafe(db)).rejects.toThrow(/所有者/);
     } finally {
@@ -52,7 +64,17 @@ describe('应用数据库角色（PGlite）', () => {
 });
 
 const url = process.env.CORE_TEST_DATABASE_URL;
-describe.skipIf(!url)('应用数据库角色（真 PostgreSQL：连接池 SET ROLE）', () => {
+describe.skipIf(!url)('应用数据库角色（真 PostgreSQL：连接启动参数设 role）', () => {
+  it('角色不存在时查询直接报错，不会以登录角色继续执行', async () => {
+    const app = createPgDb(url as string, { role: 'aroomo_role_does_not_exist', max: 2 });
+    try {
+      await expect(app.query('SELECT current_user')).rejects.toThrow(/does not exist/);
+      await expect(app.tx((q) => q.query('SELECT 1'))).rejects.toThrow(/does not exist/);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('createPgDb({ role }) 的每个连接都是应用角色，RLS 生效', async () => {
     const schema = `a_${randomBytes(6).toString('hex')}`;
     const admin = new pg.Client({ connectionString: url });
