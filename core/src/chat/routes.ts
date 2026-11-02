@@ -46,7 +46,7 @@ async function callerCtx(req: FastifyRequest, expected: string | undefined, rout
   }
   const uid = routing && token ? await routing.verify(token) : null;
   if (uid === null || !routing) {
-    if (!expected && !routing) tokenOk(req, expected); // 503：都没配置
+    if (!expected) tokenOk(req, expected); // 没配置所有者对话令牌且不是有效客户端令牌：503（保持原行为）
     throw new HttpError(401, 'UNAUTHORIZED', '对话令牌不对');
   }
   return uid === 'owner' ? undefined : routing.ctxFor(uid);
