@@ -1,7 +1,7 @@
 /** D206 RLS：收件箱表（A+）。 */
 import { afterAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/db.js';
-import { userScoped } from '../src/db/scope.js';
+import { systemScoped, userScoped } from '../src/db/scope.js';
 import { PgInboxStore } from '../src/inbox/pg.js';
 import type { InboxItem } from '../src/inbox/types.js';
 import { rlsTargets } from './helpers/rls.js';
@@ -65,5 +65,17 @@ describe.each(rlsTargets)('RLS 收件箱（$name）', (target) => {
     // 各自处理自己的卡片成功
     expect((await store.resolveIfOpen(XIAO, XIT, { status: 'done', resolvedAt: at, resolvedAction: 'ok' }))?.status).toBe('done');
     expect((await store.resolveIfOpen('owner', OWN, { status: 'done', resolvedAt: at, resolvedAction: 'ok' }))?.status).toBe('done');
+  });
+
+  it('系统范围只读：UPDATE / DELETE / INSERT 都被拒，所有者的卡片不变', async () => {
+    const { db, store } = await seeded();
+    const sys = systemScoped(db);
+    expect((await sys.query('SELECT id FROM inbox_items')).rows).toHaveLength(1);
+    expect((await sys.query(`UPDATE inbox_items SET status='done' WHERE id='${OWN}' RETURNING id`)).rows).toEqual([]);
+    expect((await sys.query(`DELETE FROM inbox_items WHERE id='${OWN}' RETURNING id`)).rows).toEqual([]);
+    await expect(
+      sys.query(`INSERT INTO inbox_items (id,grp,kind,urgency,title,summary,actions,status,created_at,user_id) VALUES ('00000000-0000-4000-8000-0000000000d4','decision','k','normal','t','s','[]','open',now(),'owner')`),
+    ).rejects.toThrow(/row-level security/);
+    expect((await store.get('owner', OWN))?.status).toBe('open');
   });
 });
