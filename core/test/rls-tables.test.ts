@@ -14,6 +14,8 @@ const TABLES: Record<string, (userIdSql: string) => string> = {
     `INSERT INTO public_memory (user_id, topic, title, body, version, created_at, updated_at) VALUES (${u}, 'topic-a', 't', 'b', 1, ${NOW}, ${NOW})`,
   public_memory_versions: (u) =>
     `INSERT INTO public_memory_versions (user_id, topic, version, title, body, created_at) VALUES (${u}, 'topic-a', 1, 't', 'b', ${NOW})`,
+  vault_secrets: (u) =>
+    `INSERT INTO vault_secrets (id, user_id, name, kind, last4, ciphertext, dek_wrapped, nonce, created_at, updated_at) VALUES ('s-${randomUUID().slice(0, 8)}', ${u}, 'n', 'api_key', '1234', 'c', 'd', 'n', ${NOW}, ${NOW})`,
   library_items: (u) =>
     `INSERT INTO library_items (id, user_id, kind, title, url, body, tags, source, created_at, updated_at) VALUES ('${randomUUID()}', ${u}, 'idea', 't', NULL, '', '', 'manual', ${NOW}, ${NOW})`,
 };
