@@ -1,9 +1,10 @@
 # CONTEXT（开工只读这份 + 自己的工单，D239）
 
-## 当前里程碑：M1（D244：一次只推一个，M1 经所有者验收确认前不派 M2）
-只做 M1：#191 V2/V3 实测（VERIFY.md，用保险箱已有的测试模型 Key），结论记入 DECISIONS（LobeHub 或 Open WebUI）；修所有者 M1 验收问题。GitHub Milestone「M1」。
-M2 工单（含 #173、#170、#171）、after-M2、deferred、POOL.md 里的项一律不领；后台/执行员/隔离三线暂停。没有 M1 工单就记一行收工。
-验收：CI 全绿；两个账号各测一遍；所有者手机按 docs/acceptance/M1.md 测 10 分钟。
+## 当前里程碑：M2（目标 11-04；M3 11-07、M4 11-10；D248）
+M2 = #120 工具网关 + #115 /mcp + 首个外部工具端到端（新工单）+ MCP 配置可复制。GitHub Milestone「M2」。#117 在 M3，#172 在 M4，#188 在 POOL。
+A 类按真实依赖并行合（#120、#115 互不依赖），后合的负责变基；只变基且 range-diff 无逻辑变化保留批准（评论贴 range-diff），有逻辑变化重新审。
+有工单的线连续做（PR 提交后马上开新会话领下一张），没工单的线暂停；需要浏览器/SSH/凭据的工单加 needs:main 由主会话做。隔离线可领 d213-1 RLS 必改项工单。D249（加固与里程碑并行）待所有者选，选定前 after-M2 照旧不领。
+验收：CI 全绿；Hark 先在 staging 用两个账号跑完验收清单，所有者再测 10 分钟。
 
 ## 文档（D244）
 以五件套为准：PROJECT.md、CONTEXT.md、DECISIONS.md、POOL.md（新想法先进池子）、PROGRESS.md。PRODUCT/HANDOFF/TICKETS 降为只查不读。

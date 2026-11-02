@@ -1,0 +1,52 @@
+name: deploy-staging
+# dev 合并后部署到 staging.pcmanai.com（工单 #170 / D209）。
+#
+# 现状：Actions Secrets 还没放（Hark 的 GitHub 连接器不能写 Secrets），服务器用 systemd timer
+# 每 2 分钟拉取 origin/dev 自动部署（deploy/staging/aroomo-staging-deploy.timer），本工作流缺 Secret 时安全跳过。
+# Secrets 到位后（STAGING_SSH_KEY、STAGING_HOST、STAGING_KNOWN_HOSTS），本工作流用部署专用密钥 ssh 到服务器；
+# 该密钥在 authorized_keys 里被 command= 强制只能运行 deploy-staging.sh，拿不到 shell。
+# 两条路同时开着也没问题：脚本有 flock，已是最新就直接退出。
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+jobs:
+  deploy:
+    name: 部署 staging
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: 检查部署 Secrets
+        id: cfg
+        env:
+          HAS_KEY: ${{ secrets.STAGING_SSH_KEY != '' && secrets.STAGING_HOST != '' && secrets.STAGING_KNOWN_HOSTS != '' }}
+        run: |
+          if [ "$HAS_KEY" = "true" ]; then
+            echo "ready=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=0" >> "$GITHUB_OUTPUT"
+            echo "::notice::未配置 STAGING_SSH_KEY / STAGING_HOST / STAGING_KNOWN_HOSTS，跳过；服务器 timer 每 2 分钟自动拉取部署。"
+          fi
+      - name: 触发服务器部署
+        if: steps.cfg.outputs.ready == '1'
+        env:
+          STAGING_SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+          STAGING_KNOWN_HOSTS: ${{ secrets.STAGING_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$STAGING_SSH_KEY" > ~/.ssh/staging_deploy
+          printf '%s\n' "$STAGING_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          # 服务器端是强制命令，这里传的参数只用来区分 deploy / status
+          ssh -i ~/.ssh/staging_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            "ubuntu@$STAGING_HOST" deploy
+          ssh -i ~/.ssh/staging_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            "ubuntu@$STAGING_HOST" status
+          rm -f ~/.ssh/staging_deploy

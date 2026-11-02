@@ -147,6 +147,7 @@ P2–P7 的功能开发在阶段 C 之后照常在网页版上推进，离线版
 | PUT /api/capabilities/:id/trial {endsAt:"2026-12-31"\|null}（填试用到期日；GET /api/capabilities 的 items/tools 多 trialEndsAt、trialDaysLeft；≤3 天或已过期每 6 小时检查并发收件箱提醒） | 能力地图（试用徽标旁显示剩余天数 + 到期日输入） | M4 | ✅ PR p1/trial-expiry |
 | /v1 模型别名（LobeHub 群组同步用）：`aroomo/auto` = 负责人入口（@成员 则该成员答，不 @ 负责人答，与 `aroomo` 同义）；`aroomo/<成员id>` = 直接由该成员答（不解析 @、不署名；名字空格换 - 也认）；`GET /v1/models` 列出这些别名 | LobeHub 群组：负责人智能体用 aroomo/auto，每个成员智能体用 aroomo/<成员id> | M1 第 3 项 | ✅ PR p1/lead-routing |
 | /api/library 资源库最小版：POST（只给 url 也行；同链接去重；像密码/Key 的内容拒收）、GET ?q=&kind=&limit=（关键词检索，多词都要命中，标题>标签>链接>正文）、GET/:id、DELETE/:id（仅本人）。客户端范围 library:read / library:write（MCP submit_resource 用 write）。检索先 ILIKE，接口后可换 PGroonga | 资源库页（丢链接+搜索） | M2 | ✅ PR p1/library |
+| POST /mcp（Core 对外 MCP，JSON-RPC 2.0；Authorization: Bearer 所有者/账号/arc_ 令牌）：工具 search_library、get_library_item、submit_resource、list_memory_topics、get_memory；tools/list 按客户端范围动态返回，无范围=工具不存在；输出打码；每次调用审计 mcp.call。GET /mcp = 405。LobeHub 设置→MCP 里用 /api/mcp/config 的配置 | LobeHub 接入 Core MCP | M2 | ✅ PR p1/mcp-readonly（A 类，needs-leader-review） |
 | GET /api/tools、工具开关与额度 | 工具 | 工具网关 | 待后台线 |
 | GET /api/library（资源库列表、搜索） | 资源库 | | 待后台线 |
 | GET /api/inbox?type=confirm\|takeover\|brief（可与 group/status 组合；confirm = 含重要确认动作的卡） | 收件箱 | 接管卡、简报分类 | ✅ PR p1/inbox-type |
@@ -177,6 +178,7 @@ P2–P7 的功能开发在阶段 C 之后照常在网页版上推进，离线版
 | Muse 1–15 清单与负责人裁决表 | D39 细节 | 用户转达 |
 
 ## 变更
+- **2026-11-01：staging 自动部署已上线**（#170 / D209）：dev 合并后 2–5 分钟内自动部署到 https://staging.pcmanai.com（Access 只允许所有者），各线从此不手动部署。说明与「怎么查当前提交」见 docs/ops/STAGING.md。
 - 2026-10-28：#38 Aroomo 页面接 Core、#39 对话经 Core /v1 → LiteLLM（含 Responses API 转换、冒烟修复）、#40 Core 定时任务合并到 dev；服务器更新到 `f349d90`，Tunnel 改指 `shell:3000`。
 - 2026-10-28：#33 修复 AGENT_GATEWAY_URL 空值 + D66–D75 入档；#36 Aroomo Shell 界面薄层 + D76–D80 入档、提议 H1/H2。
 - 2026-10-28：负责人裁决 D62–D65 入档（#26）并实现：操作员白名单 + 统一确认服务（#27）、备份公钥加密（#28）、安装器主密钥窗口与电脑版备份（#29）、测试版发布流程（#30）。

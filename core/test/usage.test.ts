@@ -143,3 +143,38 @@ describe("额度圆环 /api/usage", () => {
     expect(ringState({ requests: 100, errors: 0, limited: 0 }, 100)).toBe("full");
   });
 });
+
+describe("悬停卡 /api/members/:id/card", () => {
+  const apps: FastifyInstance[] = [];
+  afterAll(async () => {
+    for (const a of apps) await a.close();
+  });
+
+  it("只有三样；填了上限才有余量（估算），否则未知；不出站；小号看不到所有者成员", async () => {
+    const clock = fakeClock();
+    let outbound = 0;
+    const deps = memoryDeps(clock.now);
+    deps.chatFetch = (async () => {
+      outbound += 1;
+      return new Response("{}");
+    }) as typeof fetch;
+    const app = buildServer(loadConfig({ CORE_LOG_LEVEL: "silent", CORE_OWNER_TOKEN: OWNER_TOKEN, CORE_ACCESS_REAUTH: "off" }), deps);
+    apps.push(app);
+    const call = (headers: Record<string, string>) => (method: "GET" | "POST" | "PUT", url: string, payload?: object) => app.inject({ method, url, headers, ...(payload ? { payload } : {}) });
+    const owner = call(ownerAuth);
+    await owner("POST", "/api/members", { name: "Alpha", capabilityTags: ["image"] });
+    const before = outbound;
+    let c = (await owner("GET", "/api/members/alpha/card")).json();
+    expect(Object.keys(c).sort()).toEqual(["name", "remaining", "status", "type"]);
+    expect(c).toMatchObject({ name: "Alpha", type: ["image"], status: "可用", remaining: { value: null, source: "未知" } });
+    await owner("PUT", "/api/usage/limits/alpha", { dailyLimit: 10 });
+    c = (await owner("GET", "/api/members/alpha/card")).json();
+    expect(c.remaining).toEqual({ value: 10, unit: "次/天", source: "估算" });
+    expect(JSON.stringify(c)).not.toMatch(/key|price|rate/i);
+    expect(outbound).toBe(before);
+    const inv = await owner("POST", "/api/users/invites", { email: "s@example.com" });
+    const r = await app.inject({ method: "POST", url: "/auth/accept", payload: { token: inv.json().token, password: "correct-horse-battery" } });
+    const small = call({ authorization: `Bearer ${r.json().token}` });
+    expect((await small("GET", "/api/members/alpha/card")).statusCode).toBe(404);
+  });
+});

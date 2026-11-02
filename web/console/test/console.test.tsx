@@ -38,7 +38,7 @@ describe('品牌（D7）', () => {
     const [on, off] = container.querySelectorAll('[data-online]');
     expect(on!.className).not.toContain('grayscale');
     expect(off!.className).toContain('grayscale');
-    expect(off!.getAttribute('title')).toBe('Kimi（离线）');
+    expect(off!.getAttribute('aria-label')).toContain('Kimi，离线');
   });
 });
 
@@ -95,7 +95,7 @@ describe('页面', () => {
     fireEvent.click(screen.getByRole('button', { name: '登录' }));
     await waitFor(() => expect(screen.getByRole('heading', { name: '能力地图与成员' })).toBeInTheDocument());
     await waitFor(() => expect(screen.getAllByText('gpt-oss-20b').length).toBeGreaterThan(0));
-    expect(screen.getByTitle('Kimi（离线）')).toHaveAttribute('data-online', 'false');
+    expect(screen.getByRole('img', { name: /Kimi，离线/ })).toHaveAttribute('data-online', 'false');
     expect(screen.getByRole('navigation', { name: '控制台' }).querySelectorAll('a')).toHaveLength(7);
   });
 

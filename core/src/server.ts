@@ -47,9 +47,12 @@ import { PubMemService } from "./pubmem/service.js";
 import { registerPubMemRoutes } from "./pubmem/routes.js";
 import { LibraryService } from "./library/service.js";
 import { registerLibraryRoutes } from "./library/routes.js";
+import { registerMcpRoutes } from "./mcp/server.js";
 import { ClientTokenService } from "./clients/service.js";
 import { registerClientRoutes } from "./clients/routes.js";
 import { ExecutorService } from "./executor/service.js";
+import { GatewayService } from "./gateway/service.js";
+import { registerGatewayRoutes } from "./gateway/routes.js";
 import { registerExecutorRoutes } from "./executor/routes.js";
 import {
   InterruptBudget,
@@ -241,11 +244,23 @@ export function buildServer(
     (u) => scopedSettings(deps.settings, u),
     takeoverHooks(inbox, interruptBudget, deps.now),
   );
+  const gatewayService = new GatewayService(
+      deps.settings,
+      confirm,
+      deps.now,
+      executorSvc,
+      (u, id) => vaultSvc.exists(u, id),
+      (u, id) => vaultSvc.resolveForGateway(u, id),
+    );
+  registerGatewayRoutes(app, gatewayService);
   registerTakeoverHandler(inbox, executorSvc);
   registerInterruptBudgetRoutes(app, interruptBudget, inbox);
   registerExecutorRoutes(app, executorSvc);
-  registerPubMemRoutes(app, new PubMemService(deps.pubmem, deps.now));
-  registerLibraryRoutes(app, new LibraryService(deps.library, deps.now));
+  const pubMemService = new PubMemService(deps.pubmem, deps.now);
+  registerPubMemRoutes(app, pubMemService);
+  const libraryService = new LibraryService(deps.library, deps.now);
+  registerLibraryRoutes(app, libraryService);
+  registerMcpRoutes(app, libraryService, pubMemService, gatewayService);
   registerAuditRoutes(app, deps.auditLog);
   registerMcpConfigRoutes(app);
   registerCapabilityRoutes(app, new CapabilityService(), (u) => new TrialService(scopedSettings(deps.settings, u), deps.now));

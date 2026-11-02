@@ -1,0 +1,15 @@
+# 拉取式部署（工单 #170 第 6 步兜底）：由 aroomo-staging-deploy.timer 每 2 分钟触发。
+[Unit]
+Description=Aroomo staging: deploy origin/dev if it has new commits
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=docker
+Environment=STAGING_ROOT=/opt/aroomo-staging
+ExecStart=/opt/aroomo-staging/deploy/staging/deploy-staging.sh --if-changed
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=30min

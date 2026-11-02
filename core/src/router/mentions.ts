@@ -246,8 +246,30 @@ function stripTokens(text: string, tokens: MentionToken[]): string {
     .trim();
 }
 
+/**
+ * LobeHub 点选 @ 菜单生成的提及标签：<mention name="@X" id="agt_..."/>（#210）。
+ * 改写成手打的 @"X"，与手打等效；id 能对上成员时用成员名（改名后仍然准）。代码块 / URL 里的不动。
+ */
+export function normalizeMentionTags(text: string, members: RoutableMember[]): string {
+  if (!text.includes('<mention')) return text;
+  const ranges = protectedRanges(text);
+  const tag = /<mention\b([^>]*?)\/?>(?:\s*<\/mention>)?/giu;
+  const attr = (src: string, key: string): string | undefined =>
+    new RegExp(`\\b${key}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'iu').exec(src)?.slice(1).find((v) => v !== undefined);
+  return text.replace(tag, (all, attrs: string, offset: number) => {
+    if (ranges.some(([a, b]) => offset >= a && offset < b)) return all;
+    const id = attr(attrs, 'id');
+    const byId = id ? members.find((m) => m.id === id) : undefined;
+    const name = (byId?.name ?? attr(attrs, 'name') ?? '').replace(/^[@＠]/u, '').replace(/"/g, '').trim();
+    if (!name) return all;
+    const prev = offset > 0 ? text[offset - 1] : undefined;
+    return `${prev !== undefined && EMAIL_PREV.test(prev) ? ' ' : ''}@"${name}"`;
+  });
+}
+
 /** 只返回点名结果（不含 token 位置）。 */
-export function parseMentions(text: string, members: RoutableMember[]): MentionParseResult {
+export function parseMentions(rawText: string, members: RoutableMember[]): MentionParseResult {
+  const text = normalizeMentionTags(rawText, members);
   const r = parseMentionTokens(text, members);
   return { memberIds: r.memberIds, unknown: r.unknown, body: r.body, hasMention: r.hasMention };
 }

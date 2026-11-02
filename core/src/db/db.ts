@@ -55,16 +55,21 @@ export function createPgDb(connectionString: string, opts: PgDbOptions = {}): Db
     exec: base.exec,
     async tx<T>(fn: (q: Queryable) => Promise<T>): Promise<T> {
       const client = await pool.connect();
+      let broken: unknown;
       try {
         await client.query('BEGIN');
         const out = await fn(wrap(client));
         await client.query('COMMIT');
         return out;
       } catch (err) {
-        await client.query('ROLLBACK').catch(() => undefined);
+        let rollbackFailed = false;
+        await client.query('ROLLBACK').catch(() => {
+          rollbackFailed = true;
+        });
+        broken = rollbackFailed ? err : undefined;
         throw err;
       } finally {
-        client.release();
+        client.release(broken as Error | undefined);
       }
     },
     async close() {
