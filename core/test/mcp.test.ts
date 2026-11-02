@@ -119,10 +119,13 @@ describe('Core /mcp 工具网关（list_tools / call_tool）', () => {
     const g = await client(['tools:list', 'tools:call']);
     const call = async (tool: string) => (await rpc(g, 'tools/call', { name: 'call_tool', arguments: { tool } })).json().result;
     const tools = (await app.inject({ method: 'GET', url: '/api/gateway/tools', headers: ownerAuth })).json().tools as { name: string; risk: string }[];
-    const nonRead = tools.find((x) => x.risk !== 'read');
+    expect(tools.find((x) => x.name === 'browser_task_create' && x.risk !== 'read')).toBeTruthy();
     const missing = await call('does_not_exist');
     expect(missing.isError).toBe(true);
-    if (nonRead) expect(await call(nonRead.name)).toEqual(missing);
+    expect(await call('browser_task_create')).toEqual(missing);
+    const logs = JSON.stringify((await app.inject({ method: 'GET', url: '/api/audit?limit=100', headers: ownerAuth })).json());
+    expect(logs).toContain('mcp: not_read');
+    expect(logs).toContain('mcp: not_found');
     const listOnly = await client(['tools:list']);
     expect(await names(listOnly)).toEqual(['list_tools']);
     expect((await rpc(listOnly, 'tools/call', { name: 'call_tool', arguments: { tool: 'read_webpage' } })).json().error.code).toBe(-32602);

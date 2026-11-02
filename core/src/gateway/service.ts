@@ -108,17 +108,30 @@ export class GatewayService {
     }
   }
 
-  /** /mcp 能看到、能调的工具：只有内置只读工具（M2 = read_webpage）。用户登记的 HTTP 工具不经 MCP 开放。列表和调用共用这一处。 */
+  /** 列表和调用共用：必须是内置适配器提供的、白名单里的、静态与实际风险都是 read 的工具。 */
+  #mcpCheck(reg: AdapterRegistry, name: string, args?: Record<string, unknown>): 'not_found' | 'not_read' | 'not_exposed' | null {
+    const adapter = reg.find(name);
+    if (!adapter) return 'not_found';
+    const spec = reg.tools().find((t) => t.name === name);
+    if (spec?.risk !== 'read' || (args && reg.riskOf(name, args) !== 'read')) return 'not_read';
+    if (!MCP_BUILTIN_READ.has(name) || adapter !== this.#web) return 'not_exposed';
+    return null;
+  }
+
+  /** /mcp 能看到、能调的工具：只有内置只读工具（M2 = read_webpage）。用户登记的 HTTP 工具（含重名）不经 MCP 开放。 */
   async listMcpReadable(userId: string): Promise<PublicTool[]> {
-    return (await this.list(userId)).filter((x) => x.risk === 'read' && MCP_BUILTIN_READ.has(x.name));
+    const reg = await this.#registry(userId);
+    return reg
+      .tools()
+      .filter((t) => this.#mcpCheck(reg, t.name) === null)
+      .map(({ name, description, inputSchema, risk }: ToolSpec) => ({ name, description, inputSchema, risk }));
   }
 
   /** 给 /mcp 用：不在放行清单里一律返回同一条错误（审计记真实原因）；用「什么都不能确认」的上下文调用。 */
   async callRead(userId: string, tool: string, args: Record<string, unknown>, audit: AuditFn): Promise<ToolResult> {
-    const visible = await this.listMcpReadable(userId);
-    if (!visible.some((x) => x.name === tool)) {
-      const reg = await this.#registry(userId);
-      const reason = !reg.find(tool) ? 'not_found' : MCP_BUILTIN_READ.has(tool) ? 'not_read' : 'not_exposed';
+    const reg = await this.#registry(userId);
+    const reason = this.#mcpCheck(reg, tool, args);
+    if (reason) {
       await audit('gateway.call', { type: 'tool', id: tool.slice(0, 64) }, 'denied', `mcp: ${reason}`);
       throw new HttpError(403, 'FORBIDDEN', MCP_DENIED_MSG);
     }

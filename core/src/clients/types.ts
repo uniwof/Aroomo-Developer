@@ -2,7 +2,7 @@
  * 外部客户端令牌（HUB.md 1.1）。一个客户端一枚令牌；scope 白名单；可随时吊销；每次调用都审计。
  */
 
-/** 目前可授予的范围。B5 的 tools:call:<id> 随工具网关一起加入，这里不预留（宁可不能授予，也不要悄悄放宽）。 */
+/** 目前可授予的范围。tools:call = 调用 MCP 白名单里的内置只读工具（M2 只有 read_webpage）。扩大白名单不能让已发的授权自动扩大：要么改成 tools:call:<id>，要么要求重新授权。 */
 export const CLIENT_SCOPES = ['bookmarks:read', 'library:read', 'library:write', 'memory:read', 'brief:read', 'tools:list', 'tools:call', 'models:chat', 'tasks:pull', 'tasks:secret'] as const;
 export type ClientScope = (typeof CLIENT_SCOPES)[number];
 
