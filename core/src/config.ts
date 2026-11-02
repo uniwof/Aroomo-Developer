@@ -22,6 +22,8 @@ export interface CoreConfig {
   databaseUrl: string | undefined;
   /** 启动时自动执行数据库迁移（默认 true） */
   autoMigrate: boolean;
+  /** D206：应用连接切换到的数据库角色（迁移仍用 CORE_DATABASE_URL 的登录角色）；未设置 = 不切换 */
+  dbAppRole: string | undefined;
   /** 主人（P0 单用户）访问令牌；未设置时 /api/* 一律 503 */
   ownerToken: string | undefined;
   /** 对话入口 /v1/*（LobeHub 的 OpenAI 兼容服务商指向这里）用的令牌；未设置时 /v1 一律 503 */
@@ -112,6 +114,9 @@ export function loadConfig(env: Env = process.env): CoreConfig {
   if (tokenSecret !== undefined && tokenSecret.length < 32) throw new ConfigError('CORE_TOKEN_SECRET 至少 32 个字符');
   const vaultKey = str(env, 'VAULT_KEY');
   if (vaultKey !== undefined && !/^[A-Za-z0-9+/_-]{43}=?$/.test(vaultKey)) throw new ConfigError('VAULT_KEY 必须是 32 字节的 base64（43 个字符）');
+  const dbAppRole = str(env, 'CORE_DB_APP_ROLE');
+  if (dbAppRole !== undefined && !/^[a-z_][a-z0-9_]{0,62}$/.test(dbAppRole)) throw new ConfigError('CORE_DB_APP_ROLE 只允许小写字母、数字、下划线');
+
   const autoMigrateRaw = (str(env, 'CORE_AUTO_MIGRATE') ?? 'true').toLowerCase();
   if (!['true', 'false', '1', '0'].includes(autoMigrateRaw)) throw new ConfigError('CORE_AUTO_MIGRATE 必须是 true/false');
 
@@ -139,6 +144,7 @@ export function loadConfig(env: Env = process.env): CoreConfig {
     litellmMasterKey: str(env, 'LITELLM_MASTER_KEY'),
     databaseUrl,
     autoMigrate: autoMigrateRaw === 'true' || autoMigrateRaw === '1',
+    dbAppRole,
     ownerToken,
     chatToken,
     jobs: (str(env, 'CORE_JOBS') ?? 'on') !== 'off',
@@ -162,6 +168,7 @@ export function toSafeJSON(cfg: CoreConfig): Record<string, unknown> {
     litellmMasterKey: cfg.litellmMasterKey ? '(set)' : '(unset)',
     databaseUrl: cfg.databaseUrl ? '(set)' : '(unset)',
     autoMigrate: cfg.autoMigrate,
+    dbAppRole: cfg.dbAppRole ?? '(unset)',
     ownerToken: cfg.ownerToken ? '(set)' : '(unset)',
     chatToken: cfg.chatToken ? '(set)' : '(unset)',
     tokenSecret: cfg.tokenSecret ? '(set)' : '(unset)',

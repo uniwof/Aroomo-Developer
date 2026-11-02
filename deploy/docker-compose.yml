@@ -144,6 +144,8 @@ services:
       LITELLM_BASE_URL: http://litellm:4000
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
       CORE_DATABASE_URL: postgresql://aroomo_core:${CORE_DB_PASSWORD}@postgres:5432/aroomo_core
+      # D206：业务连接切到的应用角色（新装由 postgres/20-aroomo-dbs.sh 创建；已有库先按 docs/ops/RLS.md 建角色再设 aroomo_core_app）
+      CORE_DB_APP_ROLE: ${CORE_DB_APP_ROLE:-}
       CORE_OWNER_TOKEN: ${CORE_OWNER_TOKEN:-}
       # 对话入口 /v1 的令牌（LobeHub 用它调 Core；提议 H5）
       CORE_CHAT_TOKEN: ${CORE_CHAT_TOKEN:-}
