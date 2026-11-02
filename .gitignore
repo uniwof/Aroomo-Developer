@@ -38,3 +38,8 @@ installer/windows/bin/
 .gemini/
 .gemini-task/
 gha-creds-*.json
+
+# 生产服务器上的本地密钥文件与发布状态（#171：发布脚本绝不 git clean / add -A）
+deploy/.lobehub-cli-key
+deploy/.r2-readonly.env
+.release/
