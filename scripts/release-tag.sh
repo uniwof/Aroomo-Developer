@@ -21,7 +21,7 @@
 #   RELEASE_ROOT（默认 /opt/aroomo）RELEASE_REMOTE（origin）RELEASE_MAIN_BRANCH（main）
 #   RELEASE_TIER（默认 standard，与现有生产一致）RELEASE_HEALTH_TIMEOUT_S（420）
 #   RELEASE_HEALTH_CMD（测试用：命令 <服务名> 输出 healthy 即通过）RELEASE_SKIP_CONSOLE=1（测试用：不构建控制台）
-#   RELEASE_REQUIRE_PRECHECK（默认 0；#229 的 release-precheck.sh 合入后改为 1）
+#   RELEASE_REQUIRE_PRECHECK（默认 1：缺 scripts/release-precheck.sh 就拒绝部署；只有测试设 0）
 set -Eeuo pipefail
 
 ROOT="${RELEASE_ROOT:-/opt/aroomo}"
@@ -183,7 +183,7 @@ run_precheck() {
   if [ -x "$pre" ]; then
     if [ "$dry" = 1 ]; then "$pre" --no-backup || die "生产前检查不通过"
     else "$pre" || die "生产前检查或部署前备份不通过，不部署"; fi
-  elif [ "${RELEASE_REQUIRE_PRECHECK:-0}" = 1 ]; then
+  elif [ "${RELEASE_REQUIRE_PRECHECK:-1}" = 1 ]; then
     die "缺少 scripts/release-precheck.sh，不部署"
   else
     log "提示：生产前检查（#229）尚未启用，已跳过（调用点：scripts/release-precheck.sh）"

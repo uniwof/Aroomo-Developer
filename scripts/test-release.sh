@@ -49,7 +49,7 @@ mkdir -p "$root/deploy"
 echo local-secret >"$root/deploy/.lobehub-cli-key"
 
 export RELEASE_ROOT="$root" RELEASE_TEST_CALLS="$work/calls.log" RELEASE_SKIP_CONSOLE=1 RELEASE_HEALTH_POLL_S=0
-export RELEASE_HEALTH_TIMEOUT_S=2
+export RELEASE_HEALTH_TIMEOUT_S=2 RELEASE_REQUIRE_PRECHECK=0
 health="$work/health.sh"
 cat >"$health" <<'H'
 #!/usr/bin/env bash
@@ -102,6 +102,8 @@ expect "合并闸门不过则拒绝" 1 "$rel" deploy v0.2.0 --confirm v0.2.0
 expect "hotfix 跳过闸门" 0 "$rel" deploy v0.2.0 --confirm v0.2.0 --hotfix
 rm -f "$root/scripts/merge-gate.sh"
 
+# 默认必须有生产前检查脚本：缺了就拒绝（#229）
+RELEASE_REQUIRE_PRECHECK=1 expect "缺 release-precheck.sh 时拒绝部署" 1 "$rel" deploy v0.1.0 --confirm v0.1.0
 # 生产前检查脚本存在且失败时拒绝部署
 printf '#!/usr/bin/env bash\nexit 1\n' >"$root/scripts/release-precheck.sh"; chmod +x "$root/scripts/release-precheck.sh"
 expect "生产前检查失败则不切换" 1 "$rel" deploy v0.1.0 --confirm v0.1.0
