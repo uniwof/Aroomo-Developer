@@ -88,7 +88,7 @@ export function registerKeyRoutes(app: FastifyInstance, svc: KeysService): void 
     },
     async (req) => {
       const { confirmToken: t, ...patch } = req.body;
-      return { key: keyJson(await svc.update(req.params.id, patch, confirmCtx(req.principal!, t), req.audit, scopeOf(req))) };
+      return { key: keyJson(await svc.update(scopeOf(req), req.params.id, patch, confirmCtx(req.principal!, t), req.audit)) };
     },
   );
 
@@ -99,7 +99,7 @@ export function registerKeyRoutes(app: FastifyInstance, svc: KeysService): void 
       schema: { params: idParam, body: { type: ['object', 'null'], additionalProperties: false, properties: { confirmToken } } },
     },
     async (req, reply) => {
-      await svc.delete(req.params.id, confirmCtx(req.principal!, req.body?.confirmToken), req.audit, scopeOf(req));
+      await svc.delete(scopeOf(req), req.params.id, confirmCtx(req.principal!, req.body?.confirmToken), req.audit);
       return reply.status(204).send();
     },
   );

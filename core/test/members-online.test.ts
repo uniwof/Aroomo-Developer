@@ -41,7 +41,7 @@ describe("成员在线 online（有一把正常的 Key 对着它）", () => {
     };
     await deps.keys.insert(rec);
     expect((await get())[0]!.online).toBe(true);
-    await deps.keys.update({ ...rec, status: "sync_failed" });
+    await deps.keys.update('owner', { ...rec, status: "sync_failed" });
     expect((await get())[0]!.online).toBe(false);
   });
 });
