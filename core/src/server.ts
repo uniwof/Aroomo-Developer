@@ -356,6 +356,9 @@ export function buildServer(
         listMembers: () => deps.members.forUser(userId).listAll(),
         lead: leadForUser(userId),
         rules: async () => (await deps.pubmem.get(userId, "rules"))?.body ?? null,
+        security: undefined,
+        onCall: undefined,
+        onTokens: undefined,
       }),
     },
   );

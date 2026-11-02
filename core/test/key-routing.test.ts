@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { memoryDeps } from '../src/deps.js';
+import { type CoreDeps, memoryDeps, pgDeps } from '../src/deps.js';
+import { dbTargets } from './helpers/db.js';
 import { LiteLLMAdmin } from '../src/keys/litellm.js';
 import { userPrefix } from '../src/keys/prefix.js';
 import { MOCK_MASTER_KEY, type MockLiteLLM, startMockLiteLLM } from './helpers/mock-litellm.js';
@@ -9,22 +10,29 @@ import { expectDenied, expectSameAsMissing, twoAccounts, type TwoAccounts } from
 const fakeKey = (tag: string) => ['placeholder', 'sk', tag, 'ABCDEFGHIJKLMNOPQRSTUV'].join('-');
 const CHAT_TOKEN = 'placeholder-chat-token-0123456789abcdefgh';
 
-describe('Key 前缀路由 + 对话按用户路由（#179）', () => {
+const envs = [
+  { name: 'memory', make: async (now: () => Date): Promise<CoreDeps> => memoryDeps(now) },
+  ...dbTargets.map((x) => ({ name: x.name, make: async (now: () => Date): Promise<CoreDeps> => pgDeps(await x.open(), now) })),
+];
+
+describe.each(envs)('Key 前缀路由 + 对话按用户路由（#179）[$name]', (env) => {
   let mock: MockLiteLLM;
   let t: TwoAccounts;
   let upstream: string[] = [];
+  let bodies: string[] = [];
 
   beforeAll(async () => {
     mock = await startMockLiteLLM();
     t = await twoAccounts(
       {
-        name: 'memory',
+        name: env.name,
         make: async (now) => {
-          const deps = memoryDeps(now);
+          const deps = await env.make(now);
           deps.litellm = new LiteLLMAdmin({ baseUrl: mock.url, masterKey: MOCK_MASTER_KEY, timeoutMs: 2000 });
           deps.chatFetch = (async (_u: unknown, init?: { body?: string }) => {
             const b = JSON.parse(String(init?.body)) as { model: string };
             upstream.push(b.model);
+            bodies.push(String(init?.body));
             return new Response(JSON.stringify({ choices: [{ index: 0, message: { role: 'assistant', content: 'hi' }, finish_reason: 'stop' }] }), {
               status: 200,
               headers: { 'content-type': 'application/json' },
@@ -114,5 +122,50 @@ describe('Key 前缀路由 + 对话按用户路由（#179）', () => {
     expect((await say(token, 'aroomo')).statusCode).toBe(200);
     await t.xiao('DELETE', `/api/clients/${c.client.id as string}`);
     expect((await say(token, 'aroomo')).statusCode).toBe(401);
+  });
+
+  it('必改1/2：所有者的规矩不进小号的上游请求；小号任何调用方式的上游名都带小号前缀', async () => {
+    await t.deps.pubmem.put('owner', 'rules', '规矩', 'OWNER-SECRET-RULE', t.clock.now());
+    const token = (await t.xiao('POST', '/api/clients', { name: 'chat3', scopes: ['models:chat'] })).json().token as string;
+    bodies = [];
+    upstream = [];
+    for (const m of ['OwnerModel', 'openai/gpt-owner', 'aroomo', 'aroomo/auto', 'aroomo/xiaomodel']) await say(token, m);
+    await t.owner('POST', '/api/members', { name: 'OwnerModel2' });
+    const mineUpstream = [...upstream];
+    const mineBodies = bodies.join('');
+    bodies = [];
+    await say(CHAT_TOKEN, 'aroomo/ownermodel2');
+    const ownerBody = bodies.join('');
+    const prefix = `${userPrefix(t.xiaoId)}/`;
+    expect(mineUpstream.length).toBeGreaterThan(0);
+    expect(mineUpstream.every((u) => u.startsWith(prefix))).toBe(true);
+    expect(ownerBody).toContain('OWNER-SECRET-RULE'); // 对照：所有者自己的对话带规矩，说明这里的测法有效
+    expect(mineBodies).not.toContain('OWNER-SECRET-RULE');
+  });
+
+  it('必改3：非法 user id 报错（不先删字符）', () => {
+    const hex = 'a'.repeat(32);
+    expect(() => userPrefix(`zz${hex}`)).toThrow();
+    expect(() => userPrefix(`${hex}-`)).toThrow();
+    expect(() => userPrefix(`${hex}x`)).toThrow();
+    expect(userPrefix(hex.toUpperCase())).toBe(`u${hex}`);
+    expect(userPrefix('AAAAAAAA-aaaa-AAAA-aaaa-aaaaaaaaaaaa')).toBe(`u${hex}`);
+  });
+
+  it('必改4：小号整条替换 Key 后新部署带前缀、旧部署删除、所有者部署不变', async () => {
+    const xk = (await t.xiao('GET', '/api/keys')).json().keys[0].id as string;
+    const ownerBefore = [...mock.deployments.values()].filter((d) => d.model_name === 'OwnerModel').length;
+    const r = await t.xiao('PATCH', `/api/keys/${xk}`, { apiKey: fakeKey('xia2') });
+    expect(r.statusCode).toBeLessThan(300);
+    const mine = [...mock.deployments.values()].filter((d) => String(d.model_name).endsWith('/XiaoModel'));
+    expect(mine).toHaveLength(1);
+    expect(mine[0]!.model_name).toBe(`${userPrefix(t.xiaoId)}/XiaoModel`);
+    expect([...mock.deployments.values()].filter((d) => d.model_name === 'OwnerModel')).toHaveLength(ownerBefore);
+  });
+
+  it('必改5：所有者 list 不含账号的 Key，账号 list 不含所有者的（本存储）', async () => {
+    const o = (await t.owner('GET', '/api/keys')).json().keys.map((k: { name: string }) => k.name);
+    expect(o).not.toContain('小号的');
+    expect((await t.xiao('GET', '/api/keys')).json().keys.map((k: { name: string }) => k.name)).not.toContain('所有者的');
   });
 });

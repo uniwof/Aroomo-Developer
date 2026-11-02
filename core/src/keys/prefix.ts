@@ -4,8 +4,11 @@
  * Core 只会在「这个账号自己的请求」里把成员名换成带前缀的名字，所以别人的请求叫不到它。
  */
 export function userPrefix(userId: string): string {
-  const hex = userId.toLowerCase().replace(/[^a-f0-9]/g, '');
-  if (!/^[a-f0-9]{32}$/.test(hex)) throw new Error('非法 user id');
+  // 严格校验：只接受标准 UUID 或 32 位十六进制，不先删字符（避免不同 id 撞同一前缀）
+  if (!/^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{32})$/.test(userId)) {
+    throw new Error('非法 user id');
+  }
+  const hex = userId.replace(/-/g, '').toLowerCase();
   return `u${hex}`;
 }
 

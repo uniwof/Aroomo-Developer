@@ -53,7 +53,19 @@ export interface ChatDeps {
 }
 
 /** 一次调用按谁的数据处理（账号）：成员列表、负责人、规矩、上游模型名都是它自己的；不传 = 所有者 */
-export type ChatUserCtx = Pick<ChatDeps, 'upstreamModel' | 'listMembers' | 'rules' | 'lead'>;
+/**
+ * 用户依赖必须一项不漏（缺一项编译报错）：新增与用户数据相关的 ChatDeps 项，必须同时加进这里。
+ * security 不给 = 敏感保护默认开；onCall/onTokens 为 undefined = 不记到所有者名下。
+ */
+export interface ChatUserCtx {
+  upstreamModel: (name: string) => string;
+  listMembers: () => Promise<Member[]>;
+  rules: () => Promise<string | null>;
+  lead: LeadService;
+  security: SecurityService | undefined;
+  onCall: undefined;
+  onTokens: undefined;
+}
 
 export const RULES_MAX = 4000;
 
