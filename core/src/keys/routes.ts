@@ -30,7 +30,7 @@ export function registerKeyRoutes(app: FastifyInstance, svc: KeysService): void 
   app.get(
     '/api/keys',
     {
-      ...guard('keys:read'),
+      ...guard('keys:read', { user: true }),
       schema: { response: { 200: { type: 'object', properties: { keys: { type: 'array', items: keyOut } } } } },
     },
     async (req) => ({ keys: (await svc.list(scopeOf(req))).map(keyJson) }),
@@ -39,7 +39,7 @@ export function registerKeyRoutes(app: FastifyInstance, svc: KeysService): void 
   app.post<{ Body: CreateKeyInput & { confirmToken?: string } }>(
     '/api/keys',
     {
-      ...guard('keys:write'),
+      ...guard('keys:write', { user: true }),
       schema: {
         body: {
           type: 'object',
@@ -60,14 +60,14 @@ export function registerKeyRoutes(app: FastifyInstance, svc: KeysService): void 
     },
     async (req, reply) => {
       const { confirmToken: t, ...input } = req.body;
-      return reply.status(201).send({ key: keyJson(await svc.create(input, confirmCtx(req.principal!, t), req.audit)) });
+      return reply.status(201).send({ key: keyJson(await svc.create(input, confirmCtx(req.principal!, t), req.audit, scopeOf(req))) });
     },
   );
 
   app.patch<{ Params: { id: string }; Body: UpdateKeyInput & { confirmToken?: string } }>(
     '/api/keys/:id',
     {
-      ...guard('keys:write'),
+      ...guard('keys:write', { user: true }),
       schema: {
         params: idParam,
         body: {
@@ -95,7 +95,7 @@ export function registerKeyRoutes(app: FastifyInstance, svc: KeysService): void 
   app.delete<{ Params: { id: string }; Body: { confirmToken?: string } | undefined }>(
     '/api/keys/:id',
     {
-      ...guard('keys:delete'),
+      ...guard('keys:delete', { user: true }),
       schema: { params: idParam, body: { type: ['object', 'null'], additionalProperties: false, properties: { confirmToken } } },
     },
     async (req, reply) => {
