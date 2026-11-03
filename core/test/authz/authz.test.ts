@@ -71,6 +71,15 @@ describe('D208 权限声明', () => {
     }
   });
 
+  // 没匹配到路由的 /api/*（含编码写法、坏编码）：仍先验身份，不能变成无令牌 404
+  it('不存在的 /api 路径（含 /%61pi/nope）无令牌 401；坏编码在路由前就 400', async () => {
+    for (const url of ['/api/nope', '/%61pi/nope', '/%69nternal/nope']) {
+      const res = await t.app.inject({ method: 'GET', url });
+      expect(res.statusCode, url).toBe(401);
+    }
+    expect((await t.app.inject({ method: 'GET', url: '/%61pi/%E0%A4%A' })).statusCode).toBe(400);
+  });
+
   it('小号访问非 userRoute 的路由一律 403', async () => {
     const bad: string[] = [];
     for (const r of apiRoutes().filter((x) => x.config.userRoute !== true)) {
