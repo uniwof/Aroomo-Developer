@@ -98,3 +98,4 @@ networks:
     ipam: !override
       config:
         - subnet: 172.29.78.0/29
+          ip_range: 172.29.78.4/30   # 动态分配避开 core 的固定 .2（见生产 compose 注释）

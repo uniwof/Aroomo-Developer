@@ -440,6 +440,9 @@ networks:
     ipam:
       config:
         - subnet: ${MCP_NET_SUBNET:-172.29.77.0/29}
+          # 动态分配只用 .4–.6：lobe 若先于 core 启动，会占走 .2，core 再要固定的 .2 就 "Address already in use"（CI 实际撞到过）。
+          # .2/.3 留给固定地址（core = CORE_MCP_IP）。改 MCP_NET_SUBNET 时要同时改 MCP_NET_IP_RANGE 和 CORE_MCP_IP。
+          ip_range: ${MCP_NET_IP_RANGE:-172.29.77.4/30}
 
 # 默认使用 Docker 管理的命名卷（Linux 与 Windows/WSL2 都可用）。
 # 想把数据放到指定文件夹：叠加 data-dir.yml 并在 .env 里设置 DATA_DIR（绝对路径）。
