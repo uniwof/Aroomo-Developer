@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
 import { memoryDeps } from '../src/deps.js';
+import { InboxService } from '../src/inbox/service.js';
 import { buildServer } from '../src/server.js';
 import { OWNER_TOKEN, fakeClock, ownerAuth } from './helpers/db.js';
 
@@ -39,5 +40,29 @@ describe('收件箱自动收拾（M4）', () => {
     expect(await status('要拍板')).toBe('open');
     expect(await status('低紧急但要花钱')).toBe('open');
     expect(await app.jobs.runOnce('inbox-tidy')).toBe('');
+  });
+
+  it('家人账号的卡同样按规则过期，拍板卡不动，所有者的卡不受影响', async () => {
+    const c2 = fakeClock();
+    c2.set('Mon 2026-11-09 10:00 AM CST (UTC+08:00)');
+    const deps = memoryDeps(c2.now);
+    const app2 = buildServer(loadConfig({ CORE_LOG_LEVEL: 'silent', CORE_OWNER_TOKEN: OWNER_TOKEN, CORE_ACCESS_REAUTH: 'off' }), deps);
+    try {
+      const inv = await app2.inject({ method: 'POST', url: '/api/users/invites', headers: ownerAuth, payload: { email: 'kid@example.test' } });
+      await app2.inject({ method: 'POST', url: '/auth/accept', payload: { token: inv.json().token, password: 'correct-horse-battery' } });
+      const kidId = (await deps.users.getUserByEmail('kid@example.test'))!.id;
+      const svc = new InboxService(deps.inbox, undefined as never, c2.now);
+      const noAudit = (async () => undefined) as never;
+      await svc.createInboxItem({ group: 'brief', kind: 'daily', title: '小号简报', userId: kidId }, noAudit);
+      await svc.createInboxItem({ group: 'decision', kind: 'ask', urgency: 'normal', title: '小号拍板', userId: kidId, actions: [{ id: 'ok', label: '好' }] }, noAudit);
+      await svc.createInboxItem({ group: 'brief', kind: 'daily', title: '所有者简报' }, noAudit);
+      c2.set('Fri 2026-11-13 10:00 AM CST (UTC+08:00)'); // +4 天
+      expect(await app2.jobs.runOnce('inbox-tidy')).toBe('expired=2');
+      const st = async (userId?: string) => (await deps.inbox.list({ ...(userId ? { userId } : {}) })).map((i) => `${i.title}:${i.status}`).sort();
+      expect(await st(kidId)).toEqual(['小号拍板:open', '小号简报:expired']);
+      expect(await st()).toEqual(['所有者简报:expired']);
+    } finally {
+      await app2.close();
+    }
   });
 });
