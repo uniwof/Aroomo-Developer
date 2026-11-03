@@ -1,7 +1,8 @@
-/** 设置（从旧 Shell /aroomo/settings 迁来）：负责人、敏感内容保护、账号。客户端令牌与 MCP 配置复制等后台线 API。 */
+/** 设置（从旧 Shell /aroomo/settings 迁来）：负责人、敏感内容保护、外部接入（MCP 配置复制 + 客户端令牌）、账号。 */
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { ApiError, api, logout, type Member } from '@/lib/api';
+import { ClientTokens } from '@/components/ClientTokens';
 
 interface LeadSetting {
   leadId: string | null;
@@ -273,8 +274,9 @@ export function Settings() {
         <BudgetSection />
       </div>
       <h2 className="text-[16px] font-semibold">外部接入</h2>
-      <div className="rounded-2xl bg-[var(--card)] px-4">
+      <div className="divide-y divide-[var(--border)] rounded-2xl bg-[var(--card)] px-4">
         <McpSection />
+        <ClientTokens />
       </div>
       <h2 className="text-[16px] font-semibold">账号</h2>
       <div className="rounded-2xl bg-[var(--card)] px-4">
@@ -284,7 +286,6 @@ export function Settings() {
           </Button>
         </Field>
       </div>
-      <p className="text-[var(--muted)]">外部客户端令牌即将上线。</p>
     </section>
   );
 }
