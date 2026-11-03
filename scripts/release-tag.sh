@@ -48,7 +48,7 @@ trap 'rm -f "$RELEASE_TAG_COPY"' EXIT
 state="$ROOT/.release"
 mkdir -p "$state"
 # compose 的输出不丢掉：写进只有本用户能读的日志，出问题好排查（日志里没有 .env 的值）
-umask 077
+# 不设全局 umask：checkout 和构建出来的文件要保持正常权限（644/755），否则镜像里非 root 进程读不了
 compose_log="$state/compose.log"
 touch "$compose_log"; chmod 600 "$compose_log"
 log() { printf '%s %s\n' "$(date '+%F %T %Z')" "$*" | tee -a "$state/history.log" >&2; }
@@ -169,7 +169,8 @@ MIG_UNKNOWN=""
 db_ahead_of() {
   local commit="$1" has applied known
   has="$(printf '%s\n' "select coalesce(to_regclass('public.core_schema_migrations')::text, '')" | db_q 2>/dev/null)" || return 2
-  [ -n "$has" ] || { MIG_UNKNOWN=""; return 0; }   # 还没有迁移记录表 = 没迁移过
+  # 生产库一定有迁移记录表；查不到（schema 不对、连错库）不能当成「没迁移过」放行，按读不出处理（失败即关闭）
+  [ -n "$has" ] || { MIG_UNKNOWN=""; return 2; }
   applied="$(printf '%s\n' "select version from core_schema_migrations" | db_q 2>/dev/null)" || return 2
   known="$(git_ ls-tree --name-only "$commit" core/migrations/ 2>/dev/null | sed 's|.*/||' | grep -E '^[0-9]{4}_[a-z0-9_]+\.sql$' || true)"
   MIG_UNKNOWN="$(comm -23 <(printf '%s\n' "$applied" | grep . | sort) <(printf '%s\n' "$known" | grep . | sort) | tr '\n' ' ')"
@@ -183,7 +184,7 @@ migration_guard() {
   case "$rc" in
     0) return 0 ;;
     1) log "需要人工处理：数据库已执行 ${MIG_UNKNOWN% }（$(short "$commit") 不认识这些迁移），$why。先用部署前备份恢复数据库（docs/ops/BACKUP.md），再回滚代码"; return 1 ;;
-    *) log "需要人工处理：读不出数据库的迁移记录，无法确认 $(short "$commit") 能不能用现在的数据库，$why"; return 1 ;;
+    *) log "需要人工处理：读不出数据库的迁移记录（或迁移记录表 public.core_schema_migrations 不存在），无法确认 $(short "$commit") 能不能用现在的数据库，$why"; return 1 ;;
   esac
 }
 

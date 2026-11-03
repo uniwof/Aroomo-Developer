@@ -3,6 +3,7 @@
 # release-tag.sh 的本机测试（工单 #171）：用临时 git 仓库 + 假的 compose.sh，不需要 docker。
 #   scripts/test-release.sh
 set -euo pipefail
+umask 022   # 测试本身用常见的 umask，断言 release-tag.sh 不会把文件权限改严
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -102,6 +103,7 @@ expect "确认后切到 v0.2.0" 0 "$rel" deploy v0.2.0 --confirm v0.2.0
 [ "$(cat "$root/.release/current")" = v0.2.0 ] && ok "current=v0.2.0" || bad "current 状态不对"
 [ -f "$root/deploy/.lobehub-cli-key" ] && ok "本地密钥文件未被动" || bad "本地密钥文件被删了"
 grep -q 'up -d' "$RELEASE_TEST_CALLS" && ok "调用了 compose up -d" || bad "没有 compose up"
+[ "$(stat -c %a "$root/a.txt")" = 644 ] && ok "检出的文件权限是 644（没有全局 umask 077）" || bad "检出的文件权限不对：$(stat -c %a "$root/a.txt")"
 
 expect "切到坏版本 v0.3.0 失败并自动回到 v0.2.0（迁移没执行，数据库没变）" 1 "$rel" deploy v0.3.0 --confirm v0.3.0
 [ "$(head_tag)" = v0.2.0 ] && ok "失败后回到 v0.2.0" || bad "失败后检出：$(head_tag)"
@@ -167,6 +169,18 @@ git -C "$root" checkout -q -f "$(git -C "$seed" rev-parse v0.2.0)"
 printf '#!/usr/bin/env bash\nexit 3\n' >"$work/db-broken.sh"; chmod +x "$work/db-broken.sh"
 RELEASE_DB_CMD="$work/db-broken.sh" expect "读不出迁移记录：拒绝部署" 1 "$rel" deploy v0.3.0
 echo "$LAST_OUT" | grep -q '读不出数据库的迁移记录' && ok "说明读不出迁移记录" || bad "输出不对：$LAST_OUT"
+
+# 迁移记录表不存在（schema 不对或连错库）：不能当成「没迁移过」，部署和回滚都拒绝
+cat >"$work/db-notable.sh" <<'D'
+#!/usr/bin/env bash
+q="$(cat)"; case "$q" in *to_regclass*) echo "" ;; *) echo 0001_a.sql ;; esac
+D
+chmod +x "$work/db-notable.sh"
+RELEASE_DB_CMD="$work/db-notable.sh" expect "迁移记录表不存在：拒绝部署" 1 "$rel" deploy v0.3.0
+echo "$LAST_OUT" | grep -q '需要人工处理' && ok "迁移记录表不存在时写明需要人工处理" || bad "输出不对：$LAST_OUT"
+RELEASE_DB_CMD="$work/db-notable.sh" expect "迁移记录表不存在：拒绝回滚" 1 "$rel" rollback
+RELEASE_DB_CMD="$work/db-notable.sh" expect "迁移记录表不存在：确认回滚也拒绝" 1 "$rel" rollback --confirm "$(cat "$root/.release/previous")"
+[ "$(head_tag)" = v0.2.0 ] && ok "迁移记录表不存在时代码没动" || bad "检出变了：$(head_tag)"
 
 # compose 输出写进 600 权限的日志文件，不再丢掉
 [ "$(stat -c %a "$root/.release/compose.log")" = 600 ] && ok "compose.log 权限 600" || bad "compose.log 权限不对"
