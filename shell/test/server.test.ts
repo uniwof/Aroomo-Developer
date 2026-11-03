@@ -14,7 +14,7 @@ let shell: Server;
 let shellNoToken: Server;
 let base = '';
 let baseNoToken = '';
-const coreSeen: Array<{ url: string; auth?: string; cookie?: string; access?: string }> = [];
+const coreSeen: Array<{ url: string; auth?: string; cookie?: string; access?: string; xfwd?: string; aroomo?: string; xfhost?: string }> = [];
 const lobeSignOut: Array<{ cookie?: string; origin?: string }> = [];
 const lobeSeen: Array<{ url: string; cookie?: string; acceptEncoding?: string; host?: string }> = [];
 
@@ -67,6 +67,9 @@ beforeAll(async () => {
       auth: req.headers.authorization,
       cookie: req.headers.cookie,
       access: req.headers['cf-access-jwt-assertion'] as string | undefined,
+      xfwd: req.headers['x-forwarded-for'] as string | undefined,
+      aroomo: req.headers['x-aroomo-user'] as string | undefined,
+      xfhost: req.headers['x-forwarded-host'] as string | undefined,
     });
     res.writeHead(200, { 'content-type': 'application/json', 'set-cookie': 'x=1' });
     res.end('{"ok":true}');
@@ -89,6 +92,57 @@ afterAll(async () => {
 });
 
 const html = { accept: 'text/html,application/xhtml+xml' };
+
+describe('/mcp 转发给 Core（#235）', () => {
+  it('不要 LobeHub 登录；原样带客户端自己的 Authorization，不附加主人令牌、不转发 Cookie', async () => {
+    const n = coreSeen.length;
+    const r = await fetch(`${base}/mcp`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer arc_client_token_for_test', cookie: 'session=good', 'content-type': 'application/json' },
+      body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}',
+    });
+    expect(r.status).toBe(200);
+    expect(coreSeen.length).toBe(n + 1);
+    expect(coreSeen.at(-1)?.url).toBe('/mcp');
+    expect(coreSeen.at(-1)?.auth).toBe('Bearer arc_client_token_for_test');
+    expect(coreSeen.at(-1)?.cookie).toBeUndefined();
+    expect(r.headers.getSetCookie()).toEqual([]);
+  });
+
+  it('必改1：客户端伪造的 x-forwarded-for / cf-access-jwt-assertion / x-aroomo-* 一个都到不了 Core', async () => {
+    await fetch(`${base}/mcp`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer t', 'x-forwarded-for': '6.6.6.6', 'x-forwarded-host': 'evil.example', 'cf-access-jwt-assertion': 'forged', 'x-aroomo-user': 'owner' },
+      body: '{}',
+    });
+    const seen = coreSeen.at(-1);
+    expect(seen?.access).toBeUndefined();
+    expect(seen?.aroomo).toBeUndefined();
+    expect(seen?.xfhost).toBeUndefined();
+    expect(seen?.xfwd).not.toContain('6.6.6.6');
+  });
+
+  it('没带令牌就不带令牌：绝不替客户端补主人令牌（也包括配了主人令牌的 Shell）', async () => {
+    const r = await fetch(`${base}/mcp`, { method: 'POST', body: '{}' });
+    expect(r.status).toBe(200); // 假 Core 不校验；这里只看 Shell 转发了什么
+    expect(coreSeen.at(-1)?.auth).toBeUndefined();
+  });
+
+  it('只转发 POST/GET：PUT/DELETE 405，不到 Core', async () => {
+    const n = coreSeen.length;
+    for (const method of ['PUT', 'DELETE', 'PATCH']) {
+      const r = await fetch(`${base}/mcp`, { method });
+      expect(r.status, method).toBe(405);
+    }
+    expect(coreSeen.length).toBe(n);
+  });
+
+  it('/mcp 之外的路径不受影响：/mcp-x 仍交给 LobeHub', async () => {
+    const n = lobeSeen.length;
+    await (await fetch(`${base}/mcp-x`, { headers: html })).text();
+    expect(lobeSeen.length).toBe(n + 1);
+  });
+});
 
 describe('LobeHub 页面', () => {
   it('D190：HTML 原样转发——不注入、不换品牌和图标；只补默认简体中文 Cookie', async () => {
