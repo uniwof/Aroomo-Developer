@@ -398,6 +398,17 @@ jobs:
         run: |
           Remove-Item "$env:RUNNER_TEMP\rd-key.txt", "$env:RUNNER_TEMP\rd-wrong-key.txt" -Force -ErrorAction SilentlyContinue
 
+  release-scripts:
+    name: 发布脚本测试（#171 / #229，不允许跳过）
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: release-tag.sh（临时 git 仓库 + 假 compose）
+        run: |
+          scripts/test-release.sh | tee /tmp/test-release.log
+          grep -qx '全部通过' /tmp/test-release.log
+          ! grep -q '^FAIL' /tmp/test-release.log
+
   secrets:
     name: 密钥扫描（gitleaks）
     runs-on: ubuntu-24.04
