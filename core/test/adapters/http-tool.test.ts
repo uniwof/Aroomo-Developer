@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { HttpToolAdapter, type HttpToolDef, MAX_RESPONSE_BYTES, checkDef, isPrivateAddress } from '../../src/adapters/http-tool.js';
+import { HttpToolAdapter, type HttpToolDef, MAX_RESPONSE_BYTES, checkDef, isPrivateAddress, withinBasePath } from '../../src/adapters/http-tool.js';
 import { AdapterRegistry } from '../../src/adapters/registry.js';
-import type { ToolCtx } from '../../src/adapters/types.js';
+import type { ToolAdapter, ToolCtx } from '../../src/adapters/types.js';
 
 const SECRET = ['fake', 'tok', String(Date.now()), 'zzzz'].join('_');
 const def: HttpToolDef = {
@@ -111,5 +111,69 @@ describe('HTTP 外部工具适配器', () => {
     expect(reg.riskOf('search', {})).toBe('read');
     expect(reg.riskOf('nope', {})).toBeNull();
     expect(() => reg.add(make().a)).toThrow();
+  });
+
+  it('#246：编码后的 ..（%2e%2e 等）不能跳出 baseUrl 的路径，且不发请求', async () => {
+    const { a, f } = make();
+    const bad = [
+      '/%2e%2e/admin',
+      '/%2E%2E/admin',
+      '/%2e./admin',
+      '/.%2E/admin',
+      '/%2e%2e%2fadmin',
+      '/x/%2e%2e/%2e%2e/admin',
+      '/v1/../admin',
+      '/%2e%2e',
+      '/x%2f..%2f..%2fadmin',
+    ];
+    for (const p of bad) {
+      const r = await a.call('search', { path: p }, ctx);
+      expect(r.isError, p).toBe(true);
+    }
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it('#246：正常路径仍然通过，且最终网址在 baseUrl 下面', async () => {
+    const urls: string[] = [];
+    const f = (async (u: URL) => {
+      urls.push(u.toString());
+      return new Response('{}', { status: 200 });
+    }) as unknown as typeof fetch;
+    const { a } = make({}, f);
+    expect((await a.call('search', { path: '/items' }, ctx)).isError).toBeFalsy();
+    expect((await a.call('search', { path: '/items/a%20b' }, ctx)).isError).toBeFalsy();
+    expect(urls[0]).toBe('https://api.example.com/v1/items');
+    expect(urls.every((u) => u.startsWith('https://api.example.com/v1/'))).toBe(true);
+  });
+
+  it('#246：baseUrl 不带路径时，路径检查不误拒', async () => {
+    const { a, f } = make({ baseUrl: 'https://api.example.com' });
+    expect((await a.call('search', { path: '/items' }, ctx)).isError).toBeFalsy();
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+
+  it('#246：withinBasePath 按整段比，/v1x 不算在 /v1 下面', () => {
+    expect(withinBasePath('/v1/items', '/v1')).toBe(true);
+    expect(withinBasePath('/v1/items', '/v1/')).toBe(true);
+    expect(withinBasePath('/v1x/items', '/v1')).toBe(false);
+    expect(withinBasePath('/admin', '/v1')).toBe(false);
+    expect(withinBasePath('/anything', '/')).toBe(true);
+  });
+
+  it('#246：注册表 add() 一批里有重名就整批报错，前面的工具也没登记', () => {
+    const fake = (names: string[]): ToolAdapter => ({
+      id: `fake:${names.join(',')}`,
+      tools: () => names.map((name) => ({ name, description: name, risk: 'read' as const, inputSchema: { type: 'object' } })),
+      call: async () => ({ content: [{ type: 'text' as const, text: 'ok' }] }),
+    });
+    const reg = new AdapterRegistry();
+    expect(() => reg.add(fake(['alpha', 'beta', 'alpha']))).toThrow(/重复/);
+    expect(reg.tools()).toEqual([]);
+    expect(reg.find('alpha')).toBeUndefined();
+    expect(reg.find('beta')).toBeUndefined();
+    reg.add(fake(['gamma']));
+    expect(() => reg.add(fake(['delta', 'gamma']))).toThrow(/重复/);
+    expect(reg.find('delta')).toBeUndefined();
+    expect(reg.tools().map((t) => t.name)).toEqual(['gamma']);
   });
 });
