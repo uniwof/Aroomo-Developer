@@ -170,13 +170,13 @@ run "RLS 清单里的 public_memory_versions 不存在 → 失败" 1 --no-backup
 has "public_memory_versions 不存在"
 adm "alter table pmv_hidden rename to public_memory_versions" >/dev/null
 # 检查 1：查询出错不能当成 0（权限被收回时 count 出错）
-adm "create role precheck_ro login" >/dev/null 2>&1 || true
-adm "grant connect on database $dbname to precheck_ro" >/dev/null
+# 用 PGOPTIONS 在连接时切到只读角色（超级用户可直接 set role，不需要给这个角色设密码）
+adm "create role precheck_ro nologin" >/dev/null 2>&1 || true
 adm "grant usage on schema public to precheck_ro" >/dev/null
 adm "grant select on all tables in schema public to precheck_ro" >/dev/null
 adm "revoke select on provider_keys from precheck_ro" >/dev/null
-OUT="$(RELEASE_PSQL="$RELEASE_TEST_PSQL -U precheck_ro" "$pre" --no-backup 2>&1)" && rc=0 || rc=$?
-[ "$rc" = 1 ] && echo "$OUT" | grep -q 'provider_keys' && ok "查询 provider_keys 出错 → 失败（不当成 0）" || { bad "查询出错却通过（退出码 $rc）"; echo "$OUT" | sed 's/^/     /'; }
+OUT="$(PGOPTIONS='-c role=precheck_ro' "$pre" --no-backup 2>&1)" && rc=0 || rc=$?
+[ "$rc" = 1 ] && echo "$OUT" | grep -q '失败.*provider_keys' && ok "没有权限读 provider_keys（查询出错 / 看不到表）→ 失败，不当成 0" || { bad "查询出错却通过（退出码 $rc）"; echo "$OUT" | sed 's/^/     /'; }
 adm "drop owned by precheck_ro" >/dev/null 2>&1 || true
 adm "drop role precheck_ro" >/dev/null 2>&1 || true
 # 清单文件丢了 → 失败
