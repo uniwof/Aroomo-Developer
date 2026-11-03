@@ -119,7 +119,7 @@ export function ClientTokens() {
     setConfirm(null);
     setMsg('');
     try {
-      await api('DELETE', `/api/clients/${c.id}`);
+      await api('DELETE', `/api/clients/${encodeURIComponent(c.id)}`);
       setMsg(`已吊销「${c.name}」，它马上不能再连 Aroomo`);
       await load();
     } catch (e) {
@@ -230,7 +230,10 @@ export function ClientTokens() {
         <ul className="flex flex-col gap-2" aria-label="客户端令牌列表">
           {active.map((c) => (
             <li key={c.id} className="rounded-xl border border-[var(--border)] p-3">
-              <div className="font-medium break-all">{c.name}</div>
+              <div className="font-medium break-all">
+                {c.name}
+                {c.expiresAt && new Date(c.expiresAt).getTime() <= Date.now() ? '（已过期）' : ''}
+              </div>
               <div className="break-all">范围：{c.scopes.join('、')}</div>
               <div className="text-[var(--muted)]">
                 到期：{day(c.expiresAt, '不过期')} · 最近使用：{day(c.lastUsedAt, '还没用过')}

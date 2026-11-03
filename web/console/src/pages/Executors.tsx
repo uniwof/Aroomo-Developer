@@ -73,7 +73,7 @@ export function Executors() {
     setMsg('');
     try {
       if (c.kind === 'revoke') {
-        await api('DELETE', `/api/clients/${c.id}`);
+        await api('DELETE', `/api/clients/${encodeURIComponent(c.id)}`);
         setMsg(`已吊销「${c.label}」，这台电脑立刻不能再领任务`);
       } else {
         await api('POST', `/api/tasks/${c.id}/cancel`);

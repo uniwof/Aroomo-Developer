@@ -85,6 +85,21 @@ describe('客户端令牌', () => {
     expect(screen.getByRole('status')).toHaveTextContent('已吊销「LobeHub」');
   });
 
+  it('过期的令牌标「已过期」', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        json(200, {
+          clients: [{ id: 'x1', name: '旧的', scopes: ['tools:list'], rateLimitPerMin: 60, createdAt: '2020-01-01T00:00:00.000Z', expiresAt: '2020-02-01T00:00:00.000Z', lastUsedAt: null, revokedAt: null }],
+          availableScopes: SCOPES,
+        }),
+      ),
+    );
+    session.set('sess-owner');
+    render(<ClientTokens />);
+    expect(await screen.findByText(/旧的（已过期）/)).toBeInTheDocument();
+  });
+
   it('没勾范围不发请求', async () => {
     const core = fakeCore();
     vi.stubGlobal('fetch', core.fetchImpl);
