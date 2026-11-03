@@ -418,9 +418,10 @@ jobs:
         run: command -v psql >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client)
       - name: release-tag.sh（临时 git 仓库 + 假 compose）
         run: |
+          set -o pipefail
           scripts/test-release.sh | tee /tmp/test-release.log
-          grep -qx '全部通过' /tmp/test-release.log
-          ! grep -q '^FAIL' /tmp/test-release.log
+          if grep -q '^FAIL' /tmp/test-release.log; then exit 1; fi
+          if ! grep -qx '全部通过' /tmp/test-release.log; then echo "没有「全部通过」"; exit 1; fi
       - name: release-precheck.sh（真 PostgreSQL + 假备份命令）
         env:
           PGHOST: localhost
@@ -428,11 +429,12 @@ jobs:
           PGPASSWORD: placeholder-ci-only
           RELEASE_TEST_PSQL: psql -X -q -A -t -v ON_ERROR_STOP=1
         run: |
+          set -o pipefail
           scripts/test-release-precheck.sh | tee /tmp/test-precheck.log
-          # 跳过就算失败
-          ! grep -q '^跳过' /tmp/test-precheck.log
-          grep -qx '全部通过' /tmp/test-precheck.log
-          ! grep -q '^FAIL' /tmp/test-precheck.log
+          # 跳过就算失败（bash -e 不会因为 ! 取反的命令失败而退出，所以写成显式 if … exit 1）
+          if grep -q '^跳过' /tmp/test-precheck.log; then echo "测试被跳过，不算通过"; exit 1; fi
+          if grep -q '^FAIL' /tmp/test-precheck.log; then exit 1; fi
+          if ! grep -qx '全部通过' /tmp/test-precheck.log; then echo "没有「全部通过」"; exit 1; fi
 
   secrets:
     name: 密钥扫描（gitleaks）
