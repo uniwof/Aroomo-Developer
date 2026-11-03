@@ -47,6 +47,25 @@ scripts/release-tag.sh deploy v0.1.1 --confirm v0.1.1 --hotfix   # 跳过合并�
 
 脚本把自己复制到 `/tmp` 再执行，所以检出新标签不会改到正在运行的脚本。
 
+## 生产前检查 + 部署前备份（`scripts/release-precheck.sh`，#229）
+
+`release-tag.sh deploy … --confirm …` 切换前自动先跑；也可单独跑：`scripts/release-precheck.sh`（加 `--no-backup` 只检查）。任何一项不过就退出码 1，不部署。全程只读（数据库连接带 `default_transaction_read_only=on`），不打印数据内容，只输出表名和数量。
+
+| 项 | 做什么 | 不过时 |
+|----|--------|--------|
+| 检查 1 | 只查开了 RLS 的表（清单 `scripts/lib/rls-tables.txt`：members、public_memory、public_memory_versions、library_items、vault_secrets、inbox_items、provider_keys），数 `user_id = ''` 和 `user_id IS NULL` 的行 | 列出「表=行数」。空串：RLS 迁移的 `CHECK (user_id <> '')` 会失败。NULL：`CHECK` 对 NULL 放行，但 RLS 下这些行谁都看不见；只有迁移会先回填的表（`BACKFILL_NULL=(inbox_items provider_keys)`，0023/0024）可以有 NULL。清单里的表不存在、查询出错都算失败；清单外带 `user_id` 的表只打一行信息，不拦发布。以后新增 RLS 迁移要同步改清单 |
+| 检查 2 | 按迁移后的表达式（`coalesce(user_id,'owner')` + 各唯一索引原有列和条件）试算 `inbox_items`、`members`、`vault_secrets`、`library_items`、`public_memory`、`executors` 有没有重复 | 列出「表=重复组数」；典型：收件箱里 NULL（旧所有者）和 `'owner'` 有同一条 open 记录，迁移 0023 把 NULL 改成 `'owner'` 后撞 `inbox_open_dedup_uq` |
+| 检查 3 | 逐表行数能读出来，存到 `.release/precheck-<时间>.counts.tsv` | 读不出来 = 失败；部署后可以对照 |
+| 检查 4 | 生产 `deploy/.env` 里 `SHELL_OWNER_USER_ID` 已设置且非空（#252 起 Shell 只认它，`SHELL_OWNER_EMAIL` 已无作用）；判定等价于 `grep -cE '^[[:space:]]*SHELL_OWNER_USER_ID=[^[:space:]"'"'"']+' deploy/.env` 结果为 1。**不打印值** | 没有 .env、没有这一项、为空、空引号、等号后空白、被注释、出现两行 = 失败 |
+| 检查 5 | MCP 专用网段（`.env` 的 `MCP_NET_SUBNET`，默认 `172.29.77.0/29`）有没有和主机上别的 docker 网络（`docker network inspect`）或路由（`ip route`）重叠；Aroomo 自己的 `aroomo_aroomo-mcp` 不算 | 冲突 = 失败，提示改 `MCP_NET_SUBNET` 和 `CORE_MCP_IP`；读不出网络或路由也算失败 |
+| 备份 | 调用 `backup now`（主密钥公钥加密 → R2；强制 `BACKUP_CHECK=always`），核对：状态 ok、`offsite:true`、**`checked:true`（已从 R2 重新下载核对 SHA-256 和 age 文件头）**、大小 > 0、备份名在 **R2 远端**列表里**完全相等**（`backup snapshots --from offsite`，不是本地目录，不做子串匹配）。上传后 `backup.sh` 还会比对 R2 上文件大小与本地 `size_bytes`，不等就失败 | 任一不满足 = 失败 |
+
+- 检查有失败时**不做备份**（先修数据再备份）。通过的备份名记在 `.release/precheck.ok`。
+- 这台机器没有主密钥（D64），备份能不能解开只靠恢复演练验证（见 [BACKUP.md](BACKUP.md)）。
+- 查到问题怎么办：不要手工改生产数据，把输出（只有表名和数字）交给后台线/负责人，决定怎么清理，再重跑。
+- 生产实际执行前，日志写「**需要主会话：确认执行生产检查**」，由主会话在服务器上跑。
+- 测试：`scripts/test-release-precheck.sh`（真 PostgreSQL + 假备份命令；需要 `RELEASE_TEST_PSQL` 或 `psql`+`PGHOST`，否则跳过）。覆盖：干净库通过、NULL 与 owner 撞索引失败、不同账号同内容不算撞、空串 user_id 失败（library_items、provider_keys）、NULL user_id 在回填清单外的表里失败/清单内的表放行、备份失败/没上传 R2/没从 R2 重新核对/大小 0/不在 R2 列表里/只是名字子串 都拒绝、检查失败不备份、`--no-backup` 不备份、连不上库失败、不改数据；另覆盖：清单外的表有 NULL/空串照样通过、清单里的表不存在或查询出错失败、清单文件丢失失败、SHELL_OWNER_USER_ID 缺失（只有旧的 SHELL_OWNER_EMAIL 也算缺失）/为空/空引号/注释/重复失败且输出不含值、网段被别的 docker 网络或路由占用失败（自己的 MCP 网络不算）、读不出网络失败、**第一次部署（脚本从临时目录跑、生产目录没有 scripts/lib/）能通过**。
+
 ## 脚本绝不做的事
 
 - 不 `git clean`、不 `git add -A`、不 `git stash -u`：服务器上有两个本地密钥文件 `deploy/.lobehub-cli-key`、`deploy/.r2-readonly.env`（已加进 `.gitignore`，但仍不能靠清理命令碰它们）。
@@ -91,7 +110,7 @@ bash /tmp/rt.sh deploy v0.1.0 --confirm v0.1.0      # 主会话确认后真切�
 
 `scripts/test-release.sh`：临时 git 仓库 + 假的 compose，不需要 docker。覆盖列标签、拒绝 dev 标签/分支/不存在的标签、演练不切换、写错确认不切换、切换成功、坏版本自动回退（迁移没执行）、**迁移已执行后不自动回退并写「需要人工处理」**、**数据库超前时 `rollback` 演练和确认都拒绝**、**已跟踪文件有改动时演练和确认都拒绝且改动原样保留**、一键回滚、`.env` 缺项在演练时就拒绝、闸门/生产前检查取自目标版本且失败或缺失时拒绝、读不出迁移记录时拒绝、本地密钥文件不被动、`compose.log` 权限 600、日志无密钥。
 
-测试在 CI 的 `release-scripts` 任务里跑（输出里没有「全部通过」或有 FAIL 都算失败）。
+两个测试脚本都在 CI 的 `release-scripts` 任务里跑（precheck 的测试用 CI 的真 PostgreSQL 服务；输出里出现「跳过」或没有「全部通过」都算失败）。
 
 ## 不做
 
