@@ -56,3 +56,5 @@
 - 给所有者的结论不超过 5 行：能不能放家人进来、没通过的是什么、谁在修。
 - 清理：删掉 A 专属样本和 B 的测试数据，撤销测试令牌。
 - 不用做：不要把真实密码、真实 Key 放进样本。看到任何明文密钥，立刻告诉 Hark（红线问题）。
+
+Hark 在 staging 的接口层复跑结果见 [two-accounts-staging-run.md](two-accounts-staging-run.md)。
