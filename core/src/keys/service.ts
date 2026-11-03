@@ -94,8 +94,8 @@ export class KeysService {
     await this.#confirmCredential(scope, title, consequences, payload, ctx, audit);
   }
 
-  list(): Promise<KeyRecord[]> {
-    return this.store.list();
+  list(userId: string): Promise<KeyRecord[]> {
+    return this.store.list(userId === 'owner' ? undefined : userId);
   }
 
   async create(input: CreateKeyInput, ctx: ConfirmCtx, audit: AuditFn): Promise<KeyRecord> {
@@ -150,7 +150,7 @@ export class KeysService {
       throw err;
     }
     await audit('keys.create', { type: 'key', id }, 'ok', `last4=${rec.last4}`);
-    const synced = await this.#syncAfterSave(rec);
+    const synced = await this.#syncAfterSave(rec.userId ?? 'owner', rec);
     if (this.hooks.afterCreate) {
       await this.hooks.afterCreate(synced, audit).catch(async (err: unknown) => {
         await audit('keys.create.hook', { type: 'key', id }, 'failed', (err as Error).name);
@@ -159,8 +159,8 @@ export class KeysService {
     return synced;
   }
 
-  async update(id: string, patch: UpdateKeyInput, ctx: ConfirmCtx, audit: AuditFn): Promise<KeyRecord> {
-    const cur = await this.store.get(id);
+  async update(userId: string, id: string, patch: UpdateKeyInput, ctx: ConfirmCtx, audit: AuditFn): Promise<KeyRecord> {
+    const cur = await this.store.get(userId, id);
     if (!cur) throw notFound('找不到这个 Key');
     if (patch.apiKey === undefined && (patch.apiBase !== undefined || patch.model !== undefined)) {
       throw badRequest('修改接口地址或模型时需要同时重新填写 Key（整条替换）', 'KEY_REQUIRED');
@@ -174,7 +174,7 @@ export class KeysService {
 
     if (patch.apiKey === undefined) {
       next = { ...next, updatedAt: this.now() };
-      await this.store.update(next);
+      await this.store.update(userId, next);
       await audit('keys.update', { type: 'key', id }, 'ok', 'metadata');
       return next;
     }
@@ -205,7 +205,7 @@ export class KeysService {
       gatewayError(err);
     }
     next = { ...next, model, apiBase, last4: last4(apiKey), litellmModelId: newDeployment, updatedAt: this.now() };
-    await this.store.update(next);
+    await this.store.update(userId, next);
     await audit('keys.replace', { type: 'key', id }, 'ok', `last4=${next.last4}`);
     try {
       await this.litellm.deleteDeployment(cur.litellmModelId);
@@ -213,7 +213,7 @@ export class KeysService {
       // 旧部署没删掉：功能不受影响（新部署已生效），但要留痕便于人工清理
       await audit('keys.replace.cleanup', { type: 'litellm_deployment', id: cur.litellmModelId }, 'failed', (err as Error).name);
     }
-    const synced = await this.#syncAfterSave(next);
+    const synced = await this.#syncAfterSave(userId, next);
     if (this.hooks.afterReplace) {
       await this.hooks.afterReplace(synced, audit).catch(async (err: unknown) => {
         await audit('keys.replace.hook', { type: 'key', id }, 'failed', (err as Error).name);
@@ -222,8 +222,8 @@ export class KeysService {
     return synced;
   }
 
-  async delete(id: string, ctx: ConfirmCtx, audit: AuditFn): Promise<void> {
-    const cur = await this.store.get(id);
+  async delete(userId: string, id: string, ctx: ConfirmCtx, audit: AuditFn): Promise<void> {
+    const cur = await this.store.get(userId, id);
     if (!cur) throw notFound('找不到这个 Key');
     await this.#confirmCredential(
       `keys:delete:${id}`,
@@ -239,7 +239,7 @@ export class KeysService {
       await audit('keys.delete', { type: 'key', id }, 'failed', (err as Error).name);
       gatewayError(err);
     }
-    await this.store.delete(id);
+    await this.store.delete(userId, id);
     await audit('keys.delete', { type: 'key', id }, 'ok', `last4=${cur.last4}`);
     if (this.hooks.afterDelete) {
       await this.hooks.afterDelete(cur, audit).catch(async (err: unknown) => {
@@ -248,7 +248,7 @@ export class KeysService {
     }
   }
 
-  async #syncAfterSave(rec: KeyRecord): Promise<KeyRecord> {
+  async #syncAfterSave(userId: string, rec: KeyRecord): Promise<KeyRecord> {
     let next: KeyRecord;
     try {
       await this.litellm.syncModels();
@@ -256,7 +256,7 @@ export class KeysService {
     } catch {
       next = { ...rec, status: 'sync_failed' };
     }
-    await this.store.update(next);
+    await this.store.update(userId, next);
     return next;
   }
 }

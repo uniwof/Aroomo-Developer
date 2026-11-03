@@ -4,7 +4,7 @@
  * 即使将来有人往记录里加了字段，也不会被带进响应。
  */
 import type { FastifyInstance } from 'fastify';
-import { confirmCtx, guard } from '../auth/plugin.js';
+import { confirmCtx, guard, scopeOf } from '../auth/plugin.js';
 import { type CreateKeyInput, keyJson, type KeysService, type UpdateKeyInput } from './service.js';
 
 const keyOut = {
@@ -33,7 +33,7 @@ export function registerKeyRoutes(app: FastifyInstance, svc: KeysService): void 
       ...guard('keys:read'),
       schema: { response: { 200: { type: 'object', properties: { keys: { type: 'array', items: keyOut } } } } },
     },
-    async () => ({ keys: (await svc.list()).map(keyJson) }),
+    async (req) => ({ keys: (await svc.list(scopeOf(req))).map(keyJson) }),
   );
 
   app.post<{ Body: CreateKeyInput & { confirmToken?: string } }>(
@@ -88,7 +88,7 @@ export function registerKeyRoutes(app: FastifyInstance, svc: KeysService): void 
     },
     async (req) => {
       const { confirmToken: t, ...patch } = req.body;
-      return { key: keyJson(await svc.update(req.params.id, patch, confirmCtx(req.principal!, t), req.audit)) };
+      return { key: keyJson(await svc.update(scopeOf(req), req.params.id, patch, confirmCtx(req.principal!, t), req.audit)) };
     },
   );
 
@@ -99,7 +99,7 @@ export function registerKeyRoutes(app: FastifyInstance, svc: KeysService): void 
       schema: { params: idParam, body: { type: ['object', 'null'], additionalProperties: false, properties: { confirmToken } } },
     },
     async (req, reply) => {
-      await svc.delete(req.params.id, confirmCtx(req.principal!, req.body?.confirmToken), req.audit);
+      await svc.delete(scopeOf(req), req.params.id, confirmCtx(req.principal!, req.body?.confirmToken), req.audit);
       return reply.status(204).send();
     },
   );

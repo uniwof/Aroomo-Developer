@@ -70,7 +70,7 @@ export class InboxService {
     const open = (await this.store.list({ status: 'open', ...(userId ? { userId } : {}) })).filter((i) => i.kind === kind && i.related?.type === related.type && i.related.id === related.id);
     let n = 0;
     for (const it of open) {
-      const done = await this.store.resolveIfOpen(it.id, { status, resolvedAt: this.now(), ...(resolvedAction ? { resolvedAction } : {}) });
+      const done = await this.store.resolveIfOpen(userId ?? 'owner', it.id, { status, resolvedAt: this.now(), ...(resolvedAction ? { resolvedAction } : {}) });
       if (done) {
         n++;
         await audit(status === 'done' ? 'inbox.resolve_related' : 'inbox.dismiss', { type: 'inbox', id: it.id }, 'ok', kind);
@@ -137,10 +137,10 @@ export class InboxService {
    * 执行动作。确认由统一确认服务处理（D63）：重要动作没有令牌时抛 428（带 challenge），
    * 操作员不能完成重要确认（403，D62）。
    */
-  async act(id: string, actionId: string, ctx: ConfirmCtx, audit: AuditFn): Promise<InboxItem> {
+  async act(userId: string, id: string, actionId: string, ctx: ConfirmCtx, audit: AuditFn): Promise<InboxItem> {
     const target = { type: 'inbox', id };
     try {
-      const item = await this.store.get(id);
+      const item = await this.store.get(userId, id);
       if (!item) throw notFound('找不到这条收件箱事项');
       const action = item.actions.find((a) => a.id === actionId);
       if (!action) throw badRequest('这条事项没有这个动作', 'UNKNOWN_ACTION');
@@ -161,7 +161,7 @@ export class InboxService {
 
       const handler = this.#handlers.get(item.kind);
       if (handler) await handler(item, actionId, audit);
-      const done = await this.store.resolveIfOpen(id, { status: 'done', resolvedAt: this.now(), resolvedAction: actionId });
+      const done = await this.store.resolveIfOpen(userId, id, { status: 'done', resolvedAt: this.now(), resolvedAction: actionId });
       if (!done) throw conflict('这条事项已经处理过了', 'ALREADY_RESOLVED');
       await audit('inbox.action.execute', target, 'ok', `${actionId}${kind !== 'normal' ? ` (${kind}, confirmed)` : ''}`);
       return done;
@@ -174,14 +174,14 @@ export class InboxService {
     }
   }
 
-  async dismiss(id: string, audit: AuditFn): Promise<InboxItem> {
+  async dismiss(userId: string, id: string, audit: AuditFn): Promise<InboxItem> {
     const target = { type: 'inbox', id };
-    const item = await this.store.get(id);
+    const item = await this.store.get(userId, id);
     if (!item) {
       await audit('inbox.dismiss', target, 'failed', 'NOT_FOUND');
       throw notFound('找不到这条收件箱事项');
     }
-    const done = await this.store.resolveIfOpen(id, { status: 'dismissed', resolvedAt: this.now() });
+    const done = await this.store.resolveIfOpen(userId, id, { status: 'dismissed', resolvedAt: this.now() });
     if (!done) {
       await audit('inbox.dismiss', target, 'failed', 'ALREADY_RESOLVED');
       throw conflict('这条事项已经处理过了', 'ALREADY_RESOLVED');
@@ -190,11 +190,11 @@ export class InboxService {
     return done;
   }
 
-  async dismissMany(ids: string[], audit: AuditFn): Promise<BatchDismissResult> {
+  async dismissMany(userId: string, ids: string[], audit: AuditFn): Promise<BatchDismissResult> {
     const out: BatchDismissResult = { dismissed: [], skipped: [] };
     for (const id of [...new Set(ids)]) {
       try {
-        await this.dismiss(id, audit);
+        await this.dismiss(userId, id, audit);
         out.dismissed.push(id);
       } catch (err) {
         if (err instanceof HttpError && (err.code === 'NOT_FOUND' || err.code === 'ALREADY_RESOLVED')) {
@@ -206,8 +206,8 @@ export class InboxService {
   }
 
   /** 到期（例如候选过了有效期）：由其他模块 / 定时任务调用。 */
-  async expire(id: string, audit: AuditFn): Promise<InboxItem | null> {
-    const done = await this.store.resolveIfOpen(id, { status: 'expired', resolvedAt: this.now() });
+  async expire(userId: string, id: string, audit: AuditFn): Promise<InboxItem | null> {
+    const done = await this.store.resolveIfOpen(userId, id, { status: 'expired', resolvedAt: this.now() });
     await audit('inbox.expire', { type: 'inbox', id }, done ? 'ok' : 'failed', done ? undefined : 'NOT_OPEN');
     return done;
   }

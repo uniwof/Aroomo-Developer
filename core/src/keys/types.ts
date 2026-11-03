@@ -28,8 +28,11 @@ export interface KeyRecord {
 export interface KeyStore {
   /** userId 缺省 = 所有者的 Key；只返回该账号自己的 */
   list(userId?: string): Promise<KeyRecord[]>;
-  get(id: string): Promise<KeyRecord | null>;
+  /** 只取该账号自己的 Key（所有者传 'owner'）；别人的 id 一律 null（D206：不再按 id 裸取）。 */
+  get(userId: string, id: string): Promise<KeyRecord | null>;
   insert(k: KeyRecord): Promise<void>;
-  update(k: KeyRecord): Promise<void>;
-  delete(id: string): Promise<boolean>;
+  /** 只改该账号自己的 Key；不是它的返回 false，什么都不改。 */
+  update(userId: string, k: KeyRecord): Promise<boolean>;
+  /** 只删该账号自己的 Key；不是它的返回 false。 */
+  delete(userId: string, id: string): Promise<boolean>;
 }

@@ -64,15 +64,16 @@ export interface InboxListFilter {
 export interface InboxStore {
   /** 插入；若已有同 related + kind 的 open 条目则不插入，返回已有条目（原子）。 */
   insertDedup(item: InboxItem): Promise<{ item: InboxItem; created: boolean }>;
-  get(id: string): Promise<InboxItem | null>;
+  /** 只取该账号自己的条目（所有者传 'owner'）；别人的 id 一律 null（D206 B1：不再按 id 裸取）。 */
+  get(userId: string, id: string): Promise<InboxItem | null>;
   list(filter: InboxListFilter): Promise<InboxItem[]>;
   /** 各组 open 条目数 */
   openCounts(userId?: string): Promise<Record<InboxGroup, number>>;
   /**
    * 比较并交换：只有当前 status 为 open 时才改成 next.status，返回更新后的条目；
-   * 已不是 open 返回 null。并发重复请求只有一个能成功。
+   * 已不是 open、或条目不属于 userId，都返回 null。并发重复请求只有一个能成功。
    */
-  resolveIfOpen(id: string, next: { status: Exclude<InboxStatus, 'open'>; resolvedAt: Date; resolvedAction?: string }): Promise<InboxItem | null>;
+  resolveIfOpen(userId: string, id: string, next: { status: Exclude<InboxStatus, 'open'>; resolvedAt: Date; resolvedAction?: string }): Promise<InboxItem | null>;
 }
 
 export const URGENCY_RANK: Record<Urgency, number> = { urgent: 0, normal: 1, low: 2 };
