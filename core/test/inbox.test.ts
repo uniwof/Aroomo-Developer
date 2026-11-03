@@ -77,7 +77,7 @@ for (const f of factories) {
       await svc.createInboxItem(decision({ title: 'urgent', urgency: 'urgent' }), audit);
       clock.advance(1000);
       await svc.createInboxItem(decision({ title: 'normal-new' }), audit);
-      await svc.dismiss(b.item.id, audit);
+      await svc.dismiss('owner', b.item.id, audit);
       expect((await svc.list({ group: 'decision' })).map((i) => i.title)).toEqual(['urgent', 'normal-new', 'low-old', 'normal-old']);
       expect((await svc.list({ status: 'open' })).map((i) => i.title)).not.toContain('normal-old');
       expect(a.item.status).toBe('open');
@@ -91,7 +91,7 @@ for (const f of factories) {
       expect(dup.item.id).toBe(first.item.id);
       const otherKind = await svc.createInboxItem(decision({ related: rel, kind: 'takeover' }), audit);
       expect(otherKind.created).toBe(true);
-      await svc.dismiss(first.item.id, audit);
+      await svc.dismiss('owner', first.item.id, audit);
       expect((await svc.createInboxItem(decision({ related: rel }), audit)).created).toBe(true);
       expect((await svc.createInboxItem(decision(), audit)).created).toBe(true);
       expect((await svc.createInboxItem(decision(), audit)).created).toBe(true);
@@ -102,31 +102,45 @@ for (const f of factories) {
       await svc.createInboxItem(decision(), audit);
       await svc.createInboxItem(decision({ group: 'candidate' }), audit);
       const brief = await svc.createInboxItem(decision({ group: 'brief', actions: [] }), audit);
-      await svc.dismiss(brief.item.id, audit);
+      await svc.dismiss('owner', brief.item.id, audit);
       expect(await svc.unreadCount()).toEqual({ total: 2, byGroup: { decision: 1, candidate: 1, brief: 0 } });
+    });
+
+    it('越权：小号不能执行 / 忽略 / 到期所有者的卡片（404，卡片状态不变）；所有者也碰不到小号的', async () => {
+      const XIAO = '00000000-0000-4000-8000-00000000a11c';
+      const { item } = await svc.createInboxItem(decision(), audit);
+      const mine = (await svc.createInboxItem(decision({ userId: XIAO, related: { type: 't', id: 'x' } }), audit)).item;
+      expect(await code(svc.act(XIAO, item.id, 'approve', owner, audit))).toBe('404 NOT_FOUND');
+      expect(await code(svc.act(XIAO, item.id, 'pay', owner, audit))).toBe('404 NOT_FOUND');
+      expect(await code(svc.dismiss(XIAO, item.id, audit))).toBe('404 NOT_FOUND');
+      expect((await svc.dismissMany(XIAO, [item.id], audit)).skipped).toEqual([{ id: item.id, reason: 'NOT_FOUND' }]);
+      expect(await svc.expire(XIAO, item.id, audit)).toBeNull();
+      expect((await svc.list({ status: 'open' })).map((i) => i.id)).toEqual([item.id]);
+      expect(await code(svc.act('owner', mine.id, 'approve', owner, audit))).toBe('404 NOT_FOUND');
+      expect((await svc.act(XIAO, mine.id, 'approve', owner, audit)).status).toBe('done');
     });
 
     it('执行动作：成功一次；再次执行（任何动作）409；状态流转 open → done 并记录动作', async () => {
       const { item } = await svc.createInboxItem(decision(), audit);
       clock.advance(5000);
-      const r = await svc.act(item.id, 'approve', owner, audit);
+      const r = await svc.act('owner', item.id, 'approve', owner, audit);
       expect(r).toMatchObject({ status: 'done', resolvedAction: 'approve' });
       expect(r.resolvedAt?.toISOString()).toBe('2026-10-27T00:00:05.000Z');
       // 普通确认：点一下即执行，记 confirm.normal
       expect((await log.query({ action: 'confirm.normal' })).entries).toHaveLength(1);
-      expect(await code(svc.act(item.id, 'approve', owner, audit))).toBe('409 ALREADY_RESOLVED');
-      expect(await code(svc.act(item.id, 'reject', owner, audit))).toBe('409 ALREADY_RESOLVED');
-      expect(await code(svc.dismiss(item.id, audit))).toBe('409 ALREADY_RESOLVED');
-      expect(await code(svc.act(item.id, 'nope', owner, audit))).toBe('400 UNKNOWN_ACTION');
-      expect(await code(svc.act('00000000-0000-0000-0000-000000000000', 'approve', owner, audit))).toBe('404 NOT_FOUND');
+      expect(await code(svc.act('owner', item.id, 'approve', owner, audit))).toBe('409 ALREADY_RESOLVED');
+      expect(await code(svc.act('owner', item.id, 'reject', owner, audit))).toBe('409 ALREADY_RESOLVED');
+      expect(await code(svc.dismiss('owner', item.id, audit))).toBe('409 ALREADY_RESOLVED');
+      expect(await code(svc.act('owner', item.id, 'nope', owner, audit))).toBe('400 UNKNOWN_ACTION');
+      expect(await code(svc.act('owner', '00000000-0000-0000-0000-000000000000', 'approve', owner, audit))).toBe('404 NOT_FOUND');
     });
 
     it('并发：Promise.all 同时发两次（同一动作 / 不同动作），只有一个成功，其余 409', async () => {
       const { item } = await svc.createInboxItem(decision(), audit);
       const results = await Promise.allSettled([
-        svc.act(item.id, 'approve', owner, audit),
-        svc.act(item.id, 'approve', owner, audit),
-        svc.act(item.id, 'reject', owner, audit),
+        svc.act('owner', item.id, 'approve', owner, audit),
+        svc.act('owner', item.id, 'approve', owner, audit),
+        svc.act('owner', item.id, 'reject', owner, audit),
       ]);
       expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
       const rejected = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
@@ -146,14 +160,14 @@ for (const f of factories) {
 
     it('重要动作（花钱）：无令牌 428 + challenge（含后果），不执行；两步确认后带令牌才执行；全程审计', async () => {
       const { item } = await svc.createInboxItem(decision(), audit);
-      const ch = await challengeOf(svc.act(item.id, 'pay', owner, audit));
+      const ch = await challengeOf(svc.act('owner', item.id, 'pay', owner, audit));
       expect(ch).toMatchObject({ level: 'important', kind: 'payment', steps: 2, nextStep: 1, minDelayMs: 3000, requiresAccessReauth: false });
       expect(ch.consequences).toEqual(['会从你的账户扣 ¥20，不能撤回。']);
       expect(new Date(ch.expiresAt).getTime() - clock.now().getTime()).toBe(CONFIRM_TTL_MS);
       expect((await svc.list({ status: 'open' })).map((i) => i.id)).toContain(item.id);
       const token = await tokenFor(ch.id);
       expect(token.length).toBeGreaterThanOrEqual(32);
-      const done = await svc.act(item.id, 'pay', { ...owner, confirmToken: token }, audit);
+      const done = await svc.act('owner', item.id, 'pay', { ...owner, confirmToken: token }, audit);
       expect(done.status).toBe('done');
       const actions = (await log.query({ limit: 20 })).entries.map((e) => `${e.action}:${e.result}`).reverse();
       expect(actions).toEqual([
@@ -171,7 +185,7 @@ for (const f of factories) {
     it('旧写法 irreversible: true 仍按重要确认（不可逆）处理，并有默认后果文字', async () => {
       const { item } = await svc.createInboxItem(decision({ actions: [{ id: 'del', label: '永久删除', irreversible: true }] }), audit);
       expect(item.actions[0]).toEqual({ id: 'del', label: '永久删除', confirm: { kind: 'irreversible', consequences: ['这个操作不可撤销。'] } });
-      const ch = await challengeOf(svc.act(item.id, 'del', owner, audit));
+      const ch = await challengeOf(svc.act('owner', item.id, 'del', owner, audit));
       expect(ch.kind).toBe('irreversible');
     });
 
@@ -183,36 +197,36 @@ for (const f of factories) {
 
     it('令牌：过期、伪造、换操作者、换事项、重放都失败', async () => {
       const a = (await svc.createInboxItem(decision(), audit)).item;
-      const t1 = await tokenFor((await challengeOf(svc.act(a.id, 'pay', owner, audit))).id);
+      const t1 = await tokenFor((await challengeOf(svc.act('owner', a.id, 'pay', owner, audit))).id);
       clock.advance(CONFIRM_TTL_MS);
-      expect(await code(svc.act(a.id, 'pay', { ...owner, confirmToken: t1 }, audit))).toBe('409 CONFIRM_EXPIRED');
-      expect(await code(svc.act(a.id, 'pay', { ...owner, confirmToken: 'forged-token' }, audit))).toBe('409 CONFIRM_INVALID');
-      const t2 = await tokenFor((await challengeOf(svc.act(a.id, 'pay', owner, audit))).id);
-      expect(await code(svc.act(a.id, 'pay', { actor: 'someone-else', canConfirmImportant: true, confirmToken: t2 }, audit))).toBe('409 CONFIRM_INVALID');
+      expect(await code(svc.act('owner', a.id, 'pay', { ...owner, confirmToken: t1 }, audit))).toBe('409 CONFIRM_EXPIRED');
+      expect(await code(svc.act('owner', a.id, 'pay', { ...owner, confirmToken: 'forged-token' }, audit))).toBe('409 CONFIRM_INVALID');
+      const t2 = await tokenFor((await challengeOf(svc.act('owner', a.id, 'pay', owner, audit))).id);
+      expect(await code(svc.act('owner', a.id, 'pay', { actor: 'someone-else', canConfirmImportant: true, confirmToken: t2 }, audit))).toBe('409 CONFIRM_INVALID');
       const b = (await svc.createInboxItem(decision({ title: 'b' }), audit)).item;
-      expect(await code(svc.act(b.id, 'pay', { ...owner, confirmToken: t2 }, audit))).toBe('409 CONFIRM_INVALID');
-      expect((await svc.act(a.id, 'pay', { ...owner, confirmToken: t2 }, audit)).status).toBe('done');
-      const t3 = await tokenFor((await challengeOf(svc.act(b.id, 'pay', owner, audit))).id);
-      await svc.act(b.id, 'pay', { ...owner, confirmToken: t3 }, audit);
+      expect(await code(svc.act('owner', b.id, 'pay', { ...owner, confirmToken: t2 }, audit))).toBe('409 CONFIRM_INVALID');
+      expect((await svc.act('owner', a.id, 'pay', { ...owner, confirmToken: t2 }, audit)).status).toBe('done');
+      const t3 = await tokenFor((await challengeOf(svc.act('owner', b.id, 'pay', owner, audit))).id);
+      await svc.act('owner', b.id, 'pay', { ...owner, confirmToken: t3 }, audit);
       const c = (await svc.createInboxItem(decision({ title: 'c' }), audit)).item;
-      expect(await code(svc.act(c.id, 'pay', { ...owner, confirmToken: t3 }, audit))).toBe('409 CONFIRM_INVALID');
+      expect(await code(svc.act('owner', c.id, 'pay', { ...owner, confirmToken: t3 }, audit))).toBe('409 CONFIRM_INVALID');
       const failed = (await log.query({ action: 'inbox.action.execute', limit: 50 })).entries.filter((e) => e.result === 'failed');
       expect(failed.length).toBe(5);
     });
 
     it('同一令牌并发两次，只执行一次', async () => {
       const { item } = await svc.createInboxItem(decision(), audit);
-      const t = await tokenFor((await challengeOf(svc.act(item.id, 'pay', owner, audit))).id);
+      const t = await tokenFor((await challengeOf(svc.act('owner', item.id, 'pay', owner, audit))).id);
       const rs = await Promise.allSettled([
-        svc.act(item.id, 'pay', { ...owner, confirmToken: t }, audit),
-        svc.act(item.id, 'pay', { ...owner, confirmToken: t }, audit),
+        svc.act('owner', item.id, 'pay', { ...owner, confirmToken: t }, audit),
+        svc.act('owner', item.id, 'pay', { ...owner, confirmToken: t }, audit),
       ]);
       expect(rs.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
     });
 
     it('操作员不能完成重要确认 → 403 并审计 denied（D62）', async () => {
       const { item } = await svc.createInboxItem(decision(), audit);
-      expect(await code(svc.act(item.id, 'pay', { actor: 'operator:x', canConfirmImportant: false }, audit))).toBe('403 FORBIDDEN');
+      expect(await code(svc.act('owner', item.id, 'pay', { actor: 'operator:x', canConfirmImportant: false }, audit))).toBe('403 FORBIDDEN');
       const e = (await log.query({ action: 'inbox.action.execute' })).entries[0];
       expect(e?.result).toBe('denied');
       expect((await log.query({ action: 'confirm.denied' })).entries).toHaveLength(1);
@@ -223,15 +237,15 @@ for (const f of factories) {
       const b = (await svc.createInboxItem(decision({ title: 'b' }), audit)).item;
       const c = (await svc.createInboxItem(decision({ title: 'c' }), audit)).item;
       const d = (await svc.createInboxItem(decision({ title: 'd' }), audit)).item;
-      expect((await svc.dismiss(a.id, audit)).status).toBe('dismissed');
-      const r = await svc.dismissMany([a.id, b.id, c.id, c.id, '00000000-0000-0000-0000-000000000000'], audit);
+      expect((await svc.dismiss('owner', a.id, audit)).status).toBe('dismissed');
+      const r = await svc.dismissMany('owner', [a.id, b.id, c.id, c.id, '00000000-0000-0000-0000-000000000000'], audit);
       expect(r.dismissed).toEqual([b.id, c.id]);
       expect(r.skipped).toEqual([
         { id: a.id, reason: 'ALREADY_RESOLVED' },
         { id: '00000000-0000-0000-0000-000000000000', reason: 'NOT_FOUND' },
       ]);
-      expect((await svc.expire(d.id, audit))?.status).toBe('expired');
-      expect(await svc.expire(d.id, audit)).toBeNull();
+      expect((await svc.expire('owner', d.id, audit))?.status).toBe('expired');
+      expect(await svc.expire('owner', d.id, audit)).toBeNull();
       expect(await svc.unreadCount()).toMatchObject({ total: 0 });
     });
 

@@ -16,9 +16,9 @@ export class MemoryInboxStore implements InboxStore {
     this.#rows.set(item.id, clone(item));
     return { item: clone(item), created: true };
   }
-  async get(id: string): Promise<InboxItem | null> {
+  async get(userId: string, id: string): Promise<InboxItem | null> {
     const r = this.#rows.get(id);
-    return r ? clone(r) : null;
+    return r && (r.userId ?? 'owner') === userId ? clone(r) : null;
   }
   async list(f: InboxListFilter): Promise<InboxItem[]> {
     return [...this.#rows.values()]
@@ -32,12 +32,13 @@ export class MemoryInboxStore implements InboxStore {
     return out;
   }
   async resolveIfOpen(
+    userId: string,
     id: string,
     next: { status: Exclude<InboxStatus, 'open'>; resolvedAt: Date; resolvedAction?: string },
   ): Promise<InboxItem | null> {
     // 同步完成「检查 + 修改」，中间没有 await，单线程下天然原子
     const r = this.#rows.get(id);
-    if (!r || r.status !== 'open') return null;
+    if (!r || r.status !== 'open' || (r.userId ?? 'owner') !== userId) return null;
     r.status = next.status;
     r.resolvedAt = new Date(next.resolvedAt);
     if (next.resolvedAction !== undefined) r.resolvedAction = next.resolvedAction;

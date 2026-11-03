@@ -75,7 +75,7 @@ export function keyReconcileJob(keys: KeyStore, litellm: LiteLLMAdmin, inbox: In
           missing++;
           // 只在刚发现时发一张卡（每小时对账一次，已标记 sync_failed 的不再重复提醒）
           if (k.status === 'sync_failed') continue;
-          await keys.update({ ...k, status: 'sync_failed', updatedAt: now() });
+          await keys.update(k.userId ?? 'owner', { ...k, status: 'sync_failed', updatedAt: now() });
           await audit('keys.reconcile.missing', { type: 'key', id: k.id }, 'failed');
           await inbox.createInboxItem(
             {
@@ -91,7 +91,7 @@ export function keyReconcileJob(keys: KeyStore, litellm: LiteLLMAdmin, inbox: In
           );
         } else if (k.status === 'sync_failed') {
           restored++;
-          await keys.update({ ...k, status: 'active', updatedAt: now() });
+          await keys.update(k.userId ?? 'owner', { ...k, status: 'active', updatedAt: now() });
         }
       }
       const orphans = deployments.filter((d) => d.id.startsWith('aroomo-') && !localIds.has(d.id));

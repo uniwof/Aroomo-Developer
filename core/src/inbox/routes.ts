@@ -1,6 +1,6 @@
 /** 收件箱 API（前缀 /api/inbox，Issue #7）。 */
-import type { FastifyInstance } from 'fastify';
-import { guard } from '../auth/plugin.js';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { guard, scopeOf } from '../auth/plugin.js';
 import { actorKey, principalCan } from '../auth/tokens.js';
 import { CONFIRM_KINDS } from '../confirm/confirm.js';
 import type { CreateInboxInput, InboxService } from './service.js';
@@ -23,6 +23,12 @@ export function inboxJson(i: InboxItem) {
     ...(i.resolvedAt ? { resolvedAt: i.resolvedAt.toISOString() } : {}),
   };
 }
+
+/** 收件箱里所有者条目的 userId 缺省（undefined）；账号用自己的 id。 */
+const inboxUser = (req: FastifyRequest): string | undefined => {
+  const s = scopeOf(req);
+  return s === 'owner' ? undefined : s;
+};
 
 const UUID = { type: 'string', pattern: '^[0-9a-fA-F-]{36}$' } as const;
 
@@ -74,7 +80,8 @@ export function registerInboxRoutes(app: FastifyInstance, svc: InboxService): vo
       },
     },
     async (req, reply) => {
-      const out = await svc.createInboxItem(req.body, req.audit);
+      const owner = inboxUser(req);
+      const out = await svc.createInboxItem({ ...req.body, ...(owner ? { userId: owner } : {}) }, req.audit);
       return reply.status(out.created ? 201 : 200).send({ item: inboxJson(out.item), created: out.created });
     },
   );
@@ -97,15 +104,17 @@ export function registerInboxRoutes(app: FastifyInstance, svc: InboxService): vo
     },
     async (req) => {
       const { group, status, type } = req.query;
+      const owner = inboxUser(req);
+      const who = owner ? { userId: owner } : {};
       const keep = (list: InboxItem[]) => (type ? list.filter((i) => matchesInboxType(i, type)) : list);
-      if (group) return { items: keep(await svc.list({ group, ...(status ? { status } : {}) })).map(inboxJson) };
-      const all = keep(await svc.list(status ? { status } : {}));
+      if (group) return { items: keep(await svc.list({ group, ...who, ...(status ? { status } : {}) })).map(inboxJson) };
+      const all = keep(await svc.list({ ...who, ...(status ? { status } : {}) }));
       const groups = Object.fromEntries(INBOX_GROUPS.map((g) => [g, all.filter((i) => i.group === g).map(inboxJson)]));
       return { groups };
     },
   );
 
-  app.get('/api/inbox/unread-count', { ...guard('inbox:read') }, async () => svc.unreadCount());
+  app.get('/api/inbox/unread-count', { ...guard('inbox:read') }, async (req) => svc.unreadCount(inboxUser(req)));
 
   app.post<{ Params: { id: string; actionId: string }; Body: { confirmToken?: string } | undefined }>(
     '/api/inbox/:id/actions/:actionId',
@@ -127,6 +136,7 @@ export function registerInboxRoutes(app: FastifyInstance, svc: InboxService): vo
     async (req) => {
       const p = req.principal!;
       const item = await svc.act(
+        scopeOf(req),
         req.params.id,
         req.params.actionId,
         {
@@ -146,7 +156,7 @@ export function registerInboxRoutes(app: FastifyInstance, svc: InboxService): vo
       ...guard('inbox:act'),
       schema: { params: { type: 'object', required: ['id'], properties: { id: UUID } } },
     },
-    async (req) => ({ item: inboxJson(await svc.dismiss(req.params.id, req.audit)) }),
+    async (req) => ({ item: inboxJson(await svc.dismiss(scopeOf(req), req.params.id, req.audit)) }),
   );
 
   app.post<{ Body: { ids: string[] } }>(
@@ -162,6 +172,6 @@ export function registerInboxRoutes(app: FastifyInstance, svc: InboxService): vo
         },
       },
     },
-    async (req) => svc.dismissMany(req.body.ids, req.audit),
+    async (req) => svc.dismissMany(scopeOf(req), req.body.ids, req.audit),
   );
 }

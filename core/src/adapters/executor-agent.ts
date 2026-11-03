@@ -83,7 +83,8 @@ export class ExecutorAgentAdapter implements ToolAdapter {
   riskOf(tool: string, args: Record<string, unknown>): ToolRisk {
     const base = SPECS.find((s) => s.name === tool)?.risk ?? 'danger';
     if (tool !== 'browser_task_create') return base;
-    const usesSecrets = Array.isArray(args.secrets) && args.secrets.length > 0;
+    // 格式不对的 secrets（非数组等）也按有凭据处理：失败即关闭
+    const usesSecrets = args.secrets !== undefined && !(Array.isArray(args.secrets) && args.secrets.length === 0);
     const kind = str(args.kind);
     return usesSecrets || kind === 'login' || kind === 'signup' ? maxRisk(base, 'danger') : base;
   }

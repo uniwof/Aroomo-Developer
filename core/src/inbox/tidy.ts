@@ -33,7 +33,7 @@ export function inboxTidyJob(inbox: InboxService, now: () => Date): Job {
       let n = 0;
       for (const it of open) {
         if (!shouldExpire(it, now())) continue;
-        if (await inbox.expire(it.id, audit)) n++;
+        if (await inbox.expire(it.userId ?? 'owner', it.id, audit)) n++;
       }
       return n ? `expired=${n}` : '';
     },
