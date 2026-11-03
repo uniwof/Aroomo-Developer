@@ -137,12 +137,27 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
   const staticRoot = path.resolve(cfg.publicDir, 'static');
   const consoleRoot = path.resolve(cfg.consoleDir);
 
-  /** 已登录且是所有者邮箱才算（其他账号不能拿到所有者令牌） */
+  /**
+   * 已登录且确认是所有者才算（其他账号不能拿到所有者令牌）。#245：默认拒绝——拿不到身份就是 false。
+   * - 配了 SHELL_OWNER_USER_ID：只按 LobeHub 用户 id 比对（服务器版）。
+   * - 没配、但是 Windows 独立版（本机回环 + 本机主人自动登录，D78）：按安装程序生成的本机主人邮箱比对。
+   * - 都没有：一律拒绝。
+   * auth=off 只在测试里出现（生产环境 loadConfig 直接拒绝启动）。
+   */
   async function ownerOk(cookie: string | undefined): Promise<boolean> {
     if (!(await session.check(cookie))) return false;
-    if (cfg.auth === 'off' || !session.email) return true;
-    const e = await session.email(cookie);
-    return Boolean(e && cfg.ownerEmail && e === cfg.ownerEmail);
+    if (cfg.auth === 'off') return true;
+    if (cfg.ownerUserId) {
+      if (!session.userId) return false;
+      const id = await session.userId(cookie);
+      return Boolean(id) && id === cfg.ownerUserId;
+    }
+    if (cfg.localOwner) {
+      if (!session.email) return false;
+      const e = await session.email(cookie);
+      return Boolean(e) && e === cfg.localOwner.email.trim().toLowerCase();
+    }
+    return false;
   }
 
   const clientFor = (u: URL) => (u.protocol === 'https:' ? https : http);

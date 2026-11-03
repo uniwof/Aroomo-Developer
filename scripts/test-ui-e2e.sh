@@ -79,7 +79,19 @@ for i in $(seq 1 12); do
   if [ "$i" = 12 ]; then echo "注册失败 HTTP $code" >&2; head -c 500 "$report/signup.json" >&2 || true; exit 1; fi
   sleep 5
 done
+# #245：所有者按 LobeHub 用户 id 识别——取刚注册用户的 id，写进 SHELL_OWNER_USER_ID 并重建 shell
+owner_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("user",{}).get("id",""))' "$report/signup.json")"
 rm -f "$report/signup.json"
+if [ -z "$owner_id" ]; then echo "注册响应里没有 user.id" >&2; exit 1; fi
+echo "SHELL_OWNER_USER_ID=$owner_id" >>"$env_file"
+step="用所有者 id 重建 shell"
+dc up -d --no-deps shell
+for i in $(seq 1 60); do
+  code="$(curl -s -o /dev/null -w '%{http_code}' "$base/aroomo/healthz" || true)"
+  if [ "$code" = 200 ]; then echo "shell 已重建（${i}×2s）"; break; fi
+  if [ "$i" = 60 ]; then echo "shell 重建后 2 分钟没就绪（最后 HTTP $code）" >&2; exit 1; fi
+  sleep 2
+done
 
 step="Playwright 冒烟"
 pw_dir="$(mktemp -d)"
