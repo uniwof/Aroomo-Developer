@@ -1,7 +1,8 @@
 /**
  * 假时钟 3：过期记录定时清理（工单 #230）。
  * - confirm-cleanup：确认记录过期超过 1 天才删；没过期的、刚过期的都不动。
- * - inbox-tidy：简报 3 天、低紧急 7 天后变 expired（不删除）；拍板类、重要确认类、别的账号的卡片不动。
+ * - inbox-tidy：简报 3 天、低紧急 7 天后变 expired（不删除）；拍板类、重要确认类不动。
+ *   所有者和家人账号按同一套规则各收各的（工单 #240），互不串号。
  */
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -83,17 +84,18 @@ describe.each(twoAccountEnvs)('过期记录清理（$name）', (env) => {
       expect(await statusOf(t, '旧简报')).toBe('expired'); // 仍能查到
     });
 
-    it('跨账号：所有者的收拾不会动小号的卡片（含小号很久没理的拍板卡）', async () => {
+    it('跨账号：小号按同一套规则收拾（低紧急过期、拍板卡不动），所有者与小号互不串号（工单 #240）', async () => {
       const t = await clockApp(env, { start: '2026-10-31T10:00:00+08:00' });
       open.push(t);
       await t.deps.inbox.insertDedup(card({ title: 'A旧简报' }, t.clock.now()));
       await t.deps.inbox.insertDedup(card({ title: 'B拍板', group: 'decision', kind: 'ask', actions: [{ id: 'ok', label: '好' }], userId: t.xiaoId }, t.clock.now()));
       await t.deps.inbox.insertDedup(card({ title: 'B旧低紧急', urgency: 'low', group: 'decision', kind: 'fyi', actions: [{ id: 'ack', label: '知道了' }], userId: t.xiaoId }, t.clock.now()));
       t.clock.advance(8 * DAY);
-      expect(await t.app.jobs.runOnce('inbox-tidy')).toBe('expired=1'); // 只有所有者的 A旧简报
+      expect(await t.app.jobs.runOnce('inbox-tidy')).toBe('expired=2'); // 所有者的 A旧简报 + 小号的 B旧低紧急
       expect(await statusOf(t, 'A旧简报')).toBe('expired');
-      expect(await statusOf(t, 'B拍板', t.xiaoId)).toBe('open');
-      expect(await statusOf(t, 'B旧低紧急', t.xiaoId)).toBe('open');
+      expect(await statusOf(t, 'B拍板', t.xiaoId)).toBe('open'); // 拍板卡永不自动过期
+      expect(await statusOf(t, 'B旧低紧急', t.xiaoId)).toBe('expired');
+      expect(await t.app.jobs.runOnce('inbox-tidy')).toBe(''); // 再跑一次没有可收拾的
       // 小号的卡也不会出现在所有者的列表里
       expect(await statusOf(t, 'B拍板')).toBeUndefined();
     });

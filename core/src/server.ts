@@ -411,7 +411,7 @@ export function buildServer(
   jobs.add(quietTakeoverExpiryJob(inbox, executorSvc, deps.now));
   // 快跑阶段只有所有者：试用到期提醒只看所有者的设置（加固阶段再按用户遍历）
   jobs.add(trialExpiryJob(new TrialService(deps.settings, deps.now), inbox));
-  jobs.add(inboxTidyJob(inbox, deps.now));
+  jobs.add(inboxTidyJob(inbox, deps.now, async () => (await deps.users.listUsers()).map((u) => u.id)));
   app.decorate("jobs", jobs);
   if (opts.startJobs ?? cfg.jobs) {
     app.addHook("onReady", async () => jobs.start());

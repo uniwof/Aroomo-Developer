@@ -3,7 +3,7 @@
  * - 简报（brief）3 天没看 → 过期；
  * - 低紧急度（low）且动作只有普通确认的 7 天没理 → 过期；
  * - 需要拍板的（decision 且 urgency 不是 low）、带重要确认动作的，永远不自动过期。
- * 只看所有者的收件箱（加固阶段再按用户遍历）。过期不删除，仍可在「已处理」里查到。
+ * 所有者和每个家人账号的收件箱都按同一套规则遍历。过期不删除，仍可在「已处理」里查到。
  */
 import type { Job } from '../jobs/scheduler.js';
 import type { InboxService } from './service.js';
@@ -23,17 +23,20 @@ export function shouldExpire(it: InboxItem, now: Date): boolean {
   return false;
 }
 
-export function inboxTidyJob(inbox: InboxService, now: () => Date): Job {
+export function inboxTidyJob(inbox: InboxService, now: () => Date, listUserIds: () => Promise<string[]> = async () => []): Job {
   return {
     name: 'inbox-tidy',
     intervalMs: 6 * 60 * 60 * 1000,
     firstDelayMs: 120_000,
     async run(audit) {
-      const open = await inbox.list({ status: 'open' });
+      const scopes: Array<string | undefined> = [undefined, ...(await listUserIds())];
       let n = 0;
-      for (const it of open) {
-        if (!shouldExpire(it, now())) continue;
-        if (await inbox.expire(it.userId ?? 'owner', it.id, audit)) n++;
+      for (const userId of scopes) {
+        const open = await inbox.list({ status: 'open', ...(userId ? { userId } : {}) });
+        for (const it of open) {
+          if (!shouldExpire(it, now())) continue;
+          if (await inbox.expire(it.userId ?? 'owner', it.id, audit)) n++;
+        }
       }
       return n ? `expired=${n}` : '';
     },
