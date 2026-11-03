@@ -1,6 +1,7 @@
 /**
  * Aroomo Shell：同源入口。浏览器只访问这里；
  *   /aroomo/static/*   Aroomo 的静态资源（不需要登录，不含任何秘密）
+ *   /mcp               → Core /mcp（外部 MCP 客户端用；原样带客户端自己的 Authorization，不附加主人令牌，不要 LobeHub 登录）
  *   /aroomo/api/*      → Core /api/*（要求已登录 LobeHub；由这里附加主人令牌，浏览器永远拿不到令牌）
  *   /console/*         控制台（要求已登录 LobeHub；API 走 /aroomo/api）
  *   /aroomo、/aroomo/* Aroomo 页面（成员、Key 与接入、收件箱、收藏、设置）
@@ -62,6 +63,8 @@ function sendJson(res: ServerResponse, status: number, body: unknown, headers: R
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers });
   res.end(data);
 }
+
+const MCP_FORWARD_HEADERS = ['authorization', 'content-type', 'accept', 'content-length', 'user-agent', 'mcp-protocol-version', 'mcp-session-id', 'last-event-id'];
 
 function forwardHeaders(req: IncomingMessage, extra: Record<string, string | undefined> = {}, drop: string[] = []) {
   const h: Record<string, string | string[]> = {};
@@ -137,12 +140,27 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
   const staticRoot = path.resolve(cfg.publicDir, 'static');
   const consoleRoot = path.resolve(cfg.consoleDir);
 
-  /** 已登录且是所有者邮箱才算（其他账号不能拿到所有者令牌） */
+  /**
+   * 已登录且确认是所有者才算（其他账号不能拿到所有者令牌）。#245：默认拒绝——拿不到身份就是 false。
+   * - 配了 SHELL_OWNER_USER_ID：只按 LobeHub 用户 id 比对（服务器版）。
+   * - 没配、但是 Windows 独立版（本机回环 + 本机主人自动登录，D78）：按安装程序生成的本机主人邮箱比对。
+   * - 都没有：一律拒绝。
+   * auth=off 只在测试里出现（生产环境 loadConfig 直接拒绝启动）。
+   */
   async function ownerOk(cookie: string | undefined): Promise<boolean> {
     if (!(await session.check(cookie))) return false;
-    if (cfg.auth === 'off' || !session.email) return true;
-    const e = await session.email(cookie);
-    return Boolean(e && cfg.ownerEmail && e === cfg.ownerEmail);
+    if (cfg.auth === 'off') return true;
+    if (cfg.ownerUserId) {
+      if (!session.userId) return false;
+      const id = await session.userId(cookie);
+      return Boolean(id) && id === cfg.ownerUserId;
+    }
+    if (cfg.localOwner) {
+      if (!session.email) return false;
+      const e = await session.email(cookie);
+      return Boolean(e) && e === cfg.localOwner.email.trim().toLowerCase();
+    }
+    return false;
   }
 
   const clientFor = (u: URL) => (u.protocol === 'https:' ? https : http);
@@ -219,6 +237,33 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
     req.pipe(up);
   }
 
+  /** 外部 MCP 客户端（#235）：只转发 POST/GET；令牌由客户端自己带，这里不加主人令牌、不转发 Cookie */
+  function proxyMcp(req: IncomingMessage, res: ServerResponse, url: URL) {
+    if (req.method !== 'POST' && req.method !== 'GET') {
+      return sendJson(res, 405, { error: { code: 'METHOD_NOT_ALLOWED', message: 'MCP 只接受 POST（或 GET）' } }, { allow: 'GET, POST' });
+    }
+    const target = new URL('/mcp' + url.search, cfg.coreUpstream);
+    // 白名单：只转发 MCP 需要的头；x-forwarded-* / cf-access-* / x-aroomo-* 一律不信客户端的，来源 IP 由 Shell 自己填
+    const headers: Record<string, string | string[]> = {};
+    for (const k of MCP_FORWARD_HEADERS) {
+      const v = req.headers[k];
+      if (v !== undefined) headers[k] = v;
+    }
+    headers.host = target.host;
+    headers['x-forwarded-proto'] = (req.headers['x-forwarded-proto'] as string | undefined) ?? 'http';
+    headers['x-forwarded-for'] = req.socket.remoteAddress ?? '';
+    const up = clientFor(target).request(target, { method: req.method, headers }, (upRes) => {
+      res.writeHead(upRes.statusCode ?? 502, { ...responseHeaders(upRes, ['set-cookie']), 'cache-control': 'no-store' });
+      upRes.pipe(res);
+      upRes.on('error', () => res.destroy());
+    });
+    up.on('error', () => {
+      if (!res.headersSent) sendJson(res, 502, { error: { code: 'CORE_UNAVAILABLE', message: 'Aroomo 后台暂时不可用，请稍后再试' } });
+      else res.destroy();
+    });
+    req.pipe(up);
+  }
+
   function proxyLobe(req: IncomingMessage, res: ServerResponse, url: URL) {
     const html = wantsHtml(req);
     const cookie = req.headers.cookie;
@@ -271,6 +316,8 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
       return handleLogout(req, res, cfg.lobeUpstream);
     }
 
+    // 外部 MCP 客户端：鉴权在 Core（Bearer arc_… / 账号令牌），这里不要求 LobeHub 登录
+    if (p === '/mcp') return proxyMcp(req, res, url);
 
     // Windows 独立版（D78）：没登录的页面请求，替本机主人登录后跳回原页面（登录页 / 注册页跳到 callbackUrl）
     if (autoLogin && wantsHtml(req) && !hasCookie(req.headers.cookie, AUTOLOGIN_MARK) && !(await session.check(req.headers.cookie))) {

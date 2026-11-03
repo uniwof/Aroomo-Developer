@@ -156,13 +156,19 @@ services:
       CF_ACCESS_AUD: ${CF_ACCESS_AUD:-}
       CORE_ACCESS_REAUTH: ${CORE_ACCESS_REAUTH:-required}
       CORE_ACCESS_REAUTH_MAX_AGE_S: ${CORE_ACCESS_REAUTH_MAX_AGE_S:-300}
+      # LobeHub 服务端连 Core /mcp 的固定内部地址（#235）；/api/mcp/config 会把它作为 lobehubUrl 返回
+      CORE_MCP_LOBEHUB_URL: http://${CORE_MCP_IP:-172.29.77.2}:8080/mcp
     healthcheck:
       test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 5
       start_period: 10s
-    networks: [aroomo]
+    networks:
+      aroomo: {}
+      # 只有 core 和 lobe 的小网络，core 固定 IP：LobeHub 的 SSRF 防护只放行这一个地址（#235）
+      aroomo-mcp:
+        ipv4_address: ${CORE_MCP_IP:-172.29.77.2}
 
   # ---------------------------------------------------------------------------
   # 对话界面：LobeHub server 数据库版（2.x 起镜像名为 lobehub/lobehub；
@@ -223,13 +229,15 @@ services:
       # 市场 / 更新日志 / 检查更新 / 欢迎页推荐 / 画图 / 知识库 / 服务商设置与 Key 输入（Key 只在 Aroomo「Key 与接入」里填，写入 LiteLLM）
       FEATURE_FLAGS: '-speech_to_text,-voice_dictation,-market,-changelog,-check_updates,-welcome_suggest,-ai_image,-knowledge_base,-rag_eval,-provider_settings,-openai_api_key,-openai_proxy_url,-agent_share,-dashboard,-cloud_promotion,+api_key_manage'
       TZ: ${TZ:-Asia/Shanghai}
+      # LobeHub 的 MCP 插件走 ssrf-safe-fetch，默认拒绝内网地址。只放行 core 的固定 IP（不开 SSRF_ALLOW_PRIVATE_IP_ADDRESS）。#235
+      SSRF_ALLOW_IP_ADDRESS_LIST: ${CORE_MCP_IP:-172.29.77.2}
     healthcheck:
       test: ['CMD', '/bin/node', '-e', "fetch('http://127.0.0.1:3210/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
       interval: 20s
       timeout: 10s
       retries: 10
       start_period: 120s
-    networks: [aroomo]
+    networks: [aroomo, aroomo-mcp]
 
   # ---------------------------------------------------------------------------
   # Aroomo Shell：浏览器唯一入口（D69 薄定制层；提议 H1）。套在官方 LobeHub 外面：
@@ -253,7 +261,8 @@ services:
       CORE_UPSTREAM: http://core:8080
       CORE_OWNER_TOKEN: ${CORE_OWNER_TOKEN:-}
       SHELL_AUTH: lobe-session
-      SHELL_OWNER_EMAIL: ${SHELL_OWNER_EMAIL:-${AUTH_ALLOWED_EMAILS:-}}
+      # 所有者的 LobeHub 用户 id（生产必填，#245）；未设置时控制台和 /aroomo/api 对所有人 403
+      SHELL_OWNER_USER_ID: ${SHELL_OWNER_USER_ID:-}
       SHELL_DEFAULT_LOCALE: zh-CN
     # 控制台静态文件（同 core 的挂载）
     volumes:
@@ -426,6 +435,15 @@ services:
 networks:
   aroomo:
     driver: bridge
+  # core 与 lobe 之间的专用小网络（固定网段，见 CORE_MCP_IP / MCP_NET_SUBNET）；和 aroomo 网分开，避免动现有网络
+  aroomo-mcp:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${MCP_NET_SUBNET:-172.29.77.0/29}
+          # 动态分配只用 .4–.6：lobe 若先于 core 启动，会占走 .2，core 再要固定的 .2 就 "Address already in use"（CI 实际撞到过）。
+          # .2/.3 留给固定地址（core = CORE_MCP_IP）。改 MCP_NET_SUBNET 时要同时改 MCP_NET_IP_RANGE 和 CORE_MCP_IP。
+          ip_range: ${MCP_NET_IP_RANGE:-172.29.77.4/30}
 
 # 默认使用 Docker 管理的命名卷（Linux 与 Windows/WSL2 都可用）。
 # 想把数据放到指定文件夹：叠加 data-dir.yml 并在 .env 里设置 DATA_DIR（绝对路径）。

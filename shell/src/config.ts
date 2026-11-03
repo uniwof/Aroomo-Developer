@@ -28,8 +28,11 @@ export interface ShellConfig {
   publicDir: string;
   /** 控制台（web/console/dist）目录；不存在时 /console 返回 404 提示 */
   consoleDir: string;
-  /** 所有者邮箱：只有这个邮箱登录 LobeHub 才附加所有者令牌；其他人 403（未设置时一律 403） */
-  ownerEmail: string | undefined;
+  /**
+   * 所有者的 LobeHub 用户 id（SHELL_OWNER_USER_ID，#245）：只有这个用户登录才附加所有者令牌；其他人 403。
+   * 服务器版生产必填；获取方法：所有者登录后访问 /api/auth/get-session，看 user.id。未设置时一律 403（独立版见 localOwner）。
+   */
+  ownerUserId: string | undefined;
   /** 会话校验结果缓存时长 */
   sessionCacheMs: number;
   /**
@@ -70,6 +73,8 @@ export function loadConfig(env: Env = process.env): ShellConfig {
   if (!/^\d+$/.test(portRaw) || Number(portRaw) < 1 || Number(portRaw) > 65535) throw new ConfigError('SHELL_PORT 必须是 1–65535 的整数');
   const auth = (str(env, 'SHELL_AUTH') ?? 'lobe-session') as AuthMode;
   if (auth !== 'lobe-session' && auth !== 'off') throw new ConfigError('SHELL_AUTH 只能是 lobe-session 或 off');
+  // #245：auth=off 只用于测试；生产环境开着它等于谁都能拿所有者令牌，直接拒绝启动
+  if (auth === 'off' && str(env, 'NODE_ENV') === 'production') throw new ConfigError('生产环境不允许 SHELL_AUTH=off');
   const token = str(env, 'CORE_OWNER_TOKEN');
   const host = str(env, 'SHELL_HOST') ?? '0.0.0.0';
   const ownerEmail = str(env, 'SHELL_LOCAL_OWNER_EMAIL');
@@ -98,7 +103,7 @@ export function loadConfig(env: Env = process.env): ShellConfig {
     defaultLocale: str(env, 'SHELL_DEFAULT_LOCALE') ?? 'zh-CN',
     publicDir: str(env, 'SHELL_PUBLIC_DIR') ?? defaultPublicDir(),
     consoleDir: str(env, 'SHELL_CONSOLE_DIR') ?? '/app/console',
-    ownerEmail: (str(env, 'SHELL_OWNER_EMAIL') ?? ownerEmail)?.split(',')[0]?.trim().toLowerCase() || undefined,
+    ownerUserId: str(env, 'SHELL_OWNER_USER_ID'),
     sessionCacheMs: 30_000,
     localOwner,
     allowedHosts,

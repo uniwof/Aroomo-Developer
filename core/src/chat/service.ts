@@ -52,6 +52,27 @@ export interface ChatDeps {
   fetchImpl?: typeof fetch;
 }
 
+/** 一次调用按谁的数据处理（账号）：成员列表、负责人、规矩、上游模型名都是它自己的；不传 = 所有者 */
+/**
+ * 用户依赖必须一项不漏（缺一项编译报错）：新增与用户数据相关的 ChatDeps 项，必须同时加进这里。
+ * security 不给 = 敏感保护默认开；onCall/onTokens 为 undefined = 不记到所有者名下。
+ */
+export interface ChatUserCtx {
+  upstreamModel: (name: string) => string;
+  listMembers: () => Promise<Member[]>;
+  rules: () => Promise<string | null>;
+  lead: LeadService;
+  security: SecurityService | undefined;
+  onCall: undefined;
+  onTokens: undefined;
+}
+
+type ChatGlobalKeys = 'litellmBaseUrl' | 'litellmKey' | 'fetchImpl';
+// 编译期检查：ChatDeps 新增用户项而 ChatUserCtx 没跟上，这里会报错
+export const _userKeysCovered: Exclude<keyof ChatDeps, ChatGlobalKeys> extends keyof ChatUserCtx
+  ? (keyof ChatUserCtx extends Exclude<keyof ChatDeps, ChatGlobalKeys> ? true : never)
+  : never = true;
+
 export const RULES_MAX = 4000;
 
 /** 把规矩放进消息列表最前面的系统消息（已有的系统提示保留，规矩在它前面） */
@@ -179,8 +200,8 @@ export class ChatService {
   }
 
   /** 模型列表：aroomo、aroomo/auto（负责人入口），以及每位在职成员的别名 aroomo/<id> */
-  async models(): Promise<Json> {
-    const members = activeMembers(await this.d.listMembers());
+  async models(ctx?: ChatUserCtx): Promise<Json> {
+    const members = activeMembers(await (ctx ?? this.d).listMembers());
     const ids = [CHAT_MODEL, AUTO_MODEL, ...members.map((m) => `${MEMBER_MODEL_PREFIX}${m.id}`)];
     return { object: 'list', data: ids.map((id) => ({ id, object: 'model', created: 0, owned_by: 'aroomo' })) };
   }
@@ -212,7 +233,7 @@ export class ChatService {
   }
 
   /** 按调用者的上下文（成员名前缀映射/成员列表）处理一次对话；不传 ctx = 用全局依赖 */
-  async complete(req: Json, signal: AbortSignal, ctx?: Pick<ChatDeps, 'upstreamModel' | 'listMembers' | 'rules'>): Promise<ChatResult> {
+  async complete(req: Json, signal: AbortSignal, ctx?: ChatUserCtx): Promise<ChatResult> {
     if (ctx) return new ChatService({ ...this.d, ...ctx, fetchImpl: this.#fetch }).complete(req, signal);
     const stream = req.stream === true;
     const messages = (Array.isArray(req.messages) ? req.messages : []) as ChatMessage[];

@@ -4,11 +4,15 @@ import type { ToolAdapter, ToolRisk, ToolSpec } from './types.js';
 export class AdapterRegistry {
   #byTool = new Map<string, ToolAdapter>();
 
+  /** 先查完这一批所有名字（与已登记的、与本批内部）都不重复，再一起登记；有一个重复就整批不登记（#246） */
   add(a: ToolAdapter): this {
-    for (const t of a.tools()) {
-      if (this.#byTool.has(t.name)) throw new Error(`工具名重复：${t.name}`);
-      this.#byTool.set(t.name, a);
+    const names = a.tools().map((t) => t.name);
+    const seen = new Set<string>();
+    for (const n of names) {
+      if (this.#byTool.has(n) || seen.has(n)) throw new Error(`工具名重复：${n}`);
+      seen.add(n);
     }
+    for (const n of names) this.#byTool.set(n, a);
     return this;
   }
 

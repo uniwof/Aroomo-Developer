@@ -184,7 +184,7 @@ describe('Key 管理（/api/keys，mock LiteLLM）', () => {
     const svc = new KeysService(new MemoryKeyStore(), litellm, clock.now, new ConfirmService(new MemoryChallengeStore(), { now: clock.now, reauth: 'off' }));
     const audit = async () => undefined;
     await expect(
-      svc.create({ name: 'n', sourceUrl: 'https://x.example/k', apiKey: KEY_A, model: 'openai/gpt-4o-mini' }, { actor: 'operator:op', canConfirmImportant: false }, audit),
+      svc.create({ name: 'n', sourceUrl: 'https://x.example/k', apiKey: KEY_A, model: 'openai/gpt-4o-mini' }, { actor: 'operator:op', canConfirmImportant: false }, audit, 'owner'),
     ).rejects.toMatchObject({ statusCode: 403 });
     expect(mock.deployments.size).toBe(0);
   });
