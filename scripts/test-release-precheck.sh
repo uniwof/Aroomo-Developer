@@ -24,6 +24,8 @@ adm "create database $dbname" >/dev/null
 export PGDATABASE="$dbname"
 
 fail=0
+# 不用 echo | grep -q：pipefail 下 grep 提前退出会让 echo 吃 SIGPIPE，整条判失败（偶发）
+out_has() { grep "$@" <<<"$OUT"; }
 ok() { echo "ok   - $1"; }
 bad() { echo "FAIL - $1"; fail=1; }
 
@@ -107,13 +109,13 @@ run() { # run <说明> <期望退出码> [参数…]
   OUT="$("$pre" "$@" 2>&1)" || rc=$?
   if [ "$rc" = "$want" ]; then ok "$name"; else bad "$name（退出码 $rc，期望 $want）"; echo "$OUT" | sed 's/^/     /'; fi
 }
-has() { echo "$OUT" | grep -qF "$1" && ok "输出含「$1」" || { bad "输出缺「$1」"; echo "$OUT" | sed 's/^/     /'; }; }
+has() { out_has -qF "$1" && ok "输出含「$1」" || { bad "输出缺「$1」"; echo "$OUT" | sed 's/^/     /'; }; }
 
 run "干净库：全部通过（含备份）" 0
 has "检查 1 空串 user_id"; has "检查 2 唯一索引试算"; has "检查 3 逐表行数可读"; has "aroomo-20261103T100000Z"
 has "检查了 7 张开了 RLS 的表"; has "检查 4"; has "检查 5"
 has "清单外带 user_id 的表"
-echo "$OUT" | grep -q 'owner-secret-mark' && bad "输出里出现了 SHELL_OWNER_USER_ID 的值" || ok "不打印 SHELL_OWNER_USER_ID 的值"
+out_has -q 'owner-secret-mark' && bad "输出里出现了 SHELL_OWNER_USER_ID 的值" || ok "不打印 SHELL_OWNER_USER_ID 的值"
 [ -f "$work/.release/precheck.ok" ] && ok "记下了备份通过标记" || bad "没有备份通过标记"
 ls "$work"/.release/precheck-*.counts.tsv >/dev/null 2>&1 && ok "存了逐表行数" || bad "没存逐表行数"
 
@@ -176,7 +178,7 @@ adm "grant usage on schema public to precheck_ro" >/dev/null
 adm "grant select on all tables in schema public to precheck_ro" >/dev/null
 adm "revoke select on provider_keys from precheck_ro" >/dev/null
 OUT="$(PGOPTIONS='-c role=precheck_ro' "$pre" --no-backup 2>&1)" && rc=0 || rc=$?
-[ "$rc" = 1 ] && echo "$OUT" | grep -q '失败.*provider_keys' && ok "没有权限读 provider_keys（查询出错 / 看不到表）→ 失败，不当成 0" || { bad "查询出错却通过（退出码 $rc）"; echo "$OUT" | sed 's/^/     /'; }
+[ "$rc" = 1 ] && out_has -q '失败.*provider_keys' && ok "没有权限读 provider_keys（查询出错 / 看不到表）→ 失败，不当成 0" || { bad "查询出错却通过（退出码 $rc）"; echo "$OUT" | sed 's/^/     /'; }
 adm "drop owned by precheck_ro" >/dev/null 2>&1 || true
 adm "drop role precheck_ro" >/dev/null 2>&1 || true
 # 清单文件丢了 → 失败
@@ -206,7 +208,7 @@ mv "$envf" "$work/env.moved"
 run "没有 deploy/.env → 失败" 1 --no-backup
 mv "$work/env.moved" "$envf"
 run "SHELL_OWNER_USER_ID 恢复后通过" 0 --no-backup
-echo "$OUT" | grep -q 'owner-secret-mark' && bad "输出里出现了 SHELL_OWNER_USER_ID 的值" || ok "检查 4 各种情况都不打印值"
+out_has -q 'owner-secret-mark' && bad "输出里出现了 SHELL_OWNER_USER_ID 的值" || ok "检查 4 各种情况都不打印值"
 
 # 检查 5：MCP 网段冲突
 NETS_MODE=clash run "别的 docker 网络占了 172.29.77.0/29 → 失败" 1 --no-backup

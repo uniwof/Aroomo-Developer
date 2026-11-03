@@ -112,7 +112,7 @@ nullable_info=""
 rls_checked=0
 for t in "${rls_tables[@]}"; do
   ident_ok "$t" || { fail "检查 1 清单里表名不合法：$t"; continue; }
-  if ! printf '%s\n' "$tables" | grep -qx "$t"; then
+  if ! grep -qx "$t" <<<"$tables"; then
     fail "检查 1 RLS 表 $t 不存在或没有文本列 user_id（schema 不对或连错了库？）"; continue
   fi
   n="$(sql "select count(*) from public.\"$t\" where user_id = ''")" || { fail "检查 1 查询 $t 空串时出错"; continue; }
@@ -128,7 +128,7 @@ done
 others=""
 while IFS= read -r t; do
   [ -n "$t" ] || continue
-  printf '%s\n' "${rls_tables[@]}" | grep -qx "$t" || others="$others $t"
+  grep -qx "$t" < <(printf '%s\n' "${rls_tables[@]}") || others="$others $t"
 done <<<"$tables"
 if [ -n "$bad_tables" ]; then
   fail "检查 1 空串 user_id：${bad_tables# }（表=行数；先改成 'owner' 或真实账号再部署）"
@@ -145,7 +145,8 @@ fi
 
 # ---------------------------------------------------------------------------
 # 检查 2：迁移后唯一索引试算。每行：表|其他键列|条件
-has_user_id() { printf '%s\n' "$tables" | grep -qx "$1"; }
+# 注意：不能写成 printf | grep -q —— pipefail 下 grep 提前退出会让 printf 吃 SIGPIPE，整条管道判失败
+has_user_id() { grep -qx "$1" <<<"$tables"; }
 # 0 = 存在；1 = 不存在；2 = 查询出错
 table_exists() { local r; r="$(sql "select to_regclass('public.$1') is not null")" || return 2; [ "$r" = t ]; }
 
@@ -286,17 +287,17 @@ else
     last="$(printf '%s\n' "$out" | tail -n 1)"
     snap="$(printf '%s' "$last" | grep -o '"snapshot_id":"[^"]*"' | head -1 | cut -d'"' -f4 || true)"
     size="$(printf '%s' "$last" | grep -o '"size_bytes":[0-9]*' | head -1 | cut -d: -f2 || true)"
-    if ! printf '%s' "$last" | grep -q '"status":"ok"'; then
+    if ! grep -q '"status":"ok"' <<<"$last"; then
       fail "部署前备份：结果不是 ok（${last:0:120}）"
-    elif ! printf '%s' "$last" | grep -q '"offsite":true'; then
+    elif ! grep -q '"offsite":true' <<<"$last"; then
       fail "部署前备份：没有上传到异地 R2（offsite 不是 true），不算数"
-    elif ! printf '%s' "$last" | grep -q '"checked":true'; then
+    elif ! grep -q '"checked":true' <<<"$last"; then
       fail "部署前备份：没有从 R2 重新下载核对（checked 不是 true），不算数"
     elif [ -z "$snap" ] || [ -z "$size" ] || [ "$size" -le 0 ]; then
       fail "部署前备份：结果里没有备份名或大小为 0"
     else
       listing="$(run_snaps 2>/dev/null || true)"
-      if printf '%s\n' "$listing" | grep -qxF "$snap.tar.zst.age"; then
+      if grep -qxF "$snap.tar.zst.age" <<<"$listing"; then
         pass "部署前备份：$snap（$size 字节）已在 R2：上传后大小一致、重新下载校验通过、R2 列表里能看到"
         printf '%s %s\n' "$stamp" "$snap" >"$state/precheck.ok"
       else
