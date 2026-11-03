@@ -96,7 +96,7 @@ describe('页面', () => {
     await waitFor(() => expect(screen.getByRole('heading', { name: '能力地图与成员' })).toBeInTheDocument());
     await waitFor(() => expect(screen.getAllByText('gpt-oss-20b').length).toBeGreaterThan(0));
     expect(screen.getByRole('img', { name: /Kimi，离线/ })).toHaveAttribute('data-online', 'false');
-    expect(screen.getByRole('navigation', { name: '控制台' }).querySelectorAll('a')).toHaveLength(7);
+    expect(screen.getByRole('navigation', { name: '控制台' }).querySelectorAll('a')).toHaveLength(8);
   });
 
   it('登录失败给出提示', async () => {
