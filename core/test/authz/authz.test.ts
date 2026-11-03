@@ -43,7 +43,7 @@ describe('D208 权限声明', () => {
     const bad: string[] = [];
     for (const r of apiRoutes()) {
       const res = await t.app.inject({ method: r.method as 'GET', url: concretize(r.url) });
-      if (res.statusCode !== 401 && res.statusCode !== 503) bad.push(`${r.method} ${r.url} → ${res.statusCode}`);
+      if (res.statusCode !== 401) bad.push(`${r.method} ${r.url} → ${res.statusCode}`);
     }
     expect(bad).toEqual([]);
   });
@@ -56,9 +56,19 @@ describe('D208 权限声明', () => {
     expect(others.length).toBeGreaterThan(0);
     for (const r of others) {
       const res = await t.app.inject({ method: r.method as 'GET', url: concretize(r.url), headers: { 'x-forwarded-for': '10.0.0.1' }, remoteAddress: '172.29.77.2', payload: r.method === 'GET' ? undefined : r.url === '/v1/chat/completions' ? { messages: [{ role: 'user', content: 'x' }] } : {} });
-      if (res.statusCode !== 401 && res.statusCode !== 403 && res.statusCode !== 503) open.push(`${r.method} ${r.url} → ${res.statusCode}`);
+      // /v1 在 CORE_CHAT_TOKEN 未设置时先 503（tokenOk 里：没配置就一律拒绝，配了就比对令牌，不带或错令牌 401），不是放行
+      const chatUnconfigured = r.url.startsWith('/v1/') && res.statusCode === 503;
+      if (res.statusCode !== 401 && res.statusCode !== 403 && !chatUnconfigured) open.push(`${r.method} ${r.url} → ${res.statusCode}`);
     }
     expect(open, `这些非 /api 路由不带令牌也能进，请加验证或明确列为公开：\n${open.join('\n')}`).toEqual([]);
+  });
+
+  // #242 必改1：百分号编码的路径不能绕过鉴权钩子
+  it('编码路径（/%61pi、/%69nternal、/%6dcp）无令牌一律 401', async () => {
+    for (const [method, url] of [['GET', '/%61pi/keys'], ['GET', '/%61pi/auth/me'], ['POST', '/%69nternal/route-preview'], ['POST', '/%6dcp']] as const) {
+      const res = await t.app.inject({ method, url, payload: method === 'POST' ? {} : undefined });
+      expect(res.statusCode, `${method} ${url}`).toBe(401);
+    }
   });
 
   it('小号访问非 userRoute 的路由一律 403', async () => {
