@@ -89,6 +89,27 @@ export function checkDef(d: HttpToolDef): string | null {
 
 const dayOf = (d: Date) => d.toISOString().slice(0, 10);
 
+/** baseUrl 的路径规范成以 / 结尾，拼好的 pathname 必须以它开头（/v1 → /v1/；/v1x 不算在 /v1 下面） */
+export function withinBasePath(pathname: string, basePathname: string): boolean {
+  const prefix = basePathname.replace(/\/+$/, '') + '/';
+  return pathname.startsWith(prefix);
+}
+
+/** 解码后某一段是 . / .. 或含 / \ 的（如 %2e%2e%2f），对方服务器解码后可能当成穿越，一律拒 */
+function hasEncodedTraversal(pathname: string): boolean {
+  for (const seg of pathname.split('/')) {
+    if (!seg.includes('%')) continue;
+    let d: string;
+    try {
+      d = decodeURIComponent(seg);
+    } catch {
+      return true;
+    }
+    if (d === '.' || d === '..' || d.includes('/') || d.includes('\\')) return true;
+  }
+  return false;
+}
+
 export class HttpToolAdapter implements ToolAdapter {
   readonly id: string;
   readonly #fetch: typeof fetch;
@@ -138,9 +159,18 @@ export class HttpToolAdapter implements ToolAdapter {
     if (!path.startsWith('/') || path.startsWith('//') || path.includes('\\') || path.includes('..'))
       return textResult('path 必须以 / 开头，且不能含 .. 或 //', true);
 
-    const url = new URL(this.def.baseUrl.replace(/\/+$/, '') + path);
-    if (url.hostname.toLowerCase() !== new URL(this.def.baseUrl).hostname.toLowerCase() || url.protocol !== 'https:')
+    const base = new URL(this.def.baseUrl);
+    let url: URL;
+    try {
+      url = new URL(this.def.baseUrl.replace(/\/+$/, '') + path);
+    } catch {
+      return textResult('path 不是有效路径', true);
+    }
+    if (url.hostname.toLowerCase() !== base.hostname.toLowerCase() || url.protocol !== 'https:')
       return textResult('目标主机不在允许范围', true);
+    // #246：URL 解析会把 %2e%2e 当成 ..，所以拼好之后再查一遍：路径必须还在 baseUrl 的路径下面
+    if (!withinBasePath(url.pathname, base.pathname) || hasEncodedTraversal(url.pathname))
+      return textResult('path 不能跳出 baseUrl', true);
     const q = args.query;
     if (q && typeof q === 'object') for (const [k, v] of Object.entries(q)) url.searchParams.set(k, String(v));
 
