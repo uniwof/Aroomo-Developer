@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
-import { Inbox, LogOut, KeyRound, Library, Map, Monitor, Settings, Wrench } from 'lucide-react';
+import { Inbox, LogOut, ScrollText, KeyRound, Library, Map, Monitor, Settings, Wrench } from 'lucide-react';
 import { Brand, QuotaRing } from './brand';
 import { Button } from './ui/button';
 import { api, logout, viaShell } from '@/lib/api';
@@ -15,6 +15,7 @@ export const NAV = [
   { to: '/inbox', label: '收件箱', icon: Inbox },
   { to: '/executors', label: '本机执行员', icon: Monitor },
   { to: '/keys', label: 'Key 与接入', icon: KeyRound },
+  { to: '/audit', label: '审计', icon: ScrollText },
   { to: '/settings', label: '设置', icon: Settings },
 ] as const;
 
