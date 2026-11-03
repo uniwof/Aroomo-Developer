@@ -82,7 +82,7 @@ R
 chmod +x "$nets" "$routes"
 mkdir -p "$work/deploy"
 envf="$work/deploy/.env"
-printf 'CORE_CHAT_TOKEN=abc\nSHELL_OWNER_EMAIL=owner-secret-mark@example.com\n' >"$envf"
+printf 'CORE_CHAT_TOKEN=abc\nSHELL_OWNER_EMAIL=old@example.com\nSHELL_OWNER_USER_ID=owner-secret-mark-uid\n' >"$envf"
 export RELEASE_ROOT="$work" RELEASE_PSQL="$RELEASE_TEST_PSQL" RELEASE_BACKUP_CMD="$bk" RELEASE_SNAPSHOTS_CMD="$snaps"
 export RELEASE_DOCKER_NETS_CMD="$nets" RELEASE_IP_ROUTE_CMD="$routes"
 
@@ -113,7 +113,7 @@ run "干净库：全部通过（含备份）" 0
 has "检查 1 空串 user_id"; has "检查 2 唯一索引试算"; has "检查 3 逐表行数可读"; has "aroomo-20261103T100000Z"
 has "检查了 7 张开了 RLS 的表"; has "检查 4"; has "检查 5"
 has "清单外带 user_id 的表"
-echo "$OUT" | grep -q 'owner-secret-mark' && bad "输出里出现了 SHELL_OWNER_EMAIL 的值" || ok "不打印 SHELL_OWNER_EMAIL 的值"
+echo "$OUT" | grep -q 'owner-secret-mark' && bad "输出里出现了 SHELL_OWNER_USER_ID 的值" || ok "不打印 SHELL_OWNER_USER_ID 的值"
 [ -f "$work/.release/precheck.ok" ] && ok "记下了备份通过标记" || bad "没有备份通过标记"
 ls "$work"/.release/precheck-*.counts.tsv >/dev/null 2>&1 && ok "存了逐表行数" || bad "没存逐表行数"
 
@@ -184,22 +184,29 @@ mv "$work/scripts/lib/rls-tables.txt" "$work/rls.bak"
 run "没有 RLS 表清单 → 失败" 1 --no-backup
 mv "$work/rls.bak" "$work/scripts/lib/rls-tables.txt"
 
-# 检查 4：SHELL_OWNER_EMAIL
+# 检查 4：SHELL_OWNER_USER_ID（#252 起只认它；SHELL_OWNER_EMAIL 有值也不算）
 cp "$envf" "$work/env.bak"
-sed -i '/^SHELL_OWNER_EMAIL=/d' "$envf"
-run "没有 SHELL_OWNER_EMAIL → 失败" 1 --no-backup
-has "SHELL_OWNER_EMAIL 没有设置或为空"
-echo 'SHELL_OWNER_EMAIL=' >>"$envf"
-run "SHELL_OWNER_EMAIL 为空 → 失败" 1 --no-backup
-echo 'SHELL_OWNER_EMAIL=""' >>"$envf"
-run "SHELL_OWNER_EMAIL 是空引号 → 失败" 1 --no-backup
-echo "SHELL_OWNER_EMAIL='  '" >>"$envf"
-run "SHELL_OWNER_EMAIL 只有空白 → 失败" 1 --no-backup
+sed -i '/^SHELL_OWNER_USER_ID=/d' "$envf"
+run "只有 SHELL_OWNER_EMAIL、没有 SHELL_OWNER_USER_ID → 失败" 1 --no-backup
+has "SHELL_OWNER_USER_ID 没有设置或为空"
+echo 'SHELL_OWNER_USER_ID=' >>"$envf"
+run "SHELL_OWNER_USER_ID 为空 → 失败" 1 --no-backup
+sed -i '/^SHELL_OWNER_USER_ID=/d' "$envf"; echo 'SHELL_OWNER_USER_ID=""' >>"$envf"
+run "SHELL_OWNER_USER_ID 是空引号 → 失败" 1 --no-backup
+sed -i '/^SHELL_OWNER_USER_ID=/d' "$envf"; echo 'SHELL_OWNER_USER_ID= abc' >>"$envf"
+run "SHELL_OWNER_USER_ID 等号后是空白 → 失败" 1 --no-backup
+sed -i '/^SHELL_OWNER_USER_ID=/d' "$envf"; echo '#SHELL_OWNER_USER_ID=abc' >>"$envf"
+run "SHELL_OWNER_USER_ID 被注释掉 → 失败" 1 --no-backup
+cp "$work/env.bak" "$envf"; echo 'SHELL_OWNER_USER_ID=other' >>"$envf"
+run "SHELL_OWNER_USER_ID 出现两行 → 失败" 1 --no-backup
+cp "$work/env.bak" "$envf"; sed -i 's/^SHELL_OWNER_USER_ID=/  SHELL_OWNER_USER_ID=/' "$envf"
+run "行首有空白的 SHELL_OWNER_USER_ID 也认" 0 --no-backup
 cp "$work/env.bak" "$envf"
 mv "$envf" "$work/env.moved"
 run "没有 deploy/.env → 失败" 1 --no-backup
 mv "$work/env.moved" "$envf"
-run "SHELL_OWNER_EMAIL 恢复后通过" 0 --no-backup
+run "SHELL_OWNER_USER_ID 恢复后通过" 0 --no-backup
+echo "$OUT" | grep -q 'owner-secret-mark' && bad "输出里出现了 SHELL_OWNER_USER_ID 的值" || ok "检查 4 各种情况都不打印值"
 
 # 检查 5：MCP 网段冲突
 NETS_MODE=clash run "别的 docker 网络占了 172.29.77.0/29 → 失败" 1 --no-backup

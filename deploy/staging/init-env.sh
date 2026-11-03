@@ -32,6 +32,9 @@ put APP_URL https://staging.pcmanai.com
 put KEY_VAULTS_SECRET "$(openssl rand -base64 32)"
 put AUTH_SECRET "$(openssl rand -base64 32)"
 put AUTH_ALLOWED_EMAILS tifni023@gmail.com
+# 所有者的 LobeHub 用户 id（#245/#252：Shell 只认它，留空 = 控制台对所有人 403）。这里只留空变量，不写真实值；
+# 所有者登录 staging 后打开 /api/auth/get-session 复制 user.id，再由主会话在服务器上填进 deploy/.env。
+put SHELL_OWNER_USER_ID ''
 put LOBE_ENABLE_AGENT_GATEWAY 0
 # staging 不起 litellm；这两个值只为通过 compose 必填校验
 put LITELLM_MASTER_KEY "sk-$(hex 24)"

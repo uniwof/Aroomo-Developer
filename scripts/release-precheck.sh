@@ -15,7 +15,8 @@
 #         （coalesce(user_id,'owner') + 各索引原有列和条件）试算重复，撞了就失败。表名 + 重复组数，不打印任何数据内容。
 # 检查 3  逐表行数可读（scripts/lib/table-counts.sql），结果存 $RELEASE_ROOT/.release/precheck-<时间>.counts.tsv，
 #         部署后可对照。
-# 检查 4  生产 deploy/.env 里 SHELL_OWNER_EMAIL 已设置且非空（只判断有没有值，不打印值）。
+# 检查 4  生产 deploy/.env 里 SHELL_OWNER_USER_ID 已设置且非空（#252 起 Shell 只认它，SHELL_OWNER_EMAIL 已无作用）。
+#         判定等价于 grep -cE '^[[:space:]]*SHELL_OWNER_USER_ID=[^[:space:]"'"'"']+' deploy/.env 结果为 1；不打印值。
 # 检查 5  MCP 专用网段（.env 的 MCP_NET_SUBNET，默认 172.29.77.0/29）没有被主机上别的 docker 网络或路由占用
 #         （docker network inspect + ip route，只读）。冲突则失败，提示改 MCP_NET_SUBNET 与 CORE_MCP_IP。
 #         Aroomo 自己的 aroomo_aroomo-mcp 网络（上次部署建的）不算冲突。
@@ -187,7 +188,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 检查 4：SHELL_OWNER_EMAIL 已设置且非空（只看有没有值，绝不打印）
+# 检查 4：SHELL_OWNER_USER_ID 已设置且非空（只数匹配行，绝不打印值）
 env_file="$ROOT/deploy/.env"
 env_val() { # env_val <键>：取 .env 里最后一次出现的值，去掉首尾空白和成对引号；不输出到日志
   local v
@@ -197,12 +198,16 @@ env_val() { # env_val <键>：取 .env 里最后一次出现的值，去掉首�
   v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"
   printf '%s' "$v"
 }
+owner_lines=0
+[ ! -f "$env_file" ] || owner_lines="$(grep -cE '^[[:space:]]*SHELL_OWNER_USER_ID=[^[:space:]"'"'"']+' "$env_file" || true)"
 if [ ! -f "$env_file" ]; then
   fail "检查 4 找不到 deploy/.env"
-elif [ -n "$(env_val SHELL_OWNER_EMAIL)" ]; then
-  pass "检查 4 deploy/.env 里 SHELL_OWNER_EMAIL 已设置（不显示值）"
+elif [ "$owner_lines" = 1 ]; then
+  pass "检查 4 deploy/.env 里 SHELL_OWNER_USER_ID 已设置（不显示值）"
+elif [ "$owner_lines" = 0 ]; then
+  fail "检查 4 deploy/.env 里 SHELL_OWNER_USER_ID 没有设置或为空（所有者的 LobeHub 用户 id，#252 起 Shell 只认它，留空则所有者也被 403；请主会话在服务器上补上）"
 else
-  fail "检查 4 deploy/.env 里 SHELL_OWNER_EMAIL 没有设置或为空（所有者邮箱，控制台据此认主人；请主会话在服务器上补上）"
+  fail "检查 4 deploy/.env 里 SHELL_OWNER_USER_ID 出现了 $owner_lines 次，只能有一行"
 fi
 
 # ---------------------------------------------------------------------------
