@@ -52,7 +52,8 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
 
   app.addHook('onRequest', async (req: FastifyRequest) => {
     const isMcp = req.url === '/mcp' || req.url.startsWith('/mcp?');
-    if (!req.url.startsWith('/api/') && !isMcp) return;
+    // /internal/* 也要验身份：LobeHub 的 SSRF 白名单放行 Core 整个 IP，不能有免验身份的接口（#235）
+    if (!req.url.startsWith('/api/') && !req.url.startsWith('/internal/') && !isMcp) return;
     if (!opts.ownerConfigured) {
       throw new HttpError(503, 'AUTH_NOT_CONFIGURED', '尚未配置访问令牌（CORE_OWNER_TOKEN），暂时不能使用');
     }

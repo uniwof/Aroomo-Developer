@@ -14,7 +14,7 @@ let shell: Server;
 let shellNoToken: Server;
 let base = '';
 let baseNoToken = '';
-const coreSeen: Array<{ url: string; auth?: string; cookie?: string; access?: string }> = [];
+const coreSeen: Array<{ url: string; auth?: string; cookie?: string; access?: string; xfwd?: string; aroomo?: string; xfhost?: string }> = [];
 const lobeSignOut: Array<{ cookie?: string; origin?: string }> = [];
 const lobeSeen: Array<{ url: string; cookie?: string; acceptEncoding?: string; host?: string }> = [];
 
@@ -64,6 +64,9 @@ beforeAll(async () => {
       auth: req.headers.authorization,
       cookie: req.headers.cookie,
       access: req.headers['cf-access-jwt-assertion'] as string | undefined,
+      xfwd: req.headers['x-forwarded-for'] as string | undefined,
+      aroomo: req.headers['x-aroomo-user'] as string | undefined,
+      xfhost: req.headers['x-forwarded-host'] as string | undefined,
     });
     res.writeHead(200, { 'content-type': 'application/json', 'set-cookie': 'x=1' });
     res.end('{"ok":true}');
@@ -101,6 +104,19 @@ describe('/mcp 转发给 Core（#235）', () => {
     expect(coreSeen.at(-1)?.auth).toBe('Bearer arc_client_token_for_test');
     expect(coreSeen.at(-1)?.cookie).toBeUndefined();
     expect(r.headers.getSetCookie()).toEqual([]);
+  });
+
+  it('必改1：客户端伪造的 x-forwarded-for / cf-access-jwt-assertion / x-aroomo-* 一个都到不了 Core', async () => {
+    await fetch(`${base}/mcp`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer t', 'x-forwarded-for': '6.6.6.6', 'x-forwarded-host': 'evil.example', 'cf-access-jwt-assertion': 'forged', 'x-aroomo-user': 'owner' },
+      body: '{}',
+    });
+    const seen = coreSeen.at(-1);
+    expect(seen?.access).toBeUndefined();
+    expect(seen?.aroomo).toBeUndefined();
+    expect(seen?.xfhost).toBeUndefined();
+    expect(seen?.xfwd).not.toContain('6.6.6.6');
   });
 
   it('没带令牌就不带令牌：绝不替客户端补主人令牌（也包括配了主人令牌的 Shell）', async () => {

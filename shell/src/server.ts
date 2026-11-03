@@ -64,6 +64,8 @@ function sendJson(res: ServerResponse, status: number, body: unknown, headers: R
   res.end(data);
 }
 
+const MCP_FORWARD_HEADERS = ['authorization', 'content-type', 'accept', 'content-length', 'user-agent', 'mcp-protocol-version', 'mcp-session-id', 'last-event-id'];
+
 function forwardHeaders(req: IncomingMessage, extra: Record<string, string | undefined> = {}, drop: string[] = []) {
   const h: Record<string, string | string[]> = {};
   for (const [k, v] of Object.entries(req.headers)) {
@@ -226,7 +228,15 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
       return sendJson(res, 405, { error: { code: 'METHOD_NOT_ALLOWED', message: 'MCP 只接受 POST（或 GET）' } }, { allow: 'GET, POST' });
     }
     const target = new URL('/mcp' + url.search, cfg.coreUpstream);
-    const headers = forwardHeaders(req, { cookie: undefined, host: target.host, 'x-aroomo-request': undefined }, []);
+    // 白名单：只转发 MCP 需要的头；x-forwarded-* / cf-access-* / x-aroomo-* 一律不信客户端的，来源 IP 由 Shell 自己填
+    const headers: Record<string, string | string[]> = {};
+    for (const k of MCP_FORWARD_HEADERS) {
+      const v = req.headers[k];
+      if (v !== undefined) headers[k] = v;
+    }
+    headers.host = target.host;
+    headers['x-forwarded-proto'] = (req.headers['x-forwarded-proto'] as string | undefined) ?? 'http';
+    headers['x-forwarded-for'] = req.socket.remoteAddress ?? '';
     const up = clientFor(target).request(target, { method: req.method, headers }, (upRes) => {
       res.writeHead(upRes.statusCode ?? 502, { ...responseHeaders(upRes, ['set-cookie']), 'cache-control': 'no-store' });
       upRes.pipe(res);

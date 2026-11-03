@@ -48,6 +48,19 @@ describe('D208 权限声明', () => {
     expect(bad).toEqual([]);
   });
 
+  // #242 必改2：LobeHub 的 SSRF 白名单放行 Core 整个 IP:8080，非 /api 路由（/v1、/mcp 等）也不能有「免验身份」接口
+  it('非 /api 路由：无令牌也只有明确列出的公开接口能进', async () => {
+    const PUBLIC_NON_API = ['GET /healthz', 'POST /auth/login', 'POST /auth/accept', 'GET /console', 'GET /console/*'] // 健康检查、登录/接受邀请（自带校验）、控制台静态页;
+    const open: string[] = [];
+    const others = seenRoutes.filter((r) => !r.url.startsWith('/api/') && !['HEAD', 'OPTIONS'].includes(r.method) && !PUBLIC_NON_API.includes(`${r.method} ${r.url}`));
+    expect(others.length).toBeGreaterThan(0);
+    for (const r of others) {
+      const res = await t.app.inject({ method: r.method as 'GET', url: concretize(r.url), headers: { 'x-forwarded-for': '10.0.0.1' }, remoteAddress: '172.29.77.2', payload: r.method === 'GET' ? undefined : r.url === '/v1/chat/completions' ? { messages: [{ role: 'user', content: 'x' }] } : {} });
+      if (res.statusCode !== 401 && res.statusCode !== 403 && res.statusCode !== 503) open.push(`${r.method} ${r.url} → ${res.statusCode}`);
+    }
+    expect(open, `这些非 /api 路由不带令牌也能进，请加验证或明确列为公开：\n${open.join('\n')}`).toEqual([]);
+  });
+
   it('小号访问非 userRoute 的路由一律 403', async () => {
     const bad: string[] = [];
     for (const r of apiRoutes().filter((x) => x.config.userRoute !== true)) {
