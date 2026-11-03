@@ -253,7 +253,8 @@ services:
       CORE_UPSTREAM: http://core:8080
       CORE_OWNER_TOKEN: ${CORE_OWNER_TOKEN:-}
       SHELL_AUTH: lobe-session
-      SHELL_OWNER_EMAIL: ${SHELL_OWNER_EMAIL:-${AUTH_ALLOWED_EMAILS:-}}
+      # 所有者的 LobeHub 用户 id（生产必填，#245）；未设置时控制台和 /aroomo/api 对所有人 403
+      SHELL_OWNER_USER_ID: ${SHELL_OWNER_USER_ID:-}
       SHELL_DEFAULT_LOCALE: zh-CN
     # 控制台静态文件（同 core 的挂载）
     volumes:

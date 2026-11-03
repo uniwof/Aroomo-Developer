@@ -27,7 +27,10 @@ const listen = (s: Server) => {
   return new Promise<string>((r) => s.listen(0, '127.0.0.1', () => r(`http://127.0.0.1:${(s.address() as AddressInfo).port}`)));
 };
 
-const session: SessionChecker = { check: async (c) => Boolean(c && c.includes('session=good')) };
+const session: SessionChecker = {
+  check: async (c) => Boolean(c && c.includes('session=good')),
+  userId: async (c) => (c && c.includes('session=good') ? 'owner-user-id' : undefined),
+};
 
 beforeAll(async () => {
   lobe = http.createServer((req, res) => {
@@ -70,10 +73,10 @@ beforeAll(async () => {
   });
   const lobeUrl = await listen(lobe);
   const coreUrl = await listen(core);
-  const cfg = loadConfig({ LOBE_UPSTREAM: lobeUrl, CORE_UPSTREAM: coreUrl, CORE_OWNER_TOKEN: 'placeholder-owner-token-0123456789abcdef' });
+  const cfg = loadConfig({ LOBE_UPSTREAM: lobeUrl, CORE_UPSTREAM: coreUrl, CORE_OWNER_TOKEN: 'placeholder-owner-token-0123456789abcdef', SHELL_OWNER_USER_ID: 'owner-user-id' });
   shell = createShellServer(cfg, { session });
   base = await listen(shell);
-  shellNoToken = createShellServer(loadConfig({ LOBE_UPSTREAM: lobeUrl, CORE_UPSTREAM: coreUrl }), { session });
+  shellNoToken = createShellServer(loadConfig({ LOBE_UPSTREAM: lobeUrl, CORE_UPSTREAM: coreUrl, SHELL_OWNER_USER_ID: 'owner-user-id' }), { session });
   baseNoToken = await listen(shellNoToken);
 });
 

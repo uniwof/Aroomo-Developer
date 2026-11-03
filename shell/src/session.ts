@@ -9,10 +9,12 @@ export interface SessionChecker {
   check(cookie: string | undefined): Promise<boolean>;
   /** 当前会话的登录邮箱（小写）；没登录或取不到返回 undefined */
   email?(cookie: string | undefined): Promise<string | undefined>;
+  /** 当前会话的 LobeHub 用户 id；没登录或取不到返回 undefined（#245：所有者按 id 比对） */
+  userId?(cookie: string | undefined): Promise<string | undefined>;
 }
 
 export class LobeSessionChecker implements SessionChecker {
-  readonly #cache = new Map<string, { ok: boolean; email?: string; until: number }>();
+  readonly #cache = new Map<string, { ok: boolean; email?: string; userId?: string; until: number }>();
 
   constructor(
     private readonly lobe: URL,
@@ -29,7 +31,11 @@ export class LobeSessionChecker implements SessionChecker {
     return (await this.#lookup(cookie)).email;
   }
 
-  async #lookup(cookie: string | undefined): Promise<{ ok: boolean; email?: string }> {
+  async userId(cookie: string | undefined): Promise<string | undefined> {
+    return (await this.#lookup(cookie)).userId;
+  }
+
+  async #lookup(cookie: string | undefined): Promise<{ ok: boolean; email?: string; userId?: string }> {
     if (!cookie) return { ok: false };
     const key = createHash('sha256').update(cookie).digest('hex');
     const hit = this.#cache.get(key);
@@ -37,6 +43,7 @@ export class LobeSessionChecker implements SessionChecker {
     if (hit && hit.until > t) return hit;
     let ok = false;
     let email: string | undefined;
+    let userId: string | undefined;
     try {
       const res = await this.fetchImpl(new URL('/api/auth/get-session', this.lobe), {
         headers: { cookie, accept: 'application/json' },
@@ -44,15 +51,16 @@ export class LobeSessionChecker implements SessionChecker {
       });
       if (res.ok) {
         const body = (await res.json().catch(() => null)) as { user?: { id?: string; email?: string } } | null;
-        ok = Boolean(body?.user?.id);
-        email = body?.user?.email?.trim().toLowerCase() || undefined;
+        userId = typeof body?.user?.id === 'string' && body.user.id ? body.user.id : undefined;
+        ok = Boolean(userId);
+        email = ok ? body?.user?.email?.trim().toLowerCase() || undefined : undefined;
       }
     } catch {
       ok = false;
     }
     if (this.#cache.size > 200) this.#cache.clear();
     // 失败结果只缓存很短时间，登录后马上能用
-    const entry = { ok, email, until: t + (ok ? this.cacheMs : 2000) };
+    const entry = { ok, email, userId, until: t + (ok ? this.cacheMs : 2000) };
     this.#cache.set(key, entry);
     return entry;
   }
