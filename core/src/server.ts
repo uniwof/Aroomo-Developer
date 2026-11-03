@@ -362,24 +362,27 @@ export function buildServer(
       }),
     },
   );
+  // 账号的 Key 才跳过所有者的成员联动；所有者的行在 PG 上可能是 user_id='owner'（0024 回填），显式排除（#244 必改 2）
+  const isAccountKey = (rec: { userId?: string }): boolean =>
+    rec.userId !== undefined && rec.userId !== "" && rec.userId !== "owner";
   registerKeyRoutes(
     app,
     new KeysService(deps.keys, litellm, deps.now, confirm, {
       // 新 Key 的模型先进候选（名字 = LiteLLM 里对外的模型名），收件箱发「入职」卡片；同名成员已存在则只刷新模型事实
       // 入职候选 / 成员联动目前只服务所有者；账号的 Key 带前缀，成员由账号自己在「成员」里手动添加
       afterCreate: async (rec, audit) => {
-        if (rec.userId) return;
+        if (isAccountKey(rec)) return;
         await candidates.propose(rec.modelName, audit);
       },
       afterReplace: async (rec) => {
-        if (rec.userId) return;
+        if (isAccountKey(rec)) return;
         await refreshModelCaps(deps.members, litellm, deps.now, [
           rec.modelName,
         ]);
       },
       // 这个模型已经没有任何 Key：停用对应成员（可以在成员页重新启用）
       afterDelete: async (rec, audit) => {
-        if (rec.userId) return;
+        if (isAccountKey(rec)) return;
         const same = (n: string) =>
           n.toLowerCase() === rec.modelName.toLowerCase();
         if ((await deps.keys.list()).some((k) => same(k.modelName))) return;

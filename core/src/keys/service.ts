@@ -92,7 +92,7 @@ export class KeysService {
   }
 
   /** D73：主人手动新增 / 编辑 = 普通保存；其他发起方 = 涉及凭据的重要确认 */
-  async #confirmSave(scope: string, title: string, consequences: string[], payload: unknown, ctx: ConfirmCtx, audit: AuditFn, owner = 'owner'): Promise<void> {
+  async #confirmSave(scope: string, title: string, consequences: string[], payload: unknown, ctx: ConfirmCtx, audit: AuditFn, owner: string): Promise<void> {
     // 所有者本人，或账号本人在自己的数据范围内：普通保存（账号做不了重要确认，且这个 Key 只在它自己的前缀下可用）
     if (ctx.actor === 'owner' || (owner !== 'owner' && ctx.actor === `user:${owner}`)) {
       await this.confirm.require({ scope, kind: 'normal', title }, ctx, audit);
@@ -101,12 +101,13 @@ export class KeysService {
     await this.#confirmCredential(scope, title, consequences, payload, ctx, audit);
   }
 
-  /** scope 缺省 = 所有者；账号只列出自己的 */
+  /** userId 来自 scopeOf(req)：'owner' 或账号 id；账号只列出自己的 */
   list(userId: string): Promise<KeyRecord[]> {
     return this.store.list(userId === 'owner' ? undefined : userId);
   }
 
-  async create(input: CreateKeyInput, ctx: ConfirmCtx, audit: AuditFn, scope = 'owner'): Promise<KeyRecord> {
+  /** scope 必须显式传入（scopeOf(req)），不设缺省值，避免「不传就当所有者」（#244 必改 3(b)） */
+  async create(input: CreateKeyInput, ctx: ConfirmCtx, audit: AuditFn, scope: string): Promise<KeyRecord> {
     const upstream = upstreamNameFor(scope);
     const name = input.name.trim();
     if (!name) throw badRequest('名称不能为空', 'INVALID_NAME');
