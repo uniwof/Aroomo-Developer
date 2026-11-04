@@ -2,6 +2,7 @@ import { lazy, Suspense, useSyncExternalStore } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { Login } from '@/pages/Login';
+import { Accept } from '@/pages/Accept';
 import { Members } from '@/pages/Members';
 import { Keys } from '@/pages/Keys';
 import { Inbox } from '@/pages/Inbox';
@@ -18,6 +19,8 @@ const ChatPage = lazy(() => import('@/chat/ChatPage').then((m) => ({ default: m.
 
 export function App() {
   const token = useSyncExternalStore(session.subscribe, () => session.token);
+  // 凭链接设密码页不需要登录
+  if (/^\/console\/accept\/?$/.test(window.location.pathname)) return <Accept />;
   if (!token && !viaShell) return <Login />;
   return (
     <Routes>
