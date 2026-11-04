@@ -22,13 +22,13 @@ function UsageLine({ row, onSaved }: { row: UsageRow; onSaved: () => void }) {
   }
   const limitText = row.quota.limit != null ? `${row.quota.limit}` : '未知';
   return (
-    <div className="flex flex-wrap items-center gap-2 text-[14px] text-[var(--muted)]">
+    <div className="flex flex-wrap items-center gap-2 text-[16px] text-[var(--muted)]">
       <QuotaRing used={row.quota.used} limit={row.quota.limit} size={24} />
       <span>
         今天 {row.today.requests} 次{row.today.limited > 0 && ' · 被限流'} · 每天上限 {limitText}
       </span>
       {!editing && (
-        <button type="button" className="min-h-11 rounded-xl px-3 underline" onClick={() => setEditing(true)} aria-label={`设置 ${row.name} 每天次数上限`}>
+        <button type="button" className="min-h-12 rounded-xl px-3 underline" onClick={() => setEditing(true)} aria-label={`设置 ${row.name} 每天次数上限`}>
           设上限
         </button>
       )}
@@ -45,16 +45,16 @@ function UsageLine({ row, onSaved }: { row: UsageRow; onSaved: () => void }) {
           <label className="sr-only" htmlFor={`lim-${row.memberId}`}>
             {row.name} 每天次数上限
           </label>
-          <input id={`lim-${row.memberId}`} inputMode="numeric" className="min-h-11 w-28 rounded-xl border border-[var(--border)] bg-transparent px-3 text-[14px]" value={val} onChange={(e) => setVal(e.target.value)} />
-          <button type="submit" className="min-h-11 rounded-xl px-3 font-semibold">
+          <input id={`lim-${row.memberId}`} inputMode="numeric" className="min-h-12 w-28 rounded-xl border border-[var(--border)] bg-transparent px-3 text-[16px]" value={val} onChange={(e) => setVal(e.target.value)} />
+          <button type="submit" className="min-h-12 rounded-xl px-3 font-semibold">
             保存
           </button>
           {row.quota.limit != null && (
-            <button type="button" className="min-h-11 rounded-xl px-3" onClick={() => void save(null)}>
+            <button type="button" className="min-h-12 rounded-xl px-3" onClick={() => void save(null)}>
               清除
             </button>
           )}
-          <button type="button" className="min-h-11 rounded-xl px-3" onClick={() => setEditing(false)}>
+          <button type="button" className="min-h-12 rounded-xl px-3" onClick={() => setEditing(false)}>
             取消
           </button>
         </form>

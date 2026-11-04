@@ -92,7 +92,7 @@ export function Inbox() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-[16px] font-semibold">{g.title}</h2>
               {g.key === 'brief' && (data[g.key] ?? []).length > 1 && (
-                <Button variant="outline" className="min-h-11" onClick={() => dismiss((data[g.key] ?? []).map((i) => i.id))}>
+                <Button variant="outline" className="min-h-12" onClick={() => dismiss((data[g.key] ?? []).map((i) => i.id))}>
                   全部知道了
                 </Button>
               )}
@@ -106,15 +106,15 @@ export function Inbox() {
                     {i.title}
                   </p>
                   {i.summary && <p className="whitespace-pre-wrap text-[var(--muted)]">{i.summary}</p>}
-                  <p className="text-[14px] text-[var(--muted)]">{formatTime(i.createdAt)}</p>
+                  <p className="text-[16px] text-[var(--muted)]">{formatTime(i.createdAt)}</p>
                   <div className="flex flex-wrap gap-2">
                     {(i.actions ?? []).map((a) => (
-                      <Button key={a.id} className="min-h-11" variant={a.confirm && a.confirm.kind !== 'normal' ? 'outline' : 'default'} onClick={() => void act(i, a)}>
+                      <Button key={a.id} className="min-h-12" variant={a.confirm && a.confirm.kind !== 'normal' ? 'outline' : 'default'} onClick={() => void act(i, a)}>
                         {a.label}
                       </Button>
                     ))}
                     {canDismiss(i) && (
-                      <Button variant="outline" className="min-h-11" aria-label={`知道了：${i.title}`} onClick={() => dismiss([i.id])}>
+                      <Button variant="outline" className="min-h-12" aria-label={`知道了：${i.title}`} onClick={() => dismiss([i.id])}>
                         知道了
                       </Button>
                     )}

@@ -1,3 +1,24 @@
+/*
+ * 设计规则（#250 重设计，资源库 ui-design-digest：unslop / Hallmark / taste 的去 AI 味规则）：
+ * - 不用紫色渐变、发光按钮、阴影大卡片；层次靠留白和 1px 细线，主色只有珊瑚色 #ff7f50（只作填充，上面用深色字）。
+ * - 背景最多一层静态网格渐变 + 很淡的噪点，不做动画；开高对比度或系统要求更高对比度时去掉背景。
+ * - 字号 16px 起、可调大；点击区 ≥48px；读屏标签齐全。
+ */
+.chat-shell {
+  min-height: 100dvh;
+}
+.chat-composer:focus-within {
+  border-color: var(--fg);
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+/* 焦点框画在整个输入区外面，输入框自己不再画第二圈 */
+.chat-input:focus-visible {
+  outline: none;
+}
+.chat-logo {
+  color: var(--color-brand);
+}
 /* 原生对话页（#250 spike）。字号跟 --chat-font 走（默认 16px，可调大）；点击区 ≥48px；只用控制台已有的颜色变量 */
 .chat-root {
   --chat-font: 16px;
@@ -28,6 +49,7 @@
 
 .chat-header {
   display: flex;
+  min-height: 56px;
   align-items: center;
   gap: 0.5em;
   padding-bottom: 0.5em;
@@ -119,6 +141,7 @@
 }
 .chat-bubble-user {
   background: var(--chat-bubble-user);
+  border: 1px solid var(--chat-line);
   white-space: pre-wrap;
 }
 .chat-bubble-assistant {
@@ -180,8 +203,11 @@
   display: flex;
   align-items: flex-end;
   gap: 0.5em;
-  padding-top: 0.5em;
-  border-top: 1px solid var(--chat-line);
+  padding: 0.5em;
+  margin-bottom: 0.25em;
+  border: 1px solid var(--chat-line);
+  border-radius: 16px;
+  background: var(--bg);
 }
 .chat-input {
   flex: 1;
@@ -189,7 +215,7 @@
   min-height: 48px;
   max-height: 40vh;
   padding: 0.6em 0.8em;
-  border: 1px solid var(--chat-line);
+  border: 0;
   border-radius: 12px;
   background: var(--bg);
   color: var(--fg);

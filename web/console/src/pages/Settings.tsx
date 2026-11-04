@@ -67,7 +67,7 @@ function LeadSection() {
         ) : (
           <select
             aria-label="负责人"
-            className="min-h-11 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3"
+            className="min-h-12 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3"
             value={lead.auto ? '' : (lead.leadId ?? '')}
             onChange={(e) => void change(e.target.value)}
           >
@@ -174,7 +174,7 @@ function BudgetSection() {
     }
   }
 
-  const btn = 'min-h-11 min-w-11 rounded-xl border border-[var(--border)] text-[20px] disabled:opacity-40';
+  const btn = 'min-h-12 min-w-12 rounded-xl border border-[var(--border)] text-[20px] disabled:opacity-40';
   return (
     <>
       <Field
@@ -244,7 +244,7 @@ function McpSection() {
         </Button>
       </Field>
       {cfg && (
-        <pre aria-label="MCP 配置内容" className="my-2 overflow-x-auto rounded-xl bg-[var(--bg)] p-3 text-[14px] select-all">
+        <pre aria-label="MCP 配置内容" className="my-2 overflow-x-auto rounded-xl bg-[var(--bg)] p-3 text-[16px] select-all">
           {JSON.stringify(cfg.config, null, 2)}
         </pre>
       )}

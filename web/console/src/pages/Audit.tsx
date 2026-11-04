@@ -112,12 +112,12 @@ export function Audit() {
             value={prefix}
             onChange={(e) => setPrefix(e.target.value)}
             placeholder="如 gateway. 或 mcp."
-            className="min-h-11 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3"
+            className="min-h-12 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3"
           />
         </label>
         <label className="flex flex-col gap-1">
           <span>结果</span>
-          <select value={result} onChange={(e) => setResult(e.target.value)} className="min-h-11 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3">
+          <select value={result} onChange={(e) => setResult(e.target.value)} className="min-h-12 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3">
             <option value="">全部</option>
             <option value="ok">成功</option>
             <option value="denied">被拒绝</option>
@@ -149,7 +149,7 @@ export function Audit() {
       </ul>
 
       {cursor && (
-        <Button variant="outline" className="min-h-11" disabled={busy} onClick={() => void loadPage(cursor)}>
+        <Button variant="outline" className="min-h-12" disabled={busy} onClick={() => void loadPage(cursor)}>
           {busy ? '正在加载…' : '加载更多'}
         </Button>
       )}

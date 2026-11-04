@@ -158,7 +158,7 @@ export function MemberAvatar({
         {src ? <img src={src} alt="" width={size} height={size} /> : <span aria-hidden="true">{initial}</span>}
       </span>
       {STATUS_ICON[st].icon && (
-        <span aria-hidden="true" data-testid="avatar-status" className="absolute -bottom-1 -right-1 rounded-full bg-[var(--card)] text-[12px] leading-none">
+        <span aria-hidden="true" data-testid="avatar-status" className="absolute -bottom-1 -right-1 rounded-full bg-[var(--card)] text-[16px] leading-none">
           {STATUS_ICON[st].icon}
         </span>
       )}

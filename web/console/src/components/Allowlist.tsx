@@ -39,10 +39,10 @@ export function Allowlist() {
         disabled={!loaded}
         onChange={(e) => setText(e.target.value)}
         rows={4}
-        className="min-h-11 w-full rounded-xl border border-[var(--border)] bg-transparent p-3 text-[14px]"
+        className="min-h-12 w-full rounded-xl border border-[var(--border)] bg-transparent p-3 text-[16px]"
       />
       <div>
-        <Button type="button" className="min-h-11" onClick={() => void save()} disabled={!loaded}>
+        <Button type="button" className="min-h-12" onClick={() => void save()} disabled={!loaded}>
           保存站点
         </Button>
       </div>

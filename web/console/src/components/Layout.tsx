@@ -43,7 +43,7 @@ export function Layout() {
   const inboxCount = useInboxCount();
   const worst = worstRow(useUsage().rows);
   return (
-    <div className="min-h-dvh md:flex">
+    <div className="aroomo-bg min-h-dvh md:flex">
       <a href="#main" className="sr-only focus:not-sr-only">
         跳到正文
       </a>
@@ -68,7 +68,7 @@ export function Layout() {
               to={to}
               className={({ isActive }) =>
                 cn(
-                  'flex min-h-11 shrink-0 items-center gap-3 rounded-xl px-3 whitespace-nowrap hover:bg-[var(--card)]',
+                  'flex min-h-12 shrink-0 items-center gap-3 rounded-xl px-3 whitespace-nowrap hover:bg-[var(--card)]',
                   isActive && 'bg-[var(--card)] font-semibold',
                 )
               }
@@ -76,7 +76,7 @@ export function Layout() {
               <Icon className="size-5" aria-hidden="true" />
               {label}
               {to === '/inbox' && inboxCount > 0 && (
-                <span className="ml-auto min-w-6 rounded-full bg-[var(--fg)] px-2 text-center text-[14px] text-[var(--bg)]">
+                <span className="ml-auto min-w-6 rounded-full bg-[var(--fg)] px-2 text-center text-[16px] text-[var(--bg)]">
                   {inboxCount}
                   <span className="sr-only"> 条待处理</span>
                 </span>

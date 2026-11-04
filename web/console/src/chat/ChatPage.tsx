@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Menu, MessageSquarePlus, Trash2, Users, X } from 'lucide-react';
 import { api, viaShell, type Member } from '@/lib/api';
 import { Tabs } from '@/components/ui/tabs';
+import { Logo } from '@/components/brand';
 import { Members } from '@/pages/Members';
 import { Tools } from '@/pages/Tools';
 import { Inbox } from '@/pages/Inbox';
@@ -111,12 +112,14 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   const style = { '--chat-font': `${prefs.fontSize}px` } as React.CSSProperties;
 
   return (
+    <div className={`chat-shell aroomo-bg${prefs.highContrast ? ' chat-hc' : ''}`}>
     <section className={`chat-root${prefs.highContrast ? ' chat-hc' : ''}`} style={style} aria-labelledby="chat-title">
       <header className="chat-header">
         <button type="button" className="chat-btn chat-btn-ghost" aria-label="打开菜单：会话、成员、群聊、工具" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(true)}>
           <Menu aria-hidden="true" />
           <span>菜单</span>
         </button>
+        <Logo size={28} className="chat-logo" />
         <h1 id="chat-title" className="chat-title">
           {current.title}
           {current.model !== 'aroomo' && <span className="chat-muted">（单独对话）</span>}
@@ -302,5 +305,6 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         />
       </dialog>
     </section>
+    </div>
   );
 }

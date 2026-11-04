@@ -59,7 +59,7 @@ export function HoverCard({ memberId, children, delay = 300 }: { memberId: strin
   return (
     <span
       ref={rootRef}
-      className="relative inline-flex min-h-11 min-w-11 items-center justify-center"
+      className="relative inline-flex min-h-12 min-w-12 items-center justify-center"
       tabIndex={0}
       aria-describedby={open ? id : undefined}
       onMouseEnter={() => show(delay)}
@@ -74,7 +74,7 @@ export function HoverCard({ memberId, children, delay = 300 }: { memberId: strin
     >
       {children}
       {open && (
-        <span id={id} role="tooltip" className="absolute left-0 top-full z-20 mt-1 w-64 space-y-1 rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 text-[14px] shadow-lg">
+        <span id={id} role="tooltip" className="absolute left-0 top-full z-20 mt-1 w-64 space-y-1 rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 text-[16px] shadow-lg">
           {lines ? lines.map((l, i) => <span key={i} className="block">{l}</span>) : <span className="block">{failed ? '暂时读不到' : '正在读取…'}</span>}
         </span>
       )}

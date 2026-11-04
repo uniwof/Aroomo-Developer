@@ -41,9 +41,9 @@
   color-scheme: dark;
 }
 
-/* 正文 14px；只保证浏览器缩放不破版（v4.3 无障碍裁决） */
+/* 正文 16px 起（所有者视力要求 + 去 AI 味：不用「小灰字」）；浏览器缩放不破版 */
 html {
-  font-size: 14px;
+  font-size: 16px;
 }
 
 body {
@@ -66,5 +66,26 @@ body {
   *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/*
+ * 整屏底（对话页和控制台共用，一个产品一种底）：静态网格渐变（珊瑚色，极低透明度）+ 静态噪点。
+ * 不做动画；高对比度（.chat-hc）或系统要求更高对比度时去掉。去 AI 味：不用紫色渐变、不发光。
+ */
+.aroomo-bg {
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(ellipse at 0% 0%, rgb(255 127 80 / 0.1), transparent 45%),
+    radial-gradient(ellipse at 100% 100%, rgb(255 127 80 / 0.06), transparent 50%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+  background-attachment: fixed;
+}
+.aroomo-bg.chat-hc {
+  background-image: none;
+}
+@media (prefers-contrast: more) {
+  .aroomo-bg {
+    background-image: none;
   }
 }

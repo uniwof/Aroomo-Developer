@@ -97,10 +97,10 @@ export function Executors() {
           </h2>
           <p className="mt-1 text-[var(--muted)]">{confirm.kind === 'revoke' ? '吊销后这台电脑马上不能再领任务，想恢复要重新配对。' : '正在进行的步骤会在下一个检查点停下。'}</p>
           <div className="mt-3 flex gap-2">
-            <Button type="button" className="min-h-11" onClick={() => void doConfirm()}>
+            <Button type="button" className="min-h-12" onClick={() => void doConfirm()}>
               {confirm.kind === 'revoke' ? '确认吊销' : '确认取消任务'}
             </Button>
-            <Button type="button" variant="outline" className="min-h-11" onClick={() => setConfirm(null)}>
+            <Button type="button" variant="outline" className="min-h-12" onClick={() => setConfirm(null)}>
               先不了
             </Button>
           </div>
@@ -124,7 +124,7 @@ export function Executors() {
                 {d.platform} · 版本 {d.version} · 最近一次联系 {ago(d.lastSeenAt)}
               </div>
               {d.clientId && (
-                <Button type="button" variant="outline" className="mt-2 min-h-11" onClick={() => setConfirm({ kind: 'revoke', id: d.clientId as string, label: d.deviceName })} aria-label={`吊销 ${d.deviceName}`}>
+                <Button type="button" variant="outline" className="mt-2 min-h-12" onClick={() => setConfirm({ kind: 'revoke', id: d.clientId as string, label: d.deviceName })} aria-label={`吊销 ${d.deviceName}`}>
                   吊销这台电脑
                 </Button>
               )}
@@ -155,7 +155,7 @@ export function Executors() {
               {t.resultError && <p className="break-words">{t.resultError}</p>}
               <div className="text-[var(--muted)]">{ago(t.createdAt)}创建</div>
               {(t.status === 'queued' || t.status === 'running') && (
-                <Button type="button" variant="outline" className="mt-2 min-h-11" onClick={() => setConfirm({ kind: 'cancel', id: t.id, label: t.site })} aria-label={`取消任务 ${t.site}`}>
+                <Button type="button" variant="outline" className="mt-2 min-h-12" onClick={() => setConfirm({ kind: 'cancel', id: t.id, label: t.site })} aria-label={`取消任务 ${t.site}`}>
                   取消任务
                 </Button>
               )}

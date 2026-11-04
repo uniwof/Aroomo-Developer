@@ -24,7 +24,7 @@ export interface LibraryEntry {
   createdAt: string;
 }
 
-const field = 'min-h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3';
+const field = 'min-h-12 w-full rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3';
 
 export function Library() {
   const [items, setItems] = useState<LibraryEntry[] | null>(null);
@@ -96,7 +96,7 @@ export function Library() {
         <textarea name="text" required rows={2} maxLength={20000} placeholder="粘贴链接，或写一个点子" aria-label="链接或点子" className={field + ' py-2'} />
         <input name="title" maxLength={200} placeholder="标题（可不填）" aria-label="标题" className={field} />
         <input name="tags" placeholder="标签，用空格或逗号分开（可不填）" aria-label="标签" className={field} />
-        <Button type="submit" disabled={busy} className="min-h-11">
+        <Button type="submit" disabled={busy} className="min-h-12">
           收进来
         </Button>
       </form>
@@ -131,7 +131,7 @@ export function Library() {
               {it.tags.length > 0 && ` · ${it.tags.join(' ')}`}
             </div>
             {it.body && <p className="mt-1 break-words">{it.body}</p>}
-            <Button type="button" variant="outline" className="mt-2 min-h-11" onClick={() => void remove(it.id)} aria-label={confirmId === it.id ? `确认删除 ${it.title}` : `删除 ${it.title}`}>
+            <Button type="button" variant="outline" className="mt-2 min-h-12" onClick={() => void remove(it.id)} aria-label={confirmId === it.id ? `确认删除 ${it.title}` : `删除 ${it.title}`}>
               {confirmId === it.id ? '再点一次确认删除' : '删除'}
             </Button>
           </li>

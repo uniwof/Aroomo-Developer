@@ -1,11 +1,11 @@
-// shadcn/ui Button（MIT），按 Aroomo 品牌改色；手机点击区 ≥44px（min-h-11）
+// shadcn/ui Button（MIT），按 Aroomo 品牌改色；手机点击区 ≥44px（min-h-12）
 import * as React from 'react';
 import { Slot } from '@radix-ui/react-slot';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
 
 const buttonVariants = cva(
-  'inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-xl px-4 text-[14px] font-medium transition-colors disabled:pointer-events-none disabled:opacity-50',
+  'inline-flex min-h-12 min-w-12 items-center justify-center gap-2 rounded-xl px-4 text-[16px] font-medium transition-colors disabled:pointer-events-none disabled:opacity-50',
   {
     variants: {
       variant: {

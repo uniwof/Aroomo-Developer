@@ -27,7 +27,7 @@ function TrialLine({ item, sample, onSaved }: { item: CapabilityItem; sample: bo
       <div className={cn('flex flex-wrap items-center gap-2', urgent && 'font-semibold')} data-testid={`trial-${item.id}`}>
         <span>{trialText(item)}</span>
         {!sample && !editing && (
-          <button type="button" className="min-h-11 min-w-11 rounded-xl border border-[var(--border)] px-3" onClick={() => setEditing(true)}>
+          <button type="button" className="min-h-12 min-w-12 rounded-xl border border-[var(--border)] px-3" onClick={() => setEditing(true)}>
             {item.trialEndsAt ? '改日期' : '填到期日'}
           </button>
         )}
@@ -43,11 +43,11 @@ function TrialLine({ item, sample, onSaved }: { item: CapabilityItem; sample: bo
           <label className="sr-only" htmlFor={`trial-in-${item.id}`}>
             {item.name} 的试用到期日
           </label>
-          <input id={`trial-in-${item.id}`} type="date" value={val} onChange={(e) => setVal(e.target.value)} className="min-h-11 rounded-xl border border-[var(--border)] bg-transparent px-3" />
-          <button type="submit" className="min-h-11 min-w-11 rounded-xl bg-[var(--color-brand)] px-4 text-white">
+          <input id={`trial-in-${item.id}`} type="date" value={val} onChange={(e) => setVal(e.target.value)} className="min-h-12 rounded-xl border border-[var(--border)] bg-transparent px-3" />
+          <button type="submit" className="min-h-12 min-w-12 rounded-xl bg-[var(--color-brand)] px-4 text-white">
             保存
           </button>
-          <button type="button" className="min-h-11 min-w-11 rounded-xl border border-[var(--border)] px-3" onClick={() => setEditing(false)}>
+          <button type="button" className="min-h-12 min-w-12 rounded-xl border border-[var(--border)] px-3" onClick={() => setEditing(false)}>
             取消
           </button>
         </form>
@@ -128,7 +128,7 @@ export function CapabilityMap() {
                     </div>
                     <span
                       className={cn(
-                        'shrink-0 rounded-full border px-3 py-1 text-[14px]',
+                        'shrink-0 rounded-full border px-3 py-1 text-[16px]',
                         i.access === 'free' ? 'border-[var(--color-brand)] font-medium' : 'border-[var(--border)]',
                       )}
                       data-access={i.access}

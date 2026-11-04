@@ -78,10 +78,10 @@ export function TakeoverCards() {
             </p>
             <p className="whitespace-pre-wrap text-[var(--muted)]">{c.message}</p>
             <div className="flex flex-wrap gap-2">
-              <Button className="min-h-11" onClick={() => resolve(c, false)}>
+              <Button className="min-h-12" onClick={() => resolve(c, false)}>
                 我已处理，继续
               </Button>
-              <Button className="min-h-11" onClick={() => resolve(c, true)}>
+              <Button className="min-h-12" onClick={() => resolve(c, true)}>
                 放弃
               </Button>
             </div>

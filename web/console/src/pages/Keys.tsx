@@ -13,7 +13,7 @@ interface KeyItem {
   updatedAt: string;
 }
 
-const field = 'min-h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3';
+const field = 'min-h-12 w-full rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3';
 
 export function Keys() {
   const [keys, setKeys] = useState<KeyItem[] | null>(null);
@@ -96,7 +96,7 @@ export function Keys() {
         <input name="apiKey" required type="password" autoComplete="off" placeholder="Key" aria-label="Key" className={field} />
         <input name="model" required placeholder="模型，如 openai/gpt-4o" aria-label="模型" className={field} />
         <input name="apiBase" type="url" placeholder="接口地址（可选）" aria-label="接口地址" className={field} />
-        <Button type="submit" disabled={busy} className="min-h-11">
+        <Button type="submit" disabled={busy} className="min-h-12">
           保存
         </Button>
       </form>

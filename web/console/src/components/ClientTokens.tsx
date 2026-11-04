@@ -128,7 +128,7 @@ export function ClientTokens() {
   }
 
   const active = (clients ?? []).filter((c) => !c.revokedAt);
-  const inputCls = 'min-h-11 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3';
+  const inputCls = 'min-h-12 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3';
 
   return (
     <div className="space-y-4 py-3">
@@ -153,7 +153,7 @@ export function ClientTokens() {
           <legend>范围（默认都不勾）</legend>
           <div className="flex flex-wrap gap-x-6 gap-y-1">
             {available.map((s) => (
-              <label key={s} htmlFor={`${uid}-${s}`} className="flex min-h-11 items-center gap-2">
+              <label key={s} htmlFor={`${uid}-${s}`} className="flex min-h-12 items-center gap-2">
                 <input id={`${uid}-${s}`} type="checkbox" className="size-5" checked={scopes.includes(s)} onChange={() => toggle(s)} />
                 <span>
                   {s}
