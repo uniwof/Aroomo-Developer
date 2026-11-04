@@ -106,8 +106,8 @@ export function Members() {
                   />
                 </HoverCard>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate font-medium">{m.name}</div>
-                  <div className="truncate text-[var(--muted)]">
+                  <div className="font-medium [overflow-wrap:anywhere]">{m.name}</div>
+                  <div className="text-[var(--muted)] [overflow-wrap:anywhere]">
                     {m.status === 'candidate' ? '候选' : online ? '在线' : '离线'}
                     {m.capabilityTags.length > 0 && ` · ${m.capabilityTags.join('、')}`}
                   </div>

@@ -57,12 +57,12 @@
 }
 .chat-title {
   flex: 1;
+  min-width: 0;
   margin: 0;
   font-size: 1.1em;
   font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* 24/28px 大字号下标题换行显示全，不截断（视力不好时省略号看不出后面是什么） */
+  overflow-wrap: anywhere;
 }
 .chat-muted {
   color: var(--muted);
