@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
-import { Inbox, LogOut, ScrollText, KeyRound, Library, Map, Monitor, Settings, Wrench } from 'lucide-react';
+import { Inbox, LogOut, MessageCircle, ScrollText, KeyRound, Library, Map, Monitor, Settings, Wrench } from 'lucide-react';
 import { Brand, QuotaRing } from './brand';
 import { Button } from './ui/button';
 import { api, logout, viaShell } from '@/lib/api';
@@ -9,6 +9,7 @@ import { useUsage, worstRow } from '@/lib/usage';
 
 /** D195 控制台页面 */
 export const NAV = [
+  { to: '/chat', label: '对话', icon: MessageCircle },
   { to: '/members', label: '能力地图与成员', icon: Map },
   { to: '/tools', label: '工具', icon: Wrench },
   { to: '/library', label: '资源库', icon: Library },

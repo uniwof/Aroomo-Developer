@@ -75,11 +75,25 @@ describe('设置页', () => {
       }),
     );
     render(<Settings />);
+    fireEvent.click(screen.getByRole('tab', { name: '外部接入' }));
     const btn = await screen.findByRole('button', { name: '复制配置' });
     await waitFor(() => expect(btn).not.toBeDisabled());
     fireEvent.click(btn);
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(JSON.stringify(config, null, 2)));
     expect(await screen.findByText(/已复制/)).toBeInTheDocument();
+  });
+
+  it('分类是标签页：默认「常规」，方向键切换，一次只显示一类', async () => {
+    session.set('placeholder-session');
+    vi.stubGlobal('fetch', vi.fn(async () => json(200, { members: [], leadId: null, effectiveLeadId: null, auto: true, sensitiveProtect: true })));
+    render(<Settings />);
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs.map((t) => t.textContent)).toEqual(['常规', '执行员提醒', '外部接入', '账号']);
+    expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getAllByRole('tabpanel')).toHaveLength(1);
+    fireEvent.keyDown(tabs[0]!, { key: 'ArrowLeft' });
+    expect(screen.getByRole('tab', { name: '账号' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('button', { name: '退出登录' })).toBeInTheDocument();
   });
 
   it('打扰预算：显示今日统计，加减后 PUT', async () => {
@@ -98,6 +112,7 @@ describe('设置页', () => {
       }),
     );
     render(<Settings />);
+    fireEvent.click(screen.getByRole('tab', { name: '执行员提醒' }));
     expect(await screen.findByText(/今天已来 4 张接管卡/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '增加一次' }));
     await waitFor(() => expect(puts[0]).toEqual({ url: '/api/interrupt-budget', body: { daily: 4 } }));

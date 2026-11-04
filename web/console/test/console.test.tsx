@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { MemberAvatar, QuotaRing, quotaFraction } from '@/components/brand';
-import { api, login, session, ApiError } from '@/lib/api';
+import { api, login, session, ApiError, COOKIE_SESSION } from '@/lib/api';
 import { App } from '@/App';
 
 afterEach(() => {
@@ -60,6 +60,22 @@ describe('调用 Core', () => {
     expect(h['x-aroomo-request']).toBeUndefined();
   });
 
+  it('Cookie 登录（Core 不返回令牌）：只记占位标记，之后请求不带 Authorization，靠 Cookie', async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const f = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init: init ?? {} });
+      if (String(url) === '/auth/login') return json(200, { user: { id: 'u1', email: 'a@b.c', role: 'owner' } });
+      return json(200, { members: [] });
+    }) as unknown as typeof fetch;
+    await login('a@b.c', 'pw', f);
+    expect(JSON.parse(String(calls[0]!.init.body)).cookie).toBe(true);
+    expect(session.token).toBe(COOKIE_SESSION);
+    await api('GET', '/api/members', undefined, f);
+    const h = calls[1]!.init.headers as Record<string, string>;
+    expect(h.authorization).toBeUndefined();
+    expect(calls[1]!.init.credentials).toBe('same-origin');
+  });
+
   it('401 时清掉令牌并抛出 ApiError', async () => {
     session.set('placeholder-old');
     const f = (async () => json(401, { error: { code: 'UNAUTHORIZED', message: '请先登录' } })) as unknown as typeof fetch;
@@ -85,7 +101,7 @@ describe('页面', () => {
       }),
     );
     render(
-      <MemoryRouter initialEntries={['/']}>
+      <MemoryRouter initialEntries={['/members']}>
         <App />
       </MemoryRouter>,
     );
@@ -96,7 +112,7 @@ describe('页面', () => {
     await waitFor(() => expect(screen.getByRole('heading', { name: '能力地图与成员' })).toBeInTheDocument());
     await waitFor(() => expect(screen.getAllByText('gpt-oss-20b').length).toBeGreaterThan(0));
     expect(screen.getByRole('img', { name: /Kimi，离线/ })).toHaveAttribute('data-online', 'false');
-    expect(screen.getByRole('navigation', { name: '控制台' }).querySelectorAll('a')).toHaveLength(8);
+    expect(screen.getByRole('navigation', { name: '控制台' }).querySelectorAll('a')).toHaveLength(9);
   });
 
   it('登录失败给出提示', async () => {

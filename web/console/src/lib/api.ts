@@ -1,9 +1,14 @@
 /**
- * 控制台只调用 Core（同源）：POST /auth/login 拿会话令牌，之后 /api/* 带 Bearer。
+ * 控制台只调用 Core（同源）：POST /auth/login（cookie:true）→ HttpOnly 会话 Cookie；旧 Core 仍返回令牌时退回 Bearer。
  * 令牌只放 sessionStorage（关掉标签页即失效）；Core 支持 HttpOnly Cookie 后改用 Cookie（已登记在 PROGRESS「控制台需要的 API」）。
  * 改动类请求一律带 X-Aroomo-Request: 1（与 Shell 的同源校验一致）。
  */
 const TOKEN_KEY = 'aroomo.console.session';
+/**
+ * Cookie 会话的占位标记（#250 spike）：登录时请 Core 把会话放进 HttpOnly Cookie（aroomo_session），
+ * 页面脚本拿不到真令牌，sessionStorage 里只记「已用 Cookie 登录」。这时请求不带 Authorization，靠 Cookie + X-Aroomo-Request。
+ */
+export const COOKIE_SESSION = 'cookie-session';
 
 export interface User {
   id: string;
@@ -94,7 +99,7 @@ async function parse<T>(res: Response): Promise<T> {
 export async function api<T>(method: string, path: string, body?: unknown, fetchImpl: typeof fetch = fetch): Promise<T> {
   const headers: Record<string, string> = { accept: 'application/json' };
   const token = session.token;
-  if (token) headers.authorization = `Bearer ${token}`;
+  if (token && token !== COOKIE_SESSION) headers.authorization = `Bearer ${token}`;
   if (method !== 'GET' && method !== 'HEAD') headers['x-aroomo-request'] = '1';
   if (body !== undefined) headers['content-type'] = 'application/json';
   const res = await fetchImpl(apiUrl(path), {
@@ -107,8 +112,9 @@ export async function api<T>(method: string, path: string, body?: unknown, fetch
 }
 
 export async function login(email: string, password: string, fetchImpl: typeof fetch = fetch): Promise<User> {
-  const r = await api<{ token: string; user: User }>('POST', '/auth/login', { email, password }, fetchImpl);
-  session.set(r.token);
+  // cookie:true：Core 把会话放进 HttpOnly Cookie，不在响应里给令牌（原生对话 /api/chat/stream 只认 Cookie）
+  const r = await api<{ token?: string; user: User }>('POST', '/auth/login', { email, password, cookie: true }, fetchImpl);
+  session.set(r.token ?? COOKIE_SESSION);
   return r.user;
 }
 

@@ -1,8 +1,9 @@
-/** 设置（从旧 Shell /aroomo/settings 迁来）：负责人、敏感内容保护、外部接入（MCP 配置复制 + 客户端令牌）、账号。 */
+/** 设置（从旧 Shell /aroomo/settings 迁来）：负责人、敏感内容保护、外部接入（MCP 配置复制 + 客户端令牌）、账号。分类用标签页切换。 */
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { ApiError, api, logout, type Member } from '@/lib/api';
 import { ClientTokens } from '@/components/ClientTokens';
+import { Tabs } from '@/components/ui/tabs';
 
 interface LeadSetting {
   leadId: string | null;
@@ -256,36 +257,65 @@ function McpSection() {
   );
 }
 
+/** 分类用标签页切换（所有者 2026-11-04 的界面规矩；这一页是示范） */
 export function Settings() {
+  const card = 'divide-y divide-[var(--border)] rounded-2xl bg-[var(--card)] px-4';
   return (
-    <section aria-labelledby="settings-title" className="space-y-6">
+    <section aria-labelledby="settings-title" className="space-y-4">
       <h1 id="settings-title" className="text-[20px] font-semibold">
         设置
       </h1>
-      <div className="divide-y divide-[var(--border)] rounded-2xl bg-[var(--card)] px-4">
-        <LeadSection />
-      </div>
-      <h2 className="text-[16px] font-semibold">安全</h2>
-      <div className="divide-y divide-[var(--border)] rounded-2xl bg-[var(--card)] px-4">
-        <SecuritySection />
-      </div>
-      <h2 className="text-[16px] font-semibold">执行员提醒</h2>
-      <div className="rounded-2xl bg-[var(--card)] px-4">
-        <BudgetSection />
-      </div>
-      <h2 className="text-[16px] font-semibold">外部接入</h2>
-      <div className="divide-y divide-[var(--border)] rounded-2xl bg-[var(--card)] px-4">
-        <McpSection />
-        <ClientTokens />
-      </div>
-      <h2 className="text-[16px] font-semibold">账号</h2>
-      <div className="rounded-2xl bg-[var(--card)] px-4">
-        <Field label="登录" hint="退出后要重新输入邮箱和密码">
-          <Button variant="outline" onClick={() => void logout()}>
-            退出登录
-          </Button>
-        </Field>
-      </div>
+      <Tabs
+        label="设置分类"
+        items={[
+          {
+            id: 'general',
+            label: '常规',
+            content: (
+              <div className="space-y-4">
+                <div className={card}>
+                  <LeadSection />
+                </div>
+                <div className={card}>
+                  <SecuritySection />
+                </div>
+              </div>
+            ),
+          },
+          {
+            id: 'budget',
+            label: '执行员提醒',
+            content: (
+              <div className={card}>
+                <BudgetSection />
+              </div>
+            ),
+          },
+          {
+            id: 'external',
+            label: '外部接入',
+            content: (
+              <div className={card}>
+                <McpSection />
+                <ClientTokens />
+              </div>
+            ),
+          },
+          {
+            id: 'account',
+            label: '账号',
+            content: (
+              <div className={card}>
+                <Field label="登录" hint="退出后要重新输入邮箱和密码">
+                  <Button variant="outline" onClick={() => void logout()}>
+                    退出登录
+                  </Button>
+                </Field>
+              </div>
+            ),
+          },
+        ]}
+      />
     </section>
   );
 }
