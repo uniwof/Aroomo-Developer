@@ -1854,3 +1854,55 @@ kbd.row-value {
     background: var(--hover);
   }
 }
+/* 手机：顶栏两边留白收窄；会话列表底部的「成员」和底部栏重复，藏起来 */
+.app-phone .main-head {
+  padding: 0 calc(0.5 * var(--k));
+}
+.app-phone .panel {
+  padding: 0.75em 0.5em 2em;
+}
+.phone-list .foot-row:has(> [aria-label='打开成员页']) {
+  display: none;
+}
+/* 顶栏放不下时「←」贴第一行，和 ⓘ ··· 对齐 */
+@container (max-width: 21rem) {
+  .main-head > .icon-btn {
+    align-self: flex-start;
+    margin-top: 0.25rem;
+  }
+}
+/* 窄对话区（手机 + 大字号）：头像和名字一行，正文从左边顶格开始，不再被头像那一列挤窄 */
+.chat-viewport {
+  container-type: inline-size;
+}
+@container (max-width: 26rem) {
+  .msg-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: calc(0.5 * var(--k));
+    align-items: center;
+  }
+  .msg-main {
+    display: contents;
+  }
+  .msg-main > * {
+    grid-column: 1 / -1;
+  }
+  .msg-main > .msg-head {
+    grid-column: 2;
+    margin-bottom: 0;
+  }
+}
+/* 会话列表很窄（手机 + 大字号）：名字占满一行，时间换到下一行，不把名字挤成一字一行 */
+.conv-scroll {
+  container-type: inline-size;
+}
+@container (max-width: 20rem) {
+  .conv-top {
+    flex-wrap: wrap;
+    row-gap: 0;
+  }
+  .conv-top > .conv-name {
+    flex-basis: 100%;
+  }
+}
