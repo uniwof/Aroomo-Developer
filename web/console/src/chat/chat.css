@@ -88,8 +88,14 @@
   height: 1.25em;
 }
 .chat-btn:disabled {
-  opacity: 0.5;
   cursor: not-allowed;
+}
+/* 不能点的按钮不靠半透明（低视力看不清），改成灰底、清楚的字、细边框 */
+.chat-btn-primary:disabled,
+.chat-btn-ghost:disabled {
+  background: var(--card);
+  color: var(--muted);
+  border-color: var(--chat-line);
 }
 .chat-btn-ghost:hover {
   background: var(--card);
@@ -200,7 +206,9 @@
 }
 
 .chat-composer {
+  container-type: inline-size;
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   gap: 0.5em;
   padding: 0.5em;
@@ -321,4 +329,105 @@
   .chat-hide-narrow {
     display: none;
   }
+}
+
+/* Markdown 引擎还没到时：按纯文字显示，保留换行 */
+.chat-plain {
+  white-space: pre-wrap;
+}
+/* 出错：原因 + 就地「重试」 */
+.chat-error-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5em;
+  margin-top: 0.4em;
+}
+.chat-error-box .chat-error {
+  margin: 0;
+}
+.chat-root.chat-hc .chat-error,
+.dark .chat-error {
+  color: #ff6961;
+}
+/* 空状态建议：大按钮、竖排，一眼能读完 */
+.chat-suggestions {
+  list-style: none;
+  margin: 1.25em auto 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+  max-width: 28em;
+}
+.chat-suggestion {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+  border: 1px solid var(--chat-line);
+  background: var(--bg);
+}
+.chat-suggestion:hover {
+  background: var(--card);
+}
+/* 「回到最新」：贴在对话区底部，在最底下时（按钮不可用）就不显示 */
+.chat-viewport-footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.chat-jump {
+  pointer-events: auto;
+  background: var(--bg);
+  border: 1px solid var(--chat-line);
+  font-weight: 600;
+}
+.chat-jump:disabled {
+  display: none;
+}
+/* 设置里的快捷键说明：原生 details，读屏和键盘都能展开 */
+.chat-keys {
+  margin: 0 0 0.75em;
+}
+.chat-keys summary {
+  /* 保留原生的展开三角（不用 flex，否则三角会消失） */
+  padding: 0.6em 0;
+  min-height: 48px;
+  box-sizing: border-box;
+  font-weight: 600;
+  cursor: pointer;
+}
+.chat-keys dl {
+  margin: 0;
+}
+.chat-keys dl > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1em;
+  padding: 0.4em 0;
+  border-bottom: 1px solid var(--chat-line);
+}
+.chat-keys dt {
+  font-weight: 600;
+  min-width: 12em;
+}
+.chat-keys dd {
+  margin: 0;
+}
+
+/* 字号放大后（输入区不到 20 个字宽）：输入框单独占一整行，@ 和「发送」排在下面，不会把输入框挤成一条竖缝 */
+@container (max-width: 20em) {
+  .chat-input {
+    order: -1;
+    flex-basis: 100%;
+  }
+  .chat-composer > .chat-btn {
+    margin-left: auto;
+  }
+}
+/* 没有可复制的内容（例如出错的回复）时不显示「复制」 */
+.chat-actions .chat-btn:disabled {
+  display: none;
 }

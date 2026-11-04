@@ -18,6 +18,7 @@ import { Tools } from '@/pages/Tools';
 import { Inbox } from '@/pages/Inbox';
 import { Settings } from '@/pages/Settings';
 import { Thread } from './Thread';
+import { applyDisplay, type Theme } from '@/lib/display';
 import {
   FONT_SIZES,
   loadConversations,
@@ -31,6 +32,21 @@ import {
   type Conversation,
 } from './store';
 import './chat.css';
+
+const THEMES: [Theme, string][] = [
+  ['system', '跟随系统'],
+  ['light', '浅色'],
+  ['dark', '深色'],
+];
+
+const SHORTCUTS: [string, string][] = [
+  ['回车', '发送'],
+  ['Shift + 回车', '换行'],
+  ['Esc', '停止回复'],
+  ['Shift + Esc', '回到输入框'],
+  ['Ctrl（Mac 用 ⌘）+ Shift + O', '新对话'],
+  ['Ctrl（Mac 用 ⌘）+ Shift + S', '打开或关上菜单'],
+];
 
 type Tab = 'conversations' | 'members' | 'groups' | 'tools' | 'inbox' | 'settings';
 
@@ -64,7 +80,15 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   const current = list.find((c) => c.id === currentId) ?? list[0]!;
 
   useEffect(() => saveConversations(list.filter((c) => c.messages.length > 0)), [list]);
-  useEffect(() => savePrefs(prefs), [prefs]);
+  useEffect(() => {
+    savePrefs(prefs);
+    // 字号和主题作用到整页：抽屉里嵌的管理页面也一起变大，不割裂
+    applyDisplay(prefs);
+  }, [prefs]);
+  // 浏览器标签页标题跟着会话走（读屏切标签时能听到在哪个会话）
+  useEffect(() => {
+    document.title = `${current.title} · Aroomo`;
+  }, [current.title]);
   useEffect(() => {
     const d = dialog.current;
     if (!d) return;
@@ -78,6 +102,27 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     setCurrentId(c.id);
     setOpen(false);
   }, []);
+
+  // 键盘快捷键（对标 ChatGPT / LibreChat 的默认键位）：
+  // Shift+Esc 回到输入框；Ctrl/⌘+Shift+O 新对话；Ctrl/⌘+Shift+S 打开或关上菜单。Esc 停止回复由输入框自己处理。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (e.shiftKey && e.key === 'Escape') {
+        e.preventDefault();
+        setOpen(false);
+        document.getElementById('chat-input')?.focus();
+      } else if (mod && e.shiftKey && e.key.toLowerCase() === 'o') {
+        e.preventDefault();
+        start();
+      } else if (mod && e.shiftKey && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        setOpen((o) => !o);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [start]);
 
   const onMessages = useCallback(
     (turns: ChatTurn[]) => {
@@ -284,7 +329,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
               content: (
                 <>
                   <fieldset className="chat-fieldset">
-                    <legend>对话字号</legend>
+                    <legend>字号（整个页面一起变）</legend>
                     <div className="chat-seg" role="radiogroup" aria-label="字号">
                       {FONT_SIZES.map((s) => (
                         <button key={s} type="button" role="radio" aria-checked={prefs.fontSize === s} className="chat-btn chat-btn-ghost" onClick={() => setPrefs((p) => ({ ...p, fontSize: s }))}>
@@ -297,6 +342,27 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
                     <input type="checkbox" checked={prefs.highContrast} onChange={(e) => setPrefs((p) => ({ ...p, highContrast: e.target.checked }))} />
                     高对比度
                   </label>
+                  <fieldset className="chat-fieldset">
+                    <legend>颜色</legend>
+                    <div className="chat-seg" role="radiogroup" aria-label="颜色">
+                      {THEMES.map(([v, label]) => (
+                        <button key={v} type="button" role="radio" aria-checked={prefs.theme === v} className="chat-btn chat-btn-ghost" onClick={() => setPrefs((p) => ({ ...p, theme: v }))}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </fieldset>
+                  <details className="chat-keys">
+                    <summary>键盘快捷键</summary>
+                    <dl>
+                      {SHORTCUTS.map(([k, what]) => (
+                        <div key={k}>
+                          <dt>{k}</dt>
+                          <dd>{what}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </details>
                   <Settings />
                 </>
               ),

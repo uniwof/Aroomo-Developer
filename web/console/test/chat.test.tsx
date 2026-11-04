@@ -96,7 +96,8 @@ describe('原生对话页', () => {
     const input = screen.getByLabelText('输入消息');
     fireEvent.change(input, { target: { value: '你好' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
-    await waitFor(() => expect(screen.getByText('好的')).toBeInTheDocument());
+    // Markdown 引擎按需加载：先出纯文字，引擎到了再排版
+    await waitFor(() => expect(screen.getByText('好的')).toBeInTheDocument(), { timeout: 8000 });
     expect(container.querySelector('img')).toBeNull();
     await waitFor(() => expect(screen.getByRole('button', { name: '复制代码' })).toBeInTheDocument());
     await waitFor(() => expect(loadConversations()).toHaveLength(1));

@@ -4,6 +4,8 @@
  * - 会话列表和消息先存在本机浏览器 localStorage（S1 再落库）。
  */
 
+import { PREFS_KEY, readDisplayPrefs, type Theme } from '@/lib/display';
+
 export interface ChatTurn {
   role: 'user' | 'assistant';
   text: string;
@@ -58,18 +60,27 @@ export function parseEvent(event: string): StreamEvent | null {
 
 export class ChatStreamError extends Error {}
 
+export const NETWORK_ERROR = '连不上 Aroomo，请检查网络后点「重试」。';
+
 /**
  * 发一次对话，逐段产出「到目前为止的完整回复」。中断（signal）时安静结束。
  * 服务端返回错误（401/403/429/400）或流里有 error 事件时抛 ChatStreamError（文案给人看）。
  */
 export async function* streamChat(turns: ChatTurn[], model: string, signal: AbortSignal, fetchImpl: typeof fetch = fetch): AsyncGenerator<string, void> {
-  const res = await fetchImpl(STREAM_URL, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'text/event-stream', 'x-aroomo-request': '1' },
-    credentials: 'same-origin',
-    body: JSON.stringify({ model, messages: turns.map((t) => ({ role: t.role, content: t.text })) }),
-    signal,
-  });
+  let res: Response;
+  try {
+    res = await fetchImpl(STREAM_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'text/event-stream', 'x-aroomo-request': '1' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ model, messages: turns.map((t) => ({ role: t.role, content: t.text })) }),
+      signal,
+    });
+  } catch (e) {
+    if (signal.aborted) throw e;
+    // 断网 / 服务没开：给人看的话，不把浏览器的英文报错原样露出来
+    throw new ChatStreamError(NETWORK_ERROR);
+  }
   if (!res.ok || !res.body) {
     let msg = '对话出错了，请稍后再试。';
     if (res.status === 401) msg = '登录已过期，请重新登录。';
@@ -118,7 +129,6 @@ export function withGroupMentions(text: string, group: string[] | undefined): st
 // ---- 本机存储 ----
 
 const KEY = 'aroomo.chat.v1';
-const PREFS_KEY = 'aroomo.chat.prefs.v1';
 export const MAX_CONVERSATIONS = 200;
 
 export function loadConversations(storage: Storage | undefined = globalThis.localStorage): Conversation[] {
@@ -161,19 +171,21 @@ export function titleFrom(text: string): string {
 }
 
 export interface ChatPrefs {
-  /** 字号（px），默认 16 */
+  /** 字号（px），默认 16；作用到整个页面（见 lib/display.ts） */
   fontSize: number;
   highContrast: boolean;
+  /** 跟随系统 / 浅色 / 深色 */
+  theme: Theme;
 }
 export const FONT_SIZES = [16, 18, 20, 24, 28] as const;
 
 export function loadPrefs(storage: Storage | undefined = globalThis.localStorage): ChatPrefs {
+  const d = readDisplayPrefs(storage);
   try {
     const j = JSON.parse(storage?.getItem(PREFS_KEY) ?? '{}') as Partial<ChatPrefs>;
-    const fontSize = typeof j.fontSize === 'number' && j.fontSize >= 16 && j.fontSize <= 32 ? j.fontSize : 16;
-    return { fontSize, highContrast: j.highContrast === true };
+    return { ...d, highContrast: j.highContrast === true };
   } catch {
-    return { fontSize: 16, highContrast: false };
+    return { ...d, highContrast: false };
   }
 }
 
@@ -183,4 +195,42 @@ export function savePrefs(p: ChatPrefs, storage: Storage | undefined = globalThi
   } catch {
     /* 忽略 */
   }
+}
+
+// ---- 草稿：每个会话一份，没发出去的话不丢（切会话、刷新、重新登录后还在） ----
+
+const DRAFT_KEY = 'aroomo.chat.drafts.v1';
+
+function readDrafts(storage: Storage | undefined): Record<string, string> {
+  try {
+    const j = JSON.parse(storage?.getItem(DRAFT_KEY) ?? '{}') as unknown;
+    return j && typeof j === 'object' && !Array.isArray(j) ? (j as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function loadDraft(id: string, storage: Storage | undefined = globalThis.localStorage): string {
+  const v = readDrafts(storage)[id];
+  return typeof v === 'string' ? v : '';
+}
+
+export function saveDraft(id: string, text: string, storage: Storage | undefined = globalThis.localStorage): void {
+  try {
+    const all = readDrafts(storage);
+    if (text.trim()) all[id] = text.slice(0, 32000);
+    else delete all[id];
+    const keys = Object.keys(all);
+    // 最多留 50 份，删掉最早的
+    for (const k of keys.slice(0, Math.max(0, keys.length - 50))) delete all[k];
+    storage?.setItem(DRAFT_KEY, JSON.stringify(all));
+  } catch {
+    /* 忽略 */
+  }
+}
+
+/** 从回复末尾的署名「— 名字」里取出是谁回答的（Core 的 D31 署名）；没有署名返回 null */
+export function signatureOf(text: string): string | null {
+  const m = /(?:^|\n)\s*[—–]\s*([^\n—–]{1,40}?)\s*$/.exec(text);
+  return m ? m[1]!.trim() : null;
 }
