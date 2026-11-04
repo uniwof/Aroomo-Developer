@@ -194,7 +194,7 @@ export function titleFrom(text: string): string {
 }
 
 export interface ChatPrefs {
-  /** 字号（px），默认 16；作用到整个页面（见 lib/display.ts） */
+  /** 根字号（px，12–32 连续可调），默认 16 = sumus 原尺寸；作用到整个页面（见 lib/display.ts） */
   fontSize: number;
   highContrast: boolean;
   /** 跟随系统 / 浅色 / 深色 */
@@ -204,7 +204,6 @@ export interface ChatPrefs {
   /** 本机没有中文语音时，所有者点过「用在线语音」（文字会发到 Google 或微软合成） */
   speechOnline: boolean;
 }
-export const FONT_SIZES = [16, 18, 20, 24, 28] as const;
 
 export function loadPrefs(storage: Storage | undefined = globalThis.localStorage): ChatPrefs {
   const d = readDisplayPrefs(storage);

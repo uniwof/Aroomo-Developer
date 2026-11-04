@@ -119,7 +119,7 @@ describe('原生对话页', () => {
       fireEvent.click(screen.getByRole('button', { name: '设置' }));
       await waitFor(() => expect(d.hasAttribute('open')).toBe(false));
       expect(screen.getByRole('heading', { name: '设置' })).toBeInTheDocument();
-      fireEvent.click(screen.getByRole('radio', { name: '24' }));
+      fireEvent.change(screen.getByRole('slider', { name: /字号/ }), { target: { value: '24' } });
       expect(loadPrefs().fontSize).toBe(24);
       fireEvent.click(screen.getByRole('button', { name: /打开菜单/ }));
       fireEvent.click(screen.getByRole('button', { name: '成员' }));

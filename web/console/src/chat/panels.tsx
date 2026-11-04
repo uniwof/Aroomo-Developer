@@ -12,7 +12,8 @@ import { CapabilityMap } from '@/components/CapabilityMap';
 import { Field, Group, SettingsGroups } from '@/pages/Settings';
 import { Avatar } from './Avatar';
 import { SPEECH_RATES, speechSupported } from './speech';
-import { FONT_SIZES, type ChatPrefs } from './store';
+import { type ChatPrefs } from './store';
+import { FONT_DEFAULT, FONT_MAX, FONT_MIN, clampFont } from '@/lib/display';
 import type { Theme } from '@/lib/display';
 
 /** 面板顶栏：‹ 返回 + 标题（手机上还有「会话列表」按钮，由外层传进来） */
@@ -184,6 +185,47 @@ function Segmented<T extends string | number>({ label, value, options, onChange 
   );
 }
 
+/** 字号滑杆（所有者 23:07：任意大小，约 12–32，连续可调）：拖动、方向键、两边的 −/+ 都行；「恢复默认」回到 sumus 原尺寸 */
+function FontSlider({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const body = +((value * 14) / 16).toFixed(1);
+  const text = `正文 ${body} 像素${value === FONT_DEFAULT ? '（默认）' : ''}`;
+  return (
+    <div className="row row-stack">
+      <label className="row-label" htmlFor="font-size-slider">
+        字号（整个页面一起变）
+      </label>
+      <div className="font-slider">
+        <button type="button" className="btn btn-outline btn-square" aria-label="字号调小" disabled={value <= FONT_MIN} onClick={() => onChange(clampFont(value - 1))}>
+          A−
+        </button>
+        <input
+          id="font-size-slider"
+          type="range"
+          min={FONT_MIN}
+          max={FONT_MAX}
+          step={0.5}
+          value={value}
+          aria-valuetext={text}
+          onChange={(e) => onChange(clampFont(Number(e.target.value)))}
+        />
+        <button type="button" className="btn btn-outline btn-square" aria-label="字号调大" disabled={value >= FONT_MAX} onClick={() => onChange(clampFont(value + 1))}>
+          A+
+        </button>
+      </div>
+      <div className="font-slider-foot">
+        <span className="muted" aria-hidden="true">
+          {text}
+        </span>
+        {value !== FONT_DEFAULT && (
+          <button type="button" className="btn btn-outline" onClick={() => onChange(FONT_DEFAULT)}>
+            恢复默认
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Switch({ label, on, onChange }: { label: string; on: boolean; onChange: (v: boolean) => void }) {
   return (
     <button type="button" role="switch" aria-checked={on} aria-label={label} className="switch" onClick={() => onChange(!on)}>
@@ -196,10 +238,7 @@ export function SettingsPanel({ prefs, setPrefs, onOpen }: { prefs: ChatPrefs; s
   return (
     <div className="panel">
       <Group title="外观">
-        <div className="row row-stack">
-          <span className="row-label">字号（整个页面一起变）</span>
-          <Segmented label="字号" value={prefs.fontSize} options={FONT_SIZES.map((s) => [s, String(s)])} onChange={(s) => setPrefs((p) => ({ ...p, fontSize: s }))} />
-        </div>
+        <FontSlider value={prefs.fontSize} onChange={(v) => setPrefs((p) => ({ ...p, fontSize: v }))} />
         <div className="row row-stack">
           <span className="row-label">颜色</span>
           <Segmented label="颜色" value={prefs.theme} options={THEMES} onChange={(t) => setPrefs((p) => ({ ...p, theme: t }))} />

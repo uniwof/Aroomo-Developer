@@ -47,7 +47,9 @@ describe('store 小工具', () => {
   it('字号和主题作用到整页 <html>', () => {
     const root = document.createElement('html');
     applyDisplay({ fontSize: 24, theme: 'dark' }, root);
-    expect(root.style.fontSize).toBe('24px');
+    expect(root.style.fontSize).toBe('150%');
+    applyDisplay({ fontSize: 12, theme: 'dark' }, root);
+    expect(root.style.fontSize).toBe('75%');
     expect(root.classList.contains('dark')).toBe(true);
     applyDisplay({ fontSize: 16, theme: 'system' }, root);
     expect(root.style.fontSize).toBe('');
@@ -103,11 +105,12 @@ describe('对话页：对标改进', () => {
     await waitFor(() => expect(screen.getByText('Kimi 回复：')).toBeInTheDocument());
   });
 
-  it('空状态建议：点了放进输入框，不自动发', async () => {
+  it('空状态照 sumus：头像 + 名字 + 简介 + 「说点什么」；附件按钮先占位，不发请求', async () => {
     const chatFetch = vi.fn();
     renderPage(chatFetch as unknown as typeof fetch);
-    fireEvent.click(screen.getByRole('button', { name: '你能帮我做什么？' }));
-    await waitFor(() => expect((screen.getByLabelText('输入消息') as HTMLTextAreaElement).value).toBe('你能帮我做什么？'));
+    expect(screen.getByText('说点什么，开始这个话题')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '添加附件' }));
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('添加附件还没接上'));
     expect(chatFetch).not.toHaveBeenCalled();
   });
 
@@ -123,8 +126,8 @@ describe('对话页：对标改进', () => {
     renderPage();
     fireEvent.click(screen.getByRole('button', { name: '设置' }));
     expect(screen.queryAllByRole('tab')).toHaveLength(0);
-    fireEvent.click(screen.getByRole('radio', { name: '28' }));
-    expect(document.documentElement.style.fontSize).toBe('28px');
+    fireEvent.change(screen.getByRole('slider', { name: /字号/ }), { target: { value: '28' } });
+    expect(document.documentElement.style.fontSize).toBe('175%');
     fireEvent.click(screen.getByRole('radio', { name: '深色' }));
     expect(document.documentElement.classList.contains('dark')).toBe(true);
     expect(readDisplayPrefs()).toEqual({ fontSize: 28, theme: 'dark' });

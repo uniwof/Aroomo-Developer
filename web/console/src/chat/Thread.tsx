@@ -18,7 +18,7 @@ import {
   type ThreadMessage,
   type ThreadMessageLike,
 } from '@assistant-ui/react';
-import { ArrowDown, ArrowUp, AtSign, Copy, KeyRound, RotateCcw, Square, Volume2, VolumeX } from 'lucide-react';
+import { ArrowDown, Copy, KeyRound, Paperclip, RotateCcw, Send, Square, Volume2, VolumeX } from 'lucide-react';
 import { ChatStreamError, type FailureCode, dayLabel, loadDraft, saveDraft, signatureOf, streamChat, stripSignature, timeLabel, withGroupMentions, type ChatTurn, type Conversation } from './store';
 import { Avatar } from './Avatar';
 import { AnnounceContext, useAnnounce } from './announce';
@@ -121,7 +121,7 @@ const UserMessage: FC = () => (
   <MessagePrimitive.Root className="msg msg-user">
     <DaySep />
     <div className="msg-row">
-      <Avatar name="我" kind="user" />
+      <Avatar name="我" kind="user" size="msg" />
       <div className="msg-main">
         <span className="sr-only">你说：</span>
         <div className="msg-head" aria-hidden="true">
@@ -249,7 +249,7 @@ const AssistantMessage: FC = () => {
     <MessagePrimitive.Root className="msg msg-assistant">
       <DaySep />
       <div className="msg-row">
-        <Avatar name={who.name} kind={who.lead ? 'lead' : 'member'} />
+        <Avatar name={who.name} kind={who.lead ? 'lead' : 'member'} size="msg" />
         <div className="msg-main">
           <span className="sr-only">{who.signed ? `${who.signed} 回复：` : '回复：'}</span>
           <div className="msg-head" aria-hidden="true">
@@ -436,12 +436,6 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
     document.getElementById('chat-input')?.focus();
   }, [insert, runtime]);
 
-  // 空状态的建议：点了只放进输入框，不替你发（看清楚再按「发送」）
-  const suggestions = [
-    '你能帮我做什么？',
-    ...(members[0] ? [`@${members[0]} 你好，介绍一下你自己`] : []),
-    '帮我把下面这段话改得更清楚：',
-  ];
   const [mentionOpen, setMentionOpen] = useState(false);
   // 输入「@」（在开头或空格后）就弹出成员列表（sumus / 方案：「输入 @ 后弹出成员列表」）
   useEffect(() => {
@@ -462,7 +456,7 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
     document.getElementById('chat-input')?.focus();
   };
   const info: ThreadInfo = { memberName, members, messages };
-  const placeholder = memberName ? `发消息给 ${memberName}` : '发消息，@ 一位成员';
+  const placeholder = memberName ? `回复，或者交给 ${memberName} 一件新任务…` : conversation.group?.length ? '发消息给群里，@ 一位成员' : '回复，或者交给负责人一件新任务…';
 
   return (
     <AnnounceContext.Provider value={announce}>
@@ -473,21 +467,12 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
         <ThreadPrimitive.Viewport className="chat-viewport" role="log" aria-label="对话内容" aria-live="off">
           <div className="chat-column">
             <ThreadPrimitive.Empty>
-              {/* 空对话（照 sumus）：中间是成员头像 + 名字 + 一句简介 + 「说点什么开始」；下面几条可以直接用的开头 */}
+              {/* 空对话（照 sumus）：正中是头像 + 名字 + 一句简介 + 浅灰「说点什么，开始这个话题」 */}
               <div className="chat-empty">
-                <Avatar name={memberName ?? (conversation.group?.length ? conversation.title : 'Aroomo')} kind={memberName ? 'member' : conversation.group?.length ? 'group' : 'lead'} size="lg" />
-                <h2 className="chat-empty-title">{conversation.group?.length ? conversation.title.replace(/^群聊：/, '') : memberName ?? '负责人'}</h2>
+                <Avatar name={memberName ?? (conversation.group?.length ? conversation.title : '负责人')} kind={memberName ? 'member' : conversation.group?.length ? 'group' : 'lead'} size="lg" />
+                <p className="chat-empty-title">{conversation.group?.length ? conversation.title.replace(/^群聊：/, '') : memberName ?? '负责人'}</p>
                 {intro && <p className="chat-empty-intro">{intro}</p>}
-                <p className="muted chat-empty-hint">说点什么，开始这个对话</p>
-                <ul className="chat-suggestions" aria-label="可以这样开头">
-                  {suggestions.map((p) => (
-                    <li key={p}>
-                      <ThreadPrimitive.Suggestion prompt={p} send={false} className="btn btn-outline chat-suggestion">
-                        {p}
-                      </ThreadPrimitive.Suggestion>
-                    </li>
-                  ))}
-                </ul>
+                <p className="chat-empty-hint">说点什么，开始这个话题</p>
               </div>
             </ThreadPrimitive.Empty>
             <ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage }} />
@@ -513,7 +498,7 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
                 if (e.key === 'Escape') {
                   e.stopPropagation();
                   setMentionOpen(false);
-                  document.getElementById('chat-mention')?.focus();
+                  document.getElementById('chat-input')?.focus();
                 }
               }}
             >
@@ -541,27 +526,18 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
               回车发送，Shift 加回车换行，回复时按 Esc 停止
             </span>
             <div className="composer-bar">
-              {members.length > 0 && (
-                <button
-                  id="chat-mention"
-                  type="button"
-                  className="btn btn-quiet"
-                  aria-label="点名一位成员"
-                  aria-expanded={mentionOpen}
-                  onClick={() => setMentionOpen((o) => !o)}
-                >
-                  <AtSign aria-hidden="true" />
-                  <span>点名</span>
-                </button>
-              )}
+              {/* 附件（照 sumus 先放上；上传之后接上） */}
+              <button type="button" className="icon-btn hit composer-attach" aria-label="添加附件" title="添加附件" onClick={() => announce('添加附件还没接上，之后会支持')}>
+                <Paperclip aria-hidden="true" />
+              </button>
               <span className="composer-spacer" />
               <ThreadPrimitive.If running={false}>
-                <ComposerPrimitive.Send className="send" aria-label="发送">
-                  <ArrowUp aria-hidden="true" />
+                <ComposerPrimitive.Send className="send hit" aria-label="发送">
+                  <Send aria-hidden="true" />
                 </ComposerPrimitive.Send>
               </ThreadPrimitive.If>
               <ThreadPrimitive.If running>
-                <ComposerPrimitive.Cancel className="send send-stop" aria-label="停止回复">
+                <ComposerPrimitive.Cancel className="send send-stop hit" aria-label="停止回复">
                   <Square aria-hidden="true" />
                 </ComposerPrimitive.Cancel>
               </ThreadPrimitive.If>

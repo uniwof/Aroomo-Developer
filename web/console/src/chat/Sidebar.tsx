@@ -1,19 +1,18 @@
 /**
- * 会话列表栏（所有者 21:42 按 sumus 真实界面标注 + 负责人映射方案）：
- *   「Aroomo」+ 小铃铛（通知 / 收件箱，有待处理时一个珊瑚色圆点）
- *   专职成员 / 对话（sumus 的 Chat / Activity 两个切换的位置；是同一栏的两种列表，不是多标签页）
- *     专职成员：AI 在职岗位——负责人，和每位在职成员（点了就和 TA 单聊）
- *     对话：和负责人的对话、单独对话、`# 群聊`
- *   搜索会话 + 新对话
- *   底部：新建群聊（「成员」在最左分类栏）；最底：我自己 + 总额度圆环（点开 = 设置）
- * 桌面常显；手机上它就是唯一一层抽屉（外层 <dialog>）：最上面多一排分类（资源库 / 工具 / API / 成员 / 设置），
- * 点任何东西都是关抽屉、在主区域打开。
+ * 会话列表栏（2026-11-04 所有者：完全照 sumus 登录后的界面，300px 宽、极浅灰底；之后再逐个改功能）：
+ *   顶部 48px：「Aroomo」+ 右边小铃铛（通知 / 收件箱）
+ *   分段控件「对话 / 专职成员」（sumus 的 Chat / Activity 位置；同一栏的两种列表，不是标签页）
+ *   搜索框 + 新对话
+ *   分组标题「对话 ∨」（点了收起 / 展开）
+ *   会话行：头像 + 名字 + 时间 / 一行预览 + 置顶图钉
+ *   底部：「成员市场 · + 创建」「成员 · 邀请」，分隔线下面是我自己 +「连接应用」
+ * 接不上的按钮先做占位（点了在主区域说明「这里之后接上什么」），不删。
+ * 桌面常显；手机上它就是唯一一层抽屉（外层 <dialog>）：最上面多一排分类（资源库 / 工具 / API / 成员）。
  */
-import { useMemo, useState } from 'react';
-import { Bell, Search, Settings, SquarePen, UserPlus, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Activity, Bell, Blocks, Bot, ChevronDown, MessagesSquare, Pin, Plug, Plus, Search, Settings, Shapes, SquarePen, UserPlus, Users, X } from 'lucide-react';
 import { currentUser, type Member } from '@/lib/api';
-import { Logo, QuotaRing } from '@/components/brand';
-import { worstRow, type UsageRow } from '@/lib/usage';
+import type { UsageRow } from '@/lib/usage';
 import { Avatar, type AvatarKind } from './Avatar';
 import { RailNav, quotaState, type RailTarget } from './Rail';
 import { listTimeLabel, stripSignature, type Conversation } from './store';
@@ -30,6 +29,7 @@ interface Row {
   member?: Member;
   size?: number;
   lead?: boolean;
+  pinned?: boolean;
 }
 
 function previewOf(c: Conversation): string {
@@ -38,6 +38,8 @@ function previewOf(c: Conversation): string {
   const text = stripSignature(last.text).replace(/[#*`>_~[\]()]/g, '').replace(/\s+/g, ' ').trim();
   return last.role === 'user' ? `我：${text}` : text;
 }
+
+export type SideTarget = RailTarget | 'group-new' | 'inbox' | 'capmap';
 
 export interface SidebarProps {
   list: Conversation[];
@@ -49,31 +51,53 @@ export interface SidebarProps {
   onMember: (m: Member) => void;
   onLead: () => void;
   onNew: () => void;
-  onOpen: (k: RailTarget | 'group-new' | 'inbox') => void;
+  onOpen: (k: SideTarget) => void;
+  /** 照 sumus 先放上、功能还没接的按钮 */
+  onPlaceholder: (label: string) => void;
   /** 手机抽屉里才有「关闭」和分类横排 */
   onClose?: () => void;
   usage: UsageRow[] | null;
 }
 
-export function Sidebar({ list, currentId, members, inboxCount, active, onPick, onMember, onLead, onNew, onOpen, onClose, usage }: SidebarProps) {
+export function Sidebar({ list, currentId, members, inboxCount, active, onPick, onMember, onLead, onNew, onOpen, onPlaceholder, onClose, usage }: SidebarProps) {
   const [tab, setTab] = useState<Tab>('chats');
   const [q, setQ] = useState('');
+  const [folded, setFolded] = useState(false);
+  const [newOpen, setNewOpen] = useState(false);
+  useEffect(() => {
+    if (!newOpen) return;
+    const onDown = (e: MouseEvent) => !(e.target as Element).closest?.('.side-search .topic') && setNewOpen(false);
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setNewOpen(false);
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [newOpen]);
   const user = currentUser();
   const current = list.find((c) => c.id === currentId);
 
   const chats = useMemo<Row[]>(() => {
     const out: Row[] = [];
+    let pinnedLead = false;
     for (const c of list) {
-      if (c.messages.length === 0 && c.id !== currentId) continue;
+      // 还没发过消息的新话题不进列表（照 sumus：新话题挂在对象下面，不单独占一行）
+      if (c.messages.length === 0) continue;
       const member = c.model.startsWith('aroomo/') ? members.find((m) => `aroomo/${m.id}` === c.model) : undefined;
       const single = c.model.startsWith('aroomo/');
+      const kind: AvatarKind = c.group?.length ? 'group' : single ? 'member' : 'lead';
+      // 置顶：最近一次和负责人的对话（sumus 把内置助手置顶；真正的「置顶」之后再做）
+      const pinned = kind === 'lead' && !pinnedLead && c.messages.length > 0;
+      if (pinned) pinnedLead = true;
       out.push({
         key: c.id,
-        kind: c.group?.length ? 'group' : single ? 'member' : 'lead',
+        kind,
         name: c.group?.length ? c.title.replace(/^群聊：/, '') : member ? member.name : single ? c.title.replace(/^和\s*/, '') : c.title,
         preview: previewOf(c),
         at: c.messages.length ? c.updatedAt : undefined,
         convId: c.id,
+        pinned,
         ...(member ? { member } : {}),
         ...(c.group?.length ? { size: c.group.length } : {}),
       });
@@ -85,7 +109,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
     const lastOf = (model: string) => list.find((c) => c.model === model && c.messages.length > 0);
     const lead = lastOf('aroomo');
     return [
-      { key: 'lead', kind: 'lead', name: '负责人', preview: '没 @ 谁的时候，由负责人回答', at: lead?.updatedAt, lead: true },
+      { key: 'lead', kind: 'lead', name: '负责人', preview: '没 @ 谁的时候，由负责人回答', at: lead?.updatedAt, lead: true, pinned: true },
       ...members.map((m): Row => {
         const c = lastOf(`aroomo/${m.id}`);
         return { key: m.id, kind: 'member', name: m.name, preview: c ? previewOf(c) : m.capabilityTags.length ? m.capabilityTags.join('、') : '在职成员', at: c?.updatedAt, member: m };
@@ -100,20 +124,20 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
   const labelOf = (r: Row) => {
     const head = r.kind === 'group' ? `群聊 ${r.name}，${r.size ?? 0} 人` : r.name;
     const q2 = r.member && tab === 'staff' ? `，${quotaState(usage?.find((u) => u.memberId === r.member!.id)).label}` : '';
-    return `${head}${q2}，${tab === 'staff' ? '' : '最后一条：'}${r.preview}${r.at ? `，${listTimeLabel(r.at)}` : ''}`;
+    return `${head}${r.pinned ? '，已置顶' : ''}${q2}，${tab === 'staff' ? '' : '最后一条：'}${r.preview}${r.at ? `，${listTimeLabel(r.at)}` : ''}`;
   };
+  const groupLabel = tab === 'staff' ? '专职成员' : '对话';
 
   return (
     <div className="side-inner">
       <div className="side-head">
-        <Logo size={22} className="side-logo" />
         <h2 className="side-title">Aroomo</h2>
-        <button type="button" className="btn btn-icon bell" aria-label={inboxCount ? `通知和收件箱，${inboxCount} 条待处理` : '通知和收件箱'} aria-current={active === 'inbox' ? 'page' : undefined} onClick={() => onOpen('inbox')}>
+        <button type="button" className="icon-btn hit bell" aria-label={inboxCount ? `通知和收件箱，${inboxCount} 条待处理` : '通知和收件箱'} title="通知" aria-current={active === 'inbox' ? 'page' : undefined} onClick={() => onOpen('inbox')}>
           <Bell aria-hidden="true" />
           {inboxCount > 0 && <span className="bell-dot" aria-hidden="true" />}
         </button>
         {onClose && (
-          <button type="button" className="btn btn-icon" aria-label="关闭菜单" onClick={onClose}>
+          <button type="button" className="icon-btn hit" aria-label="关闭菜单" onClick={onClose}>
             <X aria-hidden="true" />
           </button>
         )}
@@ -125,83 +149,147 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
         </nav>
       )}
 
-      <div className="seg seg-full" role="radiogroup" aria-label="列表">
-        {(
-          [
-            ['staff', '专职成员'],
-            ['chats', '对话'],
-          ] as [Tab, string][]
-        ).map(([v, label]) => (
-          <button key={v} type="button" role="radio" aria-checked={tab === v} className="seg-item" onClick={() => setTab(v)}>
-            {label}
-          </button>
-        ))}
-      </div>
-
-      <div className="side-search">
-        <label className="search">
-          <Search aria-hidden="true" />
-          <span className="sr-only">搜索会话</span>
-          <input type="search" placeholder="搜索" value={q} onChange={(e) => setQ(e.target.value)} />
-        </label>
-        <button type="button" className="btn btn-icon" aria-label="新对话" onClick={onNew}>
-          <SquarePen aria-hidden="true" />
-        </button>
-      </div>
-
-      <ul className="conv-list" aria-label={tab === 'staff' ? '专职成员' : '会话列表'}>
-        {rows.map((r) => (
-          <li key={r.key}>
-            <button
-              type="button"
-              className="conv"
-              aria-current={isCurrent(r) ? 'true' : undefined}
-              aria-label={labelOf(r)}
-              onClick={() => (tab === 'chats' && r.convId ? onPick(r.convId) : r.lead ? onLead() : r.member ? onMember(r.member) : r.convId && onPick(r.convId))}
-            >
-              <Avatar name={r.name} kind={r.kind} />
-              <span className="conv-text">
-                <span className="conv-top">
-                  <span className="conv-name">
-                    {r.kind === 'group' && (
-                      <span aria-hidden="true" className="hash">
-                        #{' '}
-                      </span>
-                    )}
-                    {r.name}
-                  </span>
-                  {r.at && <span className="conv-time">{listTimeLabel(r.at)}</span>}
-                </span>
-                <span className="conv-preview">{r.preview}</span>
-              </span>
+      <div className="side-tools">
+        <div className="seg2" role="radiogroup" aria-label="列表">
+          {(
+            [
+              ['chats', '对话', MessagesSquare],
+              ['staff', '专职成员', Activity],
+            ] as [Tab, string, typeof Activity][]
+          ).map(([v, label, Icon]) => (
+            <button key={v} type="button" role="radio" aria-checked={tab === v} className="seg2-item hit" onClick={() => setTab(v)}>
+              <Icon aria-hidden="true" />
+              <span>{label}</span>
             </button>
-          </li>
-        ))}
-        {rows.length === 0 && <li className="conv-empty">{q ? '没有找到。换个词试试。' : '还没有会话。'}</li>}
-      </ul>
+          ))}
+        </div>
+
+        <div className="side-search">
+          <label className="search2">
+            <Search aria-hidden="true" />
+            <span className="sr-only">搜索会话</span>
+            <input type="search" placeholder="搜索会话" value={q} onChange={(e) => setQ(e.target.value)} />
+          </label>
+          {/* 新建对话菜单（照 sumus）：新建群聊 / 新建成员 / 和某一位开新对话 */}
+          <div className="topic">
+            <button type="button" className="icon-btn hit" aria-label="新建对话" title="新建对话" aria-haspopup="true" aria-expanded={newOpen} onClick={() => setNewOpen((o) => !o)}>
+              <SquarePen aria-hidden="true" />
+            </button>
+            {newOpen && (
+              <ul className="pop pop-right" aria-label="新建对话" onKeyDown={(e) => e.key === 'Escape' && setNewOpen(false)}>
+                <li>
+                  <button type="button" className="pop-item" onClick={() => { setNewOpen(false); onOpen('group-new'); }}>
+                    <Users aria-hidden="true" />
+                    <span>新建群聊</span>
+                  </button>
+                </li>
+                <li>
+                  <button type="button" className="pop-item" onClick={() => { setNewOpen(false); onOpen('members'); }}>
+                    <Bot aria-hidden="true" />
+                    <span>新建成员</span>
+                  </button>
+                </li>
+                <li>
+                  <button type="button" className="pop-item" onClick={() => { setNewOpen(false); onNew(); }}>
+                    <Avatar name="负责人" kind="lead" size="xs" />
+                    <span>负责人</span>
+                  </button>
+                </li>
+                {members.map((m) => (
+                  <li key={m.id}>
+                    <button type="button" className="pop-item" aria-label={`和 ${m.name} 开新对话`} onClick={() => { setNewOpen(false); onMember(m); }}>
+                      <Avatar name={m.name} size="xs" />
+                      <span>{m.name}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="conv-scroll">
+        <button type="button" className="conv-group hit" aria-expanded={!folded} onClick={() => setFolded((f) => !f)}>
+          <span>{groupLabel}</span>
+          <ChevronDown aria-hidden="true" className={folded ? 'folded' : undefined} />
+        </button>
+        {!folded && (
+          <ul className="conv-list" aria-label={tab === 'staff' ? '专职成员' : '会话列表'}>
+            {rows.map((r) => (
+              <li key={r.key}>
+                <button
+                  type="button"
+                  className="conv"
+                  aria-current={isCurrent(r) ? 'true' : undefined}
+                  aria-label={labelOf(r)}
+                  onClick={() => (tab === 'chats' && r.convId ? onPick(r.convId) : r.lead ? onLead() : r.member ? onMember(r.member) : r.convId && onPick(r.convId))}
+                >
+                  <Avatar name={r.name} kind={r.kind} />
+                  <span className="conv-text">
+                    <span className="conv-top">
+                      <span className="conv-name">
+                        {r.kind === 'group' && (
+                          <span aria-hidden="true" className="hash">
+                            #{' '}
+                          </span>
+                        )}
+                        {r.name}
+                        {r.kind === 'group' && <Users aria-hidden="true" className="conv-badge" />}
+                      </span>
+                      {r.at && <span className="conv-time">{listTimeLabel(r.at)}</span>}
+                    </span>
+                    <span className="conv-bottom">
+                      <span className="conv-preview">{r.preview}</span>
+                      {r.pinned && <Pin aria-hidden="true" className="conv-pin" />}
+                    </span>
+                  </span>
+                </button>
+              </li>
+            ))}
+            {rows.length === 0 && <li className="conv-empty">{q ? '没有找到。换个词试试。' : '还没有会话。'}</li>}
+          </ul>
+        )}
+      </div>
 
       <div className="side-foot">
-        <div className="side-links">
-          <button type="button" className="btn btn-outline" onClick={() => onOpen('group-new')}>
+        <div className="foot-row">
+          <button type="button" className="foot-link hit" aria-current={active === 'capmap' ? 'page' : undefined} onClick={() => onOpen('capmap')}>
+            <Shapes aria-hidden="true" />
+            <span>成员市场</span>
+          </button>
+          <button type="button" className="pill hit" aria-label="创建：新建群聊" onClick={() => onOpen('group-new')}>
+            <Plus aria-hidden="true" />
+            <span>创建</span>
+          </button>
+        </div>
+        <div className="foot-row">
+          <button type="button" className="foot-link hit" aria-label="工作区成员" onClick={() => onPlaceholder('工作区成员')}>
+            <Users aria-hidden="true" />
+            <span>成员</span>
+          </button>
+          <button type="button" className="pill hit" aria-label="邀请成员" onClick={() => onPlaceholder('邀请成员')}>
             <UserPlus aria-hidden="true" />
-            <span>新建群聊</span>
+            <span>邀请</span>
           </button>
         </div>
-        <div className="side-user-row">
-          <button type="button" className="side-user" aria-label="账号与设置" onClick={() => onOpen('settings')}>
-            <Avatar name="我" kind="user" />
-            <span className="conv-text">
-              <span className="conv-name">{user?.displayName || '我'}</span>
-              {user?.email && <span className="conv-preview">{user.email}</span>}
-            </span>
-            <QuotaRing used={worstRow(usage)?.quota.used} limit={worstRow(usage)?.quota.limit} />
+      </div>
+      <div className="side-account">
+        <button type="button" className="me-btn hit" aria-label="账号与设置" title={user?.email ?? ''} onClick={() => onOpen('settings')}>
+          <Avatar name={user?.displayName || user?.email || '我'} kind="user" size="sm" />
+        </button>
+        <button type="button" className="connect" aria-label="连接应用" onClick={() => onPlaceholder('连接应用')}>
+          <Plug aria-hidden="true" />
+          <span className="connect-text">连接应用</span>
+          <span className="connect-apps" aria-hidden="true">
+            <Blocks />
+          </span>
+        </button>
+        {onClose && (
+          <button type="button" className="icon-btn hit" aria-label="设置" onClick={() => onOpen('settings')}>
+            <Settings aria-hidden="true" />
           </button>
-          {onClose && (
-            <button type="button" className="btn btn-icon" aria-label="设置" onClick={() => onOpen('settings')}>
-              <Settings aria-hidden="true" />
-            </button>
-          )}
-        </div>
+        )}
       </div>
     </div>
   );

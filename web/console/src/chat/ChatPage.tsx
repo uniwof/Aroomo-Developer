@@ -8,8 +8,8 @@
  * 边界：store.ts 管数据和请求，Thread.tsx 管对话区，Sidebar.tsx 管会话列表栏，panels.tsx 管面板，这里管拼装。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Menu, SquarePen, Trash2 } from 'lucide-react';
-import { api, viaShell, type Member } from '@/lib/api';
+import { ArrowLeft, ArrowRight, ChevronDown, CircleAlert, Ellipsis, Menu, Plus, SquarePen, Trash2 } from 'lucide-react';
+import { api, currentUser, viaShell, type Member } from '@/lib/api';
 import { useUsage } from '@/lib/usage';
 import { Rail, quotaState, type RailTarget } from './Rail';
 import { HeaderCard } from './HeaderCard';
@@ -19,11 +19,10 @@ import { Tools } from '@/pages/Tools';
 import { Inbox } from '@/pages/Inbox';
 import { useInboxCount } from '@/components/Layout';
 import { Thread } from './Thread';
-import { Avatar } from './Avatar';
 import { Sidebar } from './Sidebar';
 import { CapabilityPanel, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SettingsPanel, ShortcutsPanel } from './panels';
 import { applyDisplay } from '@/lib/display';
-import { loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
+import { listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, stripSignature, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
 import './chat.css';
 
 /** 主区域显示什么：对话，或某个面板（带返回的上一层） */
@@ -38,9 +37,11 @@ type View =
   | { kind: 'inbox' }
   | { kind: 'shortcuts' }
   | { kind: 'library' }
-  | { kind: 'keys' };
+  | { kind: 'keys' }
+  /** 照 sumus 先放上、功能还没接的按钮 */
+  | { kind: 'todo'; label: string };
 
-const TITLES: Record<Exclude<View['kind'], 'chat' | 'member'>, string> = {
+const TITLES: Record<Exclude<View['kind'], 'chat' | 'member' | 'todo'>, string> = {
   members: '成员',
   capmap: '能力地图',
   'group-new': '新建群聊',
@@ -66,6 +67,12 @@ function parentOf(v: View): { view: View; label: string } | null {
       return { view: { kind: 'chat' }, label: '对话' };
   }
 }
+
+/** 会话列表宽度：单位是「sumus 像素 / 16」（18.75 = sumus 的 300px），可拖 280–420 */
+const SIDE_KEY = 'aroomo.chat.sideWidth.v1';
+const SIDE_MIN = 280;
+const SIDE_MAX = 420;
+const clampSide = (w: number) => Math.min(SIDE_MAX / 16, Math.max(SIDE_MIN / 16, w));
 
 function useMembers(): Member[] {
   const [members, setMembers] = useState<Member[]>([]);
@@ -118,6 +125,18 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   const [collapsed, setCollapsed] = useState(false);
   const [view, setView] = useState<View>({ kind: 'chat' });
   const [prefs, setPrefs] = useState<ChatPrefs>(() => loadPrefs());
+  const [menu, setMenu] = useState<'none' | 'topic' | 'more'>('none');
+  const [sideW, setSideW] = useState<number>(() => {
+    const v = Number(typeof localStorage !== 'undefined' ? localStorage.getItem(SIDE_KEY) : NaN);
+    return Number.isFinite(v) && v > 0 ? clampSide(v) : 18.75;
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDE_KEY, String(sideW));
+    } catch {
+      /* 存不了就算了 */
+    }
+  }, [sideW]);
   const [insert, setInsert] = useState<{ text: string; seq: number } | null>(null);
   const members = useMembers();
   const inboxCount = useInboxCount();
@@ -138,7 +157,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   }, [prefs]);
   // 浏览器标签页标题跟着会话走（读屏切标签时能听到在哪个会话）
   useEffect(() => {
-    document.title = `${view.kind === 'chat' ? current.title : view.kind === 'member' ? '成员' : TITLES[view.kind]} · Aroomo`;
+    document.title = `${view.kind === 'chat' ? current.title : view.kind === 'member' ? '成员' : view.kind === 'todo' ? view.label : TITLES[view.kind]} · Aroomo`;
   }, [current.title, view]);
   useEffect(() => {
     const d = dialog.current;
@@ -221,6 +240,24 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     if (id === currentId) setCurrentId(next[0]!.id);
   };
 
+  // 同一个对象（同一位成员 / 同一个群 / 负责人）的其它话题
+  const topics = useMemo(
+    () => list.filter((c) => c.messages.length > 0 && c.model === current.model && (c.group ?? []).join('、') === (current.group ?? []).join('、')).slice(0, 8),
+    [list, current.model, current.group],
+  );
+  useEffect(() => {
+    if (menu === 'none') return;
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setMenu('none');
+    const onDown = (e: MouseEvent) => !(e.target as Element).closest?.('.topic') && setMenu('none');
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('mousedown', onDown);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('mousedown', onDown);
+    };
+  }, [menu]);
+  useEffect(() => setMenu('none'), [currentId, view.kind]);
+
   const allowOnlineSpeech = useCallback(() => setPrefs((p) => ({ ...p, speechOnline: true })), []);
   const memberNames = useMemo(() => members.map((m) => m.name), [members]);
 
@@ -240,6 +277,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         else start();
       }}
       onOpen={(k) => goto({ kind: k })}
+      onPlaceholder={(label) => goto({ kind: 'todo', label })}
       usage={usage}
       {...(wide ? {} : { onClose: () => setOpen(false) })}
     />
@@ -248,13 +286,14 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   const menuButton = !wide || collapsed ? (
     <button
       type="button"
-      className="btn btn-icon"
+      className="icon-btn hit"
       aria-label="打开菜单：会话列表、成员、设置"
       aria-haspopup={wide ? undefined : 'dialog'}
       aria-expanded={wide ? !collapsed : open}
       onClick={() => (wide ? setCollapsed(false) : setOpen(true))}
     >
-      <Menu aria-hidden="true" />
+      {/* 手机照 sumus 用「←」回到会话列表；桌面收起列表后用 ≡ */}
+      {wide ? <Menu aria-hidden="true" /> : <ArrowLeft aria-hidden="true" />}
     </button>
   ) : null;
 
@@ -278,10 +317,12 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   const notice =
     q?.tone === 'full' ? (
       <div className="notice" role="status">
+        <CircleAlert aria-hidden="true" className="notice-icon" />
         <p className="notice-title">{who.name} 今天的额度用完了</p>
         <p className="notice-text">消息还能发出去，但 TA 暂时不会回复。可以换一位成员，或者到「成员」里调高每天上限。</p>
-        <button type="button" className="btn btn-outline" onClick={() => setView({ kind: 'member', id: currentMember!.id })}>
+        <button type="button" className="notice-btn hit" onClick={() => setView({ kind: 'member', id: currentMember!.id })}>
           查看成员
+          <ArrowRight aria-hidden="true" />
         </button>
       </div>
     ) : null;
@@ -292,19 +333,17 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
       <>
         <header className="main-head">
           {menuButton}
-          <Avatar name={singleName ?? current.title} kind={isGroup ? 'group' : singleName ? 'member' : 'lead'} size="sm" />
           <HeaderCard
             title={
               isGroup ? (
                 <>
                   <span aria-hidden="true" className="hash">
-                    #
+                    #{' '}
                   </span>
-                  {current.title.replace(/^群聊：/, '')}
-                  <span className="muted"> （{current.group!.length} 位）</span>
+                  {who.name}
                 </>
               ) : (
-                current.title
+                who.name
               )
             }
             name={who.name}
@@ -312,18 +351,67 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
             type={who.type}
             intro={intro}
             model={who.model}
+            creator={who.kind === 'lead' ? 'Aroomo（内置）' : currentUser()?.displayName || currentUser()?.email || '我'}
             {...(currentMember ? { onView: () => setView({ kind: 'member', id: currentMember.id }) } : { onView: () => setView({ kind: 'members' }) })}
+            extra={
+              <div className="topic">
+                <button type="button" className="topic-chip hit" aria-haspopup="true" aria-expanded={menu === 'topic'} aria-label={`话题：${current.messages.length ? current.title : '新话题'}，切换话题`} onClick={() => setMenu((m) => (m === 'topic' ? 'none' : 'topic'))}>
+                  <span className="topic-text">{current.messages.length ? current.title : '新话题'}</span>
+                  <ChevronDown aria-hidden="true" />
+                </button>
+                {menu === 'topic' && (
+                  <div className="pop pop-topics">
+                    <p className="pop-label" id="topic-pop-label">话题</p>
+                    <ul aria-labelledby="topic-pop-label">
+                      {topics.map((c) => (
+                        <li key={c.id}>
+                          <button type="button" className="pop-topic" aria-current={c.id === current.id ? 'true' : undefined} onClick={() => { setMenu('none'); pick(c.id); }}>
+                            <span className={c.id === current.id ? 'pop-dot pop-dot-on' : 'pop-dot'} aria-hidden="true" />
+                            <span className="pop-topic-text">
+                              <span className="pop-topic-top">
+                                <span className="pop-topic-title">{c.title}</span>
+                                <span className="pop-topic-time">{listTimeLabel(c.updatedAt)}</span>
+                              </span>
+                              <span className="pop-topic-preview">{stripSignature(c.messages[c.messages.length - 1]?.text ?? '').replace(/[#*`>_~[\]()]/g, '').replace(/\s+/g, ' ').trim()}</span>
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                    <button type="button" className="pop-item pop-new" onClick={() => { setMenu('none'); start({ title: current.title.startsWith('和 ') || isGroup ? current.title : '新对话', model: current.model, ...(isGroup ? { group: current.group! } : {}) }); }}>
+                      <Plus aria-hidden="true" />
+                      <span>新话题</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            }
+            right={
+              <div className="topic">
+                <button type="button" className="icon-btn hit" aria-label="更多" title="更多" aria-haspopup="true" aria-expanded={menu === 'more'} onClick={() => setMenu((m) => (m === 'more' ? 'none' : 'more'))}>
+                  <Ellipsis aria-hidden="true" />
+                </button>
+                {menu === 'more' && (
+                  <ul className="pop pop-right" aria-label="更多">
+                    <li>
+                      <button type="button" className="pop-item" onClick={() => { setMenu('none'); start(); }}>
+                        <SquarePen aria-hidden="true" />
+                        <span>新对话</span>
+                      </button>
+                    </li>
+                    {current.messages.length > 0 && (
+                      <li>
+                        <button type="button" className="pop-item pop-danger" aria-label={`删除会话「${current.title}」`} onClick={() => { setMenu('none'); remove(current.id); }}>
+                          <Trash2 aria-hidden="true" />
+                          <span>删除会话</span>
+                        </button>
+                      </li>
+                    )}
+                  </ul>
+                )}
+              </div>
+            }
           />
-          {current.messages.length > 0 && (
-            <button type="button" className="btn btn-icon" title="删除会话" aria-label={`删除会话「${current.title}」`} onClick={() => remove(current.id)}>
-              <Trash2 aria-hidden="true" />
-            </button>
-          )}
-          {!wide && (
-            <button type="button" className="btn btn-icon" aria-label="新对话" onClick={() => start()}>
-              <SquarePen aria-hidden="true" />
-            </button>
-          )}
         </header>
         {viaShell && (
           <p role="alert" className="chat-error main-note">
@@ -349,7 +437,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   } else {
     const parent = parentOf(view);
     const member = view.kind === 'member' ? members.find((m) => m.id === view.id) : undefined;
-    const title = view.kind === 'member' ? (member?.name ?? '成员') : TITLES[view.kind];
+    const title = view.kind === 'member' ? (member?.name ?? '成员') : view.kind === 'todo' ? view.label : TITLES[view.kind];
     main = (
       <>
         <PanelHeader title={title} lead={menuButton} {...(parent ? { onBack: () => setView(parent.view), backLabel: parent.label } : {})} />
@@ -393,6 +481,13 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
             </div>
           )}
           {view.kind === 'shortcuts' && <ShortcutsPanel />}
+          {view.kind === 'todo' && (
+            <div className="panel">
+              <p className="todo-note" role="status">
+                「{view.label}」这个位置先照 sumus 放好了，功能还没接上。之后告诉我们这里换成什么。
+              </p>
+            </div>
+          )}
           {view.kind === 'library' && (
             <div className="panel panel-embed">
               <Library />
@@ -411,7 +506,40 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   return (
     <div className={`app${prefs.highContrast ? ' chat-hc' : ''}${wide ? ' app-wide' : ''}${layout.rail ? ' app-rail' : ''}${wide && collapsed ? ' app-collapsed' : ''}`}>
       {layout.rail && <Rail active={view.kind} onOpen={(t: RailTarget) => goto({ kind: t })} onNew={() => start()} />}
-      {wide && !collapsed && <aside className="side" aria-label="会话列表">{sidebar}</aside>}
+      {wide && !collapsed && (
+        <aside className="side" aria-label="会话列表" style={{ width: `calc(${sideW} * var(--k))` }}>
+          {sidebar}
+          {/* 照 sumus：会话列表可以拖宽（280–420 sumus 像素）；键盘左右方向键也能调 */}
+          <div
+            className="side-resize"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="调整会话列表宽度"
+            aria-valuemin={SIDE_MIN}
+            aria-valuemax={SIDE_MAX}
+            aria-valuenow={Math.round(sideW * 16)}
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                e.preventDefault();
+                setSideW((w) => clampSide(w + (e.key === 'ArrowRight' ? 1.25 : -1.25)));
+              }
+            }}
+            onPointerDown={(e) => {
+              const k = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+              const x0 = e.clientX;
+              const w0 = sideW;
+              const move = (ev: PointerEvent) => setSideW(clampSide(w0 + (ev.clientX - x0) / k));
+              const up = () => {
+                window.removeEventListener('pointermove', move);
+                window.removeEventListener('pointerup', up);
+              };
+              window.addEventListener('pointermove', move);
+              window.addEventListener('pointerup', up);
+            }}
+          />
+        </aside>
+      )}
       {!wide && (
         <dialog ref={dialog} className="drawer" aria-label="会话列表" onClose={() => setOpen(false)} onCancel={() => setOpen(false)}>
           {open && sidebar}

@@ -1,11 +1,10 @@
 /**
- * 方形头像：浅色底 + 一个我们自己画的简单几何图形（圆、半圆、菱形、三条、拱形、角形、双圆；按名字固定取一种）。
- * 只照 sumus「彩色方块头像」的做法，不用它的小人形象、标志或任何图片。
- * 负责人用 Aroomo 标志；你自己是「我」；群聊是「#」。头像只是装饰：aria-hidden，名字由旁边的文字读出。
+ * 头像（2026-11-04 所有者：界面完全照 sumus，头像用我们自己画的同类风格彩色方块小图形）。
+ * 做法照 sumus：没有底色方块，直接是一个纯色的几何小身体 + 两个深色小眼睛；颜色取黄 / 蓝 / 粉 / 青 / 绿 / 紫。
+ * 图形全是我们自己画的（拱门、台阶、圆角方、胶囊、T 形、圆），不用 sumus 的小人文件、标志或任何图片。
+ * 负责人固定用黄色拱门；群聊是浅蓝底「#」；你自己是浅灰底首字。头像只是装饰：aria-hidden，名字由旁边的文字读出。
  */
-import { Logo } from '@/components/brand';
-
-export const TONES = 7;
+export const TONES = 6;
 
 export function toneOf(name: string): number {
   let h = 0;
@@ -13,57 +12,70 @@ export function toneOf(name: string): number {
   return h % TONES;
 }
 
-/** 7 种几何图形（24×24 画布，填充用 currentColor = 这一色调的深色） */
-const SHAPES = [
-  <circle key="c" cx="12" cy="12" r="7" />,
-  <path key="h" d="M4 15a8 8 0 0 1 16 0z" />,
-  <path key="d" d="M12 4l8 8-8 8-8-8z" />,
-  <g key="b">
-    <rect x="5" y="6" width="14" height="3" rx="1.5" />
-    <rect x="5" y="11" width="14" height="3" rx="1.5" />
-    <rect x="5" y="16" width="9" height="3" rx="1.5" />
-  </g>,
-  <path key="a" d="M5 20V12a7 7 0 0 1 14 0v8h-4v-8a3 3 0 0 0-6 0v8z" />,
-  <path key="k" d="M5 5h14v5H10v9H5z" />,
-  <g key="o">
-    <circle cx="8.5" cy="12" r="4.5" />
-    <circle cx="15.5" cy="12" r="4.5" opacity="0.6" />
-  </g>,
+/** 六种身体（40×40 画布），颜色和图形一一对应 */
+const COLORS = ['#ffd23f', '#4f8ef7', '#f7748c', '#4cc8e6', '#43cf9c', '#a98bfa'];
+const BODIES = [
+  // 黄：拱门
+  <path key="a" d="M8 33V19a12 12 0 0 1 24 0v14z" />,
+  // 蓝：台阶（左高右低两块）
+  <path key="s" d="M6 15a3 3 0 0 1 3-3h11a3 3 0 0 1 3 3v6h8a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3H9a3 3 0 0 1-3-3z" />,
+  // 粉：圆角方
+  <rect key="r" x="8" y="10" width="24" height="22" rx="5" />,
+  // 青：胶囊
+  <rect key="p" x="5" y="14" width="30" height="16" rx="8" />,
+  // 绿：T 形
+  <path key="t" d="M7 13a3 3 0 0 1 3-3h20a3 3 0 0 1 3 3v5a3 3 0 0 1-3 3h-5v9a3 3 0 0 1-3 3h-4a3 3 0 0 1-3-3v-9h-5a3 3 0 0 1-3-3z" />,
+  // 紫：圆
+  <circle key="c" cx="20" cy="21" r="12" />,
+];
+/** 每种身体的两只眼睛位置 */
+const EYES: [number, number][] = [
+  [16, 22],
+  [12, 18],
+  [17, 19],
+  [16, 21],
+  [17, 15],
+  [17, 19],
 ];
 
 export type AvatarKind = 'lead' | 'member' | 'group' | 'user';
+export type AvatarSize = 'xs' | 'sm' | 'msg' | 'md' | 'lg';
 
-export function Shape({ name }: { name: string }) {
+export function Figure({ tone }: { tone: number }) {
+  const t = ((tone % TONES) + TONES) % TONES;
+  const [x, y] = EYES[t]!;
   return (
-    <svg viewBox="0 0 24 24" className="av-shape" fill="currentColor" aria-hidden="true">
-      {SHAPES[toneOf(name + '·') % SHAPES.length]}
+    <svg viewBox="5 6 30 30" className="av-fig" aria-hidden="true">
+      <g fill={COLORS[t]}>{BODIES[t]}</g>
+      <circle cx={x} cy={y} r="1.7" fill="#262626" />
+      <circle cx={x + 6} cy={y} r="1.7" fill="#262626" />
     </svg>
   );
 }
 
-export function Avatar({ name, kind = 'member', size = 'md', off = false }: { name: string; kind?: AvatarKind; size?: 'sm' | 'md' | 'lg'; off?: boolean }) {
+/** 旧接口：只要图形（额度圆环头像在用） */
+export function Shape({ name }: { name: string }) {
+  return <Figure tone={toneOf(name)} />;
+}
+
+export function Avatar({ name, kind = 'member', size = 'md', off = false }: { name: string; kind?: AvatarKind; size?: AvatarSize; off?: boolean }) {
   const cls = `av av-${size}${off ? ' av-off' : ''}`;
-  if (kind === 'lead')
-    return (
-      <span className={`${cls} av-lead`} aria-hidden="true">
-        <Logo size={20} className="av-logo" />
-      </span>
-    );
   if (kind === 'user')
     return (
       <span className={`${cls} av-user`} aria-hidden="true">
-        我
+        {Array.from(name.trim())[0] ?? '我'}
       </span>
     );
   if (kind === 'group')
     return (
-      <span className={`${cls} av-t${toneOf(name)}`} aria-hidden="true">
+      <span className={`${cls} av-group`} aria-hidden="true">
         #
       </span>
     );
   return (
-    <span className={`${cls} av-t${toneOf(name)}`} aria-hidden="true">
-      <Shape name={name} />
+    <span className={cls} aria-hidden="true">
+      {/* 黄色拱门只给负责人；成员从其余五种里按名字取 */}
+      <Figure tone={kind === 'lead' ? 0 : 1 + (toneOf(name) % (TONES - 1))} />
     </span>
   );
 }
