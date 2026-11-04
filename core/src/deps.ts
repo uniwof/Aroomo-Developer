@@ -60,6 +60,8 @@ export interface CoreDeps {
   library: LibraryStore;
   /** 测试时注入：对话入口调用 LiteLLM 用的 fetch */
   chatFetch?: typeof fetch;
+  /** 测试时注入：/api/chat/stream 的每账号频率 / 并发限制（默认 20 次/分钟、同时 2 条） */
+  chatStreamLimits?: { perMinute?: number; concurrent?: number };
   /** 测试时注入；不传则按配置连接 LiteLLM */
   litellm?: LiteLLMAdmin;
   /** 有数据库时才有；关闭服务时一并关闭 */
