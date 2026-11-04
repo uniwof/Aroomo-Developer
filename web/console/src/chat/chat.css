@@ -1053,7 +1053,7 @@ kbd.row-value {
   container-type: inline-size;
   flex-wrap: wrap;
 }
-@container (max-width: 22em) {
+@container (max-width: 26em) {
   .main-head > .av {
     display: none;
   }
