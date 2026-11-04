@@ -56,19 +56,32 @@ export function RailNav({ active, onOpen, horizontal = false }: { active: string
   );
 }
 
-/** 我的头像 + 总额度圆环（D217/D218：只画圆环，不显示数字） */
-function MeRing({ usage, onOpen }: { usage: UsageRow[] | null; onOpen: () => void }) {
+/** 我的头像 + 总额度圆环（D217/D218：只画圆环，不显示数字）；窄栏和手机底部栏共用 */
+export function MeFace({ usage }: { usage: UsageRow[] | null }) {
   const w = worstRow(usage);
   const f = quotaFraction(w?.quota.used, w?.quota.limit);
   const q = quotaState(w ?? undefined);
-  const user = currentUser();
   return (
-    <button type="button" className="rail-me hit" aria-label={`我的账号（${user?.displayName || user?.email || '我'}），总额度：${q.label}`} title="我的账号" onClick={onOpen}>
-      <svg viewBox="0 0 36 36" className="rail-me-ring" aria-hidden="true">
+    <span className="rail-me-wrap" aria-hidden="true">
+      <svg viewBox="0 0 36 36" className="rail-me-ring">
         <circle cx="18" cy="18" r="16" className="ring-track" />
         {f != null && f < 1 && <circle cx="18" cy="18" r="16" className={`ring-arc ring-${q.tone}`} strokeDasharray={`${2 * Math.PI * 16 * (1 - f)} 200`} transform="rotate(-90 18 18)" />}
       </svg>
       <span className="rail-me-face">{initialOf()}</span>
+    </span>
+  );
+}
+
+/** 总额度状态的读屏文字 */
+export function meLabel(usage: UsageRow[] | null): string {
+  const user = currentUser();
+  return `我的账号（${user?.displayName || user?.email || '我'}），总额度：${quotaState(worstRow(usage) ?? undefined).label}`;
+}
+
+function MeRing({ usage, onOpen }: { usage: UsageRow[] | null; onOpen: () => void }) {
+  return (
+    <button type="button" className="rail-me hit" aria-label={meLabel(usage)} title="我的账号" onClick={onOpen}>
+      <MeFace usage={usage} />
     </button>
   );
 }

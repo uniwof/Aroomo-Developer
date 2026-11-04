@@ -240,6 +240,14 @@
   background: transparent;
   cursor: pointer;
 }
+.rail-me-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(2 * var(--k));
+  height: calc(2 * var(--k));
+}
 .rail-me-ring {
   position: absolute;
   inset: 0;
@@ -1728,4 +1736,121 @@ kbd.row-value {
 .chat-single .msg-name,
 .chat-single .msg-role {
   display: none;
+}
+
+/* ---------- 手机排法（<48em 或字号调大后放不下；负责人落地文档第 12 章）：每一层整页，三个顶层页底部有栏 ---------- */
+.app-phone {
+  flex-direction: column;
+}
+.app-phone > .main {
+  flex: 1;
+  min-height: 0;
+}
+.phone-list {
+  background: var(--bg);
+  font-size: calc(0.875 * var(--k));
+  line-height: 1.43;
+  overflow-y: auto;
+}
+.phone-list .side-inner {
+  height: auto;
+  min-height: 100%;
+}
+.phone-list .conv-scroll {
+  flex: none;
+  overflow: visible;
+}
+.phone-list .side-foot {
+  margin-top: auto;
+}
+.tabbar {
+  flex: none;
+  display: flex;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.tab {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(0.125 * var(--k));
+  min-height: max(44px, calc(3.5 * var(--k)));
+  padding: calc(0.375 * var(--k)) calc(0.25 * var(--k));
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: calc(0.6875 * var(--k));
+  line-height: 1.3;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.tab > svg {
+  width: calc(1.25 * var(--k));
+  height: calc(1.25 * var(--k));
+}
+.tab .rail-me-wrap {
+  width: calc(1.5 * var(--k));
+  height: calc(1.5 * var(--k));
+}
+.tab .rail-me-face {
+  width: calc(1.125 * var(--k));
+  height: calc(1.125 * var(--k));
+  font-size: calc(0.625 * var(--k));
+}
+.tab[aria-current='page'] {
+  color: var(--fg);
+  font-weight: 600;
+}
+.tab:focus-visible {
+  outline: 2px solid var(--fg);
+  outline-offset: -2px;
+}
+/* 「我」：设置、资源库、工具、API 一列 */
+.me-list {
+  list-style: none;
+  margin: 0;
+  padding: calc(0.5 * var(--k)) 0;
+}
+.me-row {
+  display: flex;
+  align-items: center;
+  gap: calc(0.75 * var(--k));
+  width: 100%;
+  min-height: max(44px, calc(3 * var(--k)));
+  padding: calc(0.5 * var(--k)) calc(1 * var(--k));
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: calc(0.9375 * var(--k));
+  text-align: left;
+  cursor: pointer;
+}
+.me-row > svg {
+  flex: none;
+  width: calc(1.125 * var(--k));
+  height: calc(1.125 * var(--k));
+}
+.me-row-label {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.me-row-go {
+  color: var(--muted);
+}
+.me-row:focus-visible {
+  outline: 2px solid var(--fg);
+  outline-offset: -2px;
+}
+@media (hover: hover) {
+  .me-row:hover {
+    background: var(--hover);
+  }
 }

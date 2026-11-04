@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ChatPage } from '@/chat/ChatPage';
 import { App } from '@/App';
@@ -106,8 +106,8 @@ describe('原生对话页', () => {
     expect(c.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
   }, 20000);
 
-  it('手机：只有一层抽屉（会话列表栏），没有标签页；设置、成员都在主区域原地打开；字号可调大并记住', async () => {
-    Object.defineProperty(window, 'innerWidth', { value: 390, configurable: true });
+  it('中等宽度（48–64em）：窄栏 + 对话，会话列表是一层抽屉，没有标签页；设置、成员都在主区域原地打开；字号可调大并记住', async () => {
+    Object.defineProperty(window, 'innerWidth', { value: 900, configurable: true });
     try {
       renderPage();
       expect(document.querySelectorAll('dialog')).toHaveLength(1);
@@ -116,13 +116,14 @@ describe('原生对话页', () => {
       await waitFor(() => expect(d.hasAttribute('open')).toBe(true));
       expect(screen.queryAllByRole('tab')).toHaveLength(0);
       // 置顶的 Aroomo 系统会话 = 收件箱
-      fireEvent.click(screen.getByRole('button', { name: '设置' }));
+      fireEvent.click(within(d).getByRole('button', { name: '设置' }));
       await waitFor(() => expect(d.hasAttribute('open')).toBe(false));
       expect(screen.getByRole('heading', { name: '设置' })).toBeInTheDocument();
-      fireEvent.change(screen.getByRole('slider', { name: /字号/ }), { target: { value: '24' } });
-      expect(loadPrefs().fontSize).toBe(24);
+      // 调到 15：900 宽仍在 48–64em 之间（再大就自动切成手机排法，见下一条测试）
+      fireEvent.change(screen.getByRole('slider', { name: /字号/ }), { target: { value: '15' } });
+      expect(loadPrefs().fontSize).toBe(15);
       fireEvent.click(screen.getByRole('button', { name: /打开菜单/ }));
-      fireEvent.click(screen.getByRole('button', { name: '成员' }));
+      fireEvent.click(within(document.querySelector('dialog')!).getByRole('button', { name: '成员' }));
       fireEvent.click(await screen.findByRole('button', { name: /^Kimi/ }));
       fireEvent.click(await screen.findByRole('button', { name: '在当前对话里点名 Kimi' }));
       await waitFor(() => expect((screen.getByLabelText('输入消息') as HTMLTextAreaElement).value).toContain('@Kimi '));
@@ -159,6 +160,27 @@ describe('原生对话页', () => {
     const { container } = renderPage();
     expect(container.querySelector('.app')).not.toBeNull();
     expect(document.documentElement.style.fontSize).toBe('');
+  });
+
+  it('手机（<48em）照 sumus：不用抽屉，整页列表 + 底部栏「对话 / 成员 / 我」，进对话后底部栏藏起来', () => {
+    const w0 = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+    try {
+      const { container } = renderPage();
+      expect(container.querySelector('dialog')).toBeNull();
+      expect(screen.queryByRole('navigation', { name: '主导航' })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: '返回对话列表' }));
+      const nav = screen.getByRole('navigation', { name: '主导航' });
+      expect(nav.querySelectorAll('button')).toHaveLength(3);
+      expect(within(nav).getByRole('button', { name: '对话' }).getAttribute('aria-current')).toBe('page');
+      fireEvent.click(within(nav).getByRole('button', { name: /^我：/ }));
+      fireEvent.click(within(screen.getByRole('list', { name: '我' })).getByRole('button', { name: '设置' }));
+      expect(screen.queryByRole('navigation', { name: '主导航' })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: '返回我' }));
+      expect(screen.getByRole('navigation', { name: '主导航' })).toBeInTheDocument();
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: w0 });
+    }
   });
 
   it('只有图标的按钮都有读屏名字（负责人落地文档 15 章必带测试）', () => {

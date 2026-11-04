@@ -134,15 +134,16 @@ describe('对话页：对标改进', () => {
     expect(screen.getByText('回到输入框')).toBeInTheDocument();
   });
 
-  it('快捷键：Ctrl+Shift+S 开关会话列表（手机宽度是抽屉）；Ctrl+Shift+O 新对话', async () => {
+  it('快捷键：Ctrl+Shift+S 开关会话列表（手机宽度是整页列表）；Ctrl+Shift+O 新对话', async () => {
     Object.defineProperty(window, 'innerWidth', { value: 390, configurable: true });
     try {
       renderPage();
-      const d = document.querySelector('dialog')!;
+      // 手机照 sumus 没有抽屉：会话列表是整页（带底部栏），再按一次回到对话
+      expect(document.querySelector('dialog')).toBeNull();
       fireEvent.keyDown(window, { key: 'S', ctrlKey: true, shiftKey: true });
-      await waitFor(() => expect(d.hasAttribute('open')).toBe(true));
+      await waitFor(() => expect(screen.getByRole('region', { name: '对话列表' })).toBeInTheDocument());
       fireEvent.keyDown(window, { key: 'S', ctrlKey: true, shiftKey: true });
-      await waitFor(() => expect(d.hasAttribute('open')).toBe(false));
+      await waitFor(() => expect(screen.queryByRole('region', { name: '对话列表' })).toBeNull());
       fireEvent.keyDown(window, { key: 'O', metaKey: true, shiftKey: true });
       expect(document.title).toBe('新对话 · Aroomo');
     } finally {

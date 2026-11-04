@@ -8,10 +8,10 @@
  * 边界：store.ts 管数据和请求，Thread.tsx 管对话区，Sidebar.tsx 管会话列表栏，panels.tsx 管面板，这里管拼装。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, ChevronDown, CircleAlert, Download, Ellipsis, Menu, Pencil, Plus, SquarePen, Trash2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BookOpen, ChevronDown, ChevronRight, CircleAlert, Download, Ellipsis, KeyRound, Menu, MessagesSquare, Pencil, Plus, Settings, SquarePen, Trash2, Users, Wrench } from 'lucide-react';
 import { api, currentUser, viaShell, type Member } from '@/lib/api';
 import { useUsage } from '@/lib/usage';
-import { Rail, quotaState, type RailTarget } from './Rail';
+import { MeFace, Rail, meLabel, quotaState, type RailTarget } from './Rail';
 import { HeaderCard } from './HeaderCard';
 import { Library } from '@/pages/Library';
 import { Keys } from '@/pages/Keys';
@@ -37,9 +37,12 @@ type View =
   | { kind: 'inbox' }
   | { kind: 'shortcuts' }
   | { kind: 'library' }
-  | { kind: 'keys' };
+  | { kind: 'keys' }
+  /** 手机底部栏「我」：设置、资源库、工具、API（负责人落地文档第 12 章） */
+  | { kind: 'me' };
 
 const TITLES: Record<Exclude<View['kind'], 'chat' | 'member'>, string> = {
+  me: '我',
   members: '成员',
   capmap: '能力地图',
   'group-new': '新建群聊',
@@ -60,6 +63,7 @@ function parentOf(v: View): { view: View; label: string } | null {
     case 'shortcuts':
       return { view: { kind: 'settings' }, label: '设置' };
     case 'chat':
+    case 'me':
       return null;
     default:
       return { view: { kind: 'chat' }, label: '对话' };
@@ -141,6 +145,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   const inboxCount = useInboxCount();
   const layout = useLayout();
   const wide = layout.side;
+  /** 手机排法（<48em，或字号调大后放不下）：不用抽屉，每一层整页 + 底部栏（负责人落地文档第 12 章） */
+  const phone = !layout.rail;
   const { rows: usage } = useUsage(120_000);
 
   const dialog = useRef<HTMLDialogElement>(null);
@@ -161,10 +167,10 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   useEffect(() => {
     const d = dialog.current;
     if (!d) return;
-    const show = open && !wide;
+    const show = open && !wide && !phone;
     if (show && !d.open) (d.showModal ? d.showModal() : d.setAttribute('open', ''));
     if (!show && d.open) (d.close ? d.close() : d.removeAttribute('open'));
-  }, [open, wide]);
+  }, [open, wide, phone]);
 
   const start = useCallback((opts: Parameters<typeof newConversation>[0] = {}) => {
     const c = newConversation(opts);
@@ -293,17 +299,26 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
       }}
       onOpen={(k) => goto({ kind: k })}
       usage={usage}
-      {...(wide ? {} : { onClose: () => setOpen(false) })}
+      {...(wide || phone ? {} : { onClose: () => setOpen(false) })}
     />
   );
+
+  /** 手机上「←」回到哪一层：成员、我是底部栏的顶层页，没有返回；我 里的四项回到 我；收件箱回到对话列表 */
+  const phoneParent = (v: View): { go: () => void; label: string } | null => {
+    if (v.kind === 'members' || v.kind === 'me') return null;
+    if (v.kind === 'settings' || v.kind === 'library' || v.kind === 'tools' || v.kind === 'keys') return { go: () => setView({ kind: 'me' }), label: '我' };
+    if (v.kind === 'inbox' || v.kind === 'group-new') return { go: () => { setView({ kind: 'chat' }); setOpen(true); }, label: '对话列表' };
+    const p = parentOf(v);
+    return p ? { go: () => setView(p.view), label: p.label } : null;
+  };
 
   const menuButton = !wide || collapsed ? (
     <button
       type="button"
       className="icon-btn hit"
-      aria-label="打开菜单：会话列表、成员、设置"
-      aria-haspopup={wide ? undefined : 'dialog'}
-      aria-expanded={wide ? !collapsed : open}
+      aria-label={phone ? '返回对话列表' : '打开菜单：会话列表、成员、设置'}
+      aria-haspopup={wide || phone ? undefined : 'dialog'}
+      aria-expanded={phone ? undefined : wide ? !collapsed : open}
       onClick={() => (wide ? setCollapsed(false) : setOpen(true))}
     >
       {/* 手机照 sumus 用「←」回到会话列表；桌面收起列表后用 ≡ */}
@@ -466,12 +481,12 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
       </>
     );
   } else {
-    const parent = parentOf(view);
+    const parent = phone ? phoneParent(view) : parentOf(view);
     const member = view.kind === 'member' ? members.find((m) => m.id === view.id) : undefined;
     const title = view.kind === 'member' ? (member?.name ?? '成员') : TITLES[view.kind];
     main = (
       <>
-        <PanelHeader title={title} lead={menuButton} {...(parent ? { onBack: () => setView(parent.view), backLabel: parent.label } : {})} />
+        <PanelHeader title={title} lead={phone ? null : menuButton} {...(parent ? { onBack: () => ('go' in parent ? parent.go() : setView(parent.view)), backLabel: parent.label } : {})} />
         <div className="panel-scroll">
           {view.kind === 'members' && (
             <>
@@ -512,6 +527,28 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
             </div>
           )}
           {view.kind === 'shortcuts' && <ShortcutsPanel />}
+          {view.kind === 'me' && (
+            <div className="panel">
+              <ul className="me-list" aria-label="我">
+                {(
+                  [
+                    ['settings', '设置', Settings],
+                    ['library', '资源库', BookOpen],
+                    ['tools', '工具', Wrench],
+                    ['keys', 'API', KeyRound],
+                  ] as const
+                ).map(([k, label, Icon]) => (
+                  <li key={k}>
+                    <button type="button" className="me-row" onClick={() => goto({ kind: k })}>
+                      <Icon aria-hidden="true" />
+                      <span className="me-row-label">{label}</span>
+                      <ChevronRight aria-hidden="true" className="me-row-go" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {view.kind === 'library' && (
             <div className="panel panel-embed">
               <Library />
@@ -527,8 +564,11 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     );
   }
 
+  /** 手机底部栏只在三个顶层页出现；进了对话或下一层就藏起来（照 sumus） */
+  const tab = !phone ? null : open && view.kind === 'chat' ? 'chats' : view.kind === 'members' ? 'members' : view.kind === 'me' ? 'me' : null;
+
   return (
-    <div className={`app${prefs.highContrast ? ' chat-hc' : ''}${wide ? ' app-wide' : ''}${layout.rail ? ' app-rail' : ''}${wide && collapsed ? ' app-collapsed' : ''}`}>
+    <div className={`app${prefs.highContrast ? ' chat-hc' : ''}${wide ? ' app-wide' : ''}${layout.rail ? ' app-rail' : ''}${phone ? ' app-phone' : ''}${wide && collapsed ? ' app-collapsed' : ''}`}>
       {layout.rail && <Rail active={view.kind} onOpen={(t: RailTarget) => goto({ kind: t })} usage={usage} />}
       {wide && !collapsed && (
         <aside className="side" aria-label="会话列表" style={{ width: `calc(${sideW} * var(--k))` }}>
@@ -564,14 +604,36 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           />
         </aside>
       )}
-      {!wide && (
+      {!wide && !phone && (
         <dialog ref={dialog} className="drawer" aria-label="会话列表" onClose={() => setOpen(false)} onCancel={() => setOpen(false)}>
           {open && sidebar}
         </dialog>
       )}
-      <section className="main" aria-labelledby={view.kind === 'chat' ? 'chat-title' : undefined} aria-label={view.kind === 'chat' ? undefined : '面板'}>
-        {main}
-      </section>
+      {phone && open && view.kind === 'chat' ? (
+        <section className="main phone-list" aria-label="对话列表">
+          {sidebar}
+        </section>
+      ) : (
+        <section className="main" aria-labelledby={view.kind === 'chat' ? 'chat-title' : undefined} aria-label={view.kind === 'chat' ? undefined : '面板'}>
+          {main}
+        </section>
+      )}
+      {phone && tab && (
+        <nav className="tabbar" aria-label="主导航">
+          <button type="button" className="tab hit" aria-current={tab === 'chats' ? 'page' : undefined} onClick={() => { setView({ kind: 'chat' }); setOpen(true); }}>
+            <MessagesSquare aria-hidden="true" />
+            <span>对话</span>
+          </button>
+          <button type="button" className="tab hit" aria-current={tab === 'members' ? 'page' : undefined} onClick={() => goto({ kind: 'members' })}>
+            <Users aria-hidden="true" />
+            <span>成员</span>
+          </button>
+          <button type="button" className="tab hit" aria-label={`我：${meLabel(usage)}`} aria-current={tab === 'me' ? 'page' : undefined} onClick={() => goto({ kind: 'me' })}>
+            <MeFace usage={usage} />
+            <span aria-hidden="true">我</span>
+          </button>
+        </nav>
+      )}
     </div>
   );
 }
