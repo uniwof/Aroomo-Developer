@@ -1,0 +1,5 @@
+{
+  "_说明": "白名单外的包逐个登记：\"包名\": { \"license\": \"与 lockfile 中完全一致\", \"reason\": \"为何可商用、零授权费\" }。禁用许可证（AGPL/SSPL/BUSL/Commons Clause/非商用/品牌限制）不能登记。LobeHub 只以官方镜像原样运行，不进任何依赖树，见 docs/third-party.md。",
+  "npm": {},
+  "python": {}
+}

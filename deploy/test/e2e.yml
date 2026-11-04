@@ -1,0 +1,12 @@
+# 只给 CI / 本地端到端测试用：让 backup / restore 容器接入外部网络 aroomo-e2e，
+# 那里有一个充当「异地 S3 备份目标」的 rustfs 容器（backup-target:9000）。
+# 该网络不属于 compose 项目，所以 `down -v` 模拟灾难时备份目标不会被删。
+services:
+  backup:
+    networks: [aroomo, e2e]
+  restore:
+    networks: [aroomo, e2e]
+networks:
+  e2e:
+    external: true
+    name: aroomo-e2e

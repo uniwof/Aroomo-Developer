@@ -1,0 +1,21 @@
+# 档位：标准版（约 4 GB 内存，PRODUCT §7.3）
+# 依据：docs/ops/MEMORY-REPORT.md（2026-10-28，AWS t4g.medium 3.7 GiB + 4 GB swap 实测）。
+# D66：每个容器（含一次性的 rustfs-init、restore）都必须有 mem_limit；CI 的 scripts/check-compose.sh 会检查。
+# 实测峰值（cgroup memory.peak，含页缓存）：postgres 363m、redis 17m、rustfs 147m、litellm 768m（顶到旧上限）、
+# core 46m、lobe 726m、cloudflared 18m。
+services:
+  postgres: { mem_limit: 640m }
+  redis: { mem_limit: 128m }
+  rustfs: { mem_limit: 256m }
+  rustfs-init: { mem_limit: 64m }
+  litellm: { mem_limit: 1024m } # 旧值 768m 实测被顶满；保持 LITELLM_NUM_WORKERS=1
+  core: { mem_limit: 256m }
+  shell: { mem_limit: 96m }
+  lobe: { mem_limit: 1024m }
+  cloudflared: { mem_limit: 128m }
+  backup: { mem_limit: 256m }
+  restore: { mem_limit: 512m }
+  gateway: { mem_limit: 128m }
+  gatus: { mem_limit: 128m }
+  beszel: { mem_limit: 128m }
+  beszel-agent: { mem_limit: 64m }

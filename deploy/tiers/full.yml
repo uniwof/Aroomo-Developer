@@ -1,0 +1,20 @@
+# 档位：完整版（≥8 GB 内存，PRODUCT §7.3；P0 服务器已改为 4 GB 的 t4g.medium，用标准版）
+# ⚠ 暂定值：完整版内存以后在用户电脑上实测（D66）；标准版实测见 docs/ops/MEMORY-REPORT.md。
+# D66：每个容器都必须有 mem_limit。
+# 后续模块（Karakeep、MetaMCP、网页代办等）加入时在此补充。
+services:
+  postgres: { mem_limit: 1536m }
+  redis: { mem_limit: 256m }
+  rustfs: { mem_limit: 512m }
+  rustfs-init: { mem_limit: 64m }
+  litellm: { mem_limit: 1536m }
+  core: { mem_limit: 512m }
+  shell: { mem_limit: 128m }
+  lobe: { mem_limit: 2048m }
+  cloudflared: { mem_limit: 256m }
+  backup: { mem_limit: 512m }
+  restore: { mem_limit: 1024m }
+  gateway: { mem_limit: 256m }
+  gatus: { mem_limit: 256m }
+  beszel: { mem_limit: 256m }
+  beszel-agent: { mem_limit: 128m }

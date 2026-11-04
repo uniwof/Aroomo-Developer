@@ -1,0 +1,35 @@
+# 只给 CI / 本地界面端到端测试用：一个假的 OpenAI 兼容模型服务（fake-llm:8000），
+# 测试里用 Aroomo 界面填一个指向它的 Key，验证「LobeHub → Core → LiteLLM → 模型」整条对话链路。
+services:
+  fake-llm:
+    image: node:22.23.4-alpine3.24
+    command:
+      - node
+      - -e
+      - |
+        const http = require('node:http');
+        const reply = (m) => '你好，我是测试模型（' + m + '）。';
+        http.createServer((req, res) => {
+          let raw = '';
+          req.on('data', (c) => (raw += c));
+          req.on('end', () => {
+            if (req.url.endsWith('/models')) {
+              res.writeHead(200, { 'content-type': 'application/json' });
+              return res.end(JSON.stringify({ object: 'list', data: [{ id: 'fake-model', object: 'model' }] }));
+            }
+            let body = {};
+            try { body = JSON.parse(raw || '{}'); } catch {}
+            const text = reply(body.model || '?');
+            if (body.stream) {
+              res.writeHead(200, { 'content-type': 'text/event-stream' });
+              for (const ch of [text.slice(0, 6), text.slice(6)]) {
+                res.write('data: ' + JSON.stringify({ id: 'x', object: 'chat.completion.chunk', created: 0, model: body.model, choices: [{ index: 0, delta: { role: 'assistant', content: ch }, finish_reason: null }] }) + '\n\n');
+              }
+              res.write('data: ' + JSON.stringify({ id: 'x', object: 'chat.completion.chunk', created: 0, model: body.model, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }) + '\n\n');
+              return res.end('data: [DONE]\n\n');
+            }
+            res.writeHead(200, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ id: 'x', object: 'chat.completion', created: 0, model: body.model, choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }));
+          });
+        }).listen(8000, '0.0.0.0');
+    networks: [aroomo]

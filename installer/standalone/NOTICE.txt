@@ -1,0 +1,25 @@
+Aroomo 独立版 —— 第三方组件说明（NOTICE）
+
+本安装包是 Aroomo 项目所有者自用的测试版，不对外分发、不商用。
+安装包里包含下列第三方组件，各自的版权归原作者所有，按各自的许可证使用。
+版本和校验值见程序文件夹里的 aroomo-components.json 与源码仓库的 installer/standalone/versions.json。
+
+1. LobeHub（对话界面）
+   Copyright (c) LobeHub LLC. https://github.com/lobehub/lobehub
+   许可证：LobeHub Community License（全文见 licenses\LobeHub-LICENSE.txt）。
+   使用的是官方 Docker 镜像 lobehub/lobehub 里的程序，未修改 LobeHub 的文件；
+   只把 Linux 平台的二进制依赖换成同版本的 Windows 官方构建（sharp、ffmpeg-static）。
+   按该许可证第 1b 条，分发衍生作品需要商业授权；因此本安装包只放在仓库的 GitHub 草稿发布里，
+   仅仓库所有者和协作者可见，不公开发布。
+2. LiteLLM（模型网关）—— MIT License，BerriAI。https://github.com/BerriAI/litellm
+3. Prisma（LiteLLM 的数据库层）—— Apache-2.0。https://github.com/prisma/prisma
+4. PostgreSQL —— PostgreSQL License。EDB 提供的 Windows 免安装包。
+5. pgvector —— PostgreSQL License。本项目 CI 按固定提交用 MSVC 编译。
+6. Node.js —— MIT License 等（见 node\LICENSE）。
+7. Python（python-build-standalone）—— PSF License 等。
+8. Redis（redis-windows 社区构建）—— 见 redis 文件夹内的许可证文件。
+9. RustFS —— Apache-2.0。https://github.com/rustfs/rustfs
+10. rclone —— MIT License。age —— BSD-3-Clause（Filippo Valsorda）。
+11. Chromium（Chrome for Testing）—— BSD 等，见 chromium 文件夹内的许可证说明。
+12. Meilisearch —— MIT License。
+13. FFmpeg（ffmpeg-static 的 Windows 构建）—— GPL/LGPL，见 lobe\node_modules\…\ffmpeg-static\ffmpeg.LICENSE。

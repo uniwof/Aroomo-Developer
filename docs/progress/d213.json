@@ -1,0 +1,16 @@
+{
+  "_说明": "D213 各项手工状态（done / partial / todo + 一句说明）。负责该项的线完成或推进时改这里；删掉某项则改为按 d213-<n> 标签工单自动统计。",
+  "1": {"status": "partial", "note": "RLS 底座与成员/公共记忆/资源库/保险箱/收件箱/Key 表 PR 已开，等负责人审"},
+  "2": {"status": "todo", "note": "D208 越权测试工具未开工"},
+  "3": {"status": "partial", "note": "小号 seed 与两个账号夹具已合（#157）"},
+  "4": {"status": "todo", "note": "staging 与自动部署未建"},
+  "5": {"status": "partial", "note": "gitleaks/OSV/CodeQL 已上（#158），Trivy 与端到端冒烟待做"},
+  "6": {"status": "todo", "note": ""},
+  "7": {"status": "todo", "note": "CI 内有备份恢复演练，真实环境演练未做"},
+  "8": {"status": "todo", "note": "甲骨文机器已有，尚未部署"},
+  "9": {"status": "todo", "note": ""},
+  "10": {"status": "todo", "note": ""},
+  "11": {"status": "todo", "note": ""},
+  "12": {"status": "partial", "note": "can() 权益判断预留已合（#164），计量待做"},
+  "13": {"status": "todo", "note": ""}
+}

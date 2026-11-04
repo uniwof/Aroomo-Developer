@@ -1,0 +1,45 @@
+# 环境变量与密钥（绝不提交）
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# 数据目录
+data/
+deploy/data/
+backups/
+*.sql
+# 迁移脚本是代码，必须提交（数据库导出仍被忽略）
+!core/migrations/*.sql
+!scripts/lib/*.sql
+*.dump
+
+# Node
+node_modules/
+dist/
+coverage/
+*.log
+npm-debug.log*
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Windows 安装包构建输出
+installer/windows/Output/
+.restore/
+installer/windows/bin/
+
+# gemini-cli（gemini-task 工作流运行时生成，不提交）
+.gemini/
+.gemini-task/
+gha-creds-*.json
+
+# 生产服务器上的本地密钥文件与发布状态（#171：发布脚本绝不 git clean / add -A）
+deploy/.lobehub-cli-key
+deploy/.r2-readonly.env
+.release/

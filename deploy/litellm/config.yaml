@@ -1,0 +1,19 @@
+# LiteLLM 代理配置（P0）。模型和 Key 不写在这里：由 Core 通过 LiteLLM 管理 API 写入数据库
+# （STORE_MODEL_IN_DB=True，凭据由 LITELLM_SALT_KEY 加密）。本文件不含任何密钥。
+model_list: []
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  store_model_in_db: true
+
+litellm_settings:
+  # 不把请求/回复正文写进日志（PRODUCT 0.4：密钥和内容不进日志）
+  turn_off_message_logging: true
+  drop_params: true
+
+router_settings:
+  # 429 冷却与回退在 P2 自动换人时细化（PRODUCT §9.4）
+  num_retries: 1
+  allowed_fails: 3
+  cooldown_time: 60

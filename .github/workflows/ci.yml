@@ -1,0 +1,449 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Core（lint + typecheck + test + build）
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: core
+    # 真 PostgreSQL：数据库相关测试除 PGlite 外再对它跑一遍（test/helpers/db.ts）
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: aroomo_test
+          POSTGRES_PASSWORD: placeholder-ci-only
+          POSTGRES_DB: aroomo_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U aroomo_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      CORE_TEST_DATABASE_URL: postgresql://aroomo_test:placeholder-ci-only@localhost:5432/aroomo_test
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: core/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  shell:
+    name: Shell（界面薄层：lint + typecheck + test + build）
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: shell
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: shell/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  console:
+    name: 控制台（web/console：typecheck + test + build）
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: web/console
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/console/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  licenses:
+    name: 许可证闸门（D179：npm + Python）
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: 闸门判定逻辑单测
+        run: node --test scripts/license-gate/policy.test.mjs
+      - name: npm（所有 package-lock.json，含 devDependencies）
+        run: node scripts/license-gate/check-npm.mjs
+      - name: Python（所有 requirements*.txt，pip-licenses）
+        run: bash scripts/license-gate/check-python.sh
+      - name: 检查 third-party.md 与依赖一致
+        run: node scripts/generate-third-party.mjs --check
+
+  compose:
+    name: Compose 配置校验 + 脚本检查
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - run: docker compose version
+      - run: scripts/check-compose.sh
+      - name: shellcheck
+        run: shellcheck -x scripts/*.sh scripts/lib/*.sh scripts/license-gate/*.sh deploy/backup/entrypoint.sh deploy/postgres/20-aroomo-dbs.sh deploy/lobe/rustfs-init.sh
+      - name: 备份保留策略单元测试
+        run: scripts/test-retention.sh
+      - name: Pester（pwsh，含与 select-tier.sh 的对照）
+        shell: pwsh
+        run: |
+          if (Get-Command Install-PSResource -ErrorAction SilentlyContinue) {
+            Install-PSResource Pester -Version 5.7.1 -TrustRepository -Scope CurrentUser -Reinstall
+          } else {
+            Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force -SkipPublisherCheck
+          }
+          Import-Module Pester -RequiredVersion 5.7.1
+          $c = New-PesterConfiguration
+          $c.Run.Path = 'installer/windows/tests'
+          $c.Run.Exit = $true
+          Invoke-Pester -Configuration $c
+      - name: select-tier 阈值
+        run: |
+          test "$(MEM_TOTAL_MB=1900 scripts/select-tier.sh)" = demo-2g
+          test "$(MEM_TOTAL_MB=3900 scripts/select-tier.sh)" = standard
+          test "$(MEM_TOTAL_MB=7700 scripts/select-tier.sh)" = full
+
+  images:
+    name: 自建镜像构建（core、backup）
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - run: docker build -t aroomo-core:ci core
+      - run: docker build -t aroomo-backup:ci deploy/backup
+      - run: docker build -t aroomo-shell:ci shell
+      - name: shell 镜像冒烟测试
+        run: |
+          # 镜像里 NODE_ENV=production，SHELL_AUTH=off 会被拒绝启动（#245）；静态资源不需要登录
+          docker run -d --name shell aroomo-shell:ci
+          for i in $(seq 1 20); do
+            if docker exec shell node -e "fetch('http://127.0.0.1:3000/aroomo/static/app.js').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
+              echo healthy; docker rm -f shell; exit 0
+            fi
+            sleep 1
+          done
+          docker logs shell; exit 1
+      - name: backup 镜像自检
+        run: |
+          docker run --rm --entrypoint age aroomo-backup:ci --version
+          docker run --rm --entrypoint age-keygen aroomo-backup:ci --version
+          docker run --rm --entrypoint rclone aroomo-backup:ci version
+          docker run --rm --entrypoint zstd aroomo-backup:ci --version
+          docker run --rm --entrypoint tar aroomo-backup:ci --version
+          docker run --rm --entrypoint pg_dumpall aroomo-backup:ci --version
+      - name: core 镜像冒烟测试
+        run: |
+          docker run -d --name core -e CORE_LOG_LEVEL=warn aroomo-core:ci
+          docker exec core ls /app/migrations/0001_audit_log.sql
+          for i in $(seq 1 20); do
+            if docker exec core node -e "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
+              echo healthy; docker rm -f core; exit 0
+            fi
+            sleep 1
+          done
+          docker logs core; exit 1
+
+  backup-e2e:
+    name: 备份/恢复端到端（S3 目标 → 删库 → 恢复 → 核对 → 演练）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - run: docker compose version
+      - run: scripts/test-backup-e2e.sh
+        env:
+          E2E_REPORT_DIR: ${{ runner.temp }}/drill-reports
+      - name: 上传恢复演练报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restore-drill-report
+          path: ${{ runner.temp }}/drill-reports/
+          if-no-files-found: ignore
+
+  multiarch:
+    name: 多架构镜像构建（amd64 + arm64：core、shell、backup）
+    # 用原生 runner 分别构建：QEMU 模拟 arm64 构建 shell 会卡到 6 小时超时被取消
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+      # 只构建、不推送（D71：不公开发布内嵌 LobeHub 的东西；这些镜像本身也不含 LobeHub，服务器 / 电脑上本地构建）
+      - run: docker buildx build --platform ${{ matrix.platform }} shell
+      - run: docker buildx build --platform ${{ matrix.platform }} core
+      - run: docker buildx build --platform ${{ matrix.platform }} deploy/backup
+
+  ui-e2e:
+    name: 界面端到端冒烟（官方 LobeHub + Aroomo Shell，电脑 + 手机截图）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: docker compose version
+      - run: scripts/test-ui-e2e.sh
+        env:
+          E2E_REPORT_DIR: ${{ runner.temp }}/ui-e2e-report
+      - name: 上传截图和报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-e2e-report
+          path: ${{ runner.temp }}/ui-e2e-report/
+          if-no-files-found: ignore
+
+  windows-installer:
+    name: Windows 安装器（PSScriptAnalyzer + Pester + 构建 .exe）
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: 安装 Pester 5 / PSScriptAnalyzer
+        shell: powershell
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force -SkipPublisherCheck
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser -Force
+      - name: PSScriptAnalyzer
+        shell: powershell
+        run: |
+          $r = Invoke-ScriptAnalyzer -Path installer/windows -Recurse -Settings installer/windows/PSScriptAnalyzerSettings.psd1
+          $r | Format-Table -AutoSize RuleName, Severity, ScriptName, Line, Message | Out-String -Width 250
+          if (@($r).Count -gt 0) { exit 1 }
+      - name: Pester（Windows PowerShell 5.1）
+        shell: powershell
+        run: |
+          Import-Module Pester -RequiredVersion 5.7.1
+          $c = New-PesterConfiguration
+          $c.Run.Path = 'installer/windows/tests'
+          $c.Run.Exit = $true
+          $c.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $c
+      - name: 下载 age-keygen.exe（核对 SHA-256，D64 主密钥离线生成）
+        shell: powershell
+        run: installer\windows\Get-AgeKeygen.ps1
+      - name: 构建安装包（Inno Setup）
+        shell: powershell
+        run: |
+          $iscc = Get-Command iscc.exe -ErrorAction SilentlyContinue
+          if (-not $iscc) {
+            $default = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+            if (-not (Test-Path $default)) { choco install innosetup -y --no-progress | Out-Host }
+            $iscc = $default
+          } else { $iscc = $iscc.Source }
+          & $iscc "/DAppVersion=0.1.0-ci.${{ github.run_number }}" installer\windows\aroomo-setup.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem installer\windows\Output | Format-Table Name, Length
+      - name: 上传安装包
+        uses: actions/upload-artifact@v4
+        with:
+          name: aroomo-setup-windows
+          path: installer/windows/Output/*.exe
+          if-no-files-found: error
+
+  master-key-tool:
+    name: 主密钥小工具冒烟（无交互：只输出 age1 公钥，结束删私钥；D64，A+）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: 文件格式与 age 哈希一致（与 Get-AgeKeygen.ps1 同版本同 SHA-256）
+        shell: powershell
+        run: |
+          $f = 'tools/master-key/New-AroomoMasterKey.cmd'
+          $b = [IO.File]::ReadAllBytes($f)
+          if ($b[0] -eq 0xEF) { throw 'cmd file must not have a BOM' }
+          if (-not ([Text.Encoding]::UTF8.GetString($b)).Contains("`r`n")) { throw 'cmd file must use CRLF' }
+          $rx = "'([0-9a-f]{64})'"
+          $a = [regex]::Match((Get-Content $f -Raw -Encoding UTF8), $rx).Groups[1].Value
+          $g = [regex]::Match((Get-Content installer/windows/Get-AgeKeygen.ps1 -Raw -Encoding UTF8), $rx).Groups[1].Value
+          if (-not $a -or $a -ne $g) { throw "age sha256 mismatch: $a / $g" }
+          $va = [regex]::Match((Get-Content $f -Raw -Encoding UTF8), "AgeVersion = '(v[0-9.]+)'").Groups[1].Value
+          $vg = [regex]::Match((Get-Content installer/windows/Get-AgeKeygen.ps1 -Raw -Encoding UTF8), "version = '(v[0-9.]+)'").Groups[1].Value
+          if ($va -ne $vg) { throw "age version mismatch: $va / $vg" }
+      - name: 双击入口（cmd）无交互生成
+        shell: cmd
+        env:
+          AROOMO_MK_NONINTERACTIVE: '1'
+        run: |
+          set AROOMO_MK_OUT=%RUNNER_TEMP%\mk-test.txt
+          call tools\master-key\New-AroomoMasterKey.cmd > "%RUNNER_TEMP%\mk-out.txt"
+          if errorlevel 1 exit /b 1
+      - name: 核对输出只有公钥、私钥文件有效，然后删除私钥
+        shell: powershell
+        run: |
+          $out = @(Get-Content "$env:RUNNER_TEMP\mk-out.txt" | Where-Object { $_.Trim() })
+          $key = "$env:RUNNER_TEMP\mk-test.txt"
+          try {
+            if ($out.Count -ne 1 -or $out[0] -cnotmatch '^age1[0-9a-z]{58}$') { throw "stdout is not exactly one age1 public key line ($($out.Count) lines)" }
+            if ((Get-Content "$env:RUNNER_TEMP\mk-out.txt" -Raw) -match 'AGE-SECRET-KEY') { throw 'secret key leaked to stdout' }
+            $t = Get-Content $key -Raw -Encoding UTF8
+            if ($t -cnotmatch '(?m)^AGE-SECRET-KEY-1[0-9A-Z]{58}\r?$') { throw 'key file has no secret key' }
+            if (-not $t.Contains("# public key: $($out[0])")) { throw 'key file does not match printed public key' }
+            Write-Output 'smoke ok: only the public key was printed; key file valid'
+          } finally {
+            Remove-Item -LiteralPath $key -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath "$env:RUNNER_TEMP\mk-out.txt" -Force -ErrorAction SilentlyContinue
+          }
+          if (Test-Path -LiteralPath $key) { throw 'key file was not deleted' }
+
+  restore-drill-tool:
+    name: 备份本机核对小工具冒烟（测试主密钥加密假备份 → 核对行数；错的主密钥被拒；D64，A+）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: 文件格式与 age 哈希一致（与主密钥小工具同版本同 SHA-256）
+        shell: powershell
+        run: |
+          $f = 'tools/restore-drill/Test-AroomoBackup.cmd'
+          $b = [IO.File]::ReadAllBytes($f)
+          if ($b[0] -eq 0xEF) { throw 'cmd file must not have a BOM' }
+          if (-not ([Text.Encoding]::UTF8.GetString($b)).Contains("`r`n")) { throw 'cmd file must use CRLF' }
+          $rx = "AgeZipSha256 = '([0-9a-f]{64})'"
+          $a = [regex]::Match((Get-Content $f -Raw -Encoding UTF8), $rx).Groups[1].Value
+          $m = [regex]::Match((Get-Content tools/master-key/New-AroomoMasterKey.cmd -Raw -Encoding UTF8), $rx).Groups[1].Value
+          if (-not $a -or $a -ne $m) { throw "age sha256 mismatch: $a / $m" }
+      - name: 两把测试主密钥（主密钥小工具无交互生成）
+        shell: cmd
+        env:
+          AROOMO_MK_NONINTERACTIVE: '1'
+        run: |
+          set AROOMO_MK_OUT=%RUNNER_TEMP%\rd-key.txt
+          call tools\master-key\New-AroomoMasterKey.cmd > "%RUNNER_TEMP%\rd-pub.txt"
+          if errorlevel 1 exit /b 1
+          set AROOMO_MK_OUT=%RUNNER_TEMP%\rd-wrong-key.txt
+          call tools\master-key\New-AroomoMasterKey.cmd > NUL
+          if errorlevel 1 exit /b 1
+      - name: 做一份与服务器同格式的假备份（manifest + counts.tsv + dump + .env，公钥加密）
+        shell: powershell
+        run: |
+          $t = $env:RUNNER_TEMP
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest -UseBasicParsing -OutFile "$t\age.zip" https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-windows-amd64.zip
+          Invoke-WebRequest -UseBasicParsing -OutFile "$t\zstd.zip" https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-v1.5.7-win64.zip
+          Expand-Archive "$t\age.zip" "$t\agebin"; Expand-Archive "$t\zstd.zip" "$t\zstdbin"
+          $src = "$t\fake"; New-Item -ItemType Directory "$src\backup-stage\db", "$src\data\secrets" -Force | Out-Null
+          $u = New-Object System.Text.UTF8Encoding($false)
+          [IO.File]::WriteAllText("$src\backup-stage\manifest.json", '{"format":2,"created_at":"ci","host_tag":"ci","databases":[{"name":"lobechat","tables":2},{"name":"aroomo_core","tables":1}],"pg_dump":"ci"}', $u)
+          [IO.File]::WriteAllText("$src\backup-stage\db\lobechat.counts.tsv", "public.users`t3`npublic.messages`t40`n", $u)
+          [IO.File]::WriteAllText("$src\backup-stage\db\aroomo_core.counts.tsv", "public.members`t5`n", $u)
+          [IO.File]::WriteAllText("$src\backup-stage\db\lobechat.dump", 'PGDMP fake', $u)
+          [IO.File]::WriteAllText("$src\backup-stage\db\aroomo_core.dump", 'PGDMP fake', $u)
+          [IO.File]::WriteAllText("$src\data\secrets\aroomo.env", 'X=1', $u)
+          $pub = @(Get-Content "$t\rd-pub.txt" | Where-Object { $_.Trim() })[0].Trim()
+          $out = "$t\aroomo-ci-20261031T000000Z.tar.zst.age"
+          cmd /d /c "$env:SystemRoot\System32\tar.exe -cf - -C $src backup-stage data | $t\zstdbin\zstd-v1.5.7-win64\zstd.exe -q -c | $t\agebin\age\age.exe -r $pub -o $out"
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $out)) { throw 'fake backup failed' }
+      - name: 核对：对的主密钥通过并输出正确计数；错的主密钥被拒
+        shell: cmd
+        env:
+          AROOMO_RD_NONINTERACTIVE: '1'
+        run: |
+          set AROOMO_RD_FILE=%RUNNER_TEMP%\aroomo-ci-20261031T000000Z.tar.zst.age
+          set AROOMO_RD_KEY=%RUNNER_TEMP%\rd-key.txt
+          call tools\restore-drill\Test-AroomoBackup.cmd > "%RUNNER_TEMP%\rd-out.txt" 2> "%RUNNER_TEMP%\rd-err1.txt"
+          if errorlevel 1 (type "%RUNNER_TEMP%\rd-out.txt" & type "%RUNNER_TEMP%\rd-err1.txt" & exit /b 1)
+          type "%RUNNER_TEMP%\rd-out.txt"
+          findstr /b /c:"ok databases=2 tables=3 rows=48 entries=" "%RUNNER_TEMP%\rd-out.txt" || exit /b 1
+          findstr /c:"env=true" "%RUNNER_TEMP%\rd-out.txt" || exit /b 1
+          set AROOMO_RD_KEY=%RUNNER_TEMP%\rd-wrong-key.txt
+          call tools\restore-drill\Test-AroomoBackup.cmd > NUL 2> "%RUNNER_TEMP%\rd-err.txt"
+          if not errorlevel 1 (echo wrong key was accepted & exit /b 1)
+          echo wrong key rejected ok
+          exit /b 0
+      - name: 删除测试私钥
+        if: always()
+        shell: powershell
+        run: |
+          Remove-Item "$env:RUNNER_TEMP\rd-key.txt", "$env:RUNNER_TEMP\rd-wrong-key.txt" -Force -ErrorAction SilentlyContinue
+
+  release-scripts:
+    name: 发布脚本测试（#171 / #229，不允许跳过）
+    runs-on: ubuntu-24.04
+    # 真 PostgreSQL：生产前检查的 SQL 在真库上跑
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: aroomo_test
+          POSTGRES_PASSWORD: placeholder-ci-only
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U aroomo_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: psql 客户端
+        run: command -v psql >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client)
+      - name: release-tag.sh（临时 git 仓库 + 假 compose）
+        run: |
+          set -o pipefail
+          scripts/test-release.sh | tee /tmp/test-release.log
+          if grep -q '^FAIL' /tmp/test-release.log; then exit 1; fi
+          if ! grep -qx '全部通过' /tmp/test-release.log; then echo "没有「全部通过」"; exit 1; fi
+      - name: release-precheck.sh（真 PostgreSQL + 假备份命令）
+        env:
+          PGHOST: localhost
+          PGUSER: aroomo_test
+          PGPASSWORD: placeholder-ci-only
+          RELEASE_TEST_PSQL: psql -X -q -A -t -v ON_ERROR_STOP=1
+        run: |
+          set -o pipefail
+          scripts/test-release-precheck.sh | tee /tmp/test-precheck.log
+          # 跳过就算失败（bash -e 不会因为 ! 取反的命令失败而退出，所以写成显式 if … exit 1）
+          if grep -q '^跳过' /tmp/test-precheck.log; then echo "测试被跳过，不算通过"; exit 1; fi
+          if grep -q '^FAIL' /tmp/test-precheck.log; then exit 1; fi
+          if ! grep -qx '全部通过' /tmp/test-precheck.log; then echo "没有「全部通过」"; exit 1; fi
+
+  secrets:
+    name: 密钥扫描（gitleaks）
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

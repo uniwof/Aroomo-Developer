@@ -1,0 +1,144 @@
+{
+  "_comment": "独立版（不需要 Docker）打包用的全部第三方组件：固定版本 + SHA-256。全部打进一个离线安装包（用户决定 2026-10-28：安装时不从 GitHub/Docker/npm 下载）。升级时一并更新校验值。",
+  "lobehub": {
+    "version": "2.2.20",
+    "image": "lobehub/lobehub",
+    "digest_linux_amd64": "sha256:4990843c886432c66f8f68b06205f2bba4ab4c7a30e27569493aabf39f6234a7",
+    "license_url": "https://raw.githubusercontent.com/lobehub/lobehub/v2.2.20/LICENSE",
+    "license_sha256": "790a8c42f10beb4f5e9122e05a8e65d5522de49f89ac69cd31063c0f2be93ea4",
+    "_note": "官方 Docker 镜像（与 deploy/docker-compose.yml 同一版本）里的 /app，原样使用；只把 Linux 平台的二进制依赖换成同版本的 Windows 官方构建（sharp、ffmpeg）。LobeHub Community License：含 LobeHub 的安装包只能发到 GitHub 草稿发布（仓库公开期间），见 docs/architecture/STANDALONE.md"
+  },
+  "crane": {
+    "version": "v0.22.1",
+    "url": "https://github.com/google/go-containerregistry/releases/download/v0.22.1/go-containerregistry_Linux_x86_64.tar.gz",
+    "sha256": "0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0"
+  },
+  "sharp_win32": [
+    {
+      "version": "0.34.5",
+      "integrity": "sha512-+29YMsqY2/9eFEiW93eqWnuLcWcufowXewwSNIT6UwZdUUCrM3oFjMWH/Z6/TMmb4hlFenmfAVbpWeup2jryCw=="
+    },
+    {
+      "version": "0.35.5",
+      "integrity": "sha512-x76eH0vEiHlcMQu8Y8IenntaACtddpT6W0wmXtWrnKcnKI7ME5DdgqhAD6SEWOEl1v2zDvkZDhFA9KnURwpfqg=="
+    }
+  ],
+  "ffmpeg_win32": {
+    "release": "b6.1.1",
+    "url": "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-win32-x64.gz",
+    "sha256": "8883a3dffbd0a16cf4ef95206ea05283f78908dbfb118f73c83f4951dcc06d77",
+    "license_url": "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/win32-x64.LICENSE",
+    "license_sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+  },
+  "node": {
+    "version": "22.23.4",
+    "url": "https://nodejs.org/dist/v22.23.4/node-v22.23.4-win-x64.zip",
+    "sha256": "cbc74b5e0982c9dbb41525fd8fb5dcd32fbee237863f7829072f4639a1ce5f20"
+  },
+  "postgresql": {
+    "version": "17.11",
+    "url": "https://get.enterprisedb.com/postgresql/postgresql-17.11-1-windows-x64-binaries.zip",
+    "sha256": "6eabdf00d2893713b75db4336a23c3fdf505f056e217ec6e2e95d901750cfea3"
+  },
+  "pgvector": {
+    "version": "v0.8.7",
+    "repo": "https://github.com/pgvector/pgvector.git",
+    "commit": "f37c13f68b57d2c3472b2214fbcff699d6d34876"
+  },
+  "redis": {
+    "version": "8.2.10",
+    "url": "https://github.com/redis-windows/redis-windows/releases/download/8.2.10/Redis-8.2.10-Windows-x64-msys2.zip",
+    "sha256": "281f180eaba420f43eb18d655197d55bf804eb692bc55209264bfb284da3850f",
+    "_note": "社区的 Windows 构建（redis-windows/redis-windows，MSYS2 编译的官方源码），不是 Redis 官方发布"
+  },
+  "rustfs": {
+    "version": "1.0.4",
+    "url": "https://github.com/rustfs/rustfs/releases/download/1.0.4/rustfs-windows-x86_64-v1.0.4.zip",
+    "sha256": "2e3af0b187dd70435dfdefe5f61aae7eede5a21fc9a2a2f07e289f727adbcfa6"
+  },
+  "rclone": {
+    "version": "v1.75.2",
+    "url": "https://github.com/rclone/rclone/releases/download/v1.75.2/rclone-v1.75.2-windows-amd64.zip",
+    "sha256": "8a9db2bad1dc79a65b3348fd857069598e2aab7cf4d118b77b1df23055aff818"
+  },
+  "age": {
+    "version": "v1.2.1",
+    "url": "https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-windows-amd64.zip",
+    "sha256": "46db0db71f146061f7c8fffa912cb806aef1bc8450e27a3abc1744f0591b89fb"
+  },
+  "python": {
+    "version": "3.12.16",
+    "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.12.16%2B20261026-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
+    "sha256": "1f2ab53880fc67ea323398c6388e05af28addc99a8e389209f08a51fdff4b149",
+    "_note": "python-build-standalone（astral-sh）install_only_stripped，自带 pip（D77-3）"
+  },
+  "litellm": {
+    "version": "1.106.4",
+    "pip": "litellm[proxy]==1.106.4",
+    "wheel_sha256_win_amd64": "1dc78af5a710715b1807a73d1b378d4d1fd82a4f4a13e45179b76287cbbabba9",
+    "prisma_python": "prisma==0.15.0",
+    "prisma_cli": "5.17.0",
+    "_note": "与 deploy/docker-compose.yml 的 ghcr.io/berriai/litellm:v1.106.4 同一版本（PyPI 官方 Windows wheel）；prisma CLI 和引擎在构建时下载进安装包，运行时离线"
+  },
+  "chromium": {
+    "version": "156.0.8078.73",
+    "url": "https://storage.googleapis.com/chrome-for-testing-public/156.0.8078.73/win64/chrome-win64.zip",
+    "sha256": "5db0ad4c070907a791ec895b9de5ed15334b27f79af2556a131c3c11b3913a2b",
+    "_note": "Google 官方 Chrome for Testing（完整档：网页代办、Karakeep 抓取网页用）；随安装包离线提供"
+  },
+  "meilisearch": {
+    "version": "v1.56.0",
+    "url": "https://github.com/meilisearch/meilisearch/releases/download/v1.56.0/meilisearch-windows-amd64.exe",
+    "sha256": "916591c45ca5be5eeb6981f68d987032f90a557a182fc7bdfdb011b869b90578",
+    "license_url": "https://raw.githubusercontent.com/meilisearch/meilisearch/v1.56.0/LICENSE",
+    "_note": "完整档：Karakeep（收藏）的全文搜索引擎，官方 Windows 构建"
+  },
+  "karakeep": {
+    "version": "0.34.1",
+    "image": "ghcr.io/karakeep-app/karakeep",
+    "digest_linux_amd64": "sha256:7d7ae59b924b6b58e018f2a67aa7207519ef0625ead5306a2491f982b6f89886",
+    "sharp": "0.35.5",
+    "re2": {
+      "version": "1.26.1",
+      "url": "https://github.com/uhop/node-re2/releases/download/1.26.1/win32-x64-127.br",
+      "sha256": "fc83e17f72cbad11c524d99dcfc73431293a67432a0368c1ab64a379bc62c5d1",
+      "_note": "node-re2 官方发布的 Windows 预编译，Node 22（ABI 127）"
+    },
+    "license_url": "https://raw.githubusercontent.com/karakeep-app/karakeep/v0.34.1/LICENSE",
+    "license_sha256": "8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef",
+    "_note": "完整档：收藏（Karakeep，AGPL-3.0）。官方镜像里的 /app + /db_migrations 原样使用，只换 Windows 版原生模块；搜索用随包的 Meilisearch，抓网页用随包的 Chromium（无界面，只听 127.0.0.1）",
+    "tessdata": [
+      {
+        "package": "@tesseract.js-data/eng",
+        "version": "1.0.0",
+        "lang": "eng",
+        "integrity": "sha512-mbTumm6KQPUHyzTPQaF3ObXYnx0SqqfV2nabqFVQBwD6Kl7PhGSLSzOlfFTWy0P3BjghaSKA2W9GB19Jk+ZcTg=="
+      },
+      {
+        "package": "@tesseract.js-data/chi_sim",
+        "version": "1.0.0",
+        "lang": "chi_sim",
+        "integrity": "sha512-iuErURkPbECDUazgsLn/r3c+tU2y5o5S/w14d0A/YiagfsjYyZKgTo75RUpsGJ311qtu0dIX4hqnXAAjmqf2CA=="
+      }
+    ],
+    "_note_tessdata": "OCR 语言数据（tesseract.js 默认从网上下载）：随包放进 OCR_CACHE_DIR，离线可用"
+  },
+  "rsshub": {
+    "revision": "1d73c7c6158e0fe2bfab06300f41b040716127ab",
+    "image": "diygod/rsshub",
+    "digest_linux_amd64": "sha256:09e17360f86f50e35955702293fc3eb47b6c83aefb793d04df05527a0acae210",
+    "oxc_parser": {
+      "version": "0.155.0",
+      "integrity": "sha512-8heq6jGq+rfpTDRDjoQiBHw0maQZf3IXkS99pdHQZPoTL5kyF5qyPS0RidUlSdnWDIqxXb5nux7GBD9cT+imUw=="
+    },
+    "license_url": "https://raw.githubusercontent.com/DIYgod/RSSHub/1d73c7c6158e0fe2bfab06300f41b040716127ab/LICENSE",
+    "license_sha256": "8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef",
+    "_note": "完整档：RSS 订阅源（RSSHub，AGPL-3.0），官方镜像 2026-10-27 构建（按摘要固定）。上游只发 latest / 提交号标签"
+  },
+  "zstd": {
+    "version": "v1.5.7",
+    "url": "https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-v1.5.7-win64.zip",
+    "sha256": "acb4e8111511749dc7a3ebedca9b04190e37a17afeb73f55d4425dbf0b90fad9",
+    "_note": "备份和服务器同一格式（format 2：tar + zstd + age，D79）"
+  }
+}

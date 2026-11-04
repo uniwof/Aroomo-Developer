@@ -1,0 +1,19 @@
+{
+  "recipes": [
+    {
+      "id": "example-checkin",
+      "site": "example.com",
+      "kind": "checkin",
+      "steps": [
+        { "do": "goto", "url": "https://example.com/login" },
+        { "do": "fill", "fields": ["username", "password"] },
+        { "do": "act", "text": "点击登录按钮" },
+        { "do": "blockers" },
+        { "do": "expect", "question": "现在是否已登录", "ok": "已登录" },
+        { "do": "goto", "url": "https://example.com/daily" },
+        { "do": "act", "text": "点击签到；如果今天已签到，说明已签到" },
+        { "do": "blockers" }
+      ]
+    }
+  ]
+}

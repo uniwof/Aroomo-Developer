@@ -1,0 +1,24 @@
+# 把数据放到指定文件夹（Windows 用户可选自己的文件夹，PRODUCT §16 P0-f）。
+# DATA_DIR 必须是 Docker 引擎能看到的绝对路径，且下面的子目录需事先创建：
+#   postgres/  redis/  rustfs/
+# Linux 示例：DATA_DIR=/srv/aroomo
+# Windows（Docker Desktop）示例与注意事项待安装器调研 Issue 确认（NTFS 绑定挂载对 PostgreSQL 有性能/权限风险）。
+volumes:
+  pg-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_DIR:?使用 data-dir.yml 时必须设置 DATA_DIR}/postgres
+  redis-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_DIR:?使用 data-dir.yml 时必须设置 DATA_DIR}/redis
+  rustfs-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_DIR:?使用 data-dir.yml 时必须设置 DATA_DIR}/rustfs
