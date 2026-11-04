@@ -1893,11 +1893,11 @@ kbd.row-value {
     margin-bottom: 0;
   }
 }
-/* 会话列表很窄（手机 + 大字号）：名字占满一行，时间换到下一行，不把名字挤成一字一行 */
+/* 会话列表很窄（手机 + 大字号；桌面会话栏最窄 17.5rem 不会触发）：名字占满一行，时间换到下一行，不把名字挤成一字一行 */
 .conv-scroll {
   container-type: inline-size;
 }
-@container (max-width: 20rem) {
+@container (max-width: 16rem) {
   .conv-top {
     flex-wrap: wrap;
     row-gap: 0;
