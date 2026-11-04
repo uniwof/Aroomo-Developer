@@ -18,6 +18,7 @@ import { Tools } from '@/pages/Tools';
 import { Inbox } from '@/pages/Inbox';
 import { Settings } from '@/pages/Settings';
 import { Thread } from './Thread';
+import { SPEECH_RATES, speechSupported } from './speech';
 import { applyDisplay, type Theme } from '@/lib/display';
 import {
   FONT_SIZES,
@@ -153,6 +154,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     if (id === currentId) setCurrentId(next[0]!.id);
   };
 
+  const allowOnlineSpeech = useCallback(() => setPrefs((p) => ({ ...p, speechOnline: true })), []);
   const memberNames = useMemo(() => members.map((m) => m.name), [members]);
   const style = { '--chat-font': `${prefs.fontSize}px` } as React.CSSProperties;
 
@@ -180,7 +182,17 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           原生对话要直接打开 Aroomo 控制台（不经过旧的 LobeHub 外壳）才能用。
         </p>
       )}
-      <Thread key={current.id} conversation={current} onMessages={onMessages} insert={insert} members={memberNames} {...(fetchImpl ? { fetchImpl } : {})} />
+      <Thread
+        key={current.id}
+        conversation={current}
+        onMessages={onMessages}
+        insert={insert}
+        members={memberNames}
+        speechRate={prefs.speechRate}
+        speechOnline={prefs.speechOnline}
+        onAllowOnlineSpeech={allowOnlineSpeech}
+        {...(fetchImpl ? { fetchImpl } : {})}
+      />
 
       <dialog ref={dialog} className="chat-drawer" aria-label="菜单" onClose={() => setOpen(false)} onCancel={() => setOpen(false)}>
         <Tabs
@@ -352,6 +364,24 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
                       ))}
                     </div>
                   </fieldset>
+                  {speechSupported() && (
+                    <>
+                      <fieldset className="chat-fieldset">
+                        <legend>朗读语速</legend>
+                        <div className="chat-seg" role="radiogroup" aria-label="朗读语速">
+                          {SPEECH_RATES.map((r) => (
+                            <button key={r} type="button" role="radio" aria-checked={prefs.speechRate === r} className="chat-btn chat-btn-ghost" onClick={() => setPrefs((p) => ({ ...p, speechRate: r }))}>
+                              {r.toFixed(1)}
+                            </button>
+                          ))}
+                        </div>
+                      </fieldset>
+                      <label className="chat-check">
+                        <input type="checkbox" checked={prefs.speechOnline} onChange={(e) => setPrefs((p) => ({ ...p, speechOnline: e.target.checked }))} />
+                        本机没有中文语音时，用在线语音（文字会发到 Google 或微软合成）
+                      </label>
+                    </>
+                  )}
                   <details className="chat-keys">
                     <summary>键盘快捷键</summary>
                     <dl>

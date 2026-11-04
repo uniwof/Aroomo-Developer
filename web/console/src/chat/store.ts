@@ -36,7 +36,18 @@ export function splitSse(buf: string): { events: string[]; rest: string } {
   return { events, rest };
 }
 
-export type StreamEvent = { type: 'delta'; text: string } | { type: 'error'; text: string } | { type: 'finish' } | { type: 'done' };
+/** 整条回复失败的原因（Core 只发这 4 种，审查点 1 补充裁决 1）；界面据此决定显示「重试」还是「去检查 Key」 */
+export type FailureCode = 'gateway_unreachable' | 'key_invalid' | 'rate_limited' | 'upstream_error';
+const FAILURE_CODES: readonly string[] = ['gateway_unreachable', 'key_invalid', 'rate_limited', 'upstream_error'];
+/** Core 随 error 发来的失败码部件（AI SDK UI Message Stream 的 data-* 部件） */
+export const FAILURE_PART = 'data-aroomo-failure';
+
+export type StreamEvent =
+  | { type: 'delta'; text: string }
+  | { type: 'error'; text: string }
+  | { type: 'failure'; code: FailureCode }
+  | { type: 'finish' }
+  | { type: 'done' };
 
 /** 一个 SSE 事件 → 我们关心的事件（其余忽略） */
 export function parseEvent(event: string): StreamEvent | null {
@@ -48,8 +59,9 @@ export function parseEvent(event: string): StreamEvent | null {
   if (!data) return null;
   if (data === '[DONE]') return { type: 'done' };
   try {
-    const j = JSON.parse(data) as { type?: string; delta?: unknown; errorText?: unknown };
+    const j = JSON.parse(data) as { type?: string; delta?: unknown; errorText?: unknown; data?: { code?: unknown } };
     if (j.type === 'text-delta' && typeof j.delta === 'string') return { type: 'delta', text: j.delta };
+    if (j.type === FAILURE_PART && typeof j.data?.code === 'string' && FAILURE_CODES.includes(j.data.code)) return { type: 'failure', code: j.data.code as FailureCode };
     if (j.type === 'error') return { type: 'error', text: typeof j.errorText === 'string' ? j.errorText : '对话出错了，请稍后再试。' };
     if (j.type === 'finish') return { type: 'finish' };
   } catch {
@@ -58,7 +70,14 @@ export function parseEvent(event: string): StreamEvent | null {
   return null;
 }
 
-export class ChatStreamError extends Error {}
+export class ChatStreamError extends Error {
+  /** Core 给了失败码时带上（key_invalid 不显示「重试」，改成「去检查 Key」） */
+  readonly code: FailureCode | undefined;
+  constructor(message: string, code?: FailureCode) {
+    super(message);
+    this.code = code;
+  }
+}
 
 export const NETWORK_ERROR = '连不上 Aroomo，请检查网络后点「重试」。';
 
@@ -99,6 +118,7 @@ export async function* streamChat(turns: ChatTurn[], model: string, signal: Abor
   const dec = new TextDecoder();
   let buf = '';
   let text = '';
+  let code: FailureCode | undefined;
   try {
     for (;;) {
       const { done, value } = await reader.read();
@@ -111,7 +131,8 @@ export async function* streamChat(turns: ChatTurn[], model: string, signal: Abor
         if (ev.type === 'delta') {
           text += ev.text;
           yield text;
-        } else if (ev.type === 'error') throw new ChatStreamError(ev.text);
+        } else if (ev.type === 'failure') code = ev.code;
+        else if (ev.type === 'error') throw new ChatStreamError(ev.text, code);
         else if (ev.type === 'done') return;
       }
     }
@@ -176,6 +197,10 @@ export interface ChatPrefs {
   highContrast: boolean;
   /** 跟随系统 / 浅色 / 深色 */
   theme: Theme;
+  /** 朗读语速（0.8–1.5，默认 1.0） */
+  speechRate: number;
+  /** 本机没有中文语音时，所有者点过「用在线语音」（文字会发到 Google 或微软合成） */
+  speechOnline: boolean;
 }
 export const FONT_SIZES = [16, 18, 20, 24, 28] as const;
 
@@ -183,9 +208,10 @@ export function loadPrefs(storage: Storage | undefined = globalThis.localStorage
   const d = readDisplayPrefs(storage);
   try {
     const j = JSON.parse(storage?.getItem(PREFS_KEY) ?? '{}') as Partial<ChatPrefs>;
-    return { ...d, highContrast: j.highContrast === true };
+    const rate = typeof j.speechRate === 'number' && j.speechRate >= 0.8 && j.speechRate <= 1.5 ? j.speechRate : 1;
+    return { ...d, highContrast: j.highContrast === true, speechRate: rate, speechOnline: j.speechOnline === true };
   } catch {
-    return { ...d, highContrast: false };
+    return { ...d, highContrast: false, speechRate: 1, speechOnline: false };
   }
 }
 

@@ -3,7 +3,8 @@
  * 边界：只认 Conversation（进）和 onMessages（出）；怎么发请求在 store.ts 的 streamChat 里，换后端只改那里。
  * 选 ExternalStore 而不是 LocalRuntime：后者会顺带打包云端会话列表等用不到的代码（gzip 多约 46KB）。
  */
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FC } from 'react';
+import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type FC } from 'react';
+import { Link } from 'react-router-dom';
 import {
   ActionBarPrimitive,
   AssistantRuntimeProvider,
@@ -17,9 +18,10 @@ import {
   type ThreadMessage,
   type ThreadMessageLike,
 } from '@assistant-ui/react';
-import { ArrowDown, ArrowUp, Copy, RotateCcw, Square } from 'lucide-react';
-import { ChatStreamError, loadDraft, saveDraft, signatureOf, streamChat, withGroupMentions, type ChatTurn, type Conversation } from './store';
+import { ArrowDown, ArrowUp, Copy, KeyRound, RotateCcw, Square, Volume2, VolumeX } from 'lucide-react';
+import { ChatStreamError, type FailureCode, loadDraft, saveDraft, signatureOf, streamChat, withGroupMentions, type ChatTurn, type Conversation } from './store';
 import { AnnounceContext, useAnnounce } from './announce';
+import { DEFAULT_RATE, pickVoice, speaker, speechSupported } from './speech';
 
 // Markdown 引擎单独打包、按需加载（首屏先出对话框和输入框）；没到之前按纯文字显示（同样不渲染 HTML）
 const LazyMarkdown = lazy(() => import('./Markdown'));
@@ -46,6 +48,8 @@ export interface UiMessage {
   /** 只对回复有意义 */
   state?: 'running' | 'done' | 'cancelled' | 'error';
   error?: string;
+  /** Core 给的失败码：key_invalid 时不显示「重试」，改成「去检查 Key」 */
+  errorCode?: FailureCode | undefined;
 }
 
 let seq = 0;
@@ -57,7 +61,12 @@ export function toThreadMessage(m: UiMessage): ThreadMessageLike {
   if (m.role === 'user') return base;
   if (m.state === 'running') return { ...base, status: { type: 'running' } };
   if (m.state === 'cancelled') return { ...base, status: { type: 'incomplete', reason: 'cancelled' } };
-  if (m.state === 'error') return { ...base, status: { type: 'incomplete', reason: 'error', error: m.error ?? '对话出错了，请稍后再试。' } };
+  if (m.state === 'error')
+    return {
+      ...base,
+      status: { type: 'incomplete', reason: 'error', error: m.error ?? '对话出错了，请稍后再试。' },
+      ...(m.errorCode ? { metadata: { custom: { errorCode: m.errorCode } } } : {}),
+    };
   return { ...base, status: { type: 'complete', reason: 'stop' } };
 }
 
@@ -92,6 +101,81 @@ const CopyReply: FC = () => {
   );
 };
 
+/** 朗读设置（语速、是否允许在线语音），由对话页传进来 */
+interface SpeechSettings {
+  rate: number;
+  online: boolean;
+  /** 所有者点了「用在线语音」：记住这个选择 */
+  allowOnline: () => void;
+}
+const SpeechContext = createContext<SpeechSettings>({ rate: DEFAULT_RATE, online: false, allowOnline: () => undefined });
+
+/** 本机语音列表（浏览器异步加载，voiceschanged 后再读一次） */
+function useVoices(): SpeechSynthesisVoice[] {
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>(() => (speechSupported() ? window.speechSynthesis.getVoices() : []));
+  useEffect(() => {
+    if (!speechSupported()) return;
+    const synth = window.speechSynthesis;
+    const load = () => setVoices(synth.getVoices());
+    load();
+    synth.addEventListener?.('voiceschanged', load);
+    return () => synth.removeEventListener?.('voiceschanged', load);
+  }, []);
+  return voices;
+}
+
+const useSpeakingId = () => useSyncExternalStore((fn) => speaker.subscribe(fn), () => speaker.speakingId);
+
+/** 「朗读 / 停止」按钮：只有点了才读；浏览器不支持就不显示 */
+const ReadAloud: FC = () => {
+  const id = useAuiState((s) => s.message.id);
+  const text = useAuiState((s) => textOfParts(s.message.content as readonly { type: string; text?: string }[]));
+  const settings = useContext(SpeechContext);
+  const voices = useVoices();
+  const speakingId = useSpeakingId();
+  const announce = useAnnounce();
+  if (!speechSupported() || !text.trim()) return null;
+  const speaking = speakingId === id;
+  const plan = pickVoice(voices, settings.online);
+  const needsOnline = !speaking && plan === null;
+  const onClick = () => {
+    if (speaking) {
+      speaker.stop();
+      announce('已停止朗读');
+      return;
+    }
+    // 本机没有中文语音：点「用在线语音」= 同意这次起用在线语音
+    const p = plan ?? pickVoice(voices, true)!;
+    if (!plan) settings.allowOnline();
+    if (speaker.speak(id, text, { rate: settings.rate, plan: p })) announce(p.kind === 'online' ? '开始朗读（在线语音）' : '开始朗读');
+  };
+  const label = speaking ? '停止朗读' : needsOnline ? '用在线语音朗读这条回复（本机没有中文语音，文字会发到 Google 或微软合成）' : '朗读这条回复';
+  return (
+    <button type="button" className="chat-btn chat-btn-ghost" aria-label={label} aria-pressed={speaking} title={label} onClick={onClick}>
+      {speaking ? <VolumeX aria-hidden="true" /> : <Volume2 aria-hidden="true" />}
+      <span>{speaking ? '停止' : needsOnline ? '用在线语音' : '朗读'}</span>
+    </button>
+  );
+};
+
+/** 出错时的按钮：Key 无效 → 「去检查 Key」（重试也没用）；其余 → 「重试」（发给原来的成员） */
+const ErrorAction: FC = () => {
+  const code = useAuiState((s) => (s.message.metadata?.custom as { errorCode?: string } | undefined)?.errorCode);
+  if (code === 'key_invalid')
+    return (
+      <Link to="/keys" className="chat-btn chat-btn-primary" aria-label="去检查 Key（成员 → Key 与接入）">
+        <KeyRound aria-hidden="true" />
+        <span>去检查 Key</span>
+      </Link>
+    );
+  return (
+    <ActionBarPrimitive.Reload className="chat-btn chat-btn-primary" aria-label="重试这条回复">
+      <RotateCcw aria-hidden="true" />
+      <span>重试</span>
+    </ActionBarPrimitive.Reload>
+  );
+};
+
 const AssistantMessage: FC = () => {
   const who = useAuiState((s) => signatureOf(textOfParts(s.message.content as readonly { type: string; text?: string }[])));
   return (
@@ -104,16 +188,14 @@ const AssistantMessage: FC = () => {
             <p className="chat-error">
               <ErrorPrimitive.Message />
             </p>
-            {/* 出错就地重试：你的原话还在，不用重打（ChatGPT「in-line error retry」） */}
-            <ActionBarPrimitive.Reload className="chat-btn chat-btn-primary" aria-label="重试这条回复">
-              <RotateCcw aria-hidden="true" />
-              <span>重试</span>
-            </ActionBarPrimitive.Reload>
+            {/* 出错就地重试：你的原话还在，不用重打（ChatGPT「in-line error retry」）；重试发给原来的成员，不换人 */}
+            <ErrorAction />
           </div>
         </MessagePrimitive.Error>
       </div>
       <ActionBarPrimitive.Root hideWhenRunning autohide="never" className="chat-actions">
         <CopyReply />
+        <ReadAloud />
       </ActionBarPrimitive.Root>
     </MessagePrimitive.Root>
   );
@@ -127,22 +209,38 @@ export interface ThreadProps {
   insert?: { text: string; seq: number } | null;
   members?: string[];
   fetchImpl?: typeof fetch;
+  /** 朗读语速（0.8–1.5，默认 1.0） */
+  speechRate?: number;
+  /** 所有者是否已同意用在线语音 */
+  speechOnline?: boolean;
+  onAllowOnlineSpeech?: () => void;
 }
 
-export function Thread({ conversation, onMessages, insert, members = [], fetchImpl }: ThreadProps) {
+export function Thread({ conversation, onMessages, insert, members = [], fetchImpl, speechRate = DEFAULT_RATE, speechOnline = false, onAllowOnlineSpeech }: ThreadProps) {
   const convRef = useRef(conversation);
   convRef.current = conversation;
   const [messages, setMessages] = useState<UiMessage[]>(() => conversation.messages.map((m) => ({ id: newId(), role: m.role, text: m.text, state: 'done' as const })));
   const [isRunning, setIsRunning] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
-  // 换会话或离开页面时，停掉还在进行的回复
-  useEffect(() => () => abortRef.current?.abort(), []);
+  // 换会话或离开页面时，停掉还在进行的回复，也停掉朗读
+  useEffect(
+    () => () => {
+      abortRef.current?.abort();
+      speaker.stop();
+    },
+    [],
+  );
+  const allowOnline = useRef(onAllowOnlineSpeech);
+  allowOnline.current = onAllowOnlineSpeech;
+  const speech: SpeechSettings = { rate: speechRate, online: speechOnline, allowOnline: () => allowOnline.current?.() };
 
   /** 发一轮：history 的最后一条是用户的话；回复一段一段写进最后一条 */
   const run = useCallback(
     async (history: UiMessage[]) => {
       const reply: UiMessage = { id: newId(), role: 'assistant', text: '', state: 'running' };
       const update = (patch: Partial<UiMessage>) => setMessages((l) => l.map((m) => (m.id === reply.id ? { ...m, ...patch } : m)));
+      // 开始新回复：停掉正在读的
+      speaker.stop();
       setMessages([...history, reply]);
       setIsRunning(true);
       const ac = new AbortController();
@@ -156,7 +254,12 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
       } catch (e) {
         // 点了停止：保留已经收到的部分；其他错误就地显示，可以「重试」
         if (ac.signal.aborted) update({ state: 'cancelled' });
-        else update({ state: 'error', error: e instanceof ChatStreamError ? e.message : '对话出错了，请稍后再试。' });
+        else
+          update({
+            state: 'error',
+            error: e instanceof ChatStreamError ? e.message : '对话出错了，请稍后再试。',
+            errorCode: e instanceof ChatStreamError ? e.code : undefined,
+          });
       } finally {
         if (abortRef.current === ac) abortRef.current = null;
         setIsRunning(false);
@@ -201,7 +304,8 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
       if (!s.isRunning && wasRunning) {
         const st = s.messages[s.messages.length - 1]?.status;
         if (st?.type === 'incomplete' && st.reason === 'cancelled') setStatus('已停止，收到的部分保留了');
-        else if (st?.type === 'incomplete' && st.reason === 'error') setStatus('出错了，可以点「重试」');
+        else if (st?.type === 'incomplete' && st.reason === 'error')
+          setStatus((s.messages[s.messages.length - 1]?.metadata?.custom as { errorCode?: string } | undefined)?.errorCode === 'key_invalid' ? '出错了：Key 无效，可以点「去检查 Key」' : '出错了，可以点「重试」');
         else setStatus('回复完成');
         save.current(toTurns(s.messages));
       }
@@ -249,6 +353,7 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
 
   return (
     <AnnounceContext.Provider value={announce}>
+    <SpeechContext.Provider value={speech}>
     <AssistantRuntimeProvider runtime={runtime}>
       <ThreadPrimitive.Root className="chat-thread">
         <ThreadPrimitive.Viewport className="chat-viewport" role="log" aria-label="对话内容" aria-live="off">
@@ -331,6 +436,7 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
         </ComposerPrimitive.Root>
       </ThreadPrimitive.Root>
     </AssistantRuntimeProvider>
+    </SpeechContext.Provider>
     </AnnounceContext.Provider>
   );
 }
