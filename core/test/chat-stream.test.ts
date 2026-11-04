@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { LiteLLMAdmin } from '../src/keys/litellm.js';
 import { userPrefix } from '../src/keys/prefix.js';
-import { GENERIC_ERROR_TEXT, toUiMessageStream } from '../src/chat/stream.js';
+import { FAILURE_PART, FAILURE_TEXT, toUiMessageStream } from '../src/chat/stream.js';
 import { MOCK_MASTER_KEY, type MockLiteLLM, startMockLiteLLM } from './helpers/mock-litellm.js';
 import { OWNER_TOKEN, ownerAuth } from './helpers/db.js';
 import { XIAOHAO_TEST_EMAIL, XIAOHAO_TEST_PASSWORD, fakePw, twoAccountEnvs, twoAccounts, type TwoAccounts } from './helpers/two-accounts.js';
@@ -38,6 +38,8 @@ describe.each(twoAccountEnvs)('POST /api/chat/stream（控制台原生对话，#
   let t: TwoAccounts;
   const upstream: string[] = [];
   const mode: { v: Mode; aborted: boolean } = { v: 'ok', aborted: false };
+  /** 上游失败：throws = 连不上网关；status = 上游返回这个状态码；only = 只让上游名以它结尾的成员失败 */
+  const fail: { throws?: boolean; status?: number; only?: string } = {};
   let xiaoCookie = '';
   let annCookie = '';
 
@@ -51,8 +53,13 @@ describe.each(twoAccountEnvs)('POST /api/chat/stream（控制台原生对话，#
           deps.litellm = new LiteLLMAdmin({ baseUrl: mock.url, masterKey: MOCK_MASTER_KEY, timeoutMs: 2000 });
           deps.chatStreamLimits = { perMinute: 1000, concurrent: 1000 };
           deps.chatFetch = (async (_u: unknown, init?: { body?: string; signal?: AbortSignal }) => {
-            const b = JSON.parse(String(init?.body)) as { model: string };
+            const b = JSON.parse(String(init?.body)) as { model: string; stream?: boolean };
             upstream.push(b.model);
+            const hit = !fail.only || b.model.endsWith(fail.only);
+            if (fail.throws && hit) throw new TypeError(`fetch failed ECONNREFUSED ${MOCK_MASTER_KEY}`);
+            if (fail.status && hit) return new Response(JSON.stringify({ error: { message: `upstream says ${MOCK_MASTER_KEY}` } }), { status: fail.status });
+            // 群聊（多人点名）走非流式
+            if (b.stream === false) return Response.json({ choices: [{ index: 0, message: { role: 'assistant', content: `我是 ${b.model}` }, finish_reason: 'stop' }] });
             const signal = init?.signal;
             const stream = new ReadableStream<Uint8Array>({
               async start(c) {
@@ -87,6 +94,9 @@ describe.each(twoAccountEnvs)('POST /api/chat/stream（控制台原生对话，#
     const login = async (email: string, password: string) => {
       const r = await t.app.inject({ method: 'POST', url: '/auth/login', payload: { email, password, cookie: true } });
       expect(r.statusCode).toBe(200);
+      // 必改 2：cookie:true 登录时响应体里没有令牌
+      expect(r.json().token).toBeUndefined();
+      expect(r.body).not.toMatch(/"token"/);
       return String(r.headers['set-cookie']).split(';')[0]!;
     };
     xiaoCookie = await login(XIAOHAO_TEST_EMAIL, XIAOHAO_TEST_PASSWORD);
@@ -96,6 +106,7 @@ describe.each(twoAccountEnvs)('POST /api/chat/stream（控制台原生对话，#
     expect(acc.statusCode).toBe(200);
     annCookie = await login('ann@example.test', fakePw(2));
     expect((await t.xiao('POST', '/api/members', { name: 'XiaoModel' })).statusCode).toBeLessThan(300);
+    expect((await t.xiao('POST', '/api/members', { name: 'XiaoTwo' })).statusCode).toBeLessThan(300);
     expect((await t.owner('POST', '/api/members', { name: 'OwnerSecretBot' })).statusCode).toBeLessThan(300);
   });
   afterAll(async () => {
@@ -106,6 +117,9 @@ describe.each(twoAccountEnvs)('POST /api/chat/stream（控制台原生对话，#
     upstream.length = 0;
     mode.v = 'ok';
     mode.aborted = false;
+    delete fail.throws;
+    delete fail.status;
+    delete fail.only;
   });
 
   const say = (headers: Record<string, string>, payload: Record<string, unknown>) =>
@@ -158,7 +172,8 @@ describe.each(twoAccountEnvs)('POST /api/chat/stream（控制台原生对话，#
     expect(bad.body).not.toContain(MOCK_MASTER_KEY);
     expect(bad.body).not.toContain('boom');
     const ev = events(bad.body);
-    expect(ev).toContainEqual({ type: 'error', errorText: GENERIC_ERROR_TEXT });
+    expect(ev).toContainEqual({ type: 'error', errorText: FAILURE_TEXT.upstream_error });
+    expect(ev).toContainEqual({ type: FAILURE_PART, data: { code: 'upstream_error' }, transient: true });
     expect(ev.at(-1)).toBe('DONE');
   });
 
@@ -185,6 +200,71 @@ describe.each(twoAccountEnvs)('POST /api/chat/stream（控制台原生对话，#
     expect(m.statusCode).toBe(200);
     expect(upstream).toHaveLength(0);
     expect(m.body).not.toContain(userPrefix(t.xiaoId));
+  });
+
+  it('网关失败（审查点 1 补充裁决 1）：整条回复失败 → 失败码 + 一句固定的话 + [DONE]；不带上游原文、Key、状态码', async () => {
+    const cases: Array<[{ throws?: boolean; status?: number }, keyof typeof FAILURE_TEXT]> = [
+      [{ throws: true }, 'gateway_unreachable'],
+      [{ status: 401 }, 'key_invalid'],
+      [{ status: 403 }, 'key_invalid'],
+      [{ status: 429 }, 'rate_limited'],
+      [{ status: 500 }, 'upstream_error'],
+    ];
+    for (const [f, code] of cases) {
+      Object.assign(fail, f);
+      for (const m of ['@XiaoModel hi', 'hi']) {
+        const r = await say({ cookie: xiaoCookie, ...CSRF }, m === 'hi' ? { model: 'aroomo/xiaomodel', ...msg(m) } : msg(m));
+        expect(r.statusCode).toBe(200);
+        const ev = events(r.body);
+        expect(ev).toEqual([
+          { type: 'start', messageId: expect.any(String) },
+          { type: FAILURE_PART, data: { code }, transient: true },
+          { type: 'error', errorText: FAILURE_TEXT[code] },
+          'DONE',
+        ]);
+        // 事件列表已逐项比对（只有这 4 条）；再确认原文和 Key 都不在 body 里
+        for (const leak of [MOCK_MASTER_KEY, 'upstream says', 'ECONNREFUSED', 'fetch failed', '暂时没有回应']) expect(r.body).not.toContain(leak);
+      }
+      delete fail.throws;
+      delete fail.status;
+    }
+  });
+
+  it('群聊部分成员失败：照旧是文字（其他人的回答留着），不发 error；全部失败才发 error', async () => {
+    fail.status = 500;
+    fail.only = '/XiaoTwo';
+    const part = await say({ cookie: xiaoCookie, ...CSRF }, msg('@XiaoModel @XiaoTwo 比较一下'));
+    expect(part.statusCode).toBe(200);
+    expect(events(part.body).some((e) => e !== 'DONE' && (e.type === 'error' || e.type === FAILURE_PART))).toBe(false);
+    expect(textOf(part.body)).toContain(`我是 ${userPrefix(t.xiaoId)}/XiaoModel`);
+    expect(textOf(part.body)).toContain('XiaoTwo 暂时没有回应');
+    delete fail.only;
+    const all = await say({ cookie: xiaoCookie, ...CSRF }, msg('@XiaoModel @XiaoTwo 比较一下'));
+    expect(events(all.body)).toContainEqual({ type: 'error', errorText: FAILURE_TEXT.upstream_error });
+    expect(all.body).not.toContain('暂时没有回应');
+  });
+
+  it('「还没有可用的成员」「没有这位成员」是提示，不算失败：照旧是文字', async () => {
+    const none = await say({ cookie: annCookie, ...CSRF }, msg('hi'));
+    expect(textOf(none.body)).toContain('还没有可用的成员');
+    const nobody = await say({ cookie: xiaoCookie, ...CSRF }, { model: 'aroomo/nobody-here', ...msg('hi') });
+    expect(textOf(nobody.body)).toContain('没有这位在职成员');
+    for (const r of [none, nobody]) expect(events(r.body).some((e) => e !== 'DONE' && e.type === 'error')).toBe(false);
+    expect(upstream).toHaveLength(0);
+  });
+
+  it('必改 2：退出登录后，旧 Cookie 再调 /api/chat/stream 返回 401，不调上游', async () => {
+    const r = await t.app.inject({ method: 'POST', url: '/auth/login', payload: { email: XIAOHAO_TEST_EMAIL, password: XIAOHAO_TEST_PASSWORD, cookie: true } });
+    expect(r.json().token).toBeUndefined();
+    const ck = String(r.headers['set-cookie']).split(';')[0]!;
+    expect((await say({ cookie: ck, ...CSRF }, msg('@XiaoModel hi'))).statusCode).toBe(200);
+    upstream.length = 0;
+    const out = await t.app.inject({ method: 'POST', url: '/api/auth/logout', headers: { cookie: ck, ...CSRF } });
+    expect(out.statusCode).toBe(204);
+    expect(String(out.headers['set-cookie'])).toContain('Max-Age=0');
+    const after = await say({ cookie: ck, ...CSRF }, msg('@XiaoModel hi'));
+    expect(after.statusCode).toBe(401);
+    expect(upstream).toHaveLength(0);
   });
 
   it('请求限制：请求体超过 256KB 413；system 角色、最后一条不是用户、模型名乱写都 400', async () => {
@@ -229,7 +309,7 @@ describe.each(twoAccountEnvs)('POST /api/chat/stream（控制台原生对话，#
 });
 
 describe('/api/chat/stream 频率与并发限制', () => {
-  it('每个账号每分钟超过上限 → 429（RATE_LIMITED）', async () => {
+  it('每个账号每分钟超过上限 → 429（RATE_LIMITED）；出错后点「重试」也是一次请求，照样计数', async () => {
     const env = twoAccountEnvs[0]!;
     const t = await twoAccounts({
       name: env.name,
@@ -243,6 +323,7 @@ describe('/api/chat/stream 频率与并发限制', () => {
     const ck = String(login.headers['set-cookie']).split(';')[0]!;
     const say = () => t.app.inject({ method: 'POST', url: '/api/chat/stream', headers: { cookie: ck, ...CSRF }, payload: { messages: [{ role: 'user', content: 'hi' }] } });
     expect((await say()).statusCode).toBe(200);
+    // 第二次 = 前端的「重试」（同一段对话原样再发一次）
     expect((await say()).statusCode).toBe(200);
     const third = await say();
     expect(third.statusCode).toBe(429);

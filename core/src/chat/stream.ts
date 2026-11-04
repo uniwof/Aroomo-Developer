@@ -17,7 +17,7 @@ import { Readable } from 'node:stream';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { CSRF_HEADER, readSessionCookie } from '../auth/session-cookie.js';
 import { HttpError } from '../http/errors.js';
-import { CHAT_MODEL, MEMBER_MODEL_PREFIX, type ChatService, type ChatUserCtx } from './service.js';
+import { CHAT_MODEL, MEMBER_MODEL_PREFIX, type ChatFailureCode, type ChatService, type ChatUserCtx } from './service.js';
 
 export const STREAM_BODY_LIMIT = 256 * 1024;
 export const STREAM_MAX_MESSAGES = 200;
@@ -31,7 +31,10 @@ export interface StreamLimits {
   concurrent: number;
 }
 
-/** 每个账号的频率 / 并发限制（内存态） */
+/**
+ * 每个账号的频率 / 并发限制（内存态）：重启后清零。这是防刷，不是额度计数，单实例可以接受；
+ * 多实例部署前要改成共享存储（负责人审查点 1 第 3 节第 6 条，D213 第 13 项）。
+ */
 export class UserRateLimiter {
   readonly #hits = new Map<string, number[]>();
   readonly #open = new Map<string, number>();
@@ -109,6 +112,20 @@ const sse = (obj: unknown) => enc.encode(`data: ${JSON.stringify(obj)}\n\n`);
 export const GENERIC_ERROR_TEXT = '对话出错了，请稍后再试。';
 
 /**
+ * 整条回复失败时浏览器看到的话（负责人审查点 1 补充裁决 1）：只从这几句固定的话里选，
+ * 不带上游原文、状态码或任何别的内容。按失败码对应，不按回复文字判断。
+ */
+export const FAILURE_TEXT: Record<ChatFailureCode, string> = {
+  gateway_unreachable: '模型网关连不上，请稍后重试。',
+  key_invalid: 'Key 无效，请到「成员 → Key 与接入」检查。',
+  rate_limited: '额度用完或太频繁，请稍后再试。',
+  upstream_error: '模型出错了，请稍后重试。',
+};
+/** 失败码随 error 一起发给浏览器（AI SDK UI Message Stream 的 data-* 部件，transient = 不进消息历史），界面据此决定显示「重试」还是「去检查 Key」 */
+export const FAILURE_PART = 'data-aroomo-failure';
+const failureEvents = (code: ChatFailureCode) => [sse({ type: FAILURE_PART, data: { code }, transient: true }), sse({ type: 'error', errorText: FAILURE_TEXT[code] })];
+
+/**
  * OpenAI chat.completion.chunk SSE 流 → AI SDK UI Message Stream。
  * 只转发文字增量；上游的 error 对象不透传原文（可能带 Key），统一换成一句话。
  */
@@ -125,8 +142,8 @@ export function toUiMessageStream(upstream: ReadableStream<Uint8Array> | undefin
     finished = true;
     opts.onDone?.();
   };
-  const finish = (c: ReadableStreamDefaultController<Uint8Array>, error?: string) => {
-    if (error) c.enqueue(sse({ type: 'error', errorText: error }));
+  const finish = (c: ReadableStreamDefaultController<Uint8Array>, error?: ChatFailureCode) => {
+    if (error) for (const e of failureEvents(error)) c.enqueue(e);
     else {
       c.enqueue(sse({ type: 'text-end', id: textId }));
       c.enqueue(sse({ type: 'finish-step' }));
@@ -137,7 +154,7 @@ export function toUiMessageStream(upstream: ReadableStream<Uint8Array> | undefin
     done();
   };
   /** 处理一个 SSE 事件；返回 'done' = 上游结束，string = 出错，null = 继续 */
-  const handle = (c: ReadableStreamDefaultController<Uint8Array>, event: string): 'done' | { error: string } | null => {
+  const handle = (c: ReadableStreamDefaultController<Uint8Array>, event: string): 'done' | { error: ChatFailureCode } | null => {
     for (const line of event.split('\n')) {
       const m = /^data:\s?(.*)$/.exec(line.trimEnd());
       if (!m) continue;
@@ -149,7 +166,7 @@ export function toUiMessageStream(upstream: ReadableStream<Uint8Array> | undefin
       } catch {
         continue;
       }
-      if (j.error) return { error: GENERIC_ERROR_TEXT };
+      if (j.error) return { error: 'upstream_error' };
       const choices = Array.isArray(j.choices) ? (j.choices as Json[]) : [];
       for (const ch of choices) {
         const delta = ch.delta as Json | undefined;
@@ -201,8 +218,8 @@ export function toUiMessageStream(upstream: ReadableStream<Uint8Array> | undefin
           if (emitted) return;
         }
       } catch {
-        // 上游断了（或被中断）：给浏览器一句话，不带原文
-        if (!finished) finish(c, GENERIC_ERROR_TEXT);
+        // 上游断了（或被中断）：给浏览器一句固定的话，不带原文
+        if (!finished) finish(c, 'gateway_unreachable');
       }
     },
     cancel() {
@@ -235,11 +252,10 @@ export function registerChatStreamRoute(app: FastifyInstance, chat: ChatService,
   app.post<{ Body: Json }>(
     '/api/chat/stream',
     {
-      // D208：每条 /api 路由都要声明权限。对话会动用成员（消耗它们的额度），按「只有主人能用的普通能力」members:write 声明，
-      // 不在操作员白名单里（操作员令牌在钩子就被拒）。真正的门是处理函数里的 sessionUser：只认账号的 Cookie 会话 + CSRF 头，
+      // D208：每条 /api 路由都要声明权限。能力名 chat:use（负责人审查点 1 定名）：不在操作员白名单里（操作员令牌在钩子就被拒），
+      // 也不是客户端令牌的范围。真正的门是处理函数里的 sessionUser：只认账号的 Cookie 会话 + CSRF 头，
       // 所有者令牌 / 操作员 / 客户端令牌（都走 Bearer）一律 401。账号可以访问（userRoute），数据只按会话里的 userId 取（D111）。
-      // 能力名选得是否合适请负责人在 A+ 审查时定。
-      config: { capability: 'members:write', userRoute: true },
+      config: { capability: 'chat:use', userRoute: true },
       bodyLimit: STREAM_BODY_LIMIT,
       schema: {
         body: {
@@ -267,14 +283,19 @@ export function registerChatStreamRoute(app: FastifyInstance, chat: ChatService,
       let body: ReadableStream<Uint8Array>;
       try {
         const out = await chat.complete({ model, stream: true, messages }, ctrl.signal, opts.ctxFor(userId));
-        if (out.stream) body = toUiMessageStream(out.stream, { onDone: release });
+        if (out.failure) {
+          // 整条回复都失败：不发那段提示文字，改发 error（只有固定的一句话 + 失败码）。/v1 不走这里，行为不变
+          await out.stream?.cancel().catch(() => undefined);
+          body = errorStream(out.failure.code);
+          release();
+        } else if (out.stream) body = toUiMessageStream(out.stream, { onDone: release });
         else {
           // 理论上 stream:true 总是返回流；万一是 JSON，就把文字一次性发出去
           const text = (out.json as { choices?: Array<{ message?: { content?: unknown } }> } | undefined)?.choices?.[0]?.message?.content;
           body = toUiMessageStream(oneShot(typeof text === 'string' ? text : ''), { onDone: release });
         }
       } catch {
-        body = errorStream(GENERIC_ERROR_TEXT);
+        body = errorStream('upstream_error');
         release();
       }
       reply
@@ -298,11 +319,11 @@ function oneShot(text: string): ReadableStream<Uint8Array> {
   });
 }
 
-function errorStream(text: string): ReadableStream<Uint8Array> {
+function errorStream(code: ChatFailureCode): ReadableStream<Uint8Array> {
   return new ReadableStream({
     start(c) {
       c.enqueue(sse({ type: 'start', messageId: `msg_${randomUUID()}` }));
-      c.enqueue(sse({ type: 'error', errorText: text }));
+      for (const e of failureEvents(code)) c.enqueue(e);
       c.enqueue(enc.encode('data: [DONE]\n\n'));
       c.close();
     },

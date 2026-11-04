@@ -167,6 +167,35 @@ describe('/v1 对话入口（LobeHub → Core → LiteLLM，D31）', () => {
     expect(text(r)).not.toContain('placeholder');
   });
 
+  it('网关失败时 /v1（LobeHub）输出一字不变：失败码只给 /api/chat/stream 用（审查点 1 补充裁决 1）', async () => {
+    await addMember('GPT-4o mini');
+    await addMember('Claude');
+    failModels.add('Claude');
+    const SAME = 'Claude 暂时没有回应（Key 无效或没有权限）。不会自动换人；去掉 @ 再发一次即可交给负责人。';
+    const r = await chat('@Claude 你好');
+    expect(r.statusCode).toBe(200);
+    expect(text(r)).toBe(SAME);
+    expect(Object.keys(r.json()).sort()).toEqual(['choices', 'created', 'id', 'model', 'object', 'usage']);
+    expect(r.body).not.toContain('failure');
+    const s = await chat('@Claude 你好', { stream: true });
+    expect(s.statusCode).toBe(200);
+    const datas = s.body.split('\n\n').filter(Boolean).map((e) => e.replace(/^data: /, ''));
+    expect(datas.at(-1)).toBe('[DONE]');
+    const chunks = datas.slice(0, -1).map((d) => JSON.parse(d) as { object: string; choices: Array<{ delta: { content?: string }; finish_reason: string | null }> });
+    expect(chunks.map((c) => c.object)).toEqual(['chat.completion.chunk', 'chat.completion.chunk']);
+    expect(chunks[0]!.choices[0]!.delta.content).toBe(SAME);
+    expect(chunks[1]!.choices[0]!.finish_reason).toBe('stop');
+    expect(s.body).not.toContain('"error"');
+    expect(s.body).not.toContain('failure');
+    // 连不上网关：同样还是一句文字
+    await app.close();
+    build({ LITELLM_BASE_URL: 'http://127.0.0.1:1' });
+    await addMember('Claude');
+    const g = await chat('@Claude 你好');
+    expect(g.statusCode).toBe(200);
+    expect(text(g)).toBe('Claude 暂时没有回应：模型网关连不上，请稍后再试。');
+  });
+
   it('没有这个成员：只给提示', async () => {
     await addMember('Claude');
     const r = await chat('@Nobody 你好');
