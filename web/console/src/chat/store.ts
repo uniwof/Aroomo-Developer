@@ -4,7 +4,7 @@
  * - 会话列表和消息先存在本机浏览器 localStorage（S1 再落库）。
  */
 
-import { PREFS_KEY, readDisplayPrefs, type Theme } from '@/lib/display';
+import { FONT_VERSION, PREFS_KEY, readDisplayPrefs, type Theme } from '@/lib/display';
 
 export interface ChatTurn {
   role: 'user' | 'assistant';
@@ -194,7 +194,7 @@ export function titleFrom(text: string): string {
 }
 
 export interface ChatPrefs {
-  /** 根字号（px，12–32 连续可调），默认 16 = sumus 原尺寸；作用到整个页面（见 lib/display.ts） */
+  /** 正文字号（px，12–32 连续可调），默认 14 = sumus 原样；作用到整个页面（见 lib/display.ts） */
   fontSize: number;
   highContrast: boolean;
   /** 跟随系统 / 浅色 / 深色 */
@@ -218,7 +218,7 @@ export function loadPrefs(storage: Storage | undefined = globalThis.localStorage
 
 export function savePrefs(p: ChatPrefs, storage: Storage | undefined = globalThis.localStorage): void {
   try {
-    storage?.setItem(PREFS_KEY, JSON.stringify(p));
+    storage?.setItem(PREFS_KEY, JSON.stringify({ ...p, fontV: FONT_VERSION }));
   } catch {
     /* 忽略 */
   }

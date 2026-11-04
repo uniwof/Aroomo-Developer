@@ -5,13 +5,13 @@
  *   搜索框 + 新对话
  *   分组标题「对话 ∨」（点了收起 / 展开）
  *   会话行：头像 + 名字 + 时间 / 一行预览 + 置顶图钉
- *   底部：「成员市场 · + 创建」「成员 · 邀请」，分隔线下面是我自己 +「连接应用」
- * 接不上的按钮先做占位（点了在主区域说明「这里之后接上什么」），不删。
+ *   底部：「资源库 · + 添加」「成员」（负责人落地文档 3.5；「邀请」「连接应用」、用户行不放）
+ * 不放点了没反应的按钮。
  * 桌面常显；手机上它就是唯一一层抽屉（外层 <dialog>）：最上面多一排分类（资源库 / 工具 / API / 成员）。
  */
 import { useEffect, useMemo, useState } from 'react';
-import { Activity, Bell, Blocks, Bot, ChevronDown, MessagesSquare, Pin, Plug, Plus, Search, Settings, Shapes, SquarePen, UserPlus, Users, X } from 'lucide-react';
-import { currentUser, type Member } from '@/lib/api';
+import { Activity, Bell, Bot, ChevronDown, MessagesSquare, Pin, Plus, Search, Shapes, SquarePen, Users, X } from 'lucide-react';
+import { type Member } from '@/lib/api';
 import type { UsageRow } from '@/lib/usage';
 import { Avatar, type AvatarKind } from './Avatar';
 import { RailNav, quotaState, type RailTarget } from './Rail';
@@ -52,14 +52,12 @@ export interface SidebarProps {
   onLead: () => void;
   onNew: () => void;
   onOpen: (k: SideTarget) => void;
-  /** 照 sumus 先放上、功能还没接的按钮 */
-  onPlaceholder: (label: string) => void;
   /** 手机抽屉里才有「关闭」和分类横排 */
   onClose?: () => void;
   usage: UsageRow[] | null;
 }
 
-export function Sidebar({ list, currentId, members, inboxCount, active, onPick, onMember, onLead, onNew, onOpen, onPlaceholder, onClose, usage }: SidebarProps) {
+export function Sidebar({ list, currentId, members, inboxCount, active, onPick, onMember, onLead, onNew, onOpen, onClose, usage }: SidebarProps) {
   const [tab, setTab] = useState<Tab>('chats');
   const [q, setQ] = useState('');
   const [folded, setFolded] = useState(false);
@@ -75,7 +73,6 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
       window.removeEventListener('keydown', onKey);
     };
   }, [newOpen]);
-  const user = currentUser();
   const current = list.find((c) => c.id === currentId);
 
   const chats = useMemo<Row[]>(() => {
@@ -145,7 +142,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
 
       {onClose && (
         <nav aria-label="分类" className="side-cats">
-          <RailNav horizontal active={active} onOpen={onOpen} onNew={onNew} />
+          <RailNav horizontal active={active} onOpen={onOpen} />
         </nav>
       )}
 
@@ -167,8 +164,8 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
         <div className="side-search">
           <label className="search2">
             <Search aria-hidden="true" />
-            <span className="sr-only">搜索会话</span>
-            <input type="search" placeholder="搜索会话" value={q} onChange={(e) => setQ(e.target.value)} />
+            <span className="sr-only">搜索对话</span>
+            <input type="search" placeholder="搜索对话" value={q} onChange={(e) => setQ(e.target.value)} />
           </label>
           {/* 新建对话菜单（照 sumus）：新建群聊 / 新建成员 / 和某一位开新对话 */}
           <div className="topic">
@@ -252,44 +249,24 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
         )}
       </div>
 
+      {/* 底部（负责人落地文档 3.5）：资源库 · + 添加 / 成员。「邀请」「连接应用」和用户行先不放（不放点了没反应的按钮） */}
       <div className="side-foot">
         <div className="foot-row">
-          <button type="button" className="foot-link hit" aria-current={active === 'capmap' ? 'page' : undefined} onClick={() => onOpen('capmap')}>
+          <button type="button" className="foot-link hit" aria-label="打开资源库" aria-current={active === 'library' ? 'page' : undefined} onClick={() => onOpen('library')}>
             <Shapes aria-hidden="true" />
-            <span>成员市场</span>
+            <span>资源库</span>
           </button>
-          <button type="button" className="pill hit" aria-label="创建：新建群聊" onClick={() => onOpen('group-new')}>
+          <button type="button" className="pill hit" aria-label="添加成员" onClick={() => onOpen('capmap')}>
             <Plus aria-hidden="true" />
-            <span>创建</span>
+            <span>添加</span>
           </button>
         </div>
         <div className="foot-row">
-          <button type="button" className="foot-link hit" aria-label="工作区成员" onClick={() => onPlaceholder('工作区成员')}>
+          <button type="button" className="foot-link hit" aria-label="打开成员页" aria-current={active === 'members' ? 'page' : undefined} onClick={() => onOpen('members')}>
             <Users aria-hidden="true" />
             <span>成员</span>
           </button>
-          <button type="button" className="pill hit" aria-label="邀请成员" onClick={() => onPlaceholder('邀请成员')}>
-            <UserPlus aria-hidden="true" />
-            <span>邀请</span>
-          </button>
         </div>
-      </div>
-      <div className="side-account">
-        <button type="button" className="me-btn hit" aria-label="账号与设置" title={user?.email ?? ''} onClick={() => onOpen('settings')}>
-          <Avatar name={user?.displayName || user?.email || '我'} kind="user" size="sm" />
-        </button>
-        <button type="button" className="connect" aria-label="连接应用" onClick={() => onPlaceholder('连接应用')}>
-          <Plug aria-hidden="true" />
-          <span className="connect-text">连接应用</span>
-          <span className="connect-apps" aria-hidden="true">
-            <Blocks />
-          </span>
-        </button>
-        {onClose && (
-          <button type="button" className="icon-btn hit" aria-label="设置" onClick={() => onOpen('settings')}>
-            <Settings aria-hidden="true" />
-          </button>
-        )}
       </div>
     </div>
   );

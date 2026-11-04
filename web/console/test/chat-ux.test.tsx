@@ -46,12 +46,12 @@ describe('store 小工具', () => {
 
   it('字号和主题作用到整页 <html>', () => {
     const root = document.createElement('html');
-    applyDisplay({ fontSize: 24, theme: 'dark' }, root);
+    applyDisplay({ fontSize: 21, theme: 'dark' }, root);
     expect(root.style.fontSize).toBe('150%');
-    applyDisplay({ fontSize: 12, theme: 'dark' }, root);
-    expect(root.style.fontSize).toBe('75%');
+    applyDisplay({ fontSize: 28, theme: 'dark' }, root);
+    expect(root.style.fontSize).toBe('200%');
     expect(root.classList.contains('dark')).toBe(true);
-    applyDisplay({ fontSize: 16, theme: 'system' }, root);
+    applyDisplay({ fontSize: 14, theme: 'system' }, root);
     expect(root.style.fontSize).toBe('');
     expect(root.classList.contains('dark')).toBe(false);
   });
@@ -75,7 +75,7 @@ describe('对话页：对标改进', () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
-    applyDisplay({ fontSize: 16, theme: 'system' });
+    applyDisplay({ fontSize: 14, theme: 'system' });
   });
 
   const renderPage = (fetchImpl?: typeof fetch) =>
@@ -105,12 +105,11 @@ describe('对话页：对标改进', () => {
     await waitFor(() => expect(screen.getByText('Kimi 回复：')).toBeInTheDocument());
   });
 
-  it('空状态照 sumus：头像 + 名字 + 简介 + 「说点什么」；附件按钮先占位，不发请求', async () => {
+  it('空状态照 sumus：头像 + 名字 + 简介 + 「说点什么」；不放没接上的附件按钮，不自动发请求', () => {
     const chatFetch = vi.fn();
     renderPage(chatFetch as unknown as typeof fetch);
     expect(screen.getByText('说点什么，开始这个话题')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '添加附件' }));
-    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('添加附件还没接上'));
+    expect(screen.queryByRole('button', { name: '添加附件' })).toBeNull();
     expect(chatFetch).not.toHaveBeenCalled();
   });
 
@@ -127,7 +126,7 @@ describe('对话页：对标改进', () => {
     fireEvent.click(screen.getByRole('button', { name: '设置' }));
     expect(screen.queryAllByRole('tab')).toHaveLength(0);
     fireEvent.change(screen.getByRole('slider', { name: /字号/ }), { target: { value: '28' } });
-    expect(document.documentElement.style.fontSize).toBe('175%');
+    expect(document.documentElement.style.fontSize).toBe('200%');
     fireEvent.click(screen.getByRole('radio', { name: '深色' }));
     expect(document.documentElement.classList.contains('dark')).toBe(true);
     expect(readDisplayPrefs()).toEqual({ fontSize: 28, theme: 'dark' });

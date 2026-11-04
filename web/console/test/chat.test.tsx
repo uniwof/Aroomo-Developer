@@ -155,9 +155,15 @@ describe('原生对话页', () => {
     session.set(null);
   });
 
-  it('默认字号 16px', () => {
+  it('默认字号 = sumus 原样（正文 14px，根字号不改）', () => {
     const { container } = renderPage();
     expect(container.querySelector('.app')).not.toBeNull();
     expect(document.documentElement.style.fontSize).toBe('');
+  });
+
+  it('只有图标的按钮都有读屏名字（负责人落地文档 15 章必带测试）', () => {
+    const { container } = renderPage();
+    const bad = [...container.querySelectorAll('button')].filter((b) => !(b.textContent ?? '').trim() && !b.getAttribute('aria-label'));
+    expect(bad.map((b) => b.outerHTML.slice(0, 80))).toEqual([]);
   });
 });

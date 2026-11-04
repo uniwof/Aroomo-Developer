@@ -187,8 +187,7 @@ function Segmented<T extends string | number>({ label, value, options, onChange 
 
 /** 字号滑杆（所有者 23:07：任意大小，约 12–32，连续可调）：拖动、方向键、两边的 −/+ 都行；「恢复默认」回到 sumus 原尺寸 */
 function FontSlider({ value, onChange }: { value: number; onChange: (v: number) => void }) {
-  const body = +((value * 14) / 16).toFixed(1);
-  const text = `正文 ${body} 像素${value === FONT_DEFAULT ? '（默认）' : ''}`;
+  const text = `正文 ${value} 像素${value === FONT_DEFAULT ? '（默认）' : ''}`;
   return (
     <div className="row row-stack">
       <label className="row-label" htmlFor="font-size-slider">

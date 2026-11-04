@@ -26,8 +26,10 @@
   --shadow: 0 1px 2px rgb(0 0 0 / 0.08), 0 0 0 0.5px rgb(0 0 0 / 0.04);
   --warn-bg: #fdefdc;
   --warn-line: #ecd5b4;
-  --warn-bar: #b8741f;
+  --warn-bar: #ff7f50;
   --warn-fg: #8a520f;
+  /* sumus 的品牌橙 → Aroomo 珊瑚色（负责人落地文档 0.2）：标志、未读圆点、提示条左边线和图标；珊瑚上只放深色 */
+  --brand: #ff7f50;
   display: flex;
   height: 100dvh;
   background: var(--bg);
@@ -53,7 +55,7 @@
   --shadow: 0 1px 2px rgb(0 0 0 / 0.5);
   --warn-bg: #3a2b16;
   --warn-line: #5a4220;
-  --warn-bar: #d9963d;
+  --warn-bar: #ff7f50;
   --warn-fg: #f0c27f;
 }
 @media (prefers-color-scheme: dark) {
@@ -73,7 +75,7 @@
     --shadow: 0 1px 2px rgb(0 0 0 / 0.5);
     --warn-bg: #3a2b16;
     --warn-line: #5a4220;
-    --warn-bar: #d9963d;
+    --warn-bar: #ff7f50;
     --warn-fg: #f0c27f;
   }
 }
@@ -177,10 +179,16 @@
 }
 .rail-logo {
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: calc(1.5 * var(--k));
   height: calc(1.5 * var(--k));
   margin-bottom: calc(1.375 * var(--k));
-  color: var(--fg);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--brand);
+  cursor: pointer;
 }
 .rail-logo > span,
 .rail-logo svg {
@@ -197,36 +205,79 @@
   gap: calc(0.5 * var(--k));
   width: 100%;
 }
-.rail-ws-li {
+/* 当前所在项：左边一条黑色竖条（照 sumus 空间头像左边那条） */
+.rail-list > li {
   position: relative;
   width: 100%;
   display: flex;
   justify-content: center;
 }
-.rail-ws-li::before {
-  /* 「当前空间」：左边一条黑色竖条 */
+.rail-list:not(.rail-list-h) > li:has(> [aria-current='page'])::before {
   content: '';
   position: absolute;
   left: 0;
-  top: calc(0.125 * var(--k));
-  bottom: calc(0.125 * var(--k));
+  top: 0.125rem;
+  bottom: 0.125rem;
   width: 3px;
   border-radius: 0 3px 3px 0;
   background: var(--fg);
 }
-.rail-ws {
+.rail-list-h > li {
+  width: auto;
+}
+/* 我的头像 + 总额度圆环 */
+.rail-me {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: calc(1.75 * var(--k));
-  height: calc(1.75 * var(--k));
-  border-radius: calc(0.375 * var(--k));
+  width: calc(2 * var(--k));
+  height: calc(2 * var(--k));
+  margin-bottom: calc(0.5 * var(--k));
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+}
+.rail-me-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.rail-me-ring .ring-track {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 2.5;
+}
+.rail-me-ring .ring-arc {
+  fill: none;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+.ring-ok {
+  stroke: #248a3d;
+}
+.ring-warn {
+  stroke: #b25000;
+}
+.ring-full {
+  stroke: #d70015;
+}
+.rail-me-face {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(1.5 * var(--k));
+  height: calc(1.5 * var(--k));
+  border-radius: 999px;
   background: #e3e3e3;
   color: var(--fg);
+  font-size: calc(0.75 * var(--k));
   font-weight: 600;
-  font-size: calc(0.8125 * var(--k));
 }
-:root.dark .rail-ws {
+:root.dark .rail-me-face {
   background: #333;
 }
 .rail-btn {
@@ -262,9 +313,11 @@
   background: var(--selected);
 }
 .rail-btn[aria-current='page'] {
-  background: var(--bg);
+  background: #e3e3e3;
   color: var(--fg);
-  box-shadow: var(--shadow);
+}
+:root.dark .rail-btn[aria-current='page'] {
+  background: #333;
 }
 .rail-spacer {
   flex: 1;
@@ -320,7 +373,7 @@
   width: calc(0.4375 * var(--k));
   height: calc(0.4375 * var(--k));
   border-radius: 999px;
-  background: #e5484d;
+  background: var(--brand);
   box-shadow: 0 0 0 2px var(--side);
 }
 .side-cats {
@@ -474,7 +527,19 @@
   }
 }
 .conv[aria-current='true'] {
+  position: relative;
   background: var(--selected);
+}
+/* 负责人落地文档 3.2：选中行左边再加一条 3px 竖线（光靠底色深浅不够明显） */
+.conv[aria-current='true']::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: calc(0.75 * var(--k));
+  bottom: calc(0.75 * var(--k));
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--fg);
 }
 .conv-text {
   flex: 1;
@@ -1657,4 +1722,10 @@ kbd.row-value {
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
+}
+
+/* 单聊里只显示时间（照 sumus；名字读屏照常读出） */
+.chat-single .msg-name,
+.chat-single .msg-role {
+  display: none;
 }

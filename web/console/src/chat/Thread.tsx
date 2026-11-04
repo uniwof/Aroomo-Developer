@@ -18,7 +18,7 @@ import {
   type ThreadMessage,
   type ThreadMessageLike,
 } from '@assistant-ui/react';
-import { ArrowDown, Copy, KeyRound, Paperclip, RotateCcw, Send, Square, Volume2, VolumeX } from 'lucide-react';
+import { ArrowDown, Copy, KeyRound, RotateCcw, Send, Square, Volume2, VolumeX } from 'lucide-react';
 import { ChatStreamError, type FailureCode, dayLabel, loadDraft, saveDraft, signatureOf, streamChat, stripSignature, timeLabel, withGroupMentions, type ChatTurn, type Conversation } from './store';
 import { Avatar } from './Avatar';
 import { AnnounceContext, useAnnounce } from './announce';
@@ -463,7 +463,7 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
     <SpeechContext.Provider value={speech}>
     <ThreadInfoContext.Provider value={info}>
     <AssistantRuntimeProvider runtime={runtime}>
-      <ThreadPrimitive.Root className="chat-thread">
+      <ThreadPrimitive.Root className={memberName ? 'chat-thread chat-single' : 'chat-thread'}>
         <ThreadPrimitive.Viewport className="chat-viewport" role="log" aria-label="对话内容" aria-live="off">
           <div className="chat-column">
             <ThreadPrimitive.Empty>
@@ -526,10 +526,7 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
               回车发送，Shift 加回车换行，回复时按 Esc 停止
             </span>
             <div className="composer-bar">
-              {/* 附件（照 sumus 先放上；上传之后接上） */}
-              <button type="button" className="icon-btn hit composer-attach" aria-label="添加附件" title="添加附件" onClick={() => announce('添加附件还没接上，之后会支持')}>
-                <Paperclip aria-hidden="true" />
-              </button>
+              {/* 附件（sumus 左下角的回形针）：第一版不做，先隐藏（负责人落地文档 4.4，不放点了没反应的按钮） */}
               <span className="composer-spacer" />
               <ThreadPrimitive.If running={false}>
                 <ComposerPrimitive.Send className="send hit" aria-label="发送">

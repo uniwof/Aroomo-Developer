@@ -8,7 +8,7 @@
  * 边界：store.ts 管数据和请求，Thread.tsx 管对话区，Sidebar.tsx 管会话列表栏，panels.tsx 管面板，这里管拼装。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, ChevronDown, CircleAlert, Ellipsis, Menu, Plus, SquarePen, Trash2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ChevronDown, CircleAlert, Download, Ellipsis, Menu, Pencil, Plus, SquarePen, Trash2 } from 'lucide-react';
 import { api, currentUser, viaShell, type Member } from '@/lib/api';
 import { useUsage } from '@/lib/usage';
 import { Rail, quotaState, type RailTarget } from './Rail';
@@ -37,11 +37,9 @@ type View =
   | { kind: 'inbox' }
   | { kind: 'shortcuts' }
   | { kind: 'library' }
-  | { kind: 'keys' }
-  /** 照 sumus 先放上、功能还没接的按钮 */
-  | { kind: 'todo'; label: string };
+  | { kind: 'keys' };
 
-const TITLES: Record<Exclude<View['kind'], 'chat' | 'member' | 'todo'>, string> = {
+const TITLES: Record<Exclude<View['kind'], 'chat' | 'member'>, string> = {
   members: '成员',
   capmap: '能力地图',
   'group-new': '新建群聊',
@@ -90,13 +88,14 @@ function useMembers(): Member[] {
 
 /**
  * 放得下几栏：按当前字号算（栏宽用 em，跟字号一起变大）。方案 2.2：放不下先把会话列表收进抽屉，只留窄栏 + 对话；
- * 再窄（手机）连窄栏也收进抽屉（成员头像横排）。16px：≥896px 四栏、≥576px 窄栏 + 对话；28px：1440px 是窄栏 + 对话。
+ * 再窄（手机）连窄栏也收进抽屉。默认根字号 16px：≥1024px 三栏、≥768px 窄栏 + 对话；字号调大后按 em 自动切换。
  */
 function useLayout(): { side: boolean; rail: boolean } {
   const calc = () => {
     if (typeof window === 'undefined') return { side: true, rail: true };
     const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
-    return { side: window.innerWidth >= 56 * rem, rail: window.innerWidth >= 36 * rem };
+    // 负责人落地文档 0.3：≥64em 三栏；48–64em 窄栏 + 对话（会话栏浮层）；<48em 手机排法。字大了桌面自动切过去
+    return { side: window.innerWidth >= 64 * rem, rail: window.innerWidth >= 48 * rem };
   };
   const [wide, setWide] = useState(calc);
   useEffect(() => {
@@ -157,7 +156,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   }, [prefs]);
   // 浏览器标签页标题跟着会话走（读屏切标签时能听到在哪个会话）
   useEffect(() => {
-    document.title = `${view.kind === 'chat' ? current.title : view.kind === 'member' ? '成员' : view.kind === 'todo' ? view.label : TITLES[view.kind]} · Aroomo`;
+    document.title = `${view.kind === 'chat' ? current.title : view.kind === 'member' ? '成员' : TITLES[view.kind]} · Aroomo`;
   }, [current.title, view]);
   useEffect(() => {
     const d = dialog.current;
@@ -258,6 +257,22 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   }, [menu]);
   useEffect(() => setMenu('none'), [currentId, view.kind]);
 
+  const rename = (id: string) => {
+    const c = list.find((x) => x.id === id);
+    if (!c) return;
+    const t = window.prompt('话题的新名字', c.title)?.trim();
+    if (t) setList((l) => l.map((x) => (x.id === id ? { ...x, title: t.slice(0, 60) } : x)));
+  };
+  /** 导出成 Markdown 文件（只在本机生成，不上传） */
+  const exportMd = (c: Conversation) => {
+    const md = [`# ${c.title}`, '', ...c.messages.map((m) => `**${m.role === 'user' ? '我' : '回复'}**${m.at ? `（${new Date(m.at).toLocaleString('zh-CN')}）` : ''}\n\n${m.text}\n`)].join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([md], { type: 'text/markdown;charset=utf-8' }));
+    a.download = `${c.title.replace(/[\\/:*?"<>|]/g, '_')}.md`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+
   const allowOnlineSpeech = useCallback(() => setPrefs((p) => ({ ...p, speechOnline: true })), []);
   const memberNames = useMemo(() => members.map((m) => m.name), [members]);
 
@@ -277,7 +292,6 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         else start();
       }}
       onOpen={(k) => goto({ kind: k })}
-      onPlaceholder={(label) => goto({ kind: 'todo', label })}
       usage={usage}
       {...(wide ? {} : { onClose: () => setOpen(false) })}
     />
@@ -302,7 +316,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   const who = isGroup
     ? { name: current.title.replace(/^群聊：/, ''), kind: 'group' as const, type: `群聊 · ${current.group!.length} 位成员`, model: current.group!.join('、') }
     : singleName
-      ? { name: singleName, kind: 'member' as const, type: 'AI 成员 · 单独对话', model: currentMember?.id ?? '—' }
+      ? { name: singleName, kind: 'member' as const, type: `云端成员 · 今日${currentMember ? quotaState(usage?.find((u) => u.memberId === currentMember.id)).label : '额度未知'}`, model: currentMember?.id ?? '—' }
       : { name: '负责人', kind: 'lead' as const, type: 'Aroomo 内置 · 负责人', model: '自动（设置 → 负责人）' };
   const intro = isGroup
     ? '群里的成员一起回答；没写 @ 时，自动 @ 群里每一位。'
@@ -393,6 +407,23 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
                 </button>
                 {menu === 'more' && (
                   <ul className="pop pop-right" aria-label="更多">
+                    {/* 负责人落地文档 4.1：重命名话题、导出（Markdown）、删除话题；「置顶」等置顶功能做好再加 */}
+                    {current.messages.length > 0 && (
+                      <li>
+                        <button type="button" className="pop-item" onClick={() => { setMenu('none'); rename(current.id); }}>
+                          <Pencil aria-hidden="true" />
+                          <span>重命名话题</span>
+                        </button>
+                      </li>
+                    )}
+                    {current.messages.length > 0 && (
+                      <li>
+                        <button type="button" className="pop-item" onClick={() => { setMenu('none'); exportMd(current); }}>
+                          <Download aria-hidden="true" />
+                          <span>导出这个话题（Markdown）</span>
+                        </button>
+                      </li>
+                    )}
                     <li>
                       <button type="button" className="pop-item" onClick={() => { setMenu('none'); start(); }}>
                         <SquarePen aria-hidden="true" />
@@ -403,7 +434,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
                       <li>
                         <button type="button" className="pop-item pop-danger" aria-label={`删除会话「${current.title}」`} onClick={() => { setMenu('none'); remove(current.id); }}>
                           <Trash2 aria-hidden="true" />
-                          <span>删除会话</span>
+                          <span>删除话题</span>
                         </button>
                       </li>
                     )}
@@ -437,7 +468,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   } else {
     const parent = parentOf(view);
     const member = view.kind === 'member' ? members.find((m) => m.id === view.id) : undefined;
-    const title = view.kind === 'member' ? (member?.name ?? '成员') : view.kind === 'todo' ? view.label : TITLES[view.kind];
+    const title = view.kind === 'member' ? (member?.name ?? '成员') : TITLES[view.kind];
     main = (
       <>
         <PanelHeader title={title} lead={menuButton} {...(parent ? { onBack: () => setView(parent.view), backLabel: parent.label } : {})} />
@@ -481,13 +512,6 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
             </div>
           )}
           {view.kind === 'shortcuts' && <ShortcutsPanel />}
-          {view.kind === 'todo' && (
-            <div className="panel">
-              <p className="todo-note" role="status">
-                「{view.label}」这个位置先照 sumus 放好了，功能还没接上。之后告诉我们这里换成什么。
-              </p>
-            </div>
-          )}
           {view.kind === 'library' && (
             <div className="panel panel-embed">
               <Library />
@@ -505,7 +529,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
 
   return (
     <div className={`app${prefs.highContrast ? ' chat-hc' : ''}${wide ? ' app-wide' : ''}${layout.rail ? ' app-rail' : ''}${wide && collapsed ? ' app-collapsed' : ''}`}>
-      {layout.rail && <Rail active={view.kind} onOpen={(t: RailTarget) => goto({ kind: t })} onNew={() => start()} />}
+      {layout.rail && <Rail active={view.kind} onOpen={(t: RailTarget) => goto({ kind: t })} usage={usage} />}
       {wide && !collapsed && (
         <aside className="side" aria-label="会话列表" style={{ width: `calc(${sideW} * var(--k))` }}>
           {sidebar}
