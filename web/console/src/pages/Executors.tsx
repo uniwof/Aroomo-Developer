@@ -92,7 +92,7 @@ export function Executors() {
 
       {confirm && (
         <div role="alertdialog" aria-labelledby="exec-confirm-title" className="rounded-xl border-2 border-[var(--border)] p-4">
-          <h2 id="exec-confirm-title" className="text-[16px] font-semibold">
+          <h2 id="exec-confirm-title" className="text-[1rem] font-semibold">
             {confirm.kind === 'revoke' ? `吊销「${confirm.label}」？` : '取消这个任务？'}
           </h2>
           <p className="mt-1 text-[var(--muted)]">{confirm.kind === 'revoke' ? '吊销后这台电脑马上不能再领任务，想恢复要重新配对。' : '正在进行的步骤会在下一个检查点停下。'}</p>
@@ -108,7 +108,7 @@ export function Executors() {
       )}
 
       <section aria-labelledby="exec-devices" className="flex flex-col gap-2">
-        <h2 id="exec-devices" className="text-[16px] font-semibold">
+        <h2 id="exec-devices" className="text-[1rem] font-semibold">
           电脑
         </h2>
         {devices === null && <p className="text-[var(--muted)]">正在加载…</p>}
@@ -136,7 +136,7 @@ export function Executors() {
       <Allowlist />
 
       <section aria-labelledby="exec-tasks" className="flex flex-col gap-2">
-        <h2 id="exec-tasks" className="text-[16px] font-semibold">
+        <h2 id="exec-tasks" className="text-[1rem] font-semibold">
           任务
         </h2>
         {tasks === null && <p className="text-[var(--muted)]">正在加载…</p>}

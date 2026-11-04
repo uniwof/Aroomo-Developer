@@ -209,7 +209,7 @@ export function ClientTokens() {
 
       {confirm && (
         <div role="alertdialog" aria-labelledby={`${uid}-confirm`} className="rounded-xl border-2 border-[var(--border)] p-4">
-          <h3 id={`${uid}-confirm`} className="text-[16px] font-semibold">
+          <h3 id={`${uid}-confirm`} className="text-[1rem] font-semibold">
             吊销「{confirm.name}」？
           </h3>
           <p className="mt-1 text-[var(--muted)]">吊销后这个客户端马上不能再连 Aroomo，不能恢复；想再用要重新新建令牌。</p>

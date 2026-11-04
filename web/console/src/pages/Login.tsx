@@ -30,7 +30,7 @@ export function Login({ onLoggedIn }: { onLoggedIn?: () => void }) {
       <form onSubmit={submit} className="w-full max-w-sm space-y-4" aria-labelledby="login-title">
         <div className="flex flex-col items-center gap-3 pb-2">
           <Logo size={56} />
-          <h1 id="login-title" className="text-[20px] font-semibold">
+          <h1 id="login-title" className="text-[1.25rem] font-semibold">
             登录 Aroomo 控制台
           </h1>
         </div>

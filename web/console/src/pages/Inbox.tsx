@@ -78,7 +78,7 @@ export function Inbox() {
 
   return (
     <section aria-labelledby="inbox-title" className="space-y-6">
-      <h1 id="inbox-title" className="text-[20px] font-semibold">
+      <h1 id="inbox-title" className="text-[1.25rem] font-semibold">
         收件箱
       </h1>
       <p role="status" className="text-[var(--muted)]">
@@ -90,7 +90,7 @@ export function Inbox() {
         groups.map((g) => (
           <div key={g.key} className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-[16px] font-semibold">{g.title}</h2>
+              <h2 className="text-[1rem] font-semibold">{g.title}</h2>
               {g.key === 'brief' && (data[g.key] ?? []).length > 1 && (
                 <Button variant="outline" className="min-h-12" onClick={() => dismiss((data[g.key] ?? []).map((i) => i.id))}>
                   全部知道了
@@ -106,7 +106,7 @@ export function Inbox() {
                     {i.title}
                   </p>
                   {i.summary && <p className="whitespace-pre-wrap text-[var(--muted)]">{i.summary}</p>}
-                  <p className="text-[16px] text-[var(--muted)]">{formatTime(i.createdAt)}</p>
+                  <p className="text-[1rem] text-[var(--muted)]">{formatTime(i.createdAt)}</p>
                   <div className="flex flex-wrap gap-2">
                     {(i.actions ?? []).map((a) => (
                       <Button key={a.id} className="min-h-12" variant={a.confirm && a.confirm.kind !== 'normal' ? 'outline' : 'default'} onClick={() => void act(i, a)}>

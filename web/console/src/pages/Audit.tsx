@@ -87,7 +87,7 @@ export function Audit() {
   if (forbidden) {
     return (
       <section aria-labelledby="audit-title" className="space-y-4">
-        <h1 id="audit-title" className="text-[20px] font-semibold">
+        <h1 id="audit-title" className="text-[1.25rem] font-semibold">
           审计
         </h1>
         <p role="status">审计只有所有者能看。</p>
@@ -100,7 +100,7 @@ export function Audit() {
 
   return (
     <section aria-labelledby="audit-title" className="space-y-4">
-      <h1 id="audit-title" className="text-[20px] font-semibold">
+      <h1 id="audit-title" className="text-[1.25rem] font-semibold">
         审计
       </h1>
       <p className="text-[var(--muted)]">谁在什么时候做了什么，只能看，不能改。新的在前。</p>

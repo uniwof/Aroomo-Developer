@@ -84,7 +84,7 @@ export function CapabilityMap() {
 
   return (
     <section aria-labelledby="cap-title" className="space-y-3">
-      <h2 id="cap-title" className="text-[18px] font-semibold" data-testid="cap-summary">
+      <h2 id="cap-title" className="text-[1.125rem] font-semibold" data-testid="cap-summary">
         {summaryLine(data.items)}
       </h2>
       {soon.length > 0 && (
@@ -128,7 +128,7 @@ export function CapabilityMap() {
                     </div>
                     <span
                       className={cn(
-                        'shrink-0 rounded-full border px-3 py-1 text-[16px]',
+                        'shrink-0 rounded-full border px-3 py-1 text-[1rem]',
                         i.access === 'free' ? 'border-[var(--color-brand)] font-medium' : 'border-[var(--border)]',
                       )}
                       data-access={i.access}

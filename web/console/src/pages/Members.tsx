@@ -22,7 +22,7 @@ function UsageLine({ row, onSaved }: { row: UsageRow; onSaved: () => void }) {
   }
   const limitText = row.quota.limit != null ? `${row.quota.limit}` : '未知';
   return (
-    <div className="flex flex-wrap items-center gap-2 text-[16px] text-[var(--muted)]">
+    <div className="flex flex-wrap items-center gap-2 text-[1rem] text-[var(--muted)]">
       <QuotaRing used={row.quota.used} limit={row.quota.limit} size={24} />
       <span>
         今天 {row.today.requests} 次{row.today.limited > 0 && ' · 被限流'} · 每天上限 {limitText}
@@ -45,7 +45,7 @@ function UsageLine({ row, onSaved }: { row: UsageRow; onSaved: () => void }) {
           <label className="sr-only" htmlFor={`lim-${row.memberId}`}>
             {row.name} 每天次数上限
           </label>
-          <input id={`lim-${row.memberId}`} inputMode="numeric" className="min-h-12 w-28 rounded-xl border border-[var(--border)] bg-transparent px-3 text-[16px]" value={val} onChange={(e) => setVal(e.target.value)} />
+          <input id={`lim-${row.memberId}`} inputMode="numeric" className="min-h-12 w-28 rounded-xl border border-[var(--border)] bg-transparent px-3 text-[1rem]" value={val} onChange={(e) => setVal(e.target.value)} />
           <button type="submit" className="min-h-12 rounded-xl px-3 font-semibold">
             保存
           </button>
@@ -82,11 +82,11 @@ export function Members() {
 
   return (
     <section aria-labelledby="members-title" className="space-y-4">
-      <h1 id="members-title" className="text-[20px] font-semibold">
+      <h1 id="members-title" className="text-[1.25rem] font-semibold">
         能力地图与成员
       </h1>
       <CapabilityMap />
-      <h2 className="text-[18px] font-semibold">成员</h2>
+      <h2 className="text-[1.125rem] font-semibold">成员</h2>
       {error && <p role="alert">{error}</p>}
       {!members && !error && <p className="text-[var(--muted)]">正在加载…</p>}
       {members && members.length === 0 && <p className="text-[var(--muted)]">还没有成员。到「Key 与接入」填一个模型 Key，模型就会成为候选成员。</p>}

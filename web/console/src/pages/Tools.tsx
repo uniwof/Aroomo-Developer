@@ -65,7 +65,7 @@ export function Tools() {
                     </div>
                     {t.note && <div className="text-[var(--muted)]">{t.note}</div>}
                   </div>
-                  <span className="shrink-0 rounded-full border border-[var(--border)] px-3 py-1 text-[16px]">{ACCESS_LABEL[t.access]}</span>
+                  <span className="shrink-0 rounded-full border border-[var(--border)] px-3 py-1 text-[1rem]">{ACCESS_LABEL[t.access]}</span>
                 </li>
               ))}
             </ul>

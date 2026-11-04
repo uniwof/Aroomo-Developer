@@ -76,7 +76,7 @@ export function Layout() {
               <Icon className="size-5" aria-hidden="true" />
               {label}
               {to === '/inbox' && inboxCount > 0 && (
-                <span className="ml-auto min-w-6 rounded-full bg-[var(--fg)] px-2 text-center text-[16px] text-[var(--bg)]">
+                <span className="ml-auto min-w-6 rounded-full bg-[var(--fg)] px-2 text-center text-[1rem] text-[var(--bg)]">
                   {inboxCount}
                   <span className="sr-only"> 条待处理</span>
                 </span>

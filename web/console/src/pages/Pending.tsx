@@ -2,7 +2,7 @@
 export function Pending({ title, note }: { title: string; note: string }) {
   return (
     <section aria-labelledby="pending-title" className="space-y-2">
-      <h1 id="pending-title" className="text-[20px] font-semibold">
+      <h1 id="pending-title" className="text-[1.25rem] font-semibold">
         {title}
       </h1>
       <p className="text-[var(--muted)]">{note}</p>

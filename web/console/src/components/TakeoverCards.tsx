@@ -63,7 +63,7 @@ export function TakeoverCards() {
   if (cards.length === 0 && !msg) return null;
   return (
     <div className="space-y-2" aria-labelledby="takeover-title" role="region">
-      <h2 id="takeover-title" className="text-[16px] font-semibold">
+      <h2 id="takeover-title" className="text-[1rem] font-semibold">
         需要你亲自处理
       </h2>
       <p role="status" className="text-[var(--muted)]">

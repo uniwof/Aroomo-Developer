@@ -174,7 +174,7 @@ function BudgetSection() {
     }
   }
 
-  const btn = 'min-h-12 min-w-12 rounded-xl border border-[var(--border)] text-[20px] disabled:opacity-40';
+  const btn = 'min-h-12 min-w-12 rounded-xl border border-[var(--border)] text-[1.25rem] disabled:opacity-40';
   return (
     <>
       <Field
@@ -190,7 +190,7 @@ function BudgetSection() {
             <button type="button" aria-label="减少一次" className={btn} disabled={b.daily <= 0} onClick={() => void change(-1)}>
               −
             </button>
-            <span aria-label="每天提醒次数" className="min-w-8 text-center text-[18px] font-semibold">
+            <span aria-label="每天提醒次数" className="min-w-8 text-center text-[1.125rem] font-semibold">
               {b.daily}
             </span>
             <button type="button" aria-label="增加一次" className={btn} disabled={b.daily >= 50} onClick={() => void change(1)}>
@@ -244,7 +244,7 @@ function McpSection() {
         </Button>
       </Field>
       {cfg && (
-        <pre aria-label="MCP 配置内容" className="my-2 overflow-x-auto rounded-xl bg-[var(--bg)] p-3 text-[16px] select-all">
+        <pre aria-label="MCP 配置内容" className="my-2 overflow-x-auto rounded-xl bg-[var(--bg)] p-3 text-[1rem] select-all">
           {JSON.stringify(cfg.config, null, 2)}
         </pre>
       )}
@@ -262,10 +262,11 @@ export function Settings() {
   const card = 'divide-y divide-[var(--border)] rounded-2xl bg-[var(--card)] px-4';
   return (
     <section aria-labelledby="settings-title" className="space-y-4">
-      <h1 id="settings-title" className="text-[20px] font-semibold">
+      <h1 id="settings-title" className="text-[1.25rem] font-semibold">
         设置
       </h1>
       <Tabs
+        wrap
         label="设置分类"
         items={[
           {
