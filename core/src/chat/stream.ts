@@ -137,6 +137,7 @@ export function toUiMessageStream(upstream: ReadableStream<Uint8Array> | undefin
   let buf = '';
   let started = false;
   let finished = false;
+  let wrote = false;
   const done = () => {
     if (finished) return;
     finished = true;
@@ -171,7 +172,7 @@ export function toUiMessageStream(upstream: ReadableStream<Uint8Array> | undefin
       for (const ch of choices) {
         const delta = ch.delta as Json | undefined;
         const piece = typeof delta?.content === 'string' ? delta.content : '';
-        if (piece) c.enqueue(sse({ type: 'text-delta', id: textId, delta: piece }));
+        if (piece) { c.enqueue(sse({ type: 'text-delta', id: textId, delta: piece })); wrote = true; }
       }
     }
     return null;
@@ -199,7 +200,7 @@ export function toUiMessageStream(upstream: ReadableStream<Uint8Array> | undefin
             return finish(c);
           }
           buf += dec.decode(value, { stream: true });
-          let emitted = false;
+          wrote = false;
           let i: number;
           while ((i = buf.indexOf('\n\n')) >= 0) {
             const event = buf.slice(0, i);
@@ -213,9 +214,8 @@ export function toUiMessageStream(upstream: ReadableStream<Uint8Array> | undefin
               void reader.cancel().catch(() => undefined);
               return finish(c, r.error);
             }
-            emitted = true;
           }
-          if (emitted) return;
+          if (wrote) return;
         }
       } catch {
         // 上游断了（或被中断）：给浏览器一句固定的话，不带原文
