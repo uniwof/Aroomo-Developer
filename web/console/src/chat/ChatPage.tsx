@@ -1,55 +1,71 @@
 /**
- * 控制台里的原生对话页（#250 spike，S0）。
- * - 打开 Aroomo 直接进对话（负责人 2026-11-04 方向 A）。
- * - 一层抽屉：会话 / 成员 / 群聊 / 工具 / 收件箱 / 设置都是同一个抽屉里的标签页，原地打开、不跳页，没有子抽屉
- *   （所有者 2026-11-04：能切换分类的地方用标签页）。收件箱、设置、工具、成员管理直接复用控制台原有页面组件。
- * - 只调用 Core 的标准接口（/api/*），换界面不用改后端。
- * - 会话先存在本机浏览器（localStorage）；回复一段一段出来，可以「停止」；可以 @ 成员；代码一键复制。
- * - 照顾视力：默认 16px，可调大；可开高对比；按钮至少 48px；读屏有标签。
- * 边界：本目录自成一块（store.ts 管数据和请求，Thread.tsx 管对话区，这里管抽屉和拼装），拆换都不影响控制台其他页面。
+ * 控制台里的原生对话页（#250 spike）。#250 重设计（2026-11-04）照 sumus.im 的布局：
+ * - 桌面：左边会话列表栏常显（标题 + 齿轮、搜索 + 新对话、全部 / 群聊 / 成员 筛选、会话行、底部 成员 / 新建群聊 / 收件箱、最底当前账号），
+ *   右边主对话区（顶栏头像 + 名字、居中日期分隔、无气泡消息、大圆角输入卡片）。
+ * - 手机（或字号放大后放不下两栏）：会话列表栏就是唯一一层抽屉；点会话、成员、设置后抽屉关上，内容在主区域原地打开，
+ *   面板里的下一层用顶栏「‹ 返回」，不开第二层抽屉，不用标签页。
+ * - 只调用 Core 的标准接口（/api/*）；会话先存在本机浏览器（localStorage）。
+ * 边界：store.ts 管数据和请求，Thread.tsx 管对话区，Sidebar.tsx 管会话列表栏，panels.tsx 管面板，这里管拼装。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Menu, MessageSquarePlus, Trash2, Users, X } from 'lucide-react';
+import { Menu, SquarePen, Trash2 } from 'lucide-react';
 import { api, viaShell, type Member } from '@/lib/api';
-import { Tabs } from '@/components/ui/tabs';
-import { Logo } from '@/components/brand';
-import { Members } from '@/pages/Members';
+import { useUsage } from '@/lib/usage';
+import { Rail, quotaState, type RailTarget } from './Rail';
+import { HeaderCard } from './HeaderCard';
+import { Library } from '@/pages/Library';
+import { Keys } from '@/pages/Keys';
 import { Tools } from '@/pages/Tools';
 import { Inbox } from '@/pages/Inbox';
-import { Settings } from '@/pages/Settings';
+import { useInboxCount } from '@/components/Layout';
 import { Thread } from './Thread';
-import { SPEECH_RATES, speechSupported } from './speech';
-import { applyDisplay, type Theme } from '@/lib/display';
-import {
-  FONT_SIZES,
-  loadConversations,
-  loadPrefs,
-  newConversation,
-  saveConversations,
-  savePrefs,
-  titleFrom,
-  type ChatPrefs,
-  type ChatTurn,
-  type Conversation,
-} from './store';
+import { Avatar } from './Avatar';
+import { Sidebar } from './Sidebar';
+import { CapabilityPanel, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SettingsPanel, ShortcutsPanel } from './panels';
+import { applyDisplay } from '@/lib/display';
+import { loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
 import './chat.css';
 
-const THEMES: [Theme, string][] = [
-  ['system', '跟随系统'],
-  ['light', '浅色'],
-  ['dark', '深色'],
-];
+/** 主区域显示什么：对话，或某个面板（带返回的上一层） */
+type View =
+  | { kind: 'chat' }
+  | { kind: 'members' }
+  | { kind: 'member'; id: string }
+  | { kind: 'capmap' }
+  | { kind: 'group-new' }
+  | { kind: 'settings' }
+  | { kind: 'tools' }
+  | { kind: 'inbox' }
+  | { kind: 'shortcuts' }
+  | { kind: 'library' }
+  | { kind: 'keys' };
 
-const SHORTCUTS: [string, string][] = [
-  ['回车', '发送'],
-  ['Shift + 回车', '换行'],
-  ['Esc', '停止回复'],
-  ['Shift + Esc', '回到输入框'],
-  ['Ctrl（Mac 用 ⌘）+ Shift + O', '新对话'],
-  ['Ctrl（Mac 用 ⌘）+ Shift + S', '打开或关上菜单'],
-];
+const TITLES: Record<Exclude<View['kind'], 'chat' | 'member'>, string> = {
+  members: '成员',
+  capmap: '能力地图',
+  'group-new': '新建群聊',
+  settings: '设置',
+  tools: '工具',
+  inbox: '收件箱',
+  shortcuts: '键盘快捷键',
+  library: '资源库',
+  keys: 'API（Key 与接入）',
+};
 
-type Tab = 'conversations' | 'members' | 'groups' | 'tools' | 'inbox' | 'settings';
+/** 上一层是哪里（顶栏「‹ 返回」） */
+function parentOf(v: View): { view: View; label: string } | null {
+  switch (v.kind) {
+    case 'member':
+    case 'capmap':
+      return { view: { kind: 'members' }, label: '成员' };
+    case 'shortcuts':
+      return { view: { kind: 'settings' }, label: '设置' };
+    case 'chat':
+      return null;
+    default:
+      return { view: { kind: 'chat' }, label: '对话' };
+  }
+}
 
 function useMembers(): Member[] {
   const [members, setMembers] = useState<Member[]>([]);
@@ -65,6 +81,33 @@ function useMembers(): Member[] {
   return members;
 }
 
+/**
+ * 放得下几栏：按当前字号算（栏宽用 em，跟字号一起变大）。方案 2.2：放不下先把会话列表收进抽屉，只留窄栏 + 对话；
+ * 再窄（手机）连窄栏也收进抽屉（成员头像横排）。16px：≥896px 四栏、≥576px 窄栏 + 对话；28px：1440px 是窄栏 + 对话。
+ */
+function useLayout(): { side: boolean; rail: boolean } {
+  const calc = () => {
+    if (typeof window === 'undefined') return { side: true, rail: true };
+    const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    return { side: window.innerWidth >= 56 * rem, rail: window.innerWidth >= 36 * rem };
+  };
+  const [wide, setWide] = useState(calc);
+  useEffect(() => {
+    const on = () => setWide((w) => {
+      const n = calc();
+      return n.side === w.side && n.rail === w.rail ? w : n;
+    });
+    window.addEventListener('resize', on);
+    const mo = new MutationObserver(on);
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
+    return () => {
+      window.removeEventListener('resize', on);
+      mo.disconnect();
+    };
+  }, []);
+  return wide;
+}
+
 export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   const [list, setList] = useState<Conversation[]>(() => {
     const l = loadConversations();
@@ -72,58 +115,69 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   });
   const [currentId, setCurrentId] = useState(() => list[0]!.id);
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<Tab>('conversations');
+  const [collapsed, setCollapsed] = useState(false);
+  const [view, setView] = useState<View>({ kind: 'chat' });
   const [prefs, setPrefs] = useState<ChatPrefs>(() => loadPrefs());
   const [insert, setInsert] = useState<{ text: string; seq: number } | null>(null);
-  const [groupPick, setGroupPick] = useState<string[]>([]);
   const members = useMembers();
+  const inboxCount = useInboxCount();
+  const layout = useLayout();
+  const wide = layout.side;
+  const { rows: usage } = useUsage(120_000);
+
   const dialog = useRef<HTMLDialogElement>(null);
   const current = list.find((c) => c.id === currentId) ?? list[0]!;
+  const currentMember = current.model.startsWith('aroomo/') ? members.find((m) => `aroomo/${m.id}` === current.model) : undefined;
+  const singleName = currentMember?.name ?? (current.model.startsWith('aroomo/') ? current.title.replace(/^和\s*/, '') : undefined);
 
   useEffect(() => saveConversations(list.filter((c) => c.messages.length > 0)), [list]);
   useEffect(() => {
     savePrefs(prefs);
-    // 字号和主题作用到整页：抽屉里嵌的管理页面也一起变大，不割裂
+    // 字号和主题作用到整页：面板里嵌的管理页面也一起变大，不割裂
     applyDisplay(prefs);
   }, [prefs]);
   // 浏览器标签页标题跟着会话走（读屏切标签时能听到在哪个会话）
   useEffect(() => {
-    document.title = `${current.title} · Aroomo`;
-  }, [current.title]);
+    document.title = `${view.kind === 'chat' ? current.title : view.kind === 'member' ? '成员' : TITLES[view.kind]} · Aroomo`;
+  }, [current.title, view]);
   useEffect(() => {
     const d = dialog.current;
     if (!d) return;
-    if (open && !d.open) (d.showModal ? d.showModal() : d.setAttribute('open', ''));
-    if (!open && d.open) (d.close ? d.close() : d.removeAttribute('open'));
-  }, [open]);
+    const show = open && !wide;
+    if (show && !d.open) (d.showModal ? d.showModal() : d.setAttribute('open', ''));
+    if (!show && d.open) (d.close ? d.close() : d.removeAttribute('open'));
+  }, [open, wide]);
 
   const start = useCallback((opts: Parameters<typeof newConversation>[0] = {}) => {
     const c = newConversation(opts);
     setList((l) => [c, ...l.filter((x) => x.messages.length > 0)]);
     setCurrentId(c.id);
+    setView({ kind: 'chat' });
     setOpen(false);
   }, []);
 
   // 键盘快捷键（对标 ChatGPT / LibreChat 的默认键位）：
-  // Shift+Esc 回到输入框；Ctrl/⌘+Shift+O 新对话；Ctrl/⌘+Shift+S 打开或关上菜单。Esc 停止回复由输入框自己处理。
+  // Shift+Esc 回到输入框；Ctrl/⌘+Shift+O 新对话；Ctrl/⌘+Shift+S 打开或关上会话列表。Esc 停止回复由输入框自己处理。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
       if (e.shiftKey && e.key === 'Escape') {
         e.preventDefault();
         setOpen(false);
-        document.getElementById('chat-input')?.focus();
+        setView({ kind: 'chat' });
+        setTimeout(() => document.getElementById('chat-input')?.focus(), 0);
       } else if (mod && e.shiftKey && e.key.toLowerCase() === 'o') {
         e.preventDefault();
         start();
       } else if (mod && e.shiftKey && e.key.toLowerCase() === 's') {
         e.preventDefault();
-        setOpen((o) => !o);
+        if (wide) setCollapsed((c) => !c);
+        else setOpen((o) => !o);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [start]);
+  }, [start, wide]);
 
   const onMessages = useCallback(
     (turns: ChatTurn[]) => {
@@ -142,6 +196,19 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
 
   const pick = (id: string) => {
     setCurrentId(id);
+    setView({ kind: 'chat' });
+    setOpen(false);
+  };
+
+  /** 点成员行：有和 TA 的单独对话就打开最近那个，没有就新开一个 */
+  const chatWith = (m: Member) => {
+    const c = list.find((x) => x.model === `aroomo/${m.id}`);
+    if (c) pick(c.id);
+    else start({ title: `和 ${m.name}`, model: `aroomo/${m.id}` });
+  };
+
+  const goto = (v: View) => {
+    setView(v);
     setOpen(false);
   };
 
@@ -156,251 +223,203 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
 
   const allowOnlineSpeech = useCallback(() => setPrefs((p) => ({ ...p, speechOnline: true })), []);
   const memberNames = useMemo(() => members.map((m) => m.name), [members]);
-  const style = { '--chat-font': `${prefs.fontSize}px` } as React.CSSProperties;
+
+  const sidebar = (
+    <Sidebar
+      list={list}
+      currentId={view.kind === 'chat' ? currentId : null}
+      members={members}
+      inboxCount={inboxCount}
+      active={view.kind}
+      onPick={pick}
+      onMember={chatWith}
+      onNew={() => start()}
+      onLead={() => {
+        const c = list.find((x) => x.model === 'aroomo' && !x.group?.length && x.messages.length > 0);
+        if (c) pick(c.id);
+        else start();
+      }}
+      onOpen={(k) => goto({ kind: k })}
+      usage={usage}
+      {...(wide ? {} : { onClose: () => setOpen(false) })}
+    />
+  );
+
+  const menuButton = !wide || collapsed ? (
+    <button
+      type="button"
+      className="btn btn-icon"
+      aria-label="打开菜单：会话列表、成员、设置"
+      aria-haspopup={wide ? undefined : 'dialog'}
+      aria-expanded={wide ? !collapsed : open}
+      onClick={() => (wide ? setCollapsed(false) : setOpen(true))}
+    >
+      <Menu aria-hidden="true" />
+    </button>
+  ) : null;
+
+  // 当前对话是谁：标题悬浮卡片、空状态、额度提示条都用它
+  const isGroup = !!current.group?.length;
+  const who = isGroup
+    ? { name: current.title.replace(/^群聊：/, ''), kind: 'group' as const, type: `群聊 · ${current.group!.length} 位成员`, model: current.group!.join('、') }
+    : singleName
+      ? { name: singleName, kind: 'member' as const, type: 'AI 成员 · 单独对话', model: currentMember?.id ?? '—' }
+      : { name: '负责人', kind: 'lead' as const, type: 'Aroomo 内置 · 负责人', model: '自动（设置 → 负责人）' };
+  const intro = isGroup
+    ? '群里的成员一起回答；没写 @ 时，自动 @ 群里每一位。'
+    : currentMember
+      ? currentMember.capabilityTags.length
+        ? `擅长：${currentMember.capabilityTags.join('、')}。这里的话只发给 TA。`
+        : '这里的话只发给 TA。'
+      : singleName
+        ? '这里的话只发给 TA。'
+        : '没 @ 谁的时候由负责人回答；想找某位成员，用「@名字」。';
+  const q = currentMember ? quotaState(usage?.find((u) => u.memberId === currentMember.id)) : null;
+  const notice =
+    q?.tone === 'full' ? (
+      <div className="notice" role="status">
+        <p className="notice-title">{who.name} 今天的额度用完了</p>
+        <p className="notice-text">消息还能发出去，但 TA 暂时不会回复。可以换一位成员，或者到「成员」里调高每天上限。</p>
+        <button type="button" className="btn btn-outline" onClick={() => setView({ kind: 'member', id: currentMember!.id })}>
+          查看成员
+        </button>
+      </div>
+    ) : null;
+
+  let main: React.ReactNode;
+  if (view.kind === 'chat') {
+    main = (
+      <>
+        <header className="main-head">
+          {menuButton}
+          <Avatar name={singleName ?? current.title} kind={isGroup ? 'group' : singleName ? 'member' : 'lead'} size="sm" />
+          <HeaderCard
+            title={
+              isGroup ? (
+                <>
+                  <span aria-hidden="true" className="hash">
+                    #
+                  </span>
+                  {current.title.replace(/^群聊：/, '')}
+                  <span className="muted"> （{current.group!.length} 位）</span>
+                </>
+              ) : (
+                current.title
+              )
+            }
+            name={who.name}
+            kind={who.kind}
+            type={who.type}
+            intro={intro}
+            model={who.model}
+            {...(currentMember ? { onView: () => setView({ kind: 'member', id: currentMember.id }) } : { onView: () => setView({ kind: 'members' }) })}
+          />
+          {current.messages.length > 0 && (
+            <button type="button" className="btn btn-icon" title="删除会话" aria-label={`删除会话「${current.title}」`} onClick={() => remove(current.id)}>
+              <Trash2 aria-hidden="true" />
+            </button>
+          )}
+          {!wide && (
+            <button type="button" className="btn btn-icon" aria-label="新对话" onClick={() => start()}>
+              <SquarePen aria-hidden="true" />
+            </button>
+          )}
+        </header>
+        {viaShell && (
+          <p role="alert" className="chat-error main-note">
+            原生对话要直接打开 Aroomo 控制台（不经过旧的 LobeHub 外壳）才能用。
+          </p>
+        )}
+        <Thread
+          key={current.id}
+          conversation={current}
+          onMessages={onMessages}
+          insert={insert}
+          members={memberNames}
+          speechRate={prefs.speechRate}
+          speechOnline={prefs.speechOnline}
+          onAllowOnlineSpeech={allowOnlineSpeech}
+          {...(singleName ? { memberName: singleName } : {})}
+          intro={intro}
+          {...(notice ? { notice } : {})}
+          {...(fetchImpl ? { fetchImpl } : {})}
+        />
+      </>
+    );
+  } else {
+    const parent = parentOf(view);
+    const member = view.kind === 'member' ? members.find((m) => m.id === view.id) : undefined;
+    const title = view.kind === 'member' ? (member?.name ?? '成员') : TITLES[view.kind];
+    main = (
+      <>
+        <PanelHeader title={title} lead={menuButton} {...(parent ? { onBack: () => setView(parent.view), backLabel: parent.label } : {})} />
+        <div className="panel-scroll">
+          {view.kind === 'members' && (
+            <>
+              <MembersPanel members={members} onOpen={(m) => setView({ kind: 'member', id: m.id })} />
+              <div className="panel">
+                <div className="group">
+                  <button type="button" className="row row-button" onClick={() => setView({ kind: 'capmap' })}>
+                    <span className="row-text">
+                      <span className="row-label">能力地图</span>
+                      <span className="row-hint">可以入职的模型、额度和试用期</span>
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+          {view.kind === 'member' && member && (
+            <MemberDetail
+              member={member}
+              onChat={() => chatWith(member)}
+              onMention={() => {
+                setInsert((p) => ({ text: `@${member.name} `, seq: (p?.seq ?? 0) + 1 }));
+                setView({ kind: 'chat' });
+              }}
+            />
+          )}
+          {view.kind === 'capmap' && <CapabilityPanel />}
+          {view.kind === 'group-new' && <GroupNewPanel members={members} onStart={(names) => start({ title: `群聊：${names.join('、')}`, group: names })} />}
+          {view.kind === 'settings' && <SettingsPanel prefs={prefs} setPrefs={setPrefs} onOpen={(k) => setView({ kind: k })} />}
+          {view.kind === 'tools' && (
+            <div className="panel panel-embed">
+              <Tools />
+            </div>
+          )}
+          {view.kind === 'inbox' && (
+            <div className="panel panel-embed">
+              <Inbox />
+            </div>
+          )}
+          {view.kind === 'shortcuts' && <ShortcutsPanel />}
+          {view.kind === 'library' && (
+            <div className="panel panel-embed">
+              <Library />
+            </div>
+          )}
+          {view.kind === 'keys' && (
+            <div className="panel panel-embed">
+              <Keys />
+            </div>
+          )}
+        </div>
+      </>
+    );
+  }
 
   return (
-    <div className={`chat-shell aroomo-bg${prefs.highContrast ? ' chat-hc' : ''}`}>
-    <section className={`chat-root${prefs.highContrast ? ' chat-hc' : ''}`} style={style} aria-labelledby="chat-title">
-      <header className="chat-header">
-        <button type="button" className="chat-btn chat-btn-ghost" aria-label="打开菜单：会话、成员、群聊、工具" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(true)}>
-          <Menu aria-hidden="true" />
-          <span>菜单</span>
-        </button>
-        <Logo size={28} className="chat-logo" />
-        <h1 id="chat-title" className="chat-title">
-          {current.title}
-          {current.model !== 'aroomo' && <span className="chat-muted">（单独对话）</span>}
-        </h1>
-        <button type="button" className="chat-btn chat-btn-ghost" aria-label="新对话" onClick={() => start()}>
-          <MessageSquarePlus aria-hidden="true" />
-          <span className="chat-hide-narrow">新对话</span>
-        </button>
-      </header>
-
-      {viaShell && (
-        <p role="alert" className="chat-error">
-          原生对话要直接打开 Aroomo 控制台（不经过旧的 LobeHub 外壳）才能用。
-        </p>
+    <div className={`app${prefs.highContrast ? ' chat-hc' : ''}${wide ? ' app-wide' : ''}${layout.rail ? ' app-rail' : ''}${wide && collapsed ? ' app-collapsed' : ''}`}>
+      {layout.rail && <Rail active={view.kind} onOpen={(t: RailTarget) => goto({ kind: t })} onNew={() => start()} />}
+      {wide && !collapsed && <aside className="side" aria-label="会话列表">{sidebar}</aside>}
+      {!wide && (
+        <dialog ref={dialog} className="drawer" aria-label="会话列表" onClose={() => setOpen(false)} onCancel={() => setOpen(false)}>
+          {open && sidebar}
+        </dialog>
       )}
-      <Thread
-        key={current.id}
-        conversation={current}
-        onMessages={onMessages}
-        insert={insert}
-        members={memberNames}
-        speechRate={prefs.speechRate}
-        speechOnline={prefs.speechOnline}
-        onAllowOnlineSpeech={allowOnlineSpeech}
-        {...(fetchImpl ? { fetchImpl } : {})}
-      />
-
-      <dialog ref={dialog} className="chat-drawer" aria-label="菜单" onClose={() => setOpen(false)} onCancel={() => setOpen(false)}>
-        <Tabs
-          label="菜单分类"
-          wrap
-          value={tab}
-          onChange={(t) => setTab(t as Tab)}
-          aside={
-            <button type="button" className="chat-btn chat-btn-ghost" aria-label="关闭菜单" onClick={() => setOpen(false)}>
-              <X aria-hidden="true" />
-            </button>
-          }
-          items={[
-            {
-              id: 'conversations',
-              label: '会话',
-              content: (
-                <>
-                  <button type="button" className="chat-btn chat-btn-primary chat-wide" onClick={() => start()}>
-                    <MessageSquarePlus aria-hidden="true" />
-                    新对话
-                  </button>
-                  <ul className="chat-list" aria-label="会话列表">
-                    {list.map((c) => (
-                      <li key={c.id} className="chat-list-item">
-                        <button type="button" className="chat-list-main" aria-current={c.id === currentId ? 'true' : undefined} onClick={() => pick(c.id)}>
-                          {c.group?.length ? <Users aria-hidden="true" className="chat-inline-icon" /> : null}
-                          {c.title}
-                        </button>
-                        {c.messages.length > 0 && (
-                          <button type="button" className="chat-btn chat-btn-ghost" aria-label={`删除会话「${c.title}」`} onClick={() => remove(c.id)}>
-                            <Trash2 aria-hidden="true" />
-                          </button>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                  <p className="chat-muted">会话只存在这台设备的浏览器里。</p>
-                </>
-              ),
-            },
-            {
-              id: 'members',
-              label: '成员',
-              content: (
-                <Tabs
-                  label="成员"
-                  items={[
-                    {
-                      id: 'call',
-                      label: '点名',
-                      content: (
-                        <>
-                          {members.length === 0 ? (
-                            <p>还没有在职成员。到旁边的「管理」里让模型入职。</p>
-                          ) : (
-                            <ul className="chat-list" aria-label="在职成员">
-                              {members.map((m) => (
-                                <li key={m.id} className="chat-list-item">
-                                  <span className="chat-list-main chat-static">{m.name}</span>
-                                  <button
-                                    type="button"
-                                    className="chat-btn chat-btn-ghost"
-                                    aria-label={`在当前对话里点名 ${m.name}`}
-                                    onClick={() => {
-                                      setInsert((p) => ({ text: `@${m.name} `, seq: (p?.seq ?? 0) + 1 }));
-                                      setOpen(false);
-                                    }}
-                                  >
-                                    @点名
-                                  </button>
-                                  <button type="button" className="chat-btn chat-btn-ghost" aria-label={`和 ${m.name} 单独对话`} onClick={() => start({ title: `和 ${m.name}`, model: `aroomo/${m.id}` })}>
-                                    单独聊
-                                  </button>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                          <p className="chat-muted">不点名时，由负责人回答。</p>
-                        </>
-                      ),
-                    },
-                    { id: 'manage', label: '管理', content: <Members /> },
-                  ]}
-                />
-              ),
-            },
-            {
-              id: 'groups',
-              label: '群聊',
-              content: (
-                <>
-                  <fieldset className="chat-fieldset">
-                    <legend>选几位成员，一起回答</legend>
-                    {members.map((m) => (
-                      <label key={m.id} className="chat-check">
-                        <input
-                          type="checkbox"
-                          checked={groupPick.includes(m.name)}
-                          onChange={(e) => setGroupPick((g) => (e.target.checked ? [...g, m.name] : g.filter((n) => n !== m.name)))}
-                        />
-                        {m.name}
-                      </label>
-                    ))}
-                  </fieldset>
-                  <button
-                    type="button"
-                    className="chat-btn chat-btn-primary chat-wide"
-                    disabled={groupPick.length < 2}
-                    onClick={() => {
-                      start({ title: `群聊：${groupPick.join('、')}`, group: groupPick });
-                      setGroupPick([]);
-                    }}
-                  >
-                    <Users aria-hidden="true" />
-                    开始群聊{groupPick.length < 2 ? '（至少选 2 位）' : ''}
-                  </button>
-                  <ul className="chat-list" aria-label="已有群聊">
-                    {list
-                      .filter((c) => c.group?.length)
-                      .map((c) => (
-                        <li key={c.id} className="chat-list-item">
-                          <button type="button" className="chat-list-main" aria-current={c.id === currentId ? 'true' : undefined} onClick={() => pick(c.id)}>
-                            {c.title}
-                          </button>
-                        </li>
-                      ))}
-                  </ul>
-                </>
-              ),
-            },
-            {
-              id: 'tools',
-              label: '工具',
-              content: (
-                <>
-                  <p className="chat-muted">对话里直接调用工具（MCP）下一步开放；这里先管理工具。</p>
-                  <Tools />
-                </>
-              ),
-            },
-            { id: 'inbox', label: '收件箱', content: <Inbox /> },
-            {
-              id: 'settings',
-              label: '设置',
-              content: (
-                <>
-                  <fieldset className="chat-fieldset">
-                    <legend>字号（整个页面一起变）</legend>
-                    <div className="chat-seg" role="radiogroup" aria-label="字号">
-                      {FONT_SIZES.map((s) => (
-                        <button key={s} type="button" role="radio" aria-checked={prefs.fontSize === s} className="chat-btn chat-btn-ghost" onClick={() => setPrefs((p) => ({ ...p, fontSize: s }))}>
-                          {s}
-                        </button>
-                      ))}
-                    </div>
-                  </fieldset>
-                  <label className="chat-check">
-                    <input type="checkbox" checked={prefs.highContrast} onChange={(e) => setPrefs((p) => ({ ...p, highContrast: e.target.checked }))} />
-                    高对比度
-                  </label>
-                  <fieldset className="chat-fieldset">
-                    <legend>颜色</legend>
-                    <div className="chat-seg" role="radiogroup" aria-label="颜色">
-                      {THEMES.map(([v, label]) => (
-                        <button key={v} type="button" role="radio" aria-checked={prefs.theme === v} className="chat-btn chat-btn-ghost" onClick={() => setPrefs((p) => ({ ...p, theme: v }))}>
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  </fieldset>
-                  {speechSupported() && (
-                    <>
-                      <fieldset className="chat-fieldset">
-                        <legend>朗读语速</legend>
-                        <div className="chat-seg" role="radiogroup" aria-label="朗读语速">
-                          {SPEECH_RATES.map((r) => (
-                            <button key={r} type="button" role="radio" aria-checked={prefs.speechRate === r} className="chat-btn chat-btn-ghost" onClick={() => setPrefs((p) => ({ ...p, speechRate: r }))}>
-                              {r.toFixed(1)}
-                            </button>
-                          ))}
-                        </div>
-                      </fieldset>
-                      <label className="chat-check">
-                        <input type="checkbox" checked={prefs.speechOnline} onChange={(e) => setPrefs((p) => ({ ...p, speechOnline: e.target.checked }))} />
-                        本机没有中文语音时，用在线语音（文字会发到 Google 或微软合成）
-                      </label>
-                    </>
-                  )}
-                  <details className="chat-keys">
-                    <summary>键盘快捷键</summary>
-                    <dl>
-                      {SHORTCUTS.map(([k, what]) => (
-                        <div key={k}>
-                          <dt>{k}</dt>
-                          <dd>{what}</dd>
-                        </div>
-                      ))}
-                    </dl>
-                  </details>
-                  <Settings />
-                </>
-              ),
-            },
-          ]}
-        />
-      </dialog>
-    </section>
+      <section className="main" aria-labelledby={view.kind === 'chat' ? 'chat-title' : undefined} aria-label={view.kind === 'chat' ? undefined : '面板'}>
+        {main}
+      </section>
     </div>
   );
 }

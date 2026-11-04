@@ -77,37 +77,37 @@ export function Inbox() {
   const canDismiss = (i: Item) => i.group !== 'decision' || (i.actions ?? []).length === 0;
 
   return (
-    <section aria-labelledby="inbox-title" className="space-y-6">
-      <h1 id="inbox-title" className="text-[1.25rem] font-semibold">
+    <section aria-labelledby="inbox-title" className="page">
+      <h1 id="inbox-title" className="page-title">
         收件箱
       </h1>
-      <p role="status" className="text-[var(--muted)]">
+      <p role="status" className="row-status">
         {msg}
       </p>
       <TakeoverCards />
-      {data === null && !msg && <p className="text-[var(--muted)]">加载中…</p>}
+      {data === null && !msg && <p className="muted">加载中…</p>}
       {data &&
         groups.map((g) => (
-          <div key={g.key} className="space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-[1rem] font-semibold">{g.title}</h2>
+          <div key={g.key} className="group-block">
+            <div className="group-head">
+              <h2 className="group-title">{g.title}</h2>
               {g.key === 'brief' && (data[g.key] ?? []).length > 1 && (
                 <Button variant="outline" className="min-h-12" onClick={() => dismiss((data[g.key] ?? []).map((i) => i.id))}>
                   全部知道了
                 </Button>
               )}
             </div>
-            {(data[g.key] ?? []).length === 0 && <p className="text-[var(--muted)]">暂时没有</p>}
-            <ul className="space-y-2">
+            {(data[g.key] ?? []).length === 0 && <p className="group-empty">{g.key === 'decision' ? '没有要你决定的事' : '暂时没有'}</p>}
+            <ul className={(data[g.key] ?? []).length ? 'group' : 'hidden'}>
               {(data[g.key] ?? []).map((i) => (
-                <li key={i.id} className="space-y-2 rounded-xl border border-[var(--border)] p-3">
-                  <p className="font-medium">
+                <li key={i.id} className="row row-stack">
+                  <p className="row-label">
                     {i.urgency === 'urgent' ? '【紧急】' : ''}
                     {i.title}
                   </p>
-                  {i.summary && <p className="whitespace-pre-wrap text-[var(--muted)]">{i.summary}</p>}
-                  <p className="text-[1rem] text-[var(--muted)]">{formatTime(i.createdAt)}</p>
-                  <div className="flex flex-wrap gap-2">
+                  {i.summary && <p className="row-hint whitespace-pre-wrap">{i.summary}</p>}
+                  <p className="row-hint">{formatTime(i.createdAt)}</p>
+                  <div className="row-actions">
                     {(i.actions ?? []).map((a) => (
                       <Button key={a.id} className="min-h-12" variant={a.confirm && a.confirm.kind !== 'normal' ? 'outline' : 'default'} onClick={() => void act(i, a)}>
                         {a.label}

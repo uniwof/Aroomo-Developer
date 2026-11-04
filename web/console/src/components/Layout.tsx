@@ -21,7 +21,7 @@ export const NAV = [
 ] as const;
 
 /** 收件箱未处理数（/api/inbox/unread-count），每 60 秒刷新；查不到就不显示，不编造 */
-function useInboxCount(): number {
+export function useInboxCount(): number {
   const [n, setN] = useState(0);
   useEffect(() => {
     let alive = true;

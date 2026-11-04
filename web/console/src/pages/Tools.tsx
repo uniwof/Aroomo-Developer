@@ -2,7 +2,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { ACCESS_LABEL, quotaText, type CapabilityAccess } from '@/lib/capabilities';
-import { QuotaRing } from '@/components/brand';
 
 export interface ToolItem {
   id: string;
@@ -42,35 +41,37 @@ export function Tools() {
     };
   }, []);
 
+  // 分组列表（#250 重设计）：一组一个小标题；每行名称 + 一行状态；权限写成行尾文字，不用胶囊和空圆环
   return (
-    <div className="flex flex-col gap-4">
-      <h1 className="text-xl font-semibold">工具</h1>
+    <section className="page" aria-labelledby="tools-title">
+      <h1 id="tools-title" className="page-title">
+        工具
+      </h1>
       {error && <p role="alert">{error}</p>}
-      {!error && !tools && <p className="text-[var(--muted)]">正在加载…</p>}
-      {tools?.length === 0 && <p className="text-[var(--muted)]">还没有工具。</p>}
+      {!error && !tools && <p className="muted">正在加载…</p>}
+      {tools?.length === 0 && <p className="muted">还没有工具。</p>}
       {tools &&
         groupTools(tools).map(([g, rows]) => (
-          <section key={g} aria-label={g} className="space-y-2">
-            <h2 className="font-semibold">
+          <section key={g} aria-label={g} className="group-block">
+            <h2 className="group-title">
               {g}（{rows.length}）
             </h2>
-            <ul className="divide-y divide-[var(--border)] rounded-2xl bg-[var(--card)]">
+            <ul className="group">
               {rows.map((t) => (
-                <li key={t.id} className="flex min-h-14 items-center gap-3 px-4 py-2">
-                  <QuotaRing used={t.quota?.used} limit={t.quota?.limit} />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate font-medium">{t.name}</div>
-                    <div className="text-[var(--muted)]">
+                <li key={t.id} className="row">
+                  <div className="row-text">
+                    <div className="row-label">{t.name}</div>
+                    <div className="row-hint">
                       {STATUS_LABEL[t.status] ?? t.status} · {quotaText(t.quota)}
                     </div>
-                    {t.note && <div className="text-[var(--muted)]">{t.note}</div>}
+                    {t.note && <div className="row-hint">{t.note}</div>}
                   </div>
-                  <span className="shrink-0 rounded-full border border-[var(--border)] px-3 py-1 text-[1rem]">{ACCESS_LABEL[t.access]}</span>
+                  <span className="row-value">{ACCESS_LABEL[t.access]}</span>
                 </li>
               ))}
             </ul>
           </section>
         ))}
-    </div>
+    </section>
   );
 }

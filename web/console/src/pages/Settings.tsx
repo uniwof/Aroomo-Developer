@@ -1,9 +1,11 @@
-/** 设置（从旧 Shell /aroomo/settings 迁来）：负责人、敏感内容保护、外部接入（MCP 配置复制 + 客户端令牌）、账号。分类用标签页切换。 */
+/**
+ * 设置（从旧 Shell /aroomo/settings 迁来）：负责人、敏感内容保护、执行员提醒、外部接入（MCP 配置复制 + 客户端令牌）、账号。
+ * #250 重设计：不用标签页，改成 iOS / sumus 式分组列表（一组一个小标题，组内一行一项），一页看完。
+ */
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { ApiError, api, logout, type Member } from '@/lib/api';
 import { ClientTokens } from '@/components/ClientTokens';
-import { Tabs } from '@/components/ui/tabs';
 
 interface LeadSetting {
   leadId: string | null;
@@ -11,15 +13,27 @@ interface LeadSetting {
   auto: boolean;
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+/** 分组列表里的一行：左边名称和说明，右边控件（放不下时控件换到下一行） */
+export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
-    <div className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
-      <div>
-        <div className="font-medium">{label}</div>
-        {hint && <div className="text-[var(--muted)]">{hint}</div>}
+    <div className="row row-field">
+      <div className="row-text">
+        <div className="row-label">{label}</div>
+        {hint && <div className="row-hint">{hint}</div>}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="row-control">{children}</div>
     </div>
+  );
+}
+
+/** 一组：小标题 + 圆角分组列表 */
+export function Group({ title, children, footer }: { title?: string; children: ReactNode; footer?: string }) {
+  return (
+    <section className="group-block" aria-label={title}>
+      {title && <h2 className="group-title">{title}</h2>}
+      <div className="group">{children}</div>
+      {footer && <p className="group-footer">{footer}</p>}
+    </section>
   );
 }
 
@@ -43,7 +57,7 @@ function LeadSection() {
   }, []);
   useEffect(load, [load]);
 
-  if (!members || !lead) return <p className="text-[var(--muted)]">{msg || '正在加载…'}</p>;
+  if (!members || !lead) return <p className="muted">{msg || '正在加载…'}</p>;
   const active = members.filter((m) => m.enabled && m.status !== 'candidate');
   const eligible = active.filter((m) => m.leadEligible);
   const effective = eligible.find((m) => m.id === lead.effectiveLeadId);
@@ -63,11 +77,11 @@ function LeadSection() {
     <>
       <Field label="负责人" hint="对话里没有 @ 成员时，交给负责人回答。负责人要能文字对话、上下文 ≥32k、支持工具调用。">
         {eligible.length === 0 ? (
-          <span className="text-[var(--muted)]">还没有合格的成员</span>
+          <span className="muted">还没有合格的成员</span>
         ) : (
           <select
             aria-label="负责人"
-            className="min-h-12 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3"
+            className="field-select"
             value={lead.auto ? '' : (lead.leadId ?? '')}
             onChange={(e) => void change(e.target.value)}
           >
@@ -87,7 +101,7 @@ function LeadSection() {
         </span>
       </Field>
       {msg && (
-        <p role="status" className="text-[var(--muted)]">
+        <p role="status" className="row-status">
           {msg}
         </p>
       )}
@@ -122,7 +136,7 @@ function SecuritySection() {
     <>
       <Field label="敏感内容保护" hint="开着时，含密码、银行卡号、Key 等敏感信息的消息不发给外部成员（默认开）">
         {on == null ? (
-          <span className="text-[var(--muted)]">—</span>
+          <span className="muted">—</span>
         ) : (
           <button
             type="button"
@@ -130,14 +144,14 @@ function SecuritySection() {
             aria-checked={on}
             aria-label="敏感内容保护"
             onClick={() => void toggle()}
-            className={`relative inline-flex h-11 w-16 items-center rounded-full transition-colors ${on ? 'bg-brand' : 'bg-[var(--border)]'}`}
+            className="switch"
           >
-            <span className={`inline-block size-7 rounded-full bg-white shadow transition-transform ${on ? 'translate-x-8' : 'translate-x-1'}`} />
+            <span className="switch-knob" />
           </button>
         )}
       </Field>
       {msg && (
-        <p role="status" className="text-[var(--muted)]">
+        <p role="status" className="row-status">
           {msg}
         </p>
       )}
@@ -174,7 +188,7 @@ function BudgetSection() {
     }
   }
 
-  const btn = 'min-h-12 min-w-12 rounded-xl border border-[var(--border)] text-[1.25rem] disabled:opacity-40';
+  const btn = 'btn btn-outline btn-square';
   return (
     <>
       <Field
@@ -190,7 +204,7 @@ function BudgetSection() {
             <button type="button" aria-label="减少一次" className={btn} disabled={b.daily <= 0} onClick={() => void change(-1)}>
               −
             </button>
-            <span aria-label="每天提醒次数" className="min-w-8 text-center text-[1.125rem] font-semibold">
+            <span aria-label="每天提醒次数" className="stepper-value">
               {b.daily}
             </span>
             <button type="button" aria-label="增加一次" className={btn} disabled={b.daily >= 50} onClick={() => void change(1)}>
@@ -198,11 +212,11 @@ function BudgetSection() {
             </button>
           </div>
         ) : (
-          <span className="text-[var(--muted)]">—</span>
+          <span className="muted">—</span>
         )}
       </Field>
       {msg && (
-        <p role="status" className="pb-3 text-[var(--muted)]">
+        <p role="status" className="row-status">
           {msg}
         </p>
       )}
@@ -244,12 +258,12 @@ function McpSection() {
         </Button>
       </Field>
       {cfg && (
-        <pre aria-label="MCP 配置内容" className="my-2 overflow-x-auto rounded-xl bg-[var(--bg)] p-3 text-[1rem] select-all">
+        <pre aria-label="MCP 配置内容" className="row-pre">
           {JSON.stringify(cfg.config, null, 2)}
         </pre>
       )}
       {msg && (
-        <p role="status" className="pb-3 text-[var(--muted)]">
+        <p role="status" className="row-status">
           {msg}
         </p>
       )}
@@ -257,66 +271,60 @@ function McpSection() {
   );
 }
 
-/** 分类用标签页切换（所有者 2026-11-04 的界面规矩；这一页是示范） */
-export function Settings() {
-  const card = 'divide-y divide-[var(--border)] rounded-2xl bg-[var(--card)] px-4';
+/** 设置的各组（对话页的设置弹窗 / 整页按组取用；控制台 /settings 一页全显示） */
+export function LeadGroup() {
   return (
-    <section aria-labelledby="settings-title" className="space-y-4">
-      <h1 id="settings-title" className="text-[1.25rem] font-semibold">
+    <Group title="负责人与安全">
+      <LeadSection />
+      <SecuritySection />
+    </Group>
+  );
+}
+export function BudgetGroup() {
+  return (
+    <Group title="执行员提醒">
+      <BudgetSection />
+    </Group>
+  );
+}
+export function ExternalGroup() {
+  return (
+    <Group title="外部接入">
+      <McpSection />
+      <ClientTokens />
+    </Group>
+  );
+}
+export function AccountGroup() {
+  return (
+    <Group title="登录">
+      <Field label="退出登录" hint="退出后要重新输入邮箱和密码">
+        <Button variant="outline" onClick={() => void logout()}>
+          退出登录
+        </Button>
+      </Field>
+    </Group>
+  );
+}
+
+export function SettingsGroups() {
+  return (
+    <>
+      <LeadGroup />
+      <BudgetGroup />
+      <ExternalGroup />
+      <AccountGroup />
+    </>
+  );
+}
+
+export function Settings() {
+  return (
+    <section aria-labelledby="settings-title" className="page">
+      <h1 id="settings-title" className="page-title">
         设置
       </h1>
-      <Tabs
-        wrap
-        label="设置分类"
-        items={[
-          {
-            id: 'general',
-            label: '常规',
-            content: (
-              <div className="space-y-4">
-                <div className={card}>
-                  <LeadSection />
-                </div>
-                <div className={card}>
-                  <SecuritySection />
-                </div>
-              </div>
-            ),
-          },
-          {
-            id: 'budget',
-            label: '执行员提醒',
-            content: (
-              <div className={card}>
-                <BudgetSection />
-              </div>
-            ),
-          },
-          {
-            id: 'external',
-            label: '外部接入',
-            content: (
-              <div className={card}>
-                <McpSection />
-                <ClientTokens />
-              </div>
-            ),
-          },
-          {
-            id: 'account',
-            label: '账号',
-            content: (
-              <div className={card}>
-                <Field label="登录" hint="退出后要重新输入邮箱和密码">
-                  <Button variant="outline" onClick={() => void logout()}>
-                    退出登录
-                  </Button>
-                </Field>
-              </div>
-            ),
-          },
-        ]}
-      />
+      <SettingsGroups />
     </section>
   );
 }

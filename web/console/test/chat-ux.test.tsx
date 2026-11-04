@@ -97,7 +97,7 @@ describe('对话页：对标改进', () => {
     fireEvent.click(screen.getByRole('button', { name: '重试这条回复' }));
     await waitFor(() => expect(container.textContent).toContain('好了'), { timeout: 8000 });
     expect(n).toBe(2);
-    expect(container.querySelector('.chat-bubble-user')?.textContent).toBe('在吗');
+    expect(container.querySelector('.msg-body-user')?.textContent).toBe('在吗');
     // 读屏能听到是谁说的
     expect(screen.getByText('你说：')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText('Kimi 回复：')).toBeInTheDocument());
@@ -119,28 +119,33 @@ describe('对话页：对标改进', () => {
     await waitFor(() => expect((screen.getByLabelText('输入消息') as HTMLTextAreaElement).value).toBe('写到一半'));
   });
 
-  it('设置：字号放大到整页、可选深色；快捷键说明能读到', async () => {
+  it('设置：字号放大到整页、可选深色；快捷键说明能读到（齿轮打开，分组列表，不用标签页）', async () => {
     renderPage();
-    fireEvent.click(screen.getByRole('button', { name: /打开菜单/ }));
-    fireEvent.click(screen.getByRole('tab', { name: '设置' }));
+    fireEvent.click(screen.getByRole('button', { name: '设置' }));
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
     fireEvent.click(screen.getByRole('radio', { name: '28' }));
     expect(document.documentElement.style.fontSize).toBe('28px');
     fireEvent.click(screen.getByRole('radio', { name: '深色' }));
     expect(document.documentElement.classList.contains('dark')).toBe(true);
     expect(readDisplayPrefs()).toEqual({ fontSize: 28, theme: 'dark' });
-    expect(screen.getByText('键盘快捷键')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '键盘快捷键' }));
     expect(screen.getByText('回到输入框')).toBeInTheDocument();
   });
 
-  it('快捷键：Ctrl+Shift+S 开关菜单；Ctrl+Shift+O 新对话', async () => {
-    renderPage();
-    const d = document.querySelector('dialog')!;
-    fireEvent.keyDown(window, { key: 'S', ctrlKey: true, shiftKey: true });
-    await waitFor(() => expect(d.hasAttribute('open')).toBe(true));
-    fireEvent.keyDown(window, { key: 'S', ctrlKey: true, shiftKey: true });
-    await waitFor(() => expect(d.hasAttribute('open')).toBe(false));
-    fireEvent.keyDown(window, { key: 'O', metaKey: true, shiftKey: true });
-    expect(document.title).toBe('新对话 · Aroomo');
+  it('快捷键：Ctrl+Shift+S 开关会话列表（手机宽度是抽屉）；Ctrl+Shift+O 新对话', async () => {
+    Object.defineProperty(window, 'innerWidth', { value: 390, configurable: true });
+    try {
+      renderPage();
+      const d = document.querySelector('dialog')!;
+      fireEvent.keyDown(window, { key: 'S', ctrlKey: true, shiftKey: true });
+      await waitFor(() => expect(d.hasAttribute('open')).toBe(true));
+      fireEvent.keyDown(window, { key: 'S', ctrlKey: true, shiftKey: true });
+      await waitFor(() => expect(d.hasAttribute('open')).toBe(false));
+      fireEvent.keyDown(window, { key: 'O', metaKey: true, shiftKey: true });
+      expect(document.title).toBe('新对话 · Aroomo');
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { value: 1024, configurable: true });
+    }
   });
 
   it('停止：上游请求被中断，已收到的部分保留，读屏播报「已停止」', async () => {
@@ -175,6 +180,6 @@ describe('对话页：对标改进', () => {
     );
     const { container } = renderPage();
     await waitFor(() => expect(container.textContent).toContain('旧回答'));
-    expect(container.querySelector('.chat-bubble-user')?.textContent).toBe('旧问题');
+    expect(container.querySelector('.msg-body-user')?.textContent).toBe('旧问题');
   });
 });

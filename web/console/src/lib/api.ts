@@ -111,10 +111,28 @@ export async function api<T>(method: string, path: string, body?: unknown, fetch
   return parse<T>(res);
 }
 
+const USER_KEY = 'aroomo.console.user';
+
+/** 登录时记下的名字和邮箱；没有就返回 null */
+export function currentUser(): { email: string; displayName: string; role: string } | null {
+  try {
+    const j = JSON.parse(sessionStorage.getItem(USER_KEY) ?? 'null') as { email?: unknown; displayName?: unknown; role?: unknown } | null;
+    return j && typeof j.email === 'string' ? { email: j.email, displayName: typeof j.displayName === 'string' ? j.displayName : '', role: typeof j.role === 'string' ? j.role : '' } : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function login(email: string, password: string, fetchImpl: typeof fetch = fetch): Promise<User> {
   // cookie:true：Core 把会话放进 HttpOnly Cookie，不在响应里给令牌（原生对话 /api/chat/stream 只认 Cookie）
   const r = await api<{ token?: string; user: User }>('POST', '/auth/login', { email, password, cookie: true }, fetchImpl);
   session.set(r.token ?? COOKIE_SESSION);
+  try {
+    // 只记显示用的名字和邮箱（侧栏底部的账号行），不记令牌
+    sessionStorage.setItem(USER_KEY, JSON.stringify({ email: r.user.email, displayName: r.user.displayName ?? '', role: r.user.role }));
+  } catch {
+    /* 忽略 */
+  }
   return r.user;
 }
 

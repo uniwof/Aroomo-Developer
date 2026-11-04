@@ -9,6 +9,8 @@ import { PREFS_KEY, readDisplayPrefs, type Theme } from '@/lib/display';
 export interface ChatTurn {
   role: 'user' | 'assistant';
   text: string;
+  /** 发出 / 收到的时间（毫秒）；旧会话没有 */
+  at?: number;
 }
 
 export interface Conversation {
@@ -259,4 +261,38 @@ export function saveDraft(id: string, text: string, storage: Storage | undefined
 export function signatureOf(text: string): string | null {
   const m = /(?:^|\n)\s*[—–]\s*([^\n—–]{1,40}?)\s*$/.exec(text);
   return m ? m[1]!.trim() : null;
+}
+
+/** 去掉回复末尾的署名行「— 名字」（名字已显示在头像旁边，不再重复） */
+export function stripSignature(text: string): string {
+  return text.replace(/\n?\s*[—–]\s*[^\n—–]{1,40}?\s*$/, '').replace(/\s+$/, '');
+}
+
+const pad = (n: number) => String(n).padStart(2, '0');
+
+/** 消息旁的时间：14:05 */
+export function timeLabel(ts: number | undefined): string {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** 会话列表里的时间：今天 14:05 / 昨天 / 周三 / 11月2日 */
+export function listTimeLabel(ts: number | undefined, now = Date.now()): string {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const n = new Date(now);
+  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(n) - day(d)) / 86400000);
+  if (diff <= 0) return timeLabel(ts);
+  if (diff === 1) return '昨天';
+  if (diff < 7) return `周${'日一二三四五六'[d.getDay()]}`;
+  return `${d.getMonth() + 1}月${d.getDate()}日`;
+}
+
+/** 对话区顶部的日期分隔：今天 / 昨天 / 11月2日 */
+export function dayLabel(ts: number | undefined, now = Date.now()): string {
+  if (!ts) return '';
+  const l = listTimeLabel(ts, now);
+  return /^\d\d:\d\d$/.test(l) ? '今天' : l;
 }

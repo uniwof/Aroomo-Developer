@@ -7,7 +7,7 @@
 @theme {
   --color-brand: #ff7f50;
   --color-brand-ink: #1d1d1f;
-  --color-brand-text: #b4441b;
+  --color-brand-text: #b4471f;
   --color-brand-text-dark: #ff9a73;
   --font-sans: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei UI', 'Segoe UI', system-ui, sans-serif;
 }
@@ -18,6 +18,9 @@
   --muted: #6e6e73;
   --card: #f5f5f7;
   --border: #e5e5ea;
+  --hover: #f2f2f4;
+  --selected: #ebebee;
+  --field: #8e8e93;
   color-scheme: light;
 }
 
@@ -28,6 +31,9 @@
     --muted: #a1a1a6;
     --card: #1c1c1e;
     --border: #2c2c2e;
+    --hover: #161618;
+    --selected: #232326;
+    --field: #8e8e93;
     color-scheme: dark;
   }
 }
@@ -38,6 +44,9 @@
   --muted: #a1a1a6;
   --card: #1c1c1e;
   --border: #2c2c2e;
+  --hover: #161618;
+  --selected: #232326;
+  --field: #8e8e93;
   color-scheme: dark;
 }
 
@@ -70,22 +79,328 @@ body {
 }
 
 /*
- * 整屏底（对话页和控制台共用，一个产品一种底）：静态网格渐变（珊瑚色，极低透明度）+ 静态噪点。
- * 不做动画；高对比度（.chat-hc）或系统要求更高对比度时去掉。去 AI 味：不用紫色渐变、不发光。
+ * 整屏底：纯色（#250 重设计：去掉珊瑚色径向光晕和 SVG 噪点——impeccable「radial-spotlight-glow」、craft-floor「feTurbulence grain」）。
+ * 类名保留，控制台和对话页共用一种底。
  */
 .aroomo-bg {
   background-color: var(--bg);
-  background-image:
-    radial-gradient(ellipse at 0% 0%, rgb(255 127 80 / 0.1), transparent 45%),
-    radial-gradient(ellipse at 100% 100%, rgb(255 127 80 / 0.06), transparent 50%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
-  background-attachment: fixed;
 }
-.aroomo-bg.chat-hc {
-  background-image: none;
+
+/* ---------- 共用控件（对话页的面板和控制台页面一套语法，照 sumus 的黑白灰） ----------
+ * 按钮：只有一种强调色（珊瑚，主按钮 / 发送 / 选中）；按下时颜色加深一档、缩 2%，瞬时变化不做过渡（所有者「无动画」）。
+ * 一切尺寸用 rem / em，跟整页字号走；点击区 ≥ 44px。
+ */
+.muted {
+  color: var(--muted);
 }
-@media (prefers-contrast: more) {
-  .aroomo-bg {
-    background-image: none;
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4em;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 0.9em;
+  border-radius: 0.75em;
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.btn svg {
+  width: 1.2em;
+  height: 1.2em;
+  flex: none;
+}
+@media (hover: hover) {
+  .btn:hover:not(:disabled) {
+    background: var(--hover);
   }
+}
+.btn:active:not(:disabled) {
+  background: var(--selected);
+  transform: scale(0.98);
+}
+.btn:disabled {
+  cursor: not-allowed;
+  color: var(--muted);
+  background: var(--card);
+  border-color: var(--border);
+}
+.btn-icon {
+  padding: 0;
+}
+.btn-quiet {
+  color: var(--fg);
+}
+.btn-outline {
+  border-color: var(--border);
+}
+.btn-square {
+  padding: 0;
+  font-size: 1.25em;
+}
+.btn-primary {
+  background: var(--color-brand);
+  color: var(--color-brand-ink);
+  font-weight: 600;
+}
+@media (hover: hover) {
+  .btn-primary:hover:not(:disabled) {
+    background: #f2723f;
+  }
+}
+.btn-primary:active:not(:disabled) {
+  background: #e5652f;
+}
+.btn-wide {
+  width: 100%;
+}
+[aria-current='page'].btn {
+  background: var(--selected);
+  font-weight: 600;
+}
+
+/* 页面 / 面板：标题 + 一组一组的分组列表（iOS / sumus 式），组内紧、组间松 */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+.page-title {
+  margin: 0;
+  font-size: 1.375rem;
+  font-weight: 600;
+}
+.group-block {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.group-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.group-title {
+  margin: 0 0 0.5rem;
+  padding: 0 0.25rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.group {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 0.875rem;
+  background: var(--bg);
+  overflow: hidden;
+}
+.group > * + *,
+.group > li + li {
+  border-top: 1px solid var(--border);
+}
+.group-footer,
+.group-empty {
+  margin: 0.5rem 0 0;
+  padding: 0 0.25rem;
+  color: var(--muted);
+}
+.group-empty {
+  margin: 0;
+  padding: 1rem;
+  border: 1px dashed var(--border);
+  border-radius: 0.875rem;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 3.25rem;
+  padding: 0.625rem 1rem;
+  box-sizing: border-box;
+  width: 100%;
+}
+.row-field {
+  flex-wrap: wrap;
+}
+.row-stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+.row-button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .row-button:hover {
+    background: var(--hover);
+  }
+}
+.row-button:active {
+  background: var(--selected);
+}
+.row-text {
+  flex: 1 1 12em;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-wrap: anywhere;
+}
+.row-label {
+  font-weight: 500;
+}
+.row-hint {
+  color: var(--muted);
+}
+.row-value {
+  color: var(--muted);
+  flex: none;
+  max-width: 50%;
+  text-align: right;
+}
+.row-control {
+  flex: none;
+  max-width: 100%;
+}
+.row-icon svg,
+.row-chevron {
+  width: 1.2em;
+  height: 1.2em;
+  color: var(--muted);
+  flex: none;
+}
+.row-status {
+  margin: 0;
+  padding: 0 1rem 0.75rem;
+  color: var(--muted);
+}
+.row-status:empty {
+  display: none;
+}
+.row-pre {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+  background: var(--card);
+  font-size: 1rem;
+  user-select: all;
+}
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.field-select {
+  min-height: 44px;
+  max-width: 100%;
+  padding: 0 0.75em;
+  border: 1px solid var(--field);
+  border-radius: 0.625em;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+.stepper-value {
+  display: inline-block;
+  min-width: 2em;
+  text-align: center;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 分段选择（单选值：字号、颜色、语速、会话筛选）；选中项用珊瑚色 */
+.seg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border-radius: 0.75rem;
+  background: var(--card);
+}
+.seg-item {
+  flex: 1 0 auto;
+  min-height: 40px;
+  min-width: 44px;
+  padding: 0 0.75em;
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+.seg-item[aria-checked='true'] {
+  background: var(--bg);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
+  outline: 2px solid var(--color-brand);
+  outline-offset: -2px;
+}
+
+/* 开关（就地生效，iOS 式） */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 3.25rem;
+  height: 2rem;
+  flex: none;
+  border: 0;
+  border-radius: 999px;
+  background: var(--field);
+  cursor: pointer;
+  vertical-align: middle;
+}
+.switch::before {
+  /* 点击区扩到 44px 以上，外观不变 */
+  content: '';
+  position: absolute;
+  inset: -0.5rem;
+}
+.switch[aria-checked='true'] {
+  background: var(--color-brand);
+}
+.switch-knob {
+  position: absolute;
+  top: 0.1875rem;
+  left: 0.1875rem;
+  width: 1.625rem;
+  height: 1.625rem;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+}
+.switch[aria-checked='true'] .switch-knob {
+  left: auto;
+  right: 0.1875rem;
+}
+.check {
+  width: 1.4em;
+  height: 1.4em;
+  accent-color: var(--color-brand);
+  flex: none;
+}
+
+/* 表单（登录、设密码） */
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+.form-label {
+  font-weight: 500;
 }

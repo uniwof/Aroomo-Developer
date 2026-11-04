@@ -6,7 +6,7 @@ import { HoverCard } from '@/components/HoverCard';
 import { CapabilityMap } from '@/components/CapabilityMap';
 
 /** 今天几次 + 每天上限（所有者自己填；没填 = 未知）。PUT /api/usage/limits/:memberId */
-function UsageLine({ row, onSaved }: { row: UsageRow; onSaved: () => void }) {
+export function UsageLine({ row, onSaved }: { row: UsageRow; onSaved: () => void }) {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState('');
   const [err, setErr] = useState('');

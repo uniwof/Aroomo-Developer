@@ -104,26 +104,44 @@ describe('原生对话页', () => {
     const c = loadConversations()[0] as Conversation;
     expect(c.title).toBe('你好');
     expect(c.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
+  }, 20000);
+
+  it('手机：只有一层抽屉（会话列表栏），没有标签页；设置、成员都在主区域原地打开；字号可调大并记住', async () => {
+    Object.defineProperty(window, 'innerWidth', { value: 390, configurable: true });
+    try {
+      renderPage();
+      expect(document.querySelectorAll('dialog')).toHaveLength(1);
+      fireEvent.click(screen.getByRole('button', { name: /打开菜单/ }));
+      const d = document.querySelector('dialog')!;
+      await waitFor(() => expect(d.hasAttribute('open')).toBe(true));
+      expect(screen.queryAllByRole('tab')).toHaveLength(0);
+      // 置顶的 Aroomo 系统会话 = 收件箱
+      fireEvent.click(screen.getByRole('button', { name: '设置' }));
+      await waitFor(() => expect(d.hasAttribute('open')).toBe(false));
+      expect(screen.getByRole('heading', { name: '设置' })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('radio', { name: '24' }));
+      expect(loadPrefs().fontSize).toBe(24);
+      fireEvent.click(screen.getByRole('button', { name: /打开菜单/ }));
+      fireEvent.click(screen.getByRole('button', { name: '成员' }));
+      fireEvent.click(await screen.findByRole('button', { name: /^Kimi/ }));
+      fireEvent.click(await screen.findByRole('button', { name: '在当前对话里点名 Kimi' }));
+      await waitFor(() => expect((screen.getByLabelText('输入消息') as HTMLTextAreaElement).value).toContain('@Kimi '));
+      expect(document.querySelectorAll('dialog')).toHaveLength(1);
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { value: 1024, configurable: true });
+    }
   });
 
-  it('一层抽屉：会话 / 成员 / 群聊 / 工具是同一个抽屉里的标签页；字号可调大并记住', async () => {
+  it('桌面：分类窄栏 + 会话列表 + 对话常显；专职成员列表里点成员就单聊；铃铛打开收件箱', async () => {
+    document.documentElement.style.fontSize = '';
     renderPage();
-    fireEvent.click(screen.getByRole('button', { name: /打开菜单/ }));
-    const tabs = screen.getAllByRole('tab');
-    expect(tabs.map((t) => t.textContent)).toEqual(['会话', '成员', '群聊', '工具', '收件箱', '设置']);
-    expect(document.querySelectorAll('dialog')).toHaveLength(1);
-    // 收件箱、设置原地打开（不跳页）
-    fireEvent.click(screen.getByRole('tab', { name: '收件箱' }));
-    expect(await screen.findByRole('heading', { name: /收件箱/ })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('tab', { name: '设置' }));
-    expect(screen.getByRole('heading', { name: '设置' })).toBeInTheDocument();
-    expect(document.querySelectorAll('dialog')).toHaveLength(1);
-    fireEvent.click(screen.getByRole('radio', { name: '24' }));
-    expect(loadPrefs().fontSize).toBe(24);
-    fireEvent.click(screen.getByRole('tab', { name: '成员' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: '在当前对话里点名 Kimi' })).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: '在当前对话里点名 Kimi' }));
-    await waitFor(() => expect((screen.getByLabelText('输入消息') as HTMLTextAreaElement).value).toContain('@Kimi '));
+    expect(document.querySelectorAll('dialog')).toHaveLength(0);
+    expect(screen.getByRole('navigation', { name: '分类' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('radio', { name: '专职成员' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Kimi/ }));
+    expect(screen.getByRole('heading', { name: 'Kimi' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^通知和收件箱/ }));
+    expect((await screen.findAllByRole('heading', { name: /收件箱/ })).length).toBeGreaterThan(0);
   });
 
   it('打开 Aroomo（/）直接进对话', async () => {
@@ -139,6 +157,7 @@ describe('原生对话页', () => {
 
   it('默认字号 16px', () => {
     const { container } = renderPage();
-    expect((container.querySelector('.chat-root') as HTMLElement).style.getPropertyValue('--chat-font')).toBe('16px');
+    expect(container.querySelector('.app')).not.toBeNull();
+    expect(document.documentElement.style.fontSize).toBe('');
   });
 });

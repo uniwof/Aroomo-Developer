@@ -10,6 +10,7 @@ import { useState, type AnchorHTMLAttributes, type FC } from 'react';
 import { MarkdownTextPrimitive, type CodeHeaderProps } from '@assistant-ui/react-markdown';
 import { Check, Copy } from 'lucide-react';
 import { useAnnounce } from './announce';
+import { stripSignature } from './store';
 
 const SAFE_PROTOCOL = /^(https?|mailto):/i;
 
@@ -45,7 +46,7 @@ const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
   return (
     <div className="chat-code-header">
       <span>{language || '代码'}</span>
-      <button type="button" className="chat-btn chat-btn-ghost" onClick={copy} aria-label={done ? '已复制代码' : '复制代码'}>
+      <button type="button" className="msg-act" onClick={copy} aria-label={done ? '已复制代码' : '复制代码'}>
         {done ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
         <span>{done ? '已复制' : '复制'}</span>
       </button>
@@ -53,5 +54,5 @@ const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
   );
 };
 
-const MarkdownText: FC = () => <MarkdownTextPrimitive skipHtml urlTransform={(url) => safeUrl(url)} className="chat-md" components={{ CodeHeader, a: SafeLink }} />;
+const MarkdownText: FC = () => <MarkdownTextPrimitive skipHtml preprocess={stripSignature} urlTransform={(url) => safeUrl(url)} className="chat-md" components={{ CodeHeader, a: SafeLink }} />;
 export default MarkdownText;
