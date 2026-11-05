@@ -6,6 +6,7 @@
  * - convFilter      X-27 全部/未读/进行中、X-22 进行中置顶——等会话存库（未读、运行中由 Core 给）
  * - schedulePage    X-02 定时列表整页——等 /api/assistants
  * - assistantDraft  X-15 助手草稿卡——等 data-aroomo-assistant-draft 数据块和 POST /api/assistants
+ * - skeletonShimmer 骨架屏微光——所有者「无动画」，默认关；她单独同意后才改 true（只影响 React 画的骨架，index.html 那份永远静态）
  */
 export const FLAGS = {
   taskCards: false,
@@ -13,6 +14,7 @@ export const FLAGS = {
   convFilter: false,
   schedulePage: false,
   assistantDraft: false,
+  skeletonShimmer: false,
 } as const;
 
 export type FlagName = keyof typeof FLAGS;
