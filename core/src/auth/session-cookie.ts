@@ -4,7 +4,8 @@
  * 跨站页面发不出这个自定义头（要先过 CORS 预检，Core 不放行），作为 SameSite 之外的第二层防护。
  *
  * Cookie 名：https（staging / 生产）：`__Host-aroomo_session`——浏览器强制 Secure、Path=/、不能带 Domain，
- * staging（chat-staging.pcmanai.com）写不了一个 .pcmanai.com 的同名 Cookie 去顶替生产的（#264 负责人必改 1）。
+ * staging（staging.pcmanai.com，对话经 Shell 转发；chat-staging / core-edge 已移除，#267）写不了一个 .pcmanai.com 的同名 Cookie
+ * 去顶替生产的（#264 负责人必改 1）。
  * http（电脑版本机、测试）：浏览器不让 http 页面写 Secure Cookie，只能用旧名 `aroomo_session`。
  */
 export const SESSION_COOKIE = '__Host-aroomo_session';

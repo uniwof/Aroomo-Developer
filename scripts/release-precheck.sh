@@ -3,7 +3,7 @@
 #
 #   scripts/release-precheck.sh               三项检查 + 部署前加密备份到 R2 并核对
 #   scripts/release-precheck.sh --no-backup   只做检查（演练用，不备份）
-#   scripts/release-precheck.sh --paid-launch 收费上线前：另外要求检查 6 的借用目录为空
+#   scripts/release-precheck.sh --paid-launch 收费上线前：另外要求检查 7 的借用目录为空
 #
 # 检查 1  只查开了 RLS 的表（清单 scripts/lib/rls-tables.txt：members、public_memory、public_memory_versions、
 #         library_items、vault_secrets、inbox_items、provider_keys）。清单里的表不能有空串 user_id（RLS 迁移会加
@@ -23,7 +23,9 @@
 # 检查 5  MCP 专用网段（.env 的 MCP_NET_SUBNET，默认 172.29.77.0/29）没有被主机上别的 docker 网络或路由占用
 #         （docker network inspect + ip route，只读）。冲突则失败，提示改 MCP_NET_SUBNET 与 CORE_MCP_IP。
 #         Aroomo 自己的 aroomo_aroomo-mcp 网络（上次部署建的）不算冲突。
-# 检查 6  core/src/third_party/ekko 收费上线前必须为空（借自 Ekko Studio，BSL 1.1 只许非商用；所有者 2026-11-05 13:00）。
+# 检查 6  设了 CORE_OWNER_ACCOUNT_ID（方案 A）时：必须是 UUID、SHELL_AUTH=core-session，且 users 表里这个 id 的邮箱
+#         就是 SHELL_OWNER_EMAIL（不分大小写）、角色 admin、状态 active。没设则通过。不打印邮箱和 id。
+# 检查 7  core/src/third_party/ekko 收费上线前必须为空（借自 Ekko Studio，BSL 1.1 只许非商用；所有者 2026-11-05 13:00）。
 #         平时只打一行信息提醒（自用发布可以带着）；加 --paid-launch 时非空即失败。
 # 备份    调用现有备份流程（scripts/backup.sh，主密钥公钥加密，异地 R2）做一次，核对：状态 ok、已上传异地、
 #         大小 > 0、备份名在 R2 远端的列表里完全相等（backup snapshots --from offsite，不是本地目录，不做子串匹配）。
@@ -233,6 +235,30 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 检查 6（方案 A，负责人必改 4）：设了 CORE_OWNER_ACCOUNT_ID 时，它和 Shell 的 SHELL_OWNER_EMAIL 必须是同一个账号，
+# 且这个账号是启用的管理员（Core 启动检查同样要求）。没设 = Core 不映射，通过。只读一条 count，不打印邮箱和 id。
+core_owner_id=""
+[ ! -f "$env_file" ] || core_owner_id="$(env_val CORE_OWNER_ACCOUNT_ID | tr '[:upper:]' '[:lower:]')"
+if [ -z "$core_owner_id" ]; then
+  pass "检查 6 没设 CORE_OWNER_ACCOUNT_ID：Core 不把所有者账号映射到所有者数据，无需比对"
+elif ! [[ "$core_owner_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+  fail "检查 6 deploy/.env 里 CORE_OWNER_ACCOUNT_ID 不是 UUID（Core 会拒绝启动）"
+elif [ "$shell_auth" != core-session ]; then
+  fail "检查 6 设了 CORE_OWNER_ACCOUNT_ID，但 SHELL_AUTH 不是 core-session：没法和 Shell 的所有者账号比对（去掉它，或改回 core-session）"
+else
+  owner_email="$(env_val SHELL_OWNER_EMAIL | tr '[:upper:]' '[:lower:]')"
+  if ! [[ "$owner_email" =~ ^[a-z0-9._%+-]+@[a-z0-9.-]+$ ]]; then
+    fail "检查 6 SHELL_OWNER_EMAIL 含邮箱以外的字符（或为空），不拼进 SQL，无法比对"
+  elif ! n="$(sql "select count(*) from users where id = '$core_owner_id'::uuid and lower(email) = '$owner_email' and role = 'admin' and status = 'active'")"; then
+    fail "检查 6 读 users 表出错，无法确认 SHELL_OWNER_EMAIL 与 CORE_OWNER_ACCOUNT_ID 是同一个账号"
+  elif [ "$n" = 1 ]; then
+    pass "检查 6 SHELL_OWNER_EMAIL 与 CORE_OWNER_ACCOUNT_ID 是同一个账号，且是启用的管理员（不显示值）"
+  else
+    fail "检查 6 SHELL_OWNER_EMAIL 与 CORE_OWNER_ACCOUNT_ID 不是同一个账号，或这个账号不是启用的管理员（不显示值；请主会话在服务器上核对）"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # 检查 5：MCP 专用网段有没有被主机上别的网络占用
 ip2int() { local a b c d; IFS=. read -r a b c d <<<"$1"; echo $(( (a << 24) | (b << 16) | (c << 8) | d )); }
 cidr_ok() { [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}(/([0-9]|[12][0-9]|3[0-2]))?$ ]]; }
@@ -288,16 +314,16 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 检查 6：third_party/ekko must be empty before paid launch
+# 检查 7：third_party/ekko must be empty before paid launch
 borrowed_dir="$ROOT/core/src/third_party/ekko"
 borrowed_n=0
 if [ -d "$borrowed_dir" ]; then borrowed_n="$(find "$borrowed_dir" -type f | wc -l | tr -d ' ')"; fi
 if [ "$borrowed_n" = 0 ]; then
-  pass "检查 6 core/src/third_party/ekko 为空，没有借用代码"
+  pass "检查 7 core/src/third_party/ekko 为空，没有借用代码"
 elif [ "$paid_launch" = 1 ]; then
-  fail "检查 6 core/src/third_party/ekko 还有 $borrowed_n 个借用文件（Ekko Studio，BSL 1.1 只许非商用）：收费上线前必须按 BORROWED.md 剥离清空"
+  fail "检查 7 core/src/third_party/ekko 还有 $borrowed_n 个借用文件（Ekko Studio，BSL 1.1 只许非商用）：收费上线前必须按 BORROWED.md 剥离清空"
 else
-  say "信息  检查 6 core/src/third_party/ekko 有 $borrowed_n 个借用文件（BSL 1.1）：自用发布可以；收费上线前必须清空（--paid-launch 会拦）"
+  say "信息  检查 7 core/src/third_party/ekko 有 $borrowed_n 个借用文件（BSL 1.1）：自用发布可以；收费上线前必须清空（--paid-launch 会拦）"
 fi
 
 # ---------------------------------------------------------------------------
