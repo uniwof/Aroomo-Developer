@@ -5,6 +5,20 @@
  */
 import { createHash } from 'node:crypto';
 
+/** 会话缓存最多条数；满了只淘汰最旧的一条（乱发 Cookie 冲不掉别人的缓存，#259 可选项） */
+export const SESSION_CACHE_MAX = 200;
+
+/** 写入缓存：先删再插（Map 按插入顺序，最旧的在最前），满了从最前淘汰 */
+export function cachePut<V>(cache: Map<string, V>, key: string, value: V, max = SESSION_CACHE_MAX): void {
+  cache.delete(key);
+  while (cache.size >= max) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+  cache.set(key, value);
+}
+
 export interface SessionChecker {
   check(cookie: string | undefined): Promise<boolean>;
   /** 当前会话的登录邮箱（小写）；没登录或取不到返回 undefined */
@@ -62,10 +76,9 @@ export class LobeSessionChecker implements SessionChecker {
     } catch {
       ok = false;
     }
-    if (this.#cache.size > 200) this.#cache.clear();
     // 失败结果只缓存很短时间，登录后马上能用
     const entry = { ok, email, userId, until: t + (ok ? this.cacheMs : 2000) };
-    this.#cache.set(key, entry);
+    cachePut(this.#cache, key, entry);
     return entry;
   }
 }
@@ -98,7 +111,7 @@ interface CoreEntry {
 /**
  * core-session：把 aroomo_session 带给 Core `GET /api/auth/me`（Core 对 Cookie 会话只认账号，停用的账号返回 401）。
  * 只有 kind=user 且 status=active 才算登录。结果按 Cookie 摘要缓存（成功 cacheMs，失败 2 秒）。
- * shortcut: 账号被停用后最多 cacheMs 仍可用；要立刻生效再加 Core 推送失效。
+ * 失效时间（D254）：退出立刻生效（forget）；停用账号、改密码最多 cacheMs（30 秒）后生效。要立刻生效再加 Core 推送失效。
  */
 export class CoreSessionChecker implements SessionChecker {
   readonly #cache = new Map<string, CoreEntry>();
@@ -150,9 +163,8 @@ export class CoreSessionChecker implements SessionChecker {
     } catch {
       entry = { ok: false };
     }
-    if (this.#cache.size > 200) this.#cache.clear();
     const stored = { ...entry, until: t + (entry.ok ? this.cacheMs : 2000) };
-    this.#cache.set(key, stored);
+    cachePut(this.#cache, key, stored);
     return stored;
   }
 }
