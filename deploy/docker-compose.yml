@@ -140,6 +140,8 @@ services:
     environment:
       CORE_PORT: '8080'
       CORE_LOG_LEVEL: ${CORE_LOG_LEVEL:-info}
+      # 只信任容器网络里的上一跳（Shell / cloudflared）给的 X-Forwarded-For：登录限速按真实来源 IP 算（#259）
+      CORE_TRUST_PROXY: ${CORE_TRUST_PROXY:-uniquelocal}
       CORE_TIMEZONE: ${TZ:-Asia/Shanghai}
       LITELLM_BASE_URL: http://litellm:4000
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
@@ -268,6 +270,8 @@ services:
       # lobe-session 才用：所有者的 LobeHub 用户 id（#245）
       SHELL_OWNER_USER_ID: ${SHELL_OWNER_USER_ID:-}
       SHELL_DEFAULT_LOCALE: zh-CN
+      # 真实来源 IP 从哪个头取（只在直连方是容器网络 / 本机时才信，Shell 前面是 cloudflared）；转给 Core 登录做限速
+      SHELL_CLIENT_IP_HEADER: ${SHELL_CLIENT_IP_HEADER:-cf-connecting-ip}
     # 控制台静态文件（同 core 的挂载）
     volumes:
       - ../web/console/dist:/app/console:ro

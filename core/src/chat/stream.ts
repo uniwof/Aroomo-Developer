@@ -1,7 +1,7 @@
 /**
  * 控制台原生对话入口 POST /api/chat/stream（#250 原生聊天 spike，S0；只在 spike/native-chat 分支）。
  *
- * - 鉴权：只认控制台会话 Cookie（aroomo_session，账号会话）+ X-Aroomo-Request 防 CSRF 头；
+ * - 鉴权：只认控制台会话 Cookie（https 上是 __Host-aroomo_session，http 和过渡期是 aroomo_session；账号会话）+ X-Aroomo-Request 防 CSRF 头；
  *   带 Authorization 头的请求一律拒绝（这个入口只给浏览器控制台用，令牌走 /v1）。
  *   CORE_CHAT_TOKEN / LiteLLM Key 永远不进浏览器：浏览器只拿到纯文字增量。
  * - 不能冒充：userId 只从会话里取，请求体里的任何 user / userId 字段一律忽略。

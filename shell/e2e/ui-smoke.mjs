@@ -90,7 +90,7 @@ for (const [label, viewport, isMobile] of [
   await page.waitForURL(onConsole, { timeout: 30000 }).catch(() => {});
   check(`${label} core-session 登录后进入 /console`, onConsole(page.url()), `${page.url()} ${(await page.locator('#msg').textContent().catch(() => '')) ?? ''}`);
   const cookies = await ctx.cookies();
-  const c = cookies.find((x) => x.name === 'aroomo_session');
+  const c = cookies.find((x) => x.name === '__Host-aroomo_session' || x.name === 'aroomo_session');
   check(`${label} core-session 会话 Cookie 是 HttpOnly`, Boolean(c?.httpOnly), JSON.stringify(cookies.map((x) => x.name)));
   await ctx.close();
 }
