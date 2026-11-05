@@ -27,6 +27,8 @@ CREATE UNIQUE INDEX assistant_runs_sched_uq ON assistant_runs (assistant_id, sch
 CREATE UNIQUE INDEX assistant_runs_idem_uq ON assistant_runs (assistant_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
 -- 同一助手同时只跑一次（库层兜底）
 CREATE UNIQUE INDEX assistant_runs_one_active ON assistant_runs (assistant_id) WHERE status IN ('queued', 'running');
+-- 同一助手最多一张「等确认」（负责人裁定 12）：上一次还在等，定时 / 立即运行都跳过；超过 24 小时自动作废
+CREATE UNIQUE INDEX assistant_runs_one_waiting ON assistant_runs (assistant_id) WHERE status = 'waiting_confirmation';
 CREATE INDEX assistant_runs_list_idx ON assistant_runs (assistant_id, requested_at DESC, id);
 CREATE INDEX assistant_runs_active_idx ON assistant_runs (status) WHERE status IN ('queued', 'running');
 

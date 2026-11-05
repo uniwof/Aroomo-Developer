@@ -92,6 +92,7 @@ export class MemoryAssistantStore implements AssistantStore {
     if (!this.#own(userId, run.assistantId) || run.userId !== userId) throw new Error('foreign key violation');
     const same = [...this.#runs.values()].filter((r) => r.assistantId === run.assistantId);
     if (ACTIVE_RUN_STATUSES.includes(run.status) && same.some((r) => ACTIVE_RUN_STATUSES.includes(r.status))) return 'conflict';
+    if (run.status === 'waiting_confirmation' && same.some((r) => r.status === 'waiting_confirmation')) return 'conflict';
     if (run.idempotencyKey && same.some((r) => r.idempotencyKey === run.idempotencyKey)) return 'conflict';
     if (run.scheduledFor && same.some((r) => r.scheduledFor?.getTime() === run.scheduledFor!.getTime())) return 'conflict';
     this.#runs.set(run.id, clone(run));
@@ -122,6 +123,9 @@ export class MemoryAssistantStore implements AssistantStore {
     const next = { ...r, ...clone(patch) };
     if (ACTIVE_RUN_STATUSES.includes(next.status) && !ACTIVE_RUN_STATUSES.includes(r.status)) {
       if ([...this.#runs.values()].some((x) => x.id !== r.id && x.assistantId === r.assistantId && ACTIVE_RUN_STATUSES.includes(x.status))) return null;
+    }
+    if (next.status === 'waiting_confirmation' && r.status !== 'waiting_confirmation') {
+      if ([...this.#runs.values()].some((x) => x.id !== r.id && x.assistantId === r.assistantId && x.status === 'waiting_confirmation')) return null;
     }
     this.#runs.set(runId, next);
     return clone(next);
@@ -172,6 +176,21 @@ export class MemoryAssistantStore implements AssistantStore {
     return true;
   }
 
+  async findWaitingRun(userId: string, assistantId: string): Promise<AssistantRun | null> {
+    const r = [...this.#runs.values()].find((x) => x.userId === userId && x.assistantId === assistantId && x.status === 'waiting_confirmation');
+    return r ? clone(r) : null;
+  }
+
+  async systemStaleWaitingRuns(before: Date, limit: number): Promise<Array<{ userId: string; runId: string; assistantId: string }>> {
+    const since = (r: AssistantRun) =>
+      this.#steps.filter((s) => s.runId === r.id && s.action === 'confirm' && s.status === 'waiting_confirmation').at(-1)?.createdAt ?? r.requestedAt;
+    return [...this.#runs.values()]
+      .filter((r) => r.status === 'waiting_confirmation' && since(r).getTime() < before.getTime())
+      .sort((x, y) => x.requestedAt.getTime() - y.requestedAt.getTime())
+      .slice(0, limit)
+      .map((r) => ({ userId: r.userId, runId: r.id, assistantId: r.assistantId }));
+  }
+
   async systemActiveRuns(): Promise<Array<{ userId: string; runId: string; assistantId: string }>> {
     return [...this.#runs.values()].filter((r) => ACTIVE_RUN_STATUSES.includes(r.status)).map((r) => ({ userId: r.userId, runId: r.id, assistantId: r.assistantId }));
   }
@@ -191,6 +210,7 @@ export class MemoryAssistantStore implements AssistantStore {
     try {
       return await fn(clone(a), {
         insertRun: (run) => this.insertRun(userId, run),
+        hasWaitingRun: async (aid) => (await this.findWaitingRun(userId, aid)) !== null,
         setNextRunAt: async (aid, next) => {
           const x = this.#own(userId, aid);
           if (x) x.nextRunAt = next ? new Date(next) : null;

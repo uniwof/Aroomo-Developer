@@ -3,7 +3,7 @@
 #
 #   scripts/release-precheck.sh               三项检查 + 部署前加密备份到 R2 并核对
 #   scripts/release-precheck.sh --no-backup   只做检查（演练用，不备份）
-#   scripts/release-precheck.sh --paid-launch 收费上线前：另外要求检查 6 的借用目录为空
+#   scripts/release-precheck.sh --paid-launch 收费上线前：另外要求检查 7 的借用目录为空
 #
 # 检查 1  只查开了 RLS 的表（清单 scripts/lib/rls-tables.txt：members、public_memory、public_memory_versions、
 #         library_items、vault_secrets、inbox_items、provider_keys）。清单里的表不能有空串 user_id（RLS 迁移会加
@@ -16,12 +16,16 @@
 #         （coalesce(user_id,'owner') + 各索引原有列和条件）试算重复，撞了就失败。表名 + 重复组数，不打印任何数据内容。
 # 检查 3  逐表行数可读（scripts/lib/table-counts.sql），结果存 $RELEASE_ROOT/.release/precheck-<时间>.counts.tsv，
 #         部署后可对照。
-# 检查 4  生产 deploy/.env 里 SHELL_OWNER_USER_ID 已设置且非空（#252 起 Shell 只认它，SHELL_OWNER_EMAIL 已无作用）。
-#         判定等价于 grep -cE '^[[:space:]]*SHELL_OWNER_USER_ID=[^[:space:]"'"'"']+' deploy/.env 结果为 1；不打印值。
+# 检查 4  生产 deploy/.env 里 Shell 所有者已设置，按 SHELL_AUTH 分两种（没写 SHELL_AUTH 时按 docker-compose 默认 core-session）：
+#           core-session（PR #259 起默认）：SHELL_OWNER_EMAIL 恰好一行、非空、像邮箱（含 @）；
+#           lobe-session（回退旧登录）：SHELL_OWNER_USER_ID 恰好一行且非空（#252，此时 SHELL_OWNER_EMAIL 无作用）。
+#         只数匹配行，不打印值。SHELL_AUTH 是别的值（含 off）一律失败。
 # 检查 5  MCP 专用网段（.env 的 MCP_NET_SUBNET，默认 172.29.77.0/29）没有被主机上别的 docker 网络或路由占用
 #         （docker network inspect + ip route，只读）。冲突则失败，提示改 MCP_NET_SUBNET 与 CORE_MCP_IP。
 #         Aroomo 自己的 aroomo_aroomo-mcp 网络（上次部署建的）不算冲突。
-# 检查 6  core/src/third_party/ekko 收费上线前必须为空（借自 Ekko Studio，BSL 1.1 只许非商用；所有者 2026-11-05 13:00）。
+# 检查 6  设了 CORE_OWNER_ACCOUNT_ID（方案 A）时：必须是 UUID、SHELL_AUTH=core-session，且 users 表里这个 id 的邮箱
+#         就是 SHELL_OWNER_EMAIL（不分大小写）、角色 admin、状态 active。没设则通过。不打印邮箱和 id。
+# 检查 7  core/src/third_party/ekko 收费上线前必须为空（借自 Ekko Studio，BSL 1.1 只许非商用；所有者 2026-11-05 13:00）。
 #         平时只打一行信息提醒（自用发布可以带着）；加 --paid-launch 时非空即失败。
 # 备份    调用现有备份流程（scripts/backup.sh，主密钥公钥加密，异地 R2）做一次，核对：状态 ok、已上传异地、
 #         大小 > 0、备份名在 R2 远端的列表里完全相等（backup snapshots --from offsite，不是本地目录，不做子串匹配）。
@@ -194,7 +198,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 检查 4：SHELL_OWNER_USER_ID 已设置且非空（只数匹配行，绝不打印值）
+# 检查 4：Shell 所有者已设置（core-session 看 SHELL_OWNER_EMAIL，lobe-session 看 SHELL_OWNER_USER_ID；只数匹配行，绝不打印值）
 env_file="$ROOT/deploy/.env"
 env_val() { # env_val <键>：取 .env 里最后一次出现的值，去掉首尾空白和成对引号；不输出到日志
   local v
@@ -204,16 +208,54 @@ env_val() { # env_val <键>：取 .env 里最后一次出现的值，去掉首�
   v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"
   printf '%s' "$v"
 }
+shell_auth=""
+[ ! -f "$env_file" ] || shell_auth="$(env_val SHELL_AUTH)"
+shell_auth="${shell_auth:-core-session}" # 与 deploy/docker-compose.yml 的 ${SHELL_AUTH:-core-session} 一致
+case "$shell_auth" in
+  core-session) owner_key=SHELL_OWNER_EMAIL; owner_re='^[[:space:]]*SHELL_OWNER_EMAIL=["'"'"']?[^[:space:]"'"'"'@]+@[^[:space:]"'"'"'@]+' ;;
+  lobe-session) owner_key=SHELL_OWNER_USER_ID; owner_re='^[[:space:]]*SHELL_OWNER_USER_ID=[^[:space:]"'"'"']+' ;;
+  *) owner_key="" ;;
+esac
 owner_lines=0
-[ ! -f "$env_file" ] || owner_lines="$(grep -cE '^[[:space:]]*SHELL_OWNER_USER_ID=[^[:space:]"'"'"']+' "$env_file" || true)"
+[ ! -f "$env_file" ] || [ -z "$owner_key" ] || owner_lines="$(grep -cE "$owner_re" "$env_file" || true)"
+key_lines=0
+[ ! -f "$env_file" ] || [ -z "$owner_key" ] || key_lines="$(grep -cE "^[[:space:]]*(export[[:space:]]+)?$owner_key=" "$env_file" || true)"
 if [ ! -f "$env_file" ]; then
   fail "检查 4 找不到 deploy/.env"
+elif [ -z "$owner_key" ]; then
+  fail "检查 4 deploy/.env 里 SHELL_AUTH 只能是 core-session 或 lobe-session（生产不允许 off），现在是别的值（不显示）"
+elif [ "$key_lines" -gt 1 ]; then
+  fail "检查 4 deploy/.env 里 $owner_key 出现了 $key_lines 次，只能有一行（SHELL_AUTH=$shell_auth）"
 elif [ "$owner_lines" = 1 ]; then
-  pass "检查 4 deploy/.env 里 SHELL_OWNER_USER_ID 已设置（不显示值）"
-elif [ "$owner_lines" = 0 ]; then
-  fail "检查 4 deploy/.env 里 SHELL_OWNER_USER_ID 没有设置或为空（所有者的 LobeHub 用户 id，#252 起 Shell 只认它，留空则所有者也被 403；请主会话在服务器上补上）"
+  pass "检查 4 SHELL_AUTH=$shell_auth，deploy/.env 里 $owner_key 已设置（不显示值）"
+elif [ "$shell_auth" = core-session ]; then
+  fail "检查 4 SHELL_AUTH=core-session，deploy/.env 里 SHELL_OWNER_EMAIL 没有设置、为空或不像邮箱（所有者的 Core 账号邮箱，留空则所有者也被 403；请主会话在服务器上补上）"
 else
-  fail "检查 4 deploy/.env 里 SHELL_OWNER_USER_ID 出现了 $owner_lines 次，只能有一行"
+  fail "检查 4 SHELL_AUTH=lobe-session，deploy/.env 里 SHELL_OWNER_USER_ID 没有设置或为空（所有者的 LobeHub 用户 id，#252 起旧登录只认它，留空则所有者也被 403；请主会话在服务器上补上）"
+fi
+
+# ---------------------------------------------------------------------------
+# 检查 6（方案 A，负责人必改 4）：设了 CORE_OWNER_ACCOUNT_ID 时，它和 Shell 的 SHELL_OWNER_EMAIL 必须是同一个账号，
+# 且这个账号是启用的管理员（Core 启动检查同样要求）。没设 = Core 不映射，通过。只读一条 count，不打印邮箱和 id。
+core_owner_id=""
+[ ! -f "$env_file" ] || core_owner_id="$(env_val CORE_OWNER_ACCOUNT_ID | tr '[:upper:]' '[:lower:]')"
+if [ -z "$core_owner_id" ]; then
+  pass "检查 6 没设 CORE_OWNER_ACCOUNT_ID：Core 不把所有者账号映射到所有者数据，无需比对"
+elif ! [[ "$core_owner_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+  fail "检查 6 deploy/.env 里 CORE_OWNER_ACCOUNT_ID 不是 UUID（Core 会拒绝启动）"
+elif [ "$shell_auth" != core-session ]; then
+  fail "检查 6 设了 CORE_OWNER_ACCOUNT_ID，但 SHELL_AUTH 不是 core-session：没法和 Shell 的所有者账号比对（去掉它，或改回 core-session）"
+else
+  owner_email="$(env_val SHELL_OWNER_EMAIL | tr '[:upper:]' '[:lower:]')"
+  if ! [[ "$owner_email" =~ ^[a-z0-9._%+-]+@[a-z0-9.-]+$ ]]; then
+    fail "检查 6 SHELL_OWNER_EMAIL 含邮箱以外的字符（或为空），不拼进 SQL，无法比对"
+  elif ! n="$(sql "select count(*) from users where id = '$core_owner_id'::uuid and lower(email) = '$owner_email' and role = 'admin' and status = 'active'")"; then
+    fail "检查 6 读 users 表出错，无法确认 SHELL_OWNER_EMAIL 与 CORE_OWNER_ACCOUNT_ID 是同一个账号"
+  elif [ "$n" = 1 ]; then
+    pass "检查 6 SHELL_OWNER_EMAIL 与 CORE_OWNER_ACCOUNT_ID 是同一个账号，且是启用的管理员（不显示值）"
+  else
+    fail "检查 6 SHELL_OWNER_EMAIL 与 CORE_OWNER_ACCOUNT_ID 不是同一个账号，或这个账号不是启用的管理员（不显示值；请主会话在服务器上核对）"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -272,16 +314,16 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 检查 6：third_party/ekko must be empty before paid launch
+# 检查 7：third_party/ekko must be empty before paid launch
 borrowed_dir="$ROOT/core/src/third_party/ekko"
 borrowed_n=0
 if [ -d "$borrowed_dir" ]; then borrowed_n="$(find "$borrowed_dir" -type f | wc -l | tr -d ' ')"; fi
 if [ "$borrowed_n" = 0 ]; then
-  pass "检查 6 core/src/third_party/ekko 为空，没有借用代码"
+  pass "检查 7 core/src/third_party/ekko 为空，没有借用代码"
 elif [ "$paid_launch" = 1 ]; then
-  fail "检查 6 core/src/third_party/ekko 还有 $borrowed_n 个借用文件（Ekko Studio，BSL 1.1 只许非商用）：收费上线前必须按 BORROWED.md 剥离清空"
+  fail "检查 7 core/src/third_party/ekko 还有 $borrowed_n 个借用文件（Ekko Studio，BSL 1.1 只许非商用）：收费上线前必须按 BORROWED.md 剥离清空"
 else
-  say "信息  检查 6 core/src/third_party/ekko 有 $borrowed_n 个借用文件（BSL 1.1）：自用发布可以；收费上线前必须清空（--paid-launch 会拦）"
+  say "信息  检查 7 core/src/third_party/ekko 有 $borrowed_n 个借用文件（BSL 1.1）：自用发布可以；收费上线前必须清空（--paid-launch 会拦）"
 fi
 
 # ---------------------------------------------------------------------------

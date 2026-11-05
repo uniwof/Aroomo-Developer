@@ -71,6 +71,10 @@ export interface PersistOpts {
   onAccepted?: () => void;
 }
 
+/**
+ * 永远是同源相对路径：从 Shell 打开时由 Shell 白名单直通 Core（只带会话 Cookie，不带主人令牌，不走 /aroomo/api），
+ * 直接从 Core 打开时就是 Core 自己。不依赖任何聊天子域名（负责人 2026-11-05 19:47 裁定）。
+ */
 export const STREAM_URL = '/api/chat/stream';
 
 /** 解析一段 SSE 文本里完整的事件；返回事件和剩下的半截 */

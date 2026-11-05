@@ -1,7 +1,7 @@
 /**
  * 控制台原生对话入口 POST /api/chat/stream（#250 原生聊天 spike，S0；只在 spike/native-chat 分支）。
  *
- * - 鉴权：只认控制台会话 Cookie（aroomo_session，账号会话）+ X-Aroomo-Request 防 CSRF 头；
+ * - 鉴权：只认控制台会话 Cookie（https 上是 __Host-aroomo_session，http 和过渡期是 aroomo_session；账号会话）+ X-Aroomo-Request 防 CSRF 头；
  *   带 Authorization 头的请求一律拒绝（这个入口只给浏览器控制台用，令牌走 /v1）。
  *   CORE_CHAT_TOKEN / LiteLLM Key 永远不进浏览器：浏览器只拿到纯文字增量。
  * - 不能冒充：userId 只从会话里取，请求体里的任何 user / userId 字段一律忽略。
@@ -22,6 +22,7 @@ import { CSRF_HEADER, readSessionCookie } from '../auth/session-cookie.js';
 import { HttpError } from '../http/errors.js';
 import { CHAT_MODEL, MEMBER_MODEL_PREFIX, type ChatFailureCode, type ChatService, type ChatUserCtx } from './service.js';
 import type { ConversationService } from '../conversations/service.js';
+import type { ChatMessageMeta } from '../conversations/types.js';
 
 export const STREAM_BODY_LIMIT = 256 * 1024;
 export const STREAM_MAX_MESSAGES = 200;
@@ -355,7 +356,7 @@ export function registerChatStreamRoute(app: FastifyInstance, chat: ChatService,
       if (req.raw.socket?.destroyed) onClose();
       const last = messages[messages.length - 1]!.content;
       /** 落库失败不打断对话（回复照样给浏览器），只记一行日志（不记内容） */
-      const save = async (role: 'user' | 'assistant', text: string, meta: { draft: { id: string; data: unknown } } | null = null) => {
+      const save = async (role: 'user' | 'assistant', text: string, meta: ChatMessageMeta | null = null) => {
         if (!convs || !convId) return;
         await convs.append(scope, convId, role, text, meta).catch((err: Error) => req.log.error({ errName: err.name }, 'conversation append failed'));
       };
@@ -378,11 +379,15 @@ export function registerChatStreamRoute(app: FastifyInstance, chat: ChatService,
             await out.stream?.cancel().catch(() => undefined);
             body = errorStream(out.failure.code);
             release();
-          } else if (out.stream) body = toUiMessageStream(out.stream, { onDone: release, onFinish: (t) => save('assistant', t), onCancel: (t) => void save('assistant', t), wasAborted: () => ctrl.signal.aborted });
+          } else if (out.stream) {
+            // 裁定 16：存回复时记下是哪位成员答的（Core 自己选的人）
+            const meta: ChatMessageMeta | null = out.answeredBy ? { answeredBy: out.answeredBy } : null;
+            body = toUiMessageStream(out.stream, { onDone: release, onFinish: (t) => save('assistant', t, meta), onCancel: (t) => void save('assistant', t, meta), wasAborted: () => ctrl.signal.aborted });
+          }
           else {
             // 理论上 stream:true 总是返回流；万一是 JSON，就把文字一次性发出去
             const text = (out.json as { choices?: Array<{ message?: { content?: unknown } }> } | undefined)?.choices?.[0]?.message?.content;
-            body = toUiMessageStream(oneShot(typeof text === 'string' ? text : ''), { onDone: release, onFinish: (t) => save('assistant', t) });
+            body = toUiMessageStream(oneShot(typeof text === 'string' ? text : ''), { onDone: release, onFinish: (t) => save('assistant', t, out.answeredBy ? { answeredBy: out.answeredBy } : null) });
           }
         } catch {
           body = errorStream('upstream_error');

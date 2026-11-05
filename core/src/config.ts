@@ -8,6 +8,7 @@
  */
 
 import { vapidKeysValid } from './push/webpush.js';
+import { isIP } from 'node:net';
 
 export type LogLevel = 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent';
 
@@ -56,6 +57,12 @@ export interface CoreConfig {
    * 和 VAPID_SUBJECT（mailto: 或 https:）。私钥只在服务器 .env。
    */
   push: { publicKey: string; privateKey: string; subject: string } | null;
+  /**
+   * 信任哪些上一跳代理的 X-Forwarded-For（CORE_TRUST_PROXY，逗号分隔：loopback / linklocal / uniquelocal 或 IP / CIDR）。
+   * 未设置 = 不信任（req.ip 就是直连地址）。compose 里设 uniquelocal：Core 只在容器网络里被 Shell / cloudflared 访问，
+   * 登录限速（邮箱 + 来源 IP）才能按真实 IP 算，别人输错密码不会把所有者也锁在外面（#259 负责人必改 2）。
+   */
+  trustProxy?: string;
 }
 
 export class ConfigError extends Error {
@@ -167,6 +174,16 @@ export function loadConfig(env: Env = process.env): CoreConfig {
     push = { publicKey, privateKey, subject };
   }
 
+  const trustProxy = str(env, 'CORE_TRUST_PROXY');
+  if (trustProxy !== undefined) {
+    for (const t of trustProxy.split(',').map((x) => x.trim())) {
+      const [ip, bits, ...rest] = t.split('/');
+      const okName = ['loopback', 'linklocal', 'uniquelocal'].includes(t);
+      const okIp = Boolean(ip) && isIP(ip!) !== 0 && rest.length === 0 && (bits === undefined || (/^\d{1,3}$/.test(bits) && Number(bits) <= (isIP(ip!) === 4 ? 32 : 128)));
+      if (!okName && !okIp) throw new ConfigError('CORE_TRUST_PROXY 只能写 loopback / linklocal / uniquelocal 或 IP / CIDR（逗号分隔）');
+    }
+  }
+
   return {
     host: str(env, 'CORE_HOST') ?? '0.0.0.0',
     port: parsePort(str(env, 'CORE_PORT'), 'CORE_PORT', 8080),
@@ -189,6 +206,7 @@ export function loadConfig(env: Env = process.env): CoreConfig {
     accessReauth,
     accessReauthMaxAgeS: Number(maxAgeRaw),
     push,
+    trustProxy,
   };
 }
 
@@ -216,5 +234,6 @@ export function toSafeJSON(cfg: CoreConfig): Record<string, unknown> {
     accessReauthMaxAgeS: cfg.accessReauthMaxAgeS,
     pushEnabled: cfg.push !== null,
     vapidPrivateKey: cfg.push ? '(set)' : '(unset)',
+    trustProxy: cfg.trustProxy ?? '(unset)',
   };
 }

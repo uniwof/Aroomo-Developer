@@ -113,7 +113,17 @@ export interface ChatResult {
   /** 流式时是一个可读流；否则是 JSON */
   stream?: ReadableStream<Uint8Array>;
   json?: unknown;
+  /** 这条回复是哪几位成员答的（Core 选的人；裁定 16）。没调成员的提示文字、整条失败时没有 */
+  answeredBy?: AnsweredBy[];
 }
+
+/** 回答的成员：id + 当时的名字（快照，成员改名 / 删除后照样能显示） */
+export interface AnsweredBy {
+  memberId: string;
+  name: string;
+}
+
+const by = (r: ChatResult, list: AnsweredBy[]): ChatResult => (r.failure || list.length === 0 ? r : { ...r, answeredBy: list });
 
 const enc = new TextEncoder();
 
@@ -266,14 +276,15 @@ export class ChatService {
     if (typeof req.model === 'string' && req.model.startsWith(MEMBER_MODEL_PREFIX) && req.model !== AUTO_MODEL) {
       const target = resolveMemberModel(req.model, members);
       if (!target) return textReply(stream, `没有这位在职成员（${req.model}）。请在「成员」里确认名字，或改用 aroomo/auto 交给负责人。`);
-      return this.#forward({ ...req, messages: withRules(messages, await this.#rules()) }, target.name, '', '', stream, signal);
+      return by(await this.#forward({ ...req, messages: withRules(messages, await this.#rules()) }, target.name, '', '', stream, signal), [{ memberId: target.id, name: target.name }]);
     }
 
     // 系统任务（起标题、翻译等）：交给负责人，不解析 @、不加提示和署名。
     // 还没有合格负责人时，用第一个在职成员做这类内部小任务（不以「负责人」身份出现在对话里）。
     const last = lastUserText(messages);
     if (!decorated || !last) {
-      return this.#forward(req, nameOf(leadState.effectiveLeadId) ?? members[0]!.name, '', '', stream, signal);
+      const sys = members.find((m) => m.id === leadState.effectiveLeadId) ?? members[0]!;
+      return by(await this.#forward(req, sys.name, '', '', stream, signal), [{ memberId: sys.id, name: sys.name }]);
     }
 
     const protect = this.d.security ? (await this.d.security.get()).sensitiveProtect : true;
@@ -285,13 +296,13 @@ export class ChatService {
     if (plan.mode === 'delegate') {
       const leadName = nameOf(plan.leadId);
       if (!leadName) return textReply(stream, prefix + NO_LEAD_TEXT);
-      return this.#forward({ ...req, messages: nextMessages }, leadName, prefix, `\n\n— ${leadName}（负责人）`, stream, signal);
+      return by(await this.#forward({ ...req, messages: nextMessages }, leadName, prefix, `\n\n— ${leadName}（负责人）`, stream, signal), [{ memberId: plan.leadId!, name: leadName }]);
     }
 
     if (plan.targets.length === 0) return textReply(stream, prefix.trim());
     if (plan.targets.length === 1) {
       const name = nameOf(plan.targets[0]!)!;
-      return this.#forward({ ...req, messages: nextMessages }, name, prefix, `\n\n— ${name}`, stream, signal, true);
+      return by(await this.#forward({ ...req, messages: nextMessages }, name, prefix, `\n\n— ${name}`, stream, signal, true), [{ memberId: plan.targets[0]!, name }]);
     }
 
     // 多人点名：各自独立、并行回答，按点名顺序分段（P0；并排显示需要改 LobeHub 消息组件，见 H5）
@@ -310,9 +321,9 @@ export class ChatService {
           }
           code = 'upstream_error';
           const j = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-          return { text: `### ${name}\n\n${j.choices?.[0]?.message?.content ?? ''}`, failed: null };
+          return { text: `### ${name}\n\n${j.choices?.[0]?.message?.content ?? ''}`, failed: null, who: { memberId: id, name } };
         } catch {
-          return { text: `### ${name}\n\n> ${name} 暂时没有回应（不会自动换人）。`, failed: code };
+          return { text: `### ${name}\n\n> ${name} 暂时没有回应（不会自动换人）。`, failed: code, who: null };
         } finally {
           clearTimeout(timer);
         }
@@ -322,7 +333,7 @@ export class ChatService {
     // 只有每位成员都失败才算整条失败；部分失败照旧是文字（其他人的回答要留着）
     const codes = answers.map((a) => a.failed);
     if (codes.every((c): c is ChatFailureCode => c !== null)) out.failure = { code: codes.every((c) => c === codes[0]) ? codes[0]! : 'upstream_error' };
-    return out;
+    return by(out, answers.flatMap((a) => (a.who ? [a.who] : [])));
   }
 
   /** 转给 LiteLLM；流式时在开头插入提示、在 [DONE] 前插入署名 */

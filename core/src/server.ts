@@ -75,7 +75,7 @@ import { ConversationService } from "./conversations/service.js";
 import { registerConversationRoutes } from "./conversations/routes.js";
 import { PushService } from "./push/service.js";
 import { registerPushRoutes } from "./push/routes.js";
-import { assistantSchedulerJob } from "./scheduler/assistant-scheduler.js";
+import { assistantSchedulerJob, confirmExpiryJob } from "./scheduler/assistant-scheduler.js";
 
 export const VERSION = "0.0.1";
 
@@ -107,6 +107,8 @@ export function buildServer(
   opts: BuildOptions = {},
 ): FastifyInstance {
   const app = Fastify({
+    // 只信任配置里的上一跳代理（容器网络里的 Shell / cloudflared）给的 X-Forwarded-For；未配置时 req.ip = 直连地址
+    trustProxy: cfg.trustProxy ?? false,
     // 未声明的字段直接 400，而不是悄悄丢掉（Key 等敏感接口不接受「多余但被忽略」的输入）
     ajv: { customOptions: { removeAdditional: false } },
     logger:
@@ -150,6 +152,7 @@ export function buildServer(
     operatorTokens: deps.operatorTokens,
     now: deps.now,
   });
+  let ownerAccountId: string | undefined; // 启动检查通过后才有值（见下方 onReady）
   installAuth(app, {
     // 主人令牌 / 操作员令牌 / 账号会话令牌（ars_ 开头）
     verify: async (token) =>
@@ -158,8 +161,18 @@ export function buildServer(
       (await clients.verify(token)),
     auditLog: deps.auditLog,
     ownerConfigured: Boolean(cfg.ownerToken),
-    ownerAccountId: cfg.ownerAccountId,
+    ownerAccountId: () => ownerAccountId,
   });
+  // 负责人必改 3：启动时核对 CORE_OWNER_ACCOUNT_ID —— 账号存在、是管理员、没停用才开映射；否则整个进程不映射并告警（不阻止启动）
+  if (cfg.ownerAccountId) {
+    const configured = cfg.ownerAccountId;
+    app.addHook("onReady", async () => {
+      const u = await deps.users.getUser(configured);
+      const why = !u ? "账号不存在" : u.role !== "admin" ? "账号不是管理员" : u.status !== "active" ? "账号已停用" : null;
+      if (why) app.log.warn(`CORE_OWNER_ACCOUNT_ID 配置的${why}：不映射到所有者数据（改好后重启 Core）`);
+      else ownerAccountId = configured;
+    });
+  }
   if (deps.db) {
     const db = deps.db;
     app.addHook("onClose", async () => db.close());
@@ -481,6 +494,8 @@ export function buildServer(
   if (cfg.assistantSchedulerEnabled) {
     jobs.add(assistantSchedulerJob({ store: deps.assistants, start: (u, r) => assistantRunner.start(u, r), now: deps.now }));
   }
+  // 裁定 12：等确认超过 24 小时自动作废（立即运行也会停在等确认，所以不受执行器总开关影响）
+  jobs.add(confirmExpiryJob(() => assistantRunner.expireStaleConfirmations()));
   jobs.add(inboxTidyJob(inbox, deps.now, async () => (await deps.users.listUsers()).map((u) => u.id)));
   app.decorate("jobs", jobs);
   if (opts.startJobs ?? cfg.jobs) {

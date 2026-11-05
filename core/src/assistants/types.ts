@@ -54,6 +54,11 @@ export type RunStatus = (typeof RUN_STATUSES)[number];
 /** 正在占用「同一助手不并发」名额的状态（与迁移 0027 的部分唯一索引一致） */
 export const ACTIVE_RUN_STATUSES: readonly RunStatus[] = ['queued', 'running'];
 
+/** 等确认最多等这么久，过了自动作废（负责人裁定 12） */
+export const CONFIRM_TTL_MS = 24 * 3_600_000;
+export const CONFIRM_EXPIRED_TEXT = '超过 24 小时没人确认，这次运行已作废。';
+export const WAITING_SKIP_TEXT = '上一次运行还在等你确认，这次跳过。';
+
 export type RunFailureCode = ChatFailureCode | 'timeout' | 'budget' | 'server_restart' | 'no_member';
 export const RUN_FAILURE_TEXT: Record<RunFailureCode, string> = {
   ...FAILURE_TEXT,
@@ -148,7 +153,7 @@ export interface AssistantStore {
   /** 删除助手（运行、步骤随之删除）和它的固定会话 */
   deleteAssistant(userId: string, id: string): Promise<boolean>;
 
-  /** 插入；撞上任何唯一约束（同助手已有进行中的运行、同幂等键、同计划时刻）→ 'conflict' */
+  /** 插入；撞上任何唯一约束（同助手已有进行中 / 等确认的运行、同幂等键、同计划时刻）→ 'conflict' */
   insertRun(userId: string, run: AssistantRun): Promise<InsertRunResult>;
   getRun(userId: string, assistantId: string, runId: string): Promise<AssistantRun | null>;
   findRunByKey(userId: string, assistantId: string, key: string): Promise<AssistantRun | null>;
@@ -168,6 +173,10 @@ export interface AssistantStore {
   listMessages(userId: string, conversationId: string, limit: number, afterSeq?: number): Promise<ConversationMessage[]>;
   markRead(userId: string, conversationId: string, at: Date): Promise<boolean>;
 
+  /** 这个助手正在等确认的那次运行（最多一条，库层唯一索引 assistant_runs_one_waiting） */
+  findWaitingRun(userId: string, assistantId: string): Promise<AssistantRun | null>;
+  /** 跨账号只读：开始等确认的时刻早于 before 的运行（过期作废用）；时刻 = 最后一条「等确认」步骤，没有就用 requested_at */
+  systemStaleWaitingRuns(before: Date, limit: number): Promise<Array<{ userId: string; runId: string; assistantId: string }>>;
   /** 跨账号只读：进行中（queued/running）的运行，重启恢复用 */
   systemActiveRuns(): Promise<Array<{ userId: string; runId: string; assistantId: string }>>;
   /** 跨账号只读：到期的助手（定时执行器第一步） */
@@ -181,5 +190,6 @@ export interface AssistantStore {
 
 export interface ClaimTx {
   insertRun(run: AssistantRun): Promise<InsertRunResult>;
+  hasWaitingRun(assistantId: string): Promise<boolean>;
   setNextRunAt(id: string, next: Date | null): Promise<void>;
 }
