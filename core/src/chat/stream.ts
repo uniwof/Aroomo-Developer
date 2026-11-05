@@ -26,6 +26,8 @@ import type { ConversationService } from '../conversations/service.js';
 export const STREAM_BODY_LIMIT = 256 * 1024;
 export const STREAM_MAX_MESSAGES = 200;
 export const STREAM_MAX_TEXT = 32_000;
+/** 上游一个 SSE 事件（到 \n\n 为止）最多攒这么多字符（约 1MB）；超了按上游出错收尾、断开上游（防一直不换行把内存撑爆） */
+export const STREAM_MAX_EVENT_BYTES = 1024 * 1024;
 export const UI_STREAM_HEADER = 'x-vercel-ai-ui-message-stream';
 
 export interface StreamLimits {
@@ -100,6 +102,8 @@ export function normalizeMessages(raw: unknown): InMessage[] {
     out.push({ role: m.role, content: text });
   }
   if (out[out.length - 1]!.role !== 'user') throw new HttpError(400, 'BAD_REQUEST', '最后一条必须是你说的话');
+  // 最后一句是空的（或只有图片 / 文件等非文字片段）：不调模型，免得白花一次调用换一个上游 400
+  if (!out[out.length - 1]!.content.trim()) throw new HttpError(400, 'BAD_REQUEST', '最后一条不能是空的');
   return out;
 }
 
@@ -237,6 +241,11 @@ export function toUiMessageStream(
               void reader.cancel().catch(() => undefined);
               return await finish(c, r.error);
             }
+          }
+          if (buf.length > STREAM_MAX_EVENT_BYTES) {
+            buf = '';
+            void reader.cancel().catch(() => undefined);
+            return await finish(c, 'upstream_error');
           }
           if (wrote) return;
         }

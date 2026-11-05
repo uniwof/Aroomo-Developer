@@ -278,6 +278,14 @@ describe.each(twoAccountEnvs)('POST /api/chat/stream（控制台原生对话，#
     expect(upstream).toHaveLength(0);
   });
 
+  it('阶段 2 预审：最后一句是空的（空白 / 只有非文字片段）→ 400，不调模型', async () => {
+    upstream.length = 0;
+    expect((await say({ cookie: xiaoCookie, ...CSRF }, { messages: [{ role: 'user', content: '   \n ' }] })).statusCode).toBe(400);
+    expect((await say({ cookie: xiaoCookie, ...CSRF }, { messages: [{ role: 'user', parts: [{ type: 'file', url: 'x' }] }] })).statusCode).toBe(400);
+    expect((await say({ cookie: xiaoCookie, ...CSRF }, { messages: [{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'ok' }, { role: 'user', content: '' }] })).statusCode).toBe(400);
+    expect(upstream).toHaveLength(0);
+  });
+
   it('停止：浏览器中断连接 → 1 秒内取消上游请求', async () => {
     mode.v = 'slow';
     const address = await t.app.listen({ host: '127.0.0.1', port: 0 });
@@ -456,6 +464,30 @@ describe('toUiMessageStream（OpenAI SSE → AI SDK UI Message Stream）', () =>
     const ev = events(body);
     expect(ev[0]).toEqual({ type: 'start', messageId: 'm1' });
     expect(ev.filter((x) => x !== 'DONE' && x.type === 'finish')).toHaveLength(1);
+    expect(ev.at(-1)).toBe('DONE');
+  });
+
+  it('阶段 2 预审：上游一直不换行（一个事件超过上限）→ 按上游出错收尾、断开上游，不再往内存里攒', async () => {
+    const piece = enc.encode('x'.repeat(64 * 1024));
+    let pulled = 0;
+    let cancelled = false;
+    const total = 64; // 共 4MB，没有一个 \n\n
+    const up = new ReadableStream<Uint8Array>({
+      pull(c) {
+        if (pulled >= total) return c.close();
+        pulled++;
+        c.enqueue(piece);
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const body = await read(toUiMessageStream(up));
+    expect(cancelled).toBe(true);
+    expect(pulled).toBeLessThan(total);
+    const ev = events(body);
+    expect(ev.some((x) => x !== 'DONE' && x.type === 'error')).toBe(true);
+    expect(ev.filter((x) => x !== 'DONE' && x.type === 'finish')).toHaveLength(0);
     expect(ev.at(-1)).toBe('DONE');
   });
 
