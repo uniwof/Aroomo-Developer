@@ -8,6 +8,11 @@ import { Button } from '@/components/ui/button';
 import { ApiError, api, type Challenge } from '@/lib/api';
 import { ConfirmCard } from '@/components/ConfirmCard';
 import { TakeoverCards } from '@/components/TakeoverCards';
+import { useAsk } from '@/components/Dialog';
+import { inboxChanged } from '@/lib/inbox';
+
+/** 拒绝、驳回这类动作：先确认，关掉确认不做决定（规范 §8 拒绝状态机） */
+const isReject = (a: Action) => /^(reject|deny|decline|dismiss|refuse)/i.test(a.id) || /^(拒绝|驳回|不同意|不批准)/.test(a.label);
 
 interface Action {
   id: string;
@@ -49,6 +54,9 @@ export function Inbox({ onBack }: { onBack?: () => void } = {}) {
   // 正在两步确认的动作：重要动作第一次点会拿到 428 + 确认卡
   const [pending, setPending] = useState<{ item: Item; action: Action; challenge: Challenge } | null>(null);
   const [show, setShow] = useState<'mine' | 'all'>('mine');
+  // 正在处理的那一条：它的按钮全部锁住，防重复提交（审计 I1；规范 §8 待定 → 已确认 → 执行中 → 完成 / 失败）
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const ask = useAsk();
 
   const load = useCallback(() => {
     api<{ groups: Record<string, Item[]> }>('GET', '/api/inbox?status=open')
@@ -59,16 +67,25 @@ export function Inbox({ onBack }: { onBack?: () => void } = {}) {
   useEffect(load, [load]);
 
   async function act(item: Item, a: Action, confirmToken?: string) {
-    setMsg('');
+    if (busyId && !confirmToken) return;
+    if (!confirmToken && isReject(a) && !(await ask.confirm({ title: `${a.label}「${item.title}」？`, desc: '关掉这个窗口不会做任何决定。', ok: a.label, danger: true }))) return;
+    setBusyId(item.id);
+    setMsg(`正在处理：${a.label}「${item.title}」…`);
     try {
       await api('POST', `/api/inbox/${item.id}/actions/${a.id}`, confirmToken ? { confirmToken } : {});
       setPending(null);
-      setMsg('已处理');
+      // 只在 Core 回了成功之后才说完成，不提前打勾
+      setMsg(`已处理：${a.label}「${item.title}」`);
       load();
+      inboxChanged();
     } catch (e) {
-      if (e instanceof ApiError && e.status === 428 && e.confirm) setPending({ item, action: a, challenge: e.confirm });
-      else if (confirmToken) throw e;
-      else setMsg(e instanceof ApiError ? e.message : '操作失败，请稍后再试');
+      if (e instanceof ApiError && e.status === 428 && e.confirm) {
+        setPending({ item, action: a, challenge: e.confirm });
+        setMsg('');
+      } else if (confirmToken) throw e;
+      else setMsg(`没处理成：${e instanceof ApiError ? e.message : '请稍后再试'}（这一条还在，可以再点一次）`);
+    } finally {
+      setBusyId(null);
     }
   }
 
@@ -79,6 +96,7 @@ export function Inbox({ onBack }: { onBack?: () => void } = {}) {
       await api('POST', '/api/inbox/dismiss', { ids });
       setMsg(ids.length > 1 ? `已清掉 ${ids.length} 条` : '已清掉');
       load();
+      inboxChanged();
     } catch (e) {
       setMsg(e instanceof ApiError ? e.message : '操作失败，请稍后再试');
     }
@@ -92,6 +110,7 @@ export function Inbox({ onBack }: { onBack?: () => void } = {}) {
 
   return (
     <section aria-labelledby="inbox-title" className="page">
+      {ask.node}
       <h1 id="inbox-title" className="page-title">
         收件箱
       </h1>
@@ -156,12 +175,12 @@ export function Inbox({ onBack }: { onBack?: () => void } = {}) {
                   <p className="row-hint">{formatTime(i.createdAt)}</p>
                   <div className="row-actions">
                     {(i.actions ?? []).map((a) => (
-                      <Button key={a.id} variant={a.confirm && a.confirm.kind !== 'normal' ? 'outline' : 'default'} onClick={() => void act(i, a)}>
+                      <Button key={a.id} variant={a.confirm && a.confirm.kind !== 'normal' ? 'outline' : 'default'} disabled={busyId === i.id} onClick={() => void act(i, a)}>
                         {a.label}
                       </Button>
                     ))}
                     {canDismiss(i) && (
-                      <Button variant="outline" aria-label={`知道了：${i.title}`} onClick={() => dismiss([i.id])}>
+                      <Button variant="outline" aria-label={`知道了：${i.title}`} disabled={busyId === i.id} onClick={() => dismiss([i.id])}>
                         知道了
                       </Button>
                     )}
