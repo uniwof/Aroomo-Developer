@@ -17,13 +17,12 @@
 5. **方案 A 的关系**：`app.user_id` 一律取 `scopeOf(req)`；所有者自己的账号映射成 `'owner'`，RLS 不需要知道映射，策略不变。
 6. **为后面新表预留（同一模板，user_id NOT NULL + 复合外键防跨账号挂接）**：
    - `conversations(id, user_id, title, member_ids[], created_at, updated_at, deleted_at)`、`conversation_messages(id, conversation_id, user_id, role, member_id, content, created_at)`，外键 `(conversation_id, user_id)`。
-   - 助手（所有者 11-05 12:38 定：支持定时、多成员小团队、不预置）：
-     - `assistants(id, user_id, name, brief 任务说明, conversation_id 固定会话, enabled 启停, schedule_cron, schedule_tz, next_run_at, created_at, updated_at, deleted_at)`
-     - `assistant_members(assistant_id, user_id, member_id, duty 分工, is_lead, position)`，外键 `(assistant_id,user_id)` 和 `(member_id,user_id)` → 只能挂本人的成员。
-     - `assistant_runs(id, assistant_id, user_id, trigger manual|schedule, scheduled_for, status queued|running|ok|failed|cancelled, started_at, finished_at, summary, error_code)`，唯一键 `(assistant_id, scheduled_for)` = 定时触发的幂等键。
-     - 三张表对应方案 v2.1「三张表一次建全」（代码在 `core/src/assistants/*`，阶段 2）；字段名以指南附录 C 为准，我这里还没拿到附录 C 原文，阶段 1 的助手一页纸会逐项对齐。
-     - 第一版只有所有者能建和看（v2.1 第 1 节）：`/api/assistants*` 只放行 `scopeOf = 'owner'`（所有者令牌 / 方案 A 的所有者账号），家人账号 403；RLS 照样按 `user_id` 隔离，为以后放开给家人留好。
-     - 定时执行器（`core/src/scheduler/*`，阶段 3，`ASSISTANT_SCHEDULER_ENABLED=false` 默认关）：只用 `systemScoped` 读 `(id, user_id, next_run_at)` 三列找到期任务（进 systemScoped 白名单），执行一律切到 `userScoped(user_id)`；不跨 `u<id>/`；先写 `assistant_runs`（唯一键占位）再干活，崩溃重启不重复跑。本轮不写执行器。
+   - 助手（所有者 11-05 12:38 定：支持定时、多成员小团队、不预置；字段按指南 v1.1 附录 C，阶段 2 一次建全，代码在 `core/src/assistants/*`、执行器在 `core/src/scheduler/*`）：
+     - `assistants`：附录 C 全部字段（instructions 任务说明、lead_member_id、enabled、schedule_kind/schedule_spec/timezone 计划、catch_up、max_runtime_sec、budget_level、notify、conversation_id、next_run_at、paused_at…）。
+     - `assistant_members(assistant_id, member_id, role lead|worker, position)` = 成员组 + 分工；`assistant_runs(… trigger, scheduled_for, status, failure_code, summary, usage_state, message_ids)` = 运行记录。
+     - **RLS 键**：附录 C 写 `owner_account_id`；我建议三张表都叫 `user_id`（含 `assistant_members`、`assistant_runs` 冗余一列），和现有 0019–0024 模板、`scopeOf`、`app.user_id` 一致，策略不用另写。复合外键 `(assistant_id,user_id)`、`(member_id,user_id)`、`(lead_member_id,user_id)` → 只能挂本人的成员，跨账号挂接在数据库层就失败。唯一键 `(assistant_id, scheduled_for)` = 定时触发的幂等键。
+     - 第一版只给所有者：`assistants:read/write` 只放行 `scopeOf = 'owner'`（所有者令牌 / 方案 A 的所有者账号），家人账号 403；RLS 照样按 `user_id` 隔离，以后放开给家人不用改表。
+     - **执行器和 RLS 的配合（要点）**：系统范围只有只读策略，`SELECT … FOR UPDATE` 在 RLS 下需要 UPDATE 策略，系统范围认领会被过滤成 0 行。所以分两步：① `systemScoped` 只读 `(id, user_id, next_run_at)` 找到期助手（进 systemScoped 白名单）；② 对每个助手切到 `userScoped(user_id)`，在一个事务里 `SELECT … WHERE id=$1 AND enabled AND paused_at IS NULL AND next_run_at<=now() FOR UPDATE SKIP LOCKED` → 插 `assistant_runs`（唯一键占位，重复即 skipped）→ 推进 `next_run_at`，再提交、再干活。整个运行都在建它的账号的数据范围里，不用超级权限。`ASSISTANT_SCHEDULER_ENABLED=false` 默认关；本轮不写执行器。
 
 ## 3. 谁能调用 / 返回什么
 - RLS 不新增接口。现有 `userRoute` 接口照旧：账号会话 → 本人数据；所有者令牌、操作员 → `'owner'`；客户端令牌 → 令牌主人。
@@ -43,4 +42,4 @@
 ## 6. 待负责人定
 1. `core_settings` 加 `user_id` 列（本稿）还是把用量 / 负责人 / 规矩拆成独立表？我建议加列，改动最小。
 2. 应用角色密码：同意由 Hark 在服务器生成直写 `.env`（不经所有者）？
-3. 助手的 cron 最短间隔：我建议 ≥ 1 小时，免费额度扛不住更密。
+3. 助手表的 RLS 键用 `user_id`（与现有模板一致）而不是附录 C 的 `owner_account_id`？我建议 `user_id`，接口里仍可叫 owner。
