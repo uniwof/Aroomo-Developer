@@ -19,7 +19,7 @@ import { Thread } from './Thread';
 import { Sidebar } from './Sidebar';
 import { BackButton, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type GoTarget, type SettingsSection } from './panels';
 import { applyDisplay } from '@/lib/display';
-import { listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, stripSignature, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
+import { listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
 import { useAsk } from '@/components/Dialog';
 import './chat.css';
 
@@ -478,7 +478,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
                                 <span className="pop-topic-title">{c.title}</span>
                                 <span className="pop-topic-time">{listTimeLabel(c.updatedAt)}</span>
                               </span>
-                              <span className="pop-topic-preview">{stripSignature(c.messages[c.messages.length - 1]?.text ?? '').replace(/[#*`>_~[\]()]/g, '').replace(/\s+/g, ' ').trim()}</span>
+                              <span className="pop-topic-preview">{previewText(c.messages[c.messages.length - 1]?.text ?? '')}</span>
                             </span>
                           </button>
                         </li>

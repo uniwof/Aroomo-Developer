@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ChatPage } from '@/chat/ChatPage';
-import { NETWORK_ERROR, loadDraft, saveDraft, signatureOf, streamChat } from '@/chat/store';
+import { NETWORK_ERROR, loadDraft, previewText, saveDraft, signatureOf, streamChat } from '@/chat/store';
 import { applyDisplay, readDisplayPrefs } from '@/lib/display';
 
 const enc = new TextEncoder();
@@ -22,6 +22,12 @@ const okResponse = (body: string) =>
   );
 
 describe('store 小工具', () => {
+  it('列表预览：带图的回复写「[图片]」，不露网址；链接只留文字；去署名和 Markdown 符号', () => {
+    expect(previewText('看这张：\n![一只猫](https://img.example/cat.png)\n\n— FreeBot')).toBe('看这张： [图片]');
+    expect(previewText('![](https://x/a.png)')).toBe('[图片]');
+    expect(previewText('**粗体** 和 [官网](https://example.com/a?b=1)')).toBe('粗体 和 官网');
+    expect(previewText('<img src="https://x/y.png">')).toBe('[图片]');
+  });
   it('署名「— 名字」→ 是谁回答的', () => {
     expect(signatureOf('你好\n\n— FreeBot')).toBe('FreeBot');
     expect(signatureOf('没有署名')).toBeNull();

@@ -262,6 +262,20 @@ export function stripSignature(text: string): string {
   return text.replace(/\n?\s*[—–]\s*[^\n—–]{1,40}?\s*$/, '').replace(/\s+$/, '');
 }
 
+/**
+ * 会话列表 / 话题菜单的一行预览：去署名，图片写成「[图片]」，链接只留文字，再去掉 Markdown 符号。
+ * 以前直接删符号，带图的回复会露出整段图片网址。
+ */
+export function previewText(text: string): string {
+  return stripSignature(text)
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' [图片] ')
+    .replace(/<img\b[^>]*>/gi, ' [图片] ')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/[#*`>_~]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 const pad = (n: number) => String(n).padStart(2, '0');
 
 /** 消息旁的时间：14:05 */

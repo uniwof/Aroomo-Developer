@@ -15,7 +15,7 @@ import { isFamily, type Member } from '@/lib/api';
 import type { UsageRow } from '@/lib/usage';
 import { Avatar, type AvatarKind } from './Avatar';
 import { quotaState, type RailTarget } from './Rail';
-import { listTimeLabel, stripSignature, type Conversation } from './store';
+import { listTimeLabel, previewText, type Conversation } from './store';
 
 type Tab = 'staff' | 'chats';
 
@@ -35,7 +35,7 @@ interface Row {
 function previewOf(c: Conversation): string {
   const last = c.messages[c.messages.length - 1];
   if (!last) return '还没有消息';
-  const text = stripSignature(last.text).replace(/[#*`>_~[\]()]/g, '').replace(/\s+/g, ' ').trim();
+  const text = previewText(last.text);
   return last.role === 'user' ? `我：${text}` : text;
 }
 
