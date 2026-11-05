@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { Login } from '@/pages/Login';
 import { Accept } from '@/pages/Accept';
 import { session, viaShell } from '@/lib/api';
+import { AppSkeleton } from '@/components/Skeleton';
 
 
 // 对话页单独打包（assistant-ui 体积大），只看管理页面时不用下载它
@@ -15,12 +16,12 @@ export function App() {
   if (!token && !viaShell) return <Login />;
   return (
     <Routes>
-      {/* 打开 Aroomo 直接进对话（#250 方向 A）；对话页自带一层抽屉，不套控制台侧栏 */}
+      {/* 打开 Aroomo 直接进对话（#250 方向 A）；对话页自带一层抽屉，不套控制台侧栏。包没到之前显示骨架（和 index.html 里那份一样，不跳） */}
       <Route index element={<Navigate to="/chat" replace />} />
       <Route
         path="chat"
         element={
-          <Suspense fallback={<p role="status" className="p-4">正在打开对话…</p>}>
+          <Suspense fallback={<AppSkeleton />}>
             <ChatPage />
           </Suspense>
         }
