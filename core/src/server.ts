@@ -105,6 +105,8 @@ export function buildServer(
   opts: BuildOptions = {},
 ): FastifyInstance {
   const app = Fastify({
+    // 只信任配置里的上一跳代理（容器网络里的 Shell / cloudflared）给的 X-Forwarded-For；未配置时 req.ip = 直连地址
+    trustProxy: cfg.trustProxy ?? false,
     // 未声明的字段直接 400，而不是悄悄丢掉（Key 等敏感接口不接受「多余但被忽略」的输入）
     ajv: { customOptions: { removeAdditional: false } },
     logger:

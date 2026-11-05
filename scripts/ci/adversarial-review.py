@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A 类 PR 反对式审查：diff + 审查清单 -> 外部模型（Gemini 优先，缺则 Groq），结果贴 PR 评论。
 Key 只从环境变量读取，绝不打印。同一 diff 只审一次；每个 PR 最多 3 次（re-review 标签可再审）。"""
-import hashlib, json, os, sys, urllib.error, urllib.request
+import hashlib, json, os, re, sys, urllib.error, urllib.request
 
 CHECKLIST = """A 类审查清单：①失败默认拒绝、无默认放行；②每次读写调用限定当前用户、有越权测试；③花钱/凭据/不可逆只有一个把关点（确认服务），无绕过；④Key/cookie/验证码不进响应、日志、审计、模型上下文；⑤外部输入（网址、主机、路径、重定向）校验、防 SSRF；⑥防点击劫持、CSRF，Cookie 属性正确；⑦计数与限额重启不清零；⑧测试有专门反例（越权、篡改、重放、超限）。"""
 PROMPT = ("你是独立的反对式代码审查员。不附和作者，对下面清单逐条检查 diff 并尽力反驳（找出违反或遗漏之处，引用文件/行）。"
@@ -22,10 +22,12 @@ def gh(path, body=None, accept="application/vnd.github+json"):
 
 
 MAX_DIFF = 60000
+SKIP_RE = re.compile(r"(^|/)package-lock\.json$|\.md$|(^|/)tests?/|\.(test|spec)\.[jt]sx?$|(^|/)test_[^/]*\.py$")
 
 
 def pr_diff(n):
-    """整份 diff；太大时 GitHub 回 406，改按 /pulls/{n}/files 一页页拼补丁，拼够 MAX_DIFF 就停（最多 30 页）。"""
+    """整份 diff；太大时 GitHub 回 406，改按 /pulls/{n}/files 一页页拼补丁，拼够 MAX_DIFF 就停（最多 30 页）。
+    兜底拼接时跳过 package-lock.json、*.md 和测试文件（只列文件名），把篇幅留给真正的代码。"""
     try:
         return gh(f"/pulls/{n}", accept="application/vnd.github.v3.diff").decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
@@ -36,6 +38,9 @@ def pr_diff(n):
     for page in range(1, 31):
         batch = gh(f"/pulls/{n}/files?per_page=100&page={page}")
         for f in batch:
+            if SKIP_RE.search(f["filename"]):
+                parts.append(f"(跳过：{f['filename']})\n")
+                continue
             part = f"diff --git a/{f['filename']} b/{f['filename']}\n({f['status']})\n{f.get('patch') or '(二进制或补丁太大，未附)'}\n"
             parts.append(part)
             size += len(part)
