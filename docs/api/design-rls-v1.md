@@ -8,14 +8,15 @@
 - 没有 RLS、但带 `user_id` 的表：`client_tokens`、`executors`、`exec_tasks`、`exec_takeovers`；`core_settings` 按键名前缀 `u<hex>.` 分用户（用量计数、负责人、规矩都在里面）。
 - 按设计不分用户的表：`users`、`user_sessions`、`user_invites`（登录本身）、`audit_log`（只追加）、`confirm_*`、`core_schema_migrations`。
 - D213 第 13 项：`SET ROLE`/`options=-c role=` 挡不住会话内 `RESET ROLE`，加固前要换成可登录的独立应用角色。
+- **RLS 防不了 SQL 注入**（负责人 11-05 22:22）：它只把注入后能读写的范围限在当前 `app.user_id` 的行里；防注入靠参数化查询（`$1` 占位，不拼接用户输入）。RLS 是第二道防线，不是第一道。
 
 ## 2. 要改什么（字段 / 配置）
 1. **独立可登录的应用角色**：`aroomo_core_app`，`LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB`，不拥有任何表，不是 `aroomo_core` 的成员（这样 `RESET ROLE` 回不到所有者）。密码由 Hark 在服务器上生成，直接写进 `.env` 的新变量 `CORE_APP_DATABASE_URL`，不经聊天、不进仓库。`CORE_DATABASE_URL`（所有者）只用来跑迁移和授权。
-2. **启动自检（失败即拒绝启动）**：应用连接 `current_user` ≠ 表所有者、非超级用户、非 BYPASSRLS、拥有表数 = 0、`pg_has_role(current_user,'aroomo_core','MEMBER') = false`；对每张 RLS 表 `relforcerowsecurity = true`。新增 `CORE_DB_REQUIRE_APP_ROLE=true`：设了而应用连接不满足 → 拒绝启动（staging 阶段 1 打开，生产阶段 3 打开）。
+2. **启动自检（失败即拒绝启动）**：应用连接 `current_user` ≠ 表所有者、非超级用户、非 BYPASSRLS、拥有表数 = 0、`pg_has_role(current_user,'aroomo_core','MEMBER') = false`；对每张 RLS 表 `relforcerowsecurity = true`；**应用角色不授 TRUNCATE**（负责人 11-05 22:22：TRUNCATE 不走行级策略、不触发 DELETE 触发器，一条就能清空所有账号的数据），授权只给 SELECT/INSERT/UPDATE/DELETE，自检查到应用角色对任何表有 TRUNCATE 权限 → 拒绝启动。新增 `CORE_DB_REQUIRE_APP_ROLE=true`：设了而应用连接不满足 → 拒绝启动（staging 阶段 1 打开，生产阶段 3 打开）。
 3. **补齐 RLS（同一模板，新迁移 0025 起，一表一文件，可回退）**：`client_tokens`、`executors`、`exec_tasks`、`exec_takeovers`。回填放在 ENABLE/FORCE 之前（docs/ops/RLS.md 规矩）。
 4. **`core_settings`**：新迁移加 `user_id text NOT NULL DEFAULT 'owner'`，按现有键名前缀回填（`u<hex>.` → 账号 id 的标准 UUID 写法，否则 `'owner'`），再上同一策略；`scopedSettings` 改为按 `user_id` 读写（键名保留前缀一个版本，便于回退）。用量计数、负责人、规矩因此也进 RLS。
 5. **方案 A 的关系**：`app.user_id` 一律取 `scopeOf(req)`；所有者自己的账号映射成 `'owner'`，RLS 不需要知道映射，策略不变。
-6. **为后面新表预留（同一模板，user_id NOT NULL + 复合外键防跨账号挂接）**：
+6. **为后面新表预留（同一模板，user_id NOT NULL + 复合外键防跨账号挂接）**：复合外键 `(x_id, user_id) REFERENCES 父表 (id, user_id)` 要求父表在这两列上**先有唯一约束**（负责人 11-05 22:22）——迁移里先建 `UNIQUE (id, user_id)`（或主键含这两列），再建外键。
    - `conversations(id, user_id, title, member_ids[], created_at, updated_at, deleted_at)`、`conversation_messages(id, conversation_id, user_id, role, member_id, content, created_at)`，外键 `(conversation_id, user_id)`。
    - 助手（所有者 11-05 12:38 定：支持定时、多成员小团队、不预置；字段按指南 v1.1 附录 C，阶段 2 一次建全，代码在 `core/src/assistants/*`、执行器在 `core/src/scheduler/*`）：
      - `assistants`：附录 C 全部字段（instructions 任务说明、lead_member_id、enabled、schedule_kind/schedule_spec/timezone 计划、catch_up、max_runtime_sec、budget_level、notify、conversation_id、next_run_at、paused_at…）。
@@ -39,7 +40,7 @@
 - staging：先 `scripts/backup.sh`；迁移可逆（每个文件附回退 SQL：`NO FORCE` + `DISABLE` + 删策略 + 删列）；回退 = 去掉 `CORE_APP_DATABASE_URL`/`CORE_DB_REQUIRE_APP_ROLE` 重建 core，再按需跑回退 SQL。
 - 生产（阶段 3，所有者确认后）：先备份、先查 `user_id=''/NULL` 行数为 0、`core_settings` 回填条数与前缀键数一致，再启用；异常退回上一标签并恢复快照，LobeHub 照常可用。
 
-## 6. 待负责人定
-1. `core_settings` 加 `user_id` 列（本稿）还是把用量 / 负责人 / 规矩拆成独立表？我建议加列，改动最小。
-2. 应用角色密码：同意由 Hark 在服务器生成直写 `.env`（不经所有者）？
-3. 助手表的 RLS 键用 `user_id`（与现有模板一致）而不是附录 C 的 `owner_account_id`？我建议 `user_id`，接口里仍可叫 owner。
+## 6. 已定（负责人 11-05 22:22 同意）
+1. `core_settings` **加 `user_id` 列**（第 2 节第 4 条），不拆独立表。
+2. 应用角色密码：**staging 由 Hark 在服务器上生成**直写 `.env`（不经所有者、不经聊天、不进仓库）；**生产在阶段 3 由主会话**生成并写入。
+3. 助手三张表（`assistants`、`assistant_members`、`assistant_runs`）的 RLS 键**用 `user_id`**（与 0019–0024 模板一致），不用附录 C 的 `owner_account_id`；接口里仍可叫 owner。
