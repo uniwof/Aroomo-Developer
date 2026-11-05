@@ -146,6 +146,13 @@ function parsePlan(text: string, workers: Member[]): Map<string, string> {
   return out;
 }
 
+/** 出错时的失败码：只认已知的码；别的错误（比如数据库错误自带的 code '23505'）一律记 upstream_error，
+ *  不然写库时过不了 failure_code 的约束，运行会一直卡在 running */
+function failureCodeOf(e: unknown): RunFailureCode {
+  const c = (e as { code?: unknown } | null)?.code;
+  return typeof c === 'string' && Object.hasOwn(RUN_FAILURE_TEXT, c) ? (c as RunFailureCode) : 'upstream_error';
+}
+
 export class AssistantRunner implements RunLauncher {
   readonly #inflight = new Map<string, { ctrl: AbortController; done: Promise<void> }>();
   readonly #isFree: (n: string) => boolean;
@@ -334,7 +341,7 @@ export class AssistantRunner implements RunLauncher {
                   return `### ${w.name}\n${out}`;
                 } catch (e) {
                   if (e instanceof RunFail || e instanceof Paused) throw e;
-                  const code = (e as { code?: ChatFailureCode }).code ?? 'upstream_error';
+                  const code = failureCodeOf(e);
                   await this.#step(userId, runId, no, w.id, 'work', 'failed', RUN_FAILURE_TEXT[code]);
                   return `### ${w.name}\n（没有结果：${RUN_FAILURE_TEXT[code]}）`;
                 }
@@ -368,7 +375,7 @@ export class AssistantRunner implements RunLauncher {
         if (e.message === 'cancelled') await this.d.store.updateRun(userId, runId, ['running'], { status: 'cancelled', finishedAt: this.d.now() });
         return;
       }
-      const code: RunFailureCode = e instanceof RunFail ? e.code : ((e as { code?: ChatFailureCode }).code ?? 'upstream_error');
+      const code: RunFailureCode = e instanceof RunFail ? e.code : failureCodeOf(e);
       const failed = await this.d.store.updateRun(userId, runId, ['running'], { status: 'failed', failureCode: code, finishedAt: this.d.now(), usageState: usage() });
       if (failed) await this.#reportFailure(a, failed, code);
     } finally {
@@ -430,4 +437,4 @@ export class AssistantRunner implements RunLauncher {
   }
 }
 
-export const _forTests = { parsePlan };
+export const _forTests = { parsePlan, failureCodeOf };

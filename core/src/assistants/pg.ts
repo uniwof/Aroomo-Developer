@@ -310,12 +310,16 @@ export class PgAssistantStore implements AssistantStore {
   }
 
   async appendStep(userId: string, e: Omit<RunStepEvent, 'seq'>): Promise<RunStepEvent> {
-    // seq = 这次运行已有的事件数；同一运行的步骤只由一个执行流写，主键 (run_id, seq) 兜住并发
-    const { rows } = await this.#u(userId).query<{ seq: number }>(
-      `INSERT INTO run_steps (run_id, user_id, seq, step_no, member_id, action, status, detail, created_at)
-       SELECT $1, $2, coalesce(max(seq) + 1, 0), $3, $4, $5, $6, $7, $8 FROM run_steps WHERE run_id = $1 RETURNING seq`,
-      [e.runId, userId, e.stepNo, e.memberId, e.action, e.status, e.detail.slice(0, 500), e.createdAt],
-    );
+    // seq = 这次运行已有的事件数。成员是并行跑的，同一运行会同时写几条步骤：按运行排队（事务级 advisory lock），
+    // 拿到锁后这条 INSERT 用新快照，看得到别人刚提交的 seq；主键 (run_id, seq) 仍兜底
+    const { rows } = await this.#u(userId).tx(async (q) => {
+      await q.query("SELECT pg_advisory_xact_lock(hashtext('aroomo.run_steps'), hashtext($1))", [e.runId]);
+      return q.query<{ seq: number }>(
+        `INSERT INTO run_steps (run_id, user_id, seq, step_no, member_id, action, status, detail, created_at)
+         SELECT $1, $2, coalesce(max(seq) + 1, 0), $3, $4, $5, $6, $7, $8 FROM run_steps WHERE run_id = $1 RETURNING seq`,
+        [e.runId, userId, e.stepNo, e.memberId, e.action, e.status, e.detail.slice(0, 500), e.createdAt],
+      );
+    });
     return { ...e, userId, seq: Number(rows[0]!.seq), detail: e.detail.slice(0, 500) };
   }
 
