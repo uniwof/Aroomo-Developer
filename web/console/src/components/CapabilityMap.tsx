@@ -126,13 +126,8 @@ export function CapabilityMap() {
                         />
                       )}
                     </div>
-                    <span
-                      className={cn(
-                        'shrink-0 rounded-full border px-3 py-1',
-                        i.access === 'free' ? 'border-[var(--fg)] font-medium' : 'border-[var(--border)]',
-                      )}
-                      data-access={i.access}
-                    >
+                    {/* 自审 C11：一屏好几个描边胶囊太抢眼，改成行尾灰色文字（珊瑚只留给标志、未读和提示条） */}
+                    <span className="shrink-0 text-[var(--muted)]" data-access={i.access}>
                       {ACCESS_LABEL[i.access]}
                     </span>
                   </li>
