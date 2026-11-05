@@ -29,9 +29,10 @@ export function Login({ onLoggedIn }: { onLoggedIn?: () => void }) {
     <main className="flex min-h-dvh items-center justify-center p-4">
       <form onSubmit={submit} className="w-full max-w-sm space-y-4" aria-labelledby="login-title">
         <div className="flex flex-col items-center gap-3 pb-2">
-          <Logo size={56} />
+          {/* 自审 C5：和对话页窄栏一样的珊瑚标志 */}
+          <Logo size={40} className="text-[var(--brand)]" />
           <h1 id="login-title" className="text-[1.25rem] font-semibold">
-            登录 Aroomo 控制台
+            登录 Aroomo
           </h1>
         </div>
         <label className="block space-y-1">

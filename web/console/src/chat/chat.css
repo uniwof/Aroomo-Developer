@@ -15,7 +15,7 @@
   height: 100dvh;
   background: var(--bg);
   color: var(--fg);
-  font-family: Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei UI', 'Segoe UI', system-ui, sans-serif;
+  font-family: var(--font-sans); /* 自审 C5：登录页和对话页同一套字体 */
   font-size: calc(0.875 * var(--k));
   line-height: 1.43;
   overflow: hidden;

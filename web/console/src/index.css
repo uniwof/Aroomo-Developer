@@ -9,7 +9,7 @@
   --color-brand-ink: #1d1d1f;
   --color-brand-text: #b4471f;
   --color-brand-text-dark: #ff9a73;
-  --font-sans: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei UI', 'Segoe UI', system-ui, sans-serif;
+  --font-sans: Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei UI', 'Segoe UI', system-ui, sans-serif;
 }
 
 :root {

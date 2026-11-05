@@ -495,7 +495,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         </header>
         {viaShell && (
           <p role="alert" className="chat-error main-note">
-            原生对话要直接打开 Aroomo 控制台（不经过旧的 LobeHub 外壳）才能用。
+            对话要直接打开 Aroomo 网页才能用，请从书签或首页进入。
           </p>
         )}
         <Thread

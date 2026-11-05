@@ -105,7 +105,7 @@ describe('页面', () => {
         <App />
       </MemoryRouter>,
     );
-    expect(screen.getByRole('heading', { name: '登录 Aroomo 控制台' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '登录 Aroomo' })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'a@b.c' } });
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'pw' } });
     fireEvent.click(screen.getByRole('button', { name: '登录' }));
