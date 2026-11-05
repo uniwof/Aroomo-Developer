@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A 类 PR 反对式审查：diff + 审查清单 -> 外部模型（Gemini 优先，缺则 Groq），结果贴 PR 评论。
 Key 只从环境变量读取，绝不打印。同一 diff 只审一次；每个 PR 最多 3 次（re-review 标签可再审）。"""
-import hashlib, json, os, sys, urllib.request
+import hashlib, json, os, sys, urllib.error, urllib.request
 
 CHECKLIST = """A 类审查清单：①失败默认拒绝、无默认放行；②每次读写调用限定当前用户、有越权测试；③花钱/凭据/不可逆只有一个把关点（确认服务），无绕过；④Key/cookie/验证码不进响应、日志、审计、模型上下文；⑤外部输入（网址、主机、路径、重定向）校验、防 SSRF；⑥防点击劫持、CSRF，Cookie 属性正确；⑦计数与限额重启不清零；⑧测试有专门反例（越权、篡改、重放、超限）。"""
 PROMPT = ("你是独立的反对式代码审查员。不附和作者，对下面清单逐条检查 diff 并尽力反驳（找出违反或遗漏之处，引用文件/行）。"
@@ -19,6 +19,31 @@ def gh(path, body=None, accept="application/vnd.github+json"):
     with urllib.request.urlopen(req, timeout=60) as r:
         data = r.read()
     return data if accept.endswith("diff") else json.loads(data or b"null")
+
+
+MAX_DIFF = 60000
+
+
+def pr_diff(n):
+    """整份 diff；太大时 GitHub 回 406，改按 /pulls/{n}/files 一页页拼补丁，拼够 MAX_DIFF 就停（最多 30 页）。"""
+    try:
+        return gh(f"/pulls/{n}", accept="application/vnd.github.v3.diff").decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        if e.code != 406:
+            raise
+    print("diff 太大（406），改按文件列表读补丁")
+    parts, size = [], 0
+    for page in range(1, 31):
+        batch = gh(f"/pulls/{n}/files?per_page=100&page={page}")
+        for f in batch:
+            part = f"diff --git a/{f['filename']} b/{f['filename']}\n({f['status']})\n{f.get('patch') or '(二进制或补丁太大，未附)'}\n"
+            parts.append(part)
+            size += len(part)
+            if size >= MAX_DIFF:
+                return "".join(parts)
+        if len(batch) < 100:
+            break
+    return "".join(parts)
 
 
 def post(url, body, headers):
@@ -58,7 +83,7 @@ def main():
     if pr["head"]["ref"].startswith("gemini/"):
         print("自动程序员 PR 不做 A 类审查");
         return
-    diff = gh(f"/pulls/{n}", accept="application/vnd.github.v3.diff").decode("utf-8", "replace")
+    diff = pr_diff(n)
     digest = hashlib.sha256(diff.encode()).hexdigest()[:16]
     comments = []
     page = 1
@@ -75,7 +100,7 @@ def main():
     if len(done) >= MAX_REVIEWS and "re-review" not in labels:
         print(f"已审 {len(done)} 次，达到上限；需要再审请加 re-review 标签");
         return
-    out, who = ask(PROMPT + diff[:60000])
+    out, who = ask(PROMPT + diff[:MAX_DIFF])
     if out is None:
         out, who = "兜底审查已跳过：Gemini 与 Groq 都未配置或调用失败（可能是免费额度用完），稍后加 re-review 标签重试。", "none"
     body = f"{MARK} sha={digest} -->\n### 自动反对式审查（{who}，仅供负责人参考，不替代负责人审）\n\n{out}\n"
