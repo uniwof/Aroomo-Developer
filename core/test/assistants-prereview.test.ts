@@ -177,3 +177,13 @@ describe('助手预审：建助手和开场白在同一个事务里', () => {
     }
   });
 });
+
+describe('助手：出错时的失败码', () => {
+  it('数据库错误自带的 code（如 23505）不当失败码 → upstream_error；已知的码照用', async () => {
+    const { _forTests } = await import('../src/assistants/runner.js');
+    expect(_forTests.failureCodeOf(Object.assign(new Error('dup'), { code: '23505' }))).toBe('upstream_error');
+    expect(_forTests.failureCodeOf(new Error('x'))).toBe('upstream_error');
+    expect(_forTests.failureCodeOf(null)).toBe('upstream_error');
+    expect(_forTests.failureCodeOf({ code: 'timeout' })).toBe('timeout');
+  });
+});
