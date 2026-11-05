@@ -79,6 +79,7 @@ Karakeep、RSSHub、MetaMCP、ContextForge、Mastra、agent-browser、noVNC、Me
 | @fastify/forwarded | 3.1.2 | MIT | https://www.npmjs.com/package/%40fastify%2Fforwarded |
 | @fastify/merge-json-schemas | 0.2.2 | MIT | https://www.npmjs.com/package/%40fastify%2Fmerge-json-schemas |
 | @fastify/proxy-addr | 5.1.2 | MIT | https://www.npmjs.com/package/%40fastify%2Fproxy-addr |
+| @fastify/rate-limit | 10.3.0 | MIT | https://www.npmjs.com/package/%40fastify%2Frate-limit |
 | @floating-ui/core | 1.8.0 | MIT | https://www.npmjs.com/package/%40floating-ui%2Fcore |
 | @floating-ui/dom | 1.8.0 | MIT | https://www.npmjs.com/package/%40floating-ui%2Fdom |
 | @floating-ui/react-dom | 2.1.9 | MIT | https://www.npmjs.com/package/%40floating-ui%2Freact-dom |
@@ -96,6 +97,7 @@ Karakeep、RSSHub、MetaMCP、ContextForge、Mastra、agent-browser、noVNC、Me
 | @jridgewell/trace-mapping | 0.3.31 | MIT | https://www.npmjs.com/package/%40jridgewell%2Ftrace-mapping |
 | @keyv/bigmap | 1.3.1 | MIT | https://www.npmjs.com/package/%40keyv%2Fbigmap |
 | @keyv/serialize | 1.1.1 | MIT | https://www.npmjs.com/package/%40keyv%2Fserialize |
+| @lukeed/ms | 2.0.2 | MIT | https://www.npmjs.com/package/%40lukeed%2Fms |
 | @oxc-project/types | 0.155.0 | MIT | https://www.npmjs.com/package/%40oxc-project%2Ftypes |
 | @oxc-project/types | 0.156.0 | MIT | https://www.npmjs.com/package/%40oxc-project%2Ftypes |
 | @pinojs/redact | 0.4.0 | MIT | https://www.npmjs.com/package/%40pinojs%2Fredact |
@@ -315,6 +317,7 @@ Karakeep、RSSHub、MetaMCP、ContextForge、Mastra、agent-browser、noVNC、Me
 | fast-uri | 3.1.9 | BSD-3-Clause | https://www.npmjs.com/package/fast-uri |
 | fast-uri | 4.2.3 | BSD-3-Clause | https://www.npmjs.com/package/fast-uri |
 | fastify | 5.12.7 | MIT | https://www.npmjs.com/package/fastify |
+| fastify-plugin | 5.1.0 | MIT | https://www.npmjs.com/package/fastify-plugin |
 | fastq | 1.20.3 | ISC | https://www.npmjs.com/package/fastq |
 | fdir | 6.5.0 | MIT | https://www.npmjs.com/package/fdir |
 | file-entry-cache | 11.1.5 | MIT | https://www.npmjs.com/package/file-entry-cache |
