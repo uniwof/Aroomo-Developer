@@ -196,7 +196,7 @@ export function BudgetSection() {
         hint={
           b?.today
             ? `今天已来 ${b.today.total} 张接管卡（提醒了 ${b.today.loud}，静默 ${b.today.quiet}）。付款类每次都会提醒。`
-            : '执行员遇到验证码、登录等要你出手的事，每天最多提醒这么多次；超出的静默放进收件箱。付款类每次都会提醒。'
+            : '电脑助手遇到验证码、登录等要你出手的事，每天最多提醒这么多次；超出的静默放进收件箱。付款类每次都会提醒。'
         }
       >
         {b ? (
@@ -244,7 +244,7 @@ export function McpSection() {
     const text = JSON.stringify(cfg.config, null, 2);
     try {
       await navigator.clipboard.writeText(text);
-      setMsg('已复制。把 <YOUR_ARC_TOKEN> 换成你的令牌后粘贴到外部客户端。');
+      setMsg('已复制。把 <YOUR_ARC_TOKEN> 换成下面新建的连接密码，再粘贴到那个软件里。');
     } catch {
       setMsg('这个浏览器不让自动复制，请长按下面的文字手动复制。');
     }
@@ -252,13 +252,13 @@ export function McpSection() {
 
   return (
     <>
-      <Field label="MCP 连接配置" hint="给外部客户端（Claude、Cursor 等）接入 Aroomo 用。令牌不在这里显示。">
+      <Field label="连接设置" hint="在 Claude、Cursor 这类软件里用 Aroomo 时，把这段复制过去。里面不含密码。">
         <Button variant="outline" disabled={!cfg} onClick={() => void copy()}>
           复制配置
         </Button>
       </Field>
       {cfg && (
-        <pre aria-label="MCP 配置内容" className="row-pre">
+        <pre aria-label="连接设置内容" tabIndex={0} className="row-pre">
           {JSON.stringify(cfg.config, null, 2)}
         </pre>
       )}
@@ -282,7 +282,7 @@ export function LeadGroup() {
 }
 export function BudgetGroup() {
   return (
-    <Group title="执行员提醒">
+    <Group title="电脑助手提醒">
       <BudgetSection />
     </Group>
   );

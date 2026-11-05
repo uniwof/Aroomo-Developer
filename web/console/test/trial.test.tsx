@@ -11,7 +11,7 @@ afterEach(() => {
 describe('试用到期', () => {
   it('文字', () => {
     expect(trialText({ access: 'free' })).toBeNull();
-    expect(trialText({ access: 'trial' })).toBe('到期日未填');
+    expect(trialText({ access: 'trial' })).toBe('还不知道哪天到期');
     expect(trialText({ access: 'trial', trialEndsAt: '2026-11-02', trialDaysLeft: 3 })).toBe('试用还剩 3 天（2026-11-02）');
     expect(trialText({ access: 'trial', trialEndsAt: '2026-10-29', trialDaysLeft: -1 })).toContain('已过期 1 天');
   });

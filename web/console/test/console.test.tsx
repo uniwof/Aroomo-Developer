@@ -136,7 +136,7 @@ describe('能力清单（M1）', () => {
       { id: '1', name: 'a', kind: 'text', provider: 'p', access: 'free', quota: null },
       { id: '2', name: 'b', kind: 'image', provider: 'p', access: 'trial', quota: { used: 3, limit: 10, unit: '次' } },
     ] as const;
-    expect(summaryLine([...items])).toBe('文本 1 · 生图 1 · 视频 0');
+    expect(summaryLine([...items])).toBe('能聊天 1 个 · 能画图 1 个 · 能做视频 0 个');
     expect(quotaText(null)).toBe('额度：未知');
     expect(quotaText({ used: null, limit: 10, unit: '次' })).toBe('额度：未知');
     expect(quotaText(items[1].quota)).toBe('额度：已用 3 / 10 次');
@@ -146,7 +146,7 @@ describe('能力清单（M1）', () => {
     const { CapabilityMap } = await import('@/components/CapabilityMap');
     vi.stubGlobal('fetch', vi.fn(async () => json(404, { error: { code: 'NOT_FOUND', message: 'x' } })));
     render(<CapabilityMap />);
-    await waitFor(() => expect(screen.getByTestId('cap-summary')).toHaveTextContent('文本 5 · 生图 2 · 视频 0'));
+    await waitFor(() => expect(screen.getByTestId('cap-summary')).toHaveTextContent('能聊天 5 个 · 能画图 2 个 · 能做视频 0 个'));
     expect(screen.getByRole('note')).toHaveTextContent('示例数据');
     expect(screen.getAllByText('永久免费').length).toBeGreaterThan(0);
     expect(screen.getAllByText('试用').length).toBeGreaterThan(0);

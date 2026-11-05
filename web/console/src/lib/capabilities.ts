@@ -26,7 +26,7 @@ export interface CapabilityList {
   sample?: boolean;
 }
 
-export const KIND_LABEL: Record<CapabilityKind, string> = { text: '文本', image: '生图', video: '视频' };
+export const KIND_LABEL: Record<CapabilityKind, string> = { text: '聊天', image: '画图', video: '做视频' };
 export const ACCESS_LABEL: Record<CapabilityAccess, string> = { free: '永久免费', trial: '试用', paid: '付费' };
 
 export function countByKind(items: CapabilityItem[]): Record<CapabilityKind, number> {
@@ -38,7 +38,7 @@ export function countByKind(items: CapabilityItem[]): Record<CapabilityKind, num
 /** 「文本 N · 生图 N · 视频 N」 */
 export function summaryLine(items: CapabilityItem[]): string {
   const c = countByKind(items);
-  return `${KIND_LABEL.text} ${c.text} · ${KIND_LABEL.image} ${c.image} · ${KIND_LABEL.video} ${c.video}`;
+  return `能${KIND_LABEL.text} ${c.text} 个 · 能${KIND_LABEL.image} ${c.image} 个 · 能${KIND_LABEL.video} ${c.video} 个`;
 }
 
 export function quotaText(q: CapabilityItem['quota']): string {
@@ -60,7 +60,7 @@ export const SAMPLE_ITEMS: CapabilityItem[] = [
 /** 试用状态一句话：未填到期日 / 还剩 N 天 / 今天到期 / 已过期 N 天；非试用返回 null */
 export function trialText(i: Pick<CapabilityItem, 'access' | 'trialEndsAt' | 'trialDaysLeft'>): string | null {
   if (i.access !== 'trial') return null;
-  if (!i.trialEndsAt) return '到期日未填';
+  if (!i.trialEndsAt) return '还不知道哪天到期';
   const d = i.trialDaysLeft;
   if (d == null) return `试用到 ${i.trialEndsAt}`;
   if (d < 0) return `试用已过期 ${-d} 天（${i.trialEndsAt}）`;

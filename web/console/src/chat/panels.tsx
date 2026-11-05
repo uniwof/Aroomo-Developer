@@ -242,8 +242,8 @@ export const SETTINGS_SECTIONS: { id: SettingsSection; label: string; sub: strin
   { id: 'prefs', label: '偏好', sub: '改动立即生效，不用保存。', Icon: SlidersHorizontal },
   { id: 'lead', label: '负责人', sub: '对话里没有 @ 成员时，交给负责人回答。', Icon: UserRound },
   { id: 'safety', label: '安全', sub: '敏感内容保护和这台设备的登录。', Icon: ShieldCheck },
-  { id: 'budget', label: '执行员提醒', sub: '本机执行员每天最多提醒你几次。', Icon: Bell },
-  { id: 'external', label: '外部接入', sub: '让别的 AI 工具通过 MCP 用你的 Aroomo。', Icon: Plug },
+  { id: 'budget', label: '电脑助手提醒', sub: '电脑助手每天最多提醒你几次。', Icon: Bell },
+  { id: 'external', label: '外部接入', sub: '在别的 AI 软件里也能用你的 Aroomo。', Icon: Plug },
   { id: 'shortcuts', label: '键盘快捷键', sub: '不用鼠标也能用。', Icon: Keyboard },
 ];
 
@@ -311,7 +311,7 @@ export function SettingsSectionBody({ section, prefs, setPrefs, onGo, headingLev
       {section === 'budget' && (
         <div className="group">
           <BudgetSection />
-          <NavRow icon={<Monitor aria-hidden="true" />} label="本机执行员" value="设备和任务" onClick={() => onGo('executors')} />
+          <NavRow icon={<Monitor aria-hidden="true" />} label="电脑助手" value="哪些电脑、在做什么" onClick={() => onGo('executors')} />
         </div>
       )}
       {section === 'external' && (

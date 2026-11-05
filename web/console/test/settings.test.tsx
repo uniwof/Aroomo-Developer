@@ -87,7 +87,7 @@ describe('设置页', () => {
     vi.stubGlobal('fetch', vi.fn(async () => json(200, { members: [], leadId: null, effectiveLeadId: null, auto: true, sensitiveProtect: true })));
     render(<Settings />);
     expect(screen.queryAllByRole('tab')).toHaveLength(0);
-    for (const g of ['负责人与安全', '执行员提醒', '外部接入', '登录']) expect(screen.getByRole('heading', { name: g })).toBeInTheDocument();
+    for (const g of ['负责人与安全', '电脑助手提醒', '外部接入', '登录']) expect(screen.getByRole('heading', { name: g })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '退出登录' })).toBeInTheDocument();
   });
 

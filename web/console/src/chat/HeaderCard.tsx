@@ -94,8 +94,13 @@ export function HeaderCard({
                   <dd>{creator}</dd>
                 </>
               )}
-              <dt>{kind === 'group' ? '成员' : '模型'}</dt>
-              <dd>{model}</dd>
+              {/* 自审 B5：不显示 freebot 这类内部 id；不知道模型就不显示这一行 */}
+              {model !== '—' && (
+                <>
+                  <dt>{kind === 'group' ? '成员' : '模型'}</dt>
+                  <dd>{model}</dd>
+                </>
+              )}
             </dl>
           </div>
           {onView && (

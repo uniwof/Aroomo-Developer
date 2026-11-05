@@ -58,7 +58,7 @@ const TITLES: Record<Exclude<View['kind'], 'chat' | 'member'>, string> = {
   library: '资源库',
   keys: 'API',
   audit: '审计记录',
-  executors: '本机执行员',
+  executors: '电脑助手',
 };
 
 /** 上一层是哪里（顶栏「← 返回」） */
@@ -365,8 +365,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   const who = isGroup
     ? { name: current.title.replace(/^群聊：/, ''), kind: 'group' as const, type: `群聊 · ${current.group!.length} 位成员`, model: current.group!.join('、') }
     : singleName
-      ? { name: singleName, kind: 'member' as const, type: `云端成员 · 今日${currentMember ? quotaState(usage?.find((u) => u.memberId === currentMember.id)).label : '额度未知'}`, model: currentMember?.id ?? '—' }
-      : { name: '负责人', kind: 'lead' as const, type: 'Aroomo 内置 · 负责人', model: '自动（设置 → 负责人）' };
+      ? { name: singleName, kind: 'member' as const, type: `云端成员 · 今日${currentMember ? quotaState(usage?.find((u) => u.memberId === currentMember.id)).label : '额度未知'}`, model: '—' }
+      : { name: '负责人', kind: 'lead' as const, type: 'Aroomo 内置 · 负责人', model: '自动挑选' };
   const intro = isGroup
     ? '群里的成员一起回答；没写 @ 时，自动 @ 群里每一位。'
     : currentMember

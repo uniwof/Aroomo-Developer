@@ -102,10 +102,10 @@ export function CapabilityMap() {
         return (
           <div key={k} className="space-y-2">
             <h3 className="font-semibold">
-              {KIND_LABEL[k]}（{rows.length}）
+              能{KIND_LABEL[k]}的（{rows.length}）
             </h3>
             {rows.length === 0 ? (
-              <p className="text-[var(--muted)]">暂无{KIND_LABEL[k]}能力。</p>
+              <p className="text-[var(--muted)]">还没有能{KIND_LABEL[k]}的。</p>
             ) : (
               <ul className="group">
                 {rows.map((i) => (

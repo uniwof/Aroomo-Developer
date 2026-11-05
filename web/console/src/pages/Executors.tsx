@@ -1,4 +1,4 @@
-/** 本机执行员（M3）：设备在线/离线、任务进度、吊销设备（走确认卡）。接 /api/executors、/api/tasks、DELETE /api/clients/:id。 */
+/** 电脑助手（M3）：设备在线/离线、任务进度、停用设备（走确认卡）。接 /api/executors、/api/tasks、DELETE /api/clients/:id。 */
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ApiError, api } from '@/lib/api';
@@ -57,7 +57,7 @@ export function Executors() {
     } catch (e) {
       setDevices((v) => v ?? []);
       setTasks((v) => v ?? []);
-      setMsg(e instanceof ApiError && e.status === 404 ? '本机执行员功能还没上线，稍后再来' : '加载失败，请稍后再试');
+      setMsg(e instanceof ApiError && e.status === 404 ? '电脑助手功能还没上线，稍后再来' : '加载失败，请稍后再试');
     }
   }, []);
   useEffect(() => {
@@ -74,7 +74,7 @@ export function Executors() {
     try {
       if (c.kind === 'revoke') {
         await api('DELETE', `/api/clients/${encodeURIComponent(c.id)}`);
-        setMsg(`已吊销「${c.label}」，这台电脑立刻不能再领任务`);
+        setMsg(`已停用「${c.label}」，这台电脑立刻不能再领任务`);
       } else {
         await api('POST', `/api/tasks/${c.id}/cancel`);
         setMsg('已请求取消这个任务');
@@ -87,18 +87,18 @@ export function Executors() {
 
   return (
     <div className="page">
-      <h1 className="page-title">本机执行员</h1>
+      <h1 className="page-title">电脑助手</h1>
       {msg && <p role="status">{msg}</p>}
 
       {confirm && (
         <div role="alertdialog" aria-labelledby="exec-confirm-title" className="card card-strong">
           <h2 id="exec-confirm-title" className="group-title">
-            {confirm.kind === 'revoke' ? `吊销「${confirm.label}」？` : '取消这个任务？'}
+            {confirm.kind === 'revoke' ? `停用「${confirm.label}」？` : '取消这个任务？'}
           </h2>
-          <p className="mt-1 text-[var(--muted)]">{confirm.kind === 'revoke' ? '吊销后这台电脑马上不能再领任务，想恢复要重新配对。' : '正在进行的步骤会在下一个检查点停下。'}</p>
+          <p className="mt-1 text-[var(--muted)]">{confirm.kind === 'revoke' ? '停用后这台电脑马上不能再领任务，想恢复要重新配对。' : '正在进行的步骤会在下一个检查点停下。'}</p>
           <div className="mt-3 flex gap-2">
             <Button type="button" onClick={() => void doConfirm()}>
-              {confirm.kind === 'revoke' ? '确认吊销' : '确认取消任务'}
+              {confirm.kind === 'revoke' ? '确认停用' : '确认取消任务'}
             </Button>
             <Button type="button" variant="outline" onClick={() => setConfirm(null)}>
               先不了
@@ -112,7 +112,7 @@ export function Executors() {
           电脑
         </h2>
         {devices === null && <p className="text-[var(--muted)]">正在加载…</p>}
-        {devices?.length === 0 && <p className="text-[var(--muted)]">还没有电脑连上来。装好本机执行员并配对后会出现在这里。</p>}
+        {devices?.length === 0 && <p className="text-[var(--muted)]">还没有电脑连上来。装好电脑助手并配对后会出现在这里。</p>}
         <ul className="flex flex-col gap-2">
           {devices?.map((d) => (
             <li key={d.id} className="card">
@@ -124,8 +124,8 @@ export function Executors() {
                 {d.platform} · 版本 {d.version} · 最近一次联系 {ago(d.lastSeenAt)}
               </div>
               {d.clientId && (
-                <Button type="button" variant="outline" className="mt-2" onClick={() => setConfirm({ kind: 'revoke', id: d.clientId as string, label: d.deviceName })} aria-label={`吊销 ${d.deviceName}`}>
-                  吊销这台电脑
+                <Button type="button" variant="outline" className="mt-2" onClick={() => setConfirm({ kind: 'revoke', id: d.clientId as string, label: d.deviceName })} aria-label={`停用 ${d.deviceName}`}>
+                  停用这台电脑
                 </Button>
               )}
             </li>
