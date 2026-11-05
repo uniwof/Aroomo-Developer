@@ -96,8 +96,10 @@ async function parse<T>(res: Response): Promise<T> {
   return body as T;
 }
 
-export async function api<T>(method: string, path: string, body?: unknown, fetchImpl: typeof fetch = fetch): Promise<T> {
+/** extraHeaders：调用方要加的头（如 Idempotency-Key）；不能覆盖鉴权、CSRF 和内容类型 */
+export async function api<T>(method: string, path: string, body?: unknown, fetchImpl: typeof fetch = fetch, extraHeaders: Record<string, string> = {}): Promise<T> {
   const headers: Record<string, string> = { accept: 'application/json' };
+  for (const [k, v] of Object.entries(extraHeaders)) if (!/^(authorization|cookie|accept|content-type|x-aroomo-request)$/i.test(k)) headers[k.toLowerCase()] = v;
   const token = session.token;
   if (token && token !== COOKIE_SESSION) headers.authorization = `Bearer ${token}`;
   if (method !== 'GET' && method !== 'HEAD') headers['x-aroomo-request'] = '1';

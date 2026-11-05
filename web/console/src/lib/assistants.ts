@@ -101,16 +101,22 @@ export interface DraftPart {
   };
 }
 
+const idem = (key?: string): Record<string, string> => (key ? { 'idempotency-key': key } : {});
+/** 新的幂等键（每个意图一个：一张草稿卡、一次「立即运行」） */
+export const newIdemKey = (prefix: string) => `${prefix}-${typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`}`;
+
 const base = (id: string) => `/api/assistants/${encodeURIComponent(id)}`;
 
 export const assistantsApi = {
   list: () => api<{ assistants: Assistant[] }>('GET', '/api/assistants').then((r) => r.assistants),
   get: (id: string) => api<{ assistant: Assistant }>('GET', base(id)).then((r) => r.assistant),
   preview: (b: AssistantInput) => api<{ scheduleText: string; nextRunAt: string | null; nextRunText: string; part: DraftPart }>('POST', '/api/assistants/preview', b),
-  create: (b: AssistantInput) => api<{ assistant: Assistant; created: boolean }>('POST', '/api/assistants', b).then((r) => r.assistant),
+  /** key = Idempotency-Key：同一次「建好」（同一张草稿卡）重试或连点只建一个 */
+  create: (b: AssistantInput, key?: string) => api<{ assistant: Assistant; created: boolean }>('POST', '/api/assistants', b, fetch, idem(key)).then((r) => r.assistant),
   pause: (id: string) => api<{ assistant: Assistant }>('POST', `${base(id)}/pause`).then((r) => r.assistant),
   resume: (id: string) => api<{ assistant: Assistant }>('POST', `${base(id)}/resume`).then((r) => r.assistant),
-  runNow: (id: string) => api<{ run: AssistantRun; created: boolean }>('POST', `${base(id)}/runs`).then((r) => r.run),
+  /** key = Idempotency-Key：同一次点击的重试返回同一条运行 */
+  runNow: (id: string, key?: string) => api<{ run: AssistantRun; created: boolean }>('POST', `${base(id)}/runs`, undefined, fetch, idem(key)).then((r) => r.run),
   runs: (id: string, before?: string) => api<{ runs: AssistantRun[]; nextBefore: string | null }>('GET', `${base(id)}/runs?limit=20${before ? `&before=${encodeURIComponent(before)}` : ''}`),
   run: (id: string, runId: string) => api<{ run: AssistantRun & { steps: RunStep[] } }>('GET', `${base(id)}/runs/${encodeURIComponent(runId)}`).then((r) => r.run),
   cancelRun: (id: string, runId: string) => api<{ run: AssistantRun }>('POST', `${base(id)}/runs/${encodeURIComponent(runId)}/cancel`).then((r) => r.run),
