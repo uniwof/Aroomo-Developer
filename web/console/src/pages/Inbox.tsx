@@ -8,6 +8,12 @@ import { Button } from '@/components/ui/button';
 import { ApiError, api, type Challenge } from '@/lib/api';
 import { ConfirmCard } from '@/components/ConfirmCard';
 import { TakeoverCards } from '@/components/TakeoverCards';
+import { ErrorRetry } from '@/components/ErrorRetry';
+import { useAsk } from '@/components/Dialog';
+import { inboxChanged } from '@/lib/inbox';
+
+/** 拒绝、驳回这类动作：先确认，关掉确认不做决定（规范 §8 拒绝状态机） */
+const isReject = (a: Action) => /^(reject|deny|decline|dismiss|refuse)/i.test(a.id) || /^(拒绝|驳回|不同意|不批准)/.test(a.label);
 
 interface Action {
   id: string;
@@ -61,26 +67,44 @@ export function Inbox({ onBack, onOpenConversation }: { onBack?: () => void; onO
   // 正在两步确认的动作：重要动作第一次点会拿到 428 + 确认卡
   const [pending, setPending] = useState<{ item: Item; action: Action; challenge: Challenge } | null>(null);
   const [show, setShow] = useState<'mine' | 'all'>('mine');
+  // 正在处理的那一条：它的按钮全部锁住，防重复提交（审计 I1；规范 §8 待定 → 已确认 → 执行中 → 完成 / 失败）
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const ask = useAsk();
 
+  // 读取失败（不是没权限）：给重试（切片 14）
+  const [loadErr, setLoadErr] = useState(false);
   const load = useCallback(() => {
+    setLoadErr(false);
     api<{ groups: Record<string, Item[]> }>('GET', '/api/inbox?status=open')
       // 接管卡已由上面的 TakeoverCards 显示，收件箱里同一张卡不再重复出现
       .then((r) => setData(Object.fromEntries(Object.entries(r.groups).map(([k, v]) => [k, v.filter((i) => i.kind !== 'executor.takeover')]))))
-      .catch((e) => setMsg(e instanceof ApiError && e.status === 403 ? '这个账号还不能查看收件箱' : '加载失败，请稍后再试'));
+      .catch((e) => {
+        if (e instanceof ApiError && e.status === 403) setMsg('这个账号还不能查看收件箱');
+        else setLoadErr(true);
+      });
   }, []);
   useEffect(load, [load]);
 
   async function act(item: Item, a: Action, confirmToken?: string) {
-    setMsg('');
+    if (busyId && !confirmToken) return;
+    if (!confirmToken && isReject(a) && !(await ask.confirm({ title: `${a.label}「${item.title}」？`, desc: '关掉这个窗口不会做任何决定。', ok: a.label, danger: true }))) return;
+    setBusyId(item.id);
+    setMsg(`正在处理：${a.label}「${item.title}」…`);
     try {
       await api('POST', `/api/inbox/${item.id}/actions/${a.id}`, confirmToken ? { confirmToken } : {});
       setPending(null);
-      setMsg('已处理');
+      // 只在 Core 回了成功之后才说完成，不提前打勾
+      setMsg(`已处理：${a.label}「${item.title}」`);
       load();
+      inboxChanged();
     } catch (e) {
-      if (e instanceof ApiError && e.status === 428 && e.confirm) setPending({ item, action: a, challenge: e.confirm });
-      else if (confirmToken) throw e;
-      else setMsg(e instanceof ApiError ? e.message : '操作失败，请稍后再试');
+      if (e instanceof ApiError && e.status === 428 && e.confirm) {
+        setPending({ item, action: a, challenge: e.confirm });
+        setMsg('');
+      } else if (confirmToken) throw e;
+      else setMsg(`没处理成：${e instanceof ApiError ? e.message : '请稍后再试'}（这一条还在，可以再点一次）`);
+    } finally {
+      setBusyId(null);
     }
   }
 
@@ -91,6 +115,7 @@ export function Inbox({ onBack, onOpenConversation }: { onBack?: () => void; onO
       await api('POST', '/api/inbox/dismiss', { ids });
       setMsg(ids.length > 1 ? `已清掉 ${ids.length} 条` : '已清掉');
       load();
+      inboxChanged();
     } catch (e) {
       setMsg(e instanceof ApiError ? e.message : '操作失败，请稍后再试');
     }
@@ -104,9 +129,11 @@ export function Inbox({ onBack, onOpenConversation }: { onBack?: () => void; onO
 
   return (
     <section aria-labelledby="inbox-title" className="page">
-      <h1 id="inbox-title" className="page-title">
+      {ask.node}
+      {/* 只嵌在面板里，面板顶栏已有 h1：这里是 h2（审计 S4，class 不变外观不变） */}
+      <h2 id="inbox-title" className="page-title">
         收件箱
-      </h1>
+      </h2>
       {/* 照 sumus 全站唯一那种分段筛选（是筛选，不是标签页） */}
       <div className="seg inbox-filter" role="radiogroup" aria-label="收件箱筛选">
         {(
@@ -123,8 +150,9 @@ export function Inbox({ onBack, onOpenConversation }: { onBack?: () => void; onO
       <p role="status" className="row-status">
         {msg}
       </p>
+      {loadErr && <ErrorRetry text="收件箱没读到。" what="收件箱" onRetry={load} />}
       <TakeoverCards />
-      {data === null && !msg && <p className="muted">加载中…</p>}
+      {data === null && !msg && !loadErr && <p className="muted">加载中…</p>}
       {/* 自审 B17：都空时只显示一个空状态（一句话 + 一个动作），不再三个框各写「暂时没有」 */}
       {data && shown === 0 && (
         <div className="empty">
@@ -150,7 +178,7 @@ export function Inbox({ onBack, onOpenConversation }: { onBack?: () => void; onO
           .map((g) => (
           <div key={g.key} className="group-block">
             <div className="group-head">
-              <h2 className="group-title">{g.title}</h2>
+              <h3 className="group-title">{g.title}</h3>
               {g.key === 'brief' && (view[g.key] ?? []).length > 1 && (
                 <Button variant="outline" onClick={() => dismiss((view[g.key] ?? []).map((i) => i.id))}>
                   全部知道了
@@ -168,7 +196,7 @@ export function Inbox({ onBack, onOpenConversation }: { onBack?: () => void; onO
                   <p className="row-hint">{formatTime(i.createdAt)}</p>
                   <div className="row-actions">
                     {(i.actions ?? []).map((a) => (
-                      <Button key={a.id} variant={a.confirm && a.confirm.kind !== 'normal' ? 'outline' : 'default'} onClick={() => void act(i, a)}>
+                      <Button key={a.id} variant={a.confirm && a.confirm.kind !== 'normal' ? 'outline' : 'default'} disabled={busyId === i.id} onClick={() => void act(i, a)}>
                         {a.label}
                       </Button>
                     ))}
@@ -181,7 +209,7 @@ export function Inbox({ onBack, onOpenConversation }: { onBack?: () => void; onO
                       ) : null;
                     })()}
                     {canDismiss(i) && (
-                      <Button variant="outline" aria-label={`知道了：${i.title}`} onClick={() => dismiss([i.id])}>
+                      <Button variant="outline" aria-label={`知道了：${i.title}`} disabled={busyId === i.id} onClick={() => dismiss([i.id])}>
                         知道了
                       </Button>
                     )}

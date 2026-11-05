@@ -29,9 +29,9 @@ export function Allowlist() {
 
   return (
     <section aria-labelledby="exec-allow" className="flex flex-col gap-2">
-      <h2 id="exec-allow" className="group-title">
+      <h3 id="exec-allow" className="group-title">
         允许的站点
-      </h2>
+      </h3>
       <p className="text-[var(--muted)]">每行一个域名。留空 = 不限制；填了以后，派任务给不在名单里的站点会被拒绝。</p>
       <textarea
         aria-label="站点列表"

@@ -16,7 +16,6 @@ import {
   useAuiState,
   useExternalStoreRuntime,
   type AppendMessage,
-  type ThreadMessage,
   type ThreadMessageLike,
 } from '@assistant-ui/react';
 import { ArrowDown, Copy, KeyRound, RotateCcw, Send, Square, Volume2, VolumeX } from 'lucide-react';
@@ -25,11 +24,10 @@ import { ToolCalls } from './thread/cards/ToolCalls';
 import { Avatar } from './Avatar';
 import { AnnounceContext, useAnnounce } from './announce';
 import { DEFAULT_RATE, pickVoice, speaker, speechSupported } from './speech';
+import { useAsk } from '@/components/Dialog';
 
 // Markdown 引擎单独打包、按需加载（首屏先出对话框和输入框）；没到之前按纯文字显示（同样不渲染 HTML）
 const LazyMarkdown = lazy(() => import('./Markdown'));
-const NEW_DRAFT = 'new';
-
 // X-15 草稿卡点开才下载（对话页包 ≤150 KB gz）
 const ChatDraftCard = lazy(() => import('./pages/assistants/ChatDraftCard'));
 
@@ -40,34 +38,13 @@ const noteOfMessage = (m: { metadata?: { custom?: unknown } }): string | undefin
 const streamNoteOfMessage = (m: { metadata?: { custom?: unknown } }): string | undefined => (m.metadata?.custom as { streamNote?: string } | undefined)?.streamNote;
 const toolsOfMessage = (m: { metadata?: { custom?: unknown } }): ChatTool[] | undefined => (m.metadata?.custom as { tools?: ChatTool[] } | undefined)?.tools;
 
-const textOfMessage = (m: ThreadMessage): string =>
-  m.content
-    .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
-    .map((p) => p.text)
-    .join('\n');
-
 /** Core 给的消息 id 是 uuid；本页新发的消息用 newId()（m 开头），不当作 Core 的 id */
 const CORE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function toTurns(messages: readonly ThreadMessage[]): ChatTurn[] {
-  return messages
-    .filter((m) => m.role === 'user' || m.role === 'assistant')
-    .map((m) => {
-      const draft = draftOfMessage(m);
-      const note = noteOfMessage(m);
-      const tools = toolsOfMessage(m);
-      return {
-        ...(CORE_ID.test(m.id) ? { id: m.id } : {}),
-        role: m.role as 'user' | 'assistant',
-        text: textOfMessage(m),
-        ...(m.createdAt ? { at: m.createdAt.getTime() } : {}),
-        ...(draft ? { draft } : {}),
-        ...(tools?.length ? { tools } : {}),
-        ...(note ? { note } : {}),
-      };
-    })
-    .filter((t) => t.text.trim() !== '');
-}
+/** 还没发过消息的新对话：草稿按对象记（全员 / 某位成员 / 某个群），换一位新开对话不带出别人的草稿（审计 C14） */
+const newDraftKey = (c: Conversation) => `new:${c.model}${c.group?.length ? `:${c.group.join('、')}` : ''}`;
+
+
 
 /** 对话区里的一条消息（本地状态） */
 export interface UiMessage {
@@ -116,6 +93,20 @@ export function toThreadMessage(m: UiMessage): ThreadMessageLike {
 }
 
 const turnsOf = (list: UiMessage[]): ChatTurn[] => list.filter((m) => m.text.trim() !== '').map((m) => ({ role: m.role, text: m.text }));
+/** 存本机用：带时间（Poke 行为规范切片 1：发出即存、结束再存，离开对话区也不丢） */
+// 带上 Core 的消息 id、草稿卡、工具行、摘要灰字（streamNote 只在这次的流里显示，不存）
+const savedTurnsOf = (list: UiMessage[]): ChatTurn[] =>
+  list
+    .filter((m) => m.text.trim() !== '')
+    .map((m) => ({
+      ...(CORE_ID.test(m.id) ? { id: m.id } : {}),
+      role: m.role,
+      text: m.text,
+      ...(m.at ? { at: m.at } : {}),
+      ...(m.draft ? { draft: m.draft } : {}),
+      ...(m.tools?.length ? { tools: m.tools } : {}),
+      ...(m.note ? { note: m.note } : {}),
+    }));
 
 const MarkdownText: FC<{ text: string }> = ({ text }) => (
   <Suspense fallback={<p className="chat-md chat-plain">{stripSignature(text)}</p>}>
@@ -267,7 +258,7 @@ const ErrorAction: FC = () => {
     return isFamily() ? (
       <span className="msg-note">这位成员暂时用不了，请告诉家里管 Aroomo 的人。</span>
     ) : (
-      <Link to="/chat?view=keys" className="msg-act hit" aria-label="去检查 Key（打开 API）">
+      <Link to="/hub/keys" className="msg-act hit" aria-label="去检查 Key（打开 API）">
         <KeyRound aria-hidden="true" />
         <span>去检查 Key</span>
       </Link>
@@ -405,6 +396,12 @@ export interface ThreadProps {
   onMessages: (turns: ChatTurn[]) => void;
   /** 外部（抽屉里点成员）要插入到输入框的文字，例如「@张三 」 */
   insert?: { text: string; seq: number } | null;
+  /** 插入完了：外面清掉 insert，免得对话区重新挂载或换会话时再插一次（审计 C2） */
+  onInserted?: () => void;
+  /** 面板打开时对话区仍挂着但藏起来（回复不断、输入不丢；审计 C1） */
+  hidden?: boolean;
+  /** 输入框里的「/路由」（规范 §3 Omnibox）：只有选中或回车认得的路由才导航；不认得的照常当一句话发 */
+  routes?: { cmd: string; label: string; go: () => void }[];
   members?: string[];
   fetchImpl?: typeof fetch;
   /** 朗读语速（0.8–1.5，默认 1.0） */
@@ -426,12 +423,18 @@ export interface ThreadProps {
   persist?: (firstUserText: string) => Promise<string | null>;
   /** X-04b：打开后滚到这条消息并给焦点（收件箱「打开对话」） */
   focusMessageId?: string;
+  /** 一轮对话结束：成功给 null，接口回了错误状态给 HTTP 状态（别的失败给 undefined） */
+  onResult?: (status: number | null | undefined) => void;
 }
 
-export function Thread({ conversation, onMessages, insert, members = [], fetchImpl, speechRate = DEFAULT_RATE, speechOnline = false, onAllowOnlineSpeech, memberName, onRunning, intro, notice, draftActions, persist, focusMessageId }: ThreadProps) {
+export function Thread({ conversation, onMessages, insert, onInserted, hidden = false, routes = [], members = [], fetchImpl, speechRate = DEFAULT_RATE, speechOnline = false, onAllowOnlineSpeech, memberName, onRunning, intro, notice, onResult, draftActions, persist, focusMessageId }: ThreadProps) {
+  const resultCb = useRef(onResult);
+  resultCb.current = onResult;
   const convRef = useRef(conversation);
   convRef.current = conversation;
-  const [messages, setMessages] = useState<UiMessage[]>(() =>
+  const save = useRef(onMessages);
+  save.current = onMessages;
+  const [messages, setMessagesState] = useState<UiMessage[]>(() =>
     conversation.messages.map((m) => ({
       id: m.id ?? newId(),
       role: m.role,
@@ -443,6 +446,13 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
       state: 'done' as const,
     })),
   );
+
+  // 最新的消息列表（不等 React 渲染）：回复结束时即使对话区已卸载，也能把完整的一轮存下
+  const msgsRef = useRef(messages);
+  const setMessages = useCallback((next: UiMessage[] | ((l: UiMessage[]) => UiMessage[])) => {
+    msgsRef.current = typeof next === 'function' ? next(msgsRef.current) : next;
+    setMessagesState(msgsRef.current);
+  }, []);
   const [isRunning, setIsRunning] = useState(false);
   const persistRef = useRef(persist);
   persistRef.current = persist;
@@ -469,6 +479,8 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
       // 开始新回复：停掉正在读的
       speaker.stop();
       setMessages([...history, reply]);
+      // 发出即存：回复没完就离开、刷新，这句话也不丢
+      save.current(savedTurnsOf(history));
       setIsRunning(true);
       const ac = new AbortController();
       abortRef.current = ac;
@@ -495,7 +507,9 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
         const onTool = (t: ChatTool) => setMessages((l) => l.map((m) => (m.id === reply.id ? { ...m, tools: upsertTool(m.tools, t) } : m)));
         for await (const text of streamChat(turns, convRef.current.model, ac.signal, fetchImpl, (draft) => update({ draft }), opts, onTool)) update({ text });
         update({ state: 'done' });
+        resultCb.current?.(null);
       } catch (e) {
+        if (!ac.signal.aborted) resultCb.current?.(e instanceof ChatStreamError ? e.status : undefined);
         // 点了停止：保留已经收到的部分；其他错误就地显示，可以「重试」
         if (ac.signal.aborted) update({ state: 'cancelled' });
         else
@@ -507,11 +521,14 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
       } finally {
         if (abortRef.current === ac) abortRef.current = null;
         setIsRunning(false);
+        // 结束（完成 / 停止 / 出错）就存：不靠界面订阅，对话区已卸载也存得下
+        save.current(savedTurnsOf(msgsRef.current));
       }
     },
-    [fetchImpl],
+    [fetchImpl, setMessages],
   );
 
+  const ask = useAsk();
   const runtime = useExternalStoreRuntime<UiMessage>({
     messages,
     isRunning,
@@ -525,21 +542,22 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
     onReload: async (parentId: string | null) => {
       const i = parentId ? messages.findIndex((m) => m.id === parentId) : -1;
       if (i < 0) return;
+      // 旧回复上的重试会删掉它后面的对话：先确认（切片 7 / 审计 C10）；关掉确认什么都不变
+      const later = messages.length - (i + 2);
+      if (later > 0 && !(await ask.confirm({ title: '重新回答这一条？', desc: `后面的 ${later} 条消息会被删掉，删了找不回来。`, ok: '重新回答', danger: true }))) return;
       await run(messages.slice(0, i + 1));
     },
     onCancel: async () => abortRef.current?.abort(),
   });
   const [status, setStatus] = useState('');
-  const save = useRef(onMessages);
-  save.current = onMessages;
   // 草稿卡点了「建好」/「不用了」：记在那条回复上并存本机（刷新后卡不再能点）
-  const latest = useRef(messages);
-  latest.current = messages;
-  const setDraftState = useCallback((messageId: string, state: 'done' | 'dismissed') => {
-    const next = latest.current.map((m) => (m.id === messageId && m.draft ? { ...m, draft: { ...m.draft, state } } : m));
-    setMessages(next);
-    save.current(next.filter((m) => m.text.trim() !== '').map((m) => ({ role: m.role, text: m.text, ...(m.at ? { at: m.at } : {}), ...(m.draft ? { draft: m.draft } : {}), ...(m.tools?.length ? { tools: m.tools } : {}), ...(m.note ? { note: m.note } : {}) })));
-  }, []);
+  const setDraftState = useCallback(
+    (messageId: string, state: 'done' | 'dismissed') => {
+      setMessages((l) => l.map((m) => (m.id === messageId && m.draft ? { ...m, draft: { ...m.draft, state } } : m)));
+      save.current(savedTurnsOf(msgsRef.current));
+    },
+    [setMessages],
+  );
   const draftCtx = { actions: draftActions, setState: setDraftState };
   const runningCb = useRef(onRunning);
   runningCb.current = onRunning;
@@ -565,7 +583,6 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
         else if (st?.type === 'incomplete' && st.reason === 'error')
           setStatus((s.messages[s.messages.length - 1]?.metadata?.custom as { errorCode?: string } | undefined)?.errorCode === 'key_invalid' ? '出错了：Key 无效，可以点「去检查 Key」' : '出错了，可以点「重试」');
         else setStatus('回复完成');
-        save.current(toTurns(s.messages));
       }
       wasRunning = s.isRunning;
     });
@@ -576,7 +593,7 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
   const hasMessages = useRef(messages.length > 0);
   hasMessages.current = messages.length > 0;
   useEffect(() => {
-    const key = () => (hasMessages.current ? conversation.id : NEW_DRAFT);
+    const key = () => (hasMessages.current ? conversation.id : newDraftKey(convRef.current));
     const c = runtime.thread.composer;
     const draft = loadDraft(key());
     if (draft && !c.getState().text) c.setText(draft);
@@ -614,10 +631,34 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
     const cur = c.getState().text;
     c.setText(cur && !cur.endsWith(' ') ? `${cur} ${insert.text}` : cur + insert.text);
     document.getElementById('chat-input')?.focus();
+    insertedCb.current?.();
   }, [insert, runtime]);
+  const insertedCb = useRef(onInserted);
+  insertedCb.current = onInserted;
 
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionAt, setMentionAt] = useState(0);
+  // 「/路由」建议（切片 4）：整句只有 /字母 时才算路由输入
+  const [routeQ, setRouteQ] = useState<string | null>(null);
+  const [routeAt, setRouteAt] = useState(0);
+  useEffect(() => {
+    const c = runtime.thread.composer;
+    return c.subscribe(() => {
+      const t = c.getState().text;
+      const next = /^\/[a-z/]*$/.test(t) ? t : null;
+      setRouteQ((q) => {
+        if (q !== next) setRouteAt(0);
+        return next;
+      });
+    });
+  }, [runtime]);
+  const routeMatches = routeQ !== null ? routes.filter((r) => r.cmd.startsWith(routeQ)) : [];
+  const goRoute = (r: { go: () => void }) => {
+    runtime.thread.composer.setText('');
+    setRouteQ(null);
+    r.go();
+  };
+  const sugg: 'mention' | 'route' | null = mentionOpen && members.length > 0 ? 'mention' : routeMatches.length > 0 ? 'route' : null;
   // 输入「@」（在开头或空格后）就弹出成员列表（sumus / 方案：「输入 @ 后弹出成员列表」）
   useEffect(() => {
     const c = runtime.thread.composer;
@@ -644,11 +685,12 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
 
   return (
     <AnnounceContext.Provider value={announce}>
+    {ask.node}
     <DraftContext.Provider value={draftCtx}>
     <SpeechContext.Provider value={speech}>
     <ThreadInfoContext.Provider value={info}>
     <AssistantRuntimeProvider runtime={runtime}>
-      <ThreadPrimitive.Root className={memberName ? 'chat-thread chat-single' : 'chat-thread'}>
+      <ThreadPrimitive.Root className={memberName ? 'chat-thread chat-single' : 'chat-thread'} hidden={hidden}>
         <ThreadPrimitive.Viewport className="chat-viewport" role="log" aria-label="对话内容" aria-live="off">
           <div className="chat-column">
             <ThreadPrimitive.Empty>
@@ -697,23 +739,48 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
               ))}
             </ul>
           )}
+          {sugg === 'route' && (
+            // 「/路由」建议：和点名列表同一种组合框、同一种 .pop（不另起样式）
+            <ul id="route-list" role="listbox" className="pop mention-pop" aria-label="前往页面">
+              {routeMatches.map((r, i) => (
+                <li
+                  key={r.cmd}
+                  id={`route-${i}`}
+                  role="option"
+                  aria-selected={i === routeAt}
+                  aria-label={`前往${r.label}（${r.cmd}）`}
+                  className="pop-item"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    goRoute(r);
+                  }}
+                >
+                  <span>{r.cmd}</span>
+                  <span>{r.label}</span>
+                </li>
+              ))}
+            </ul>
+          )}
           <div
             className="composer-keys"
             onKeyDownCapture={(e) => {
-              if (!mentionOpen || !members.length) return;
+              if (!sugg) return;
               const k = e.key;
+              const n = sugg === 'mention' ? members.length : routeMatches.length;
               if (k === 'ArrowDown' || k === 'ArrowUp') {
                 e.preventDefault();
                 e.stopPropagation();
-                setMentionAt((i) => (i + (k === 'ArrowDown' ? 1 : members.length - 1)) % members.length);
+                (sugg === 'mention' ? setMentionAt : setRouteAt)((i) => (i + (k === 'ArrowDown' ? 1 : n - 1)) % n);
               } else if ((k === 'Enter' && !e.shiftKey) || k === 'Tab') {
                 e.preventDefault();
                 e.stopPropagation();
-                mention(members[mentionAt] ?? members[0]!);
+                if (sugg === 'route') goRoute(routeMatches[routeAt] ?? routeMatches[0]!);
+                else mention(members[mentionAt] ?? members[0]!);
               } else if (k === 'Escape') {
                 e.preventDefault();
                 e.stopPropagation();
                 setMentionOpen(false);
+                setRouteQ(null);
               }
             }}
           >
@@ -724,7 +791,7 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
               placeholder={placeholder}
               aria-label="输入消息"
               aria-describedby="chat-input-hint"
-              {...(mentionOpen && members.length ? { role: 'combobox', 'aria-expanded': true, 'aria-controls': 'mention-list', 'aria-activedescendant': `mention-${mentionAt}`, 'aria-autocomplete': 'list' as const } : {})}
+              {...(sugg ? { role: 'combobox', 'aria-expanded': true, 'aria-controls': sugg === 'mention' ? 'mention-list' : 'route-list', 'aria-activedescendant': sugg === 'mention' ? `mention-${mentionAt}` : `route-${routeAt}`, 'aria-autocomplete': 'list' as const } : {})}
               rows={1}
               autoFocus
             />

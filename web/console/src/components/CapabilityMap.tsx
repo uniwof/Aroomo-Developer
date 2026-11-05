@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ErrorRetry } from './ErrorRetry';
 import { ApiError, api } from '@/lib/api';
 import { ACCESS_LABEL, KIND_LABEL, SAMPLE_ITEMS, quotaText, summaryLine, trialText, type CapabilityItem, type CapabilityKind, type CapabilityList } from '@/lib/capabilities';
 import { QuotaRing } from './brand';
@@ -61,9 +62,11 @@ function TrialLine({ item, sample, onSaved }: { item: CapabilityItem; sample: bo
 export function CapabilityMap() {
   const [data, setData] = useState<CapabilityList | null>(null);
   const [error, setError] = useState('');
+  const [seq, setSeq] = useState(0);
 
   useEffect(() => {
     let alive = true;
+    setError('');
     api<{ items: CapabilityItem[] }>('GET', '/api/capabilities')
       .then((r) => alive && setData({ items: r.items ?? [] }))
       .catch((e: unknown) => {
@@ -75,9 +78,10 @@ export function CapabilityMap() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [seq]);
 
-  if (error) return <p role="alert">{error}</p>;
+  // 读失败给重试（切片 14）
+  if (error) return <ErrorRetry text={error} what="能力地图" onRetry={() => setSeq((n) => n + 1)} />;
   if (!data) return <p className="text-[var(--muted)]">正在加载能力清单…</p>;
 
   const soon = data.items.filter((i) => i.access === 'trial' && i.trialDaysLeft != null && i.trialDaysLeft <= 3);

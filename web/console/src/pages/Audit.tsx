@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Search } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
+import { ErrorRetry } from '@/components/ErrorRetry';
 
 export interface AuditRow {
   id: string;
@@ -48,6 +49,8 @@ export function Audit() {
   const [cursor, setCursor] = useState<string | null>(null);
   const [forbidden, setForbidden] = useState(false);
   const [msg, setMsg] = useState('');
+  /** 读失败的是哪一页（null = 第一页）：重试就再读这一页（切片 14） */
+  const [failedAt, setFailedAt] = useState<string | null | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [prefix, setPrefix] = useState('');
   const [result, setResult] = useState('');
@@ -57,6 +60,7 @@ export function Audit() {
   const loadPage = useCallback(async (after: string | null) => {
     setBusy(true);
     setMsg('');
+    setFailedAt(undefined);
     try {
       const qs = new URLSearchParams({ limit: String(PAGE) });
       if (after) qs.set('cursor', after);
@@ -67,7 +71,10 @@ export function Audit() {
       if (after && !r.nextCursor) requestAnimationFrame(() => statusRef.current?.focus());
     } catch (e) {
       if (e instanceof ApiError && e.status === 403) setForbidden(true);
-      else setMsg(e instanceof ApiError ? e.message : '加载失败，请稍后再试');
+      else {
+        setMsg(e instanceof ApiError ? e.message : '加载失败，请稍后再试');
+        setFailedAt(after);
+      }
       setRows((v) => v ?? []);
     } finally {
       setBusy(false);
@@ -85,9 +92,9 @@ export function Audit() {
   if (forbidden) {
     return (
       <section aria-labelledby="audit-title" className="page">
-        <h1 id="audit-title" className="page-title">
+        <h2 id="audit-title" className="page-title">
           审计
-        </h1>
+        </h2>
         <p role="status" className="note">
           审计只有所有者能看。
         </p>
@@ -102,9 +109,9 @@ export function Audit() {
   return (
     <section aria-labelledby="audit-title" className="page">
       <div className="page-head">
-        <h1 id="audit-title" className="page-title">
+        <h2 id="audit-title" className="page-title">
           审计
-        </h1>
+        </h2>
         <p className="page-sub">谁在什么时候做了什么，只能看，不能改。新的在前。</p>
       </div>
 
@@ -128,8 +135,16 @@ export function Audit() {
       </div>
 
       <p ref={statusRef} tabIndex={-1} role="status" aria-live="polite" className="note">
-        {rows === null ? '正在加载…' : msg || `显示 ${shown.length} 条（已加载 ${rows.length} 条）`}
+        {rows === null
+          ? '正在加载…'
+          : msg ||
+            // 筛选只在已加载的记录里做：还有更早的就说清楚，免得以为没有（审计 S2）
+            ((p || result) && cursor
+              ? `显示 ${shown.length} 条。只在已加载的 ${rows.length} 条里找，还有更早的记录，点下面「加载更多」接着找。`
+              : `显示 ${shown.length} 条（已加载 ${rows.length} 条）`)}
       </p>
+
+      {failedAt !== undefined && <ErrorRetry text="审计记录没读到。" what="审计记录" onRetry={() => void loadPage(failedAt)} />}
 
       {rows !== null && shown.length === 0 && !msg ? (
         <div className="empty">

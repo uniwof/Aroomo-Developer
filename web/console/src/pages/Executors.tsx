@@ -3,6 +3,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ApiError, api } from '@/lib/api';
 import { Allowlist } from '@/components/Allowlist';
+import { useAsk } from '@/components/Dialog';
+import { ErrorRetry } from '@/components/ErrorRetry';
 
 export interface ExecutorInfo {
   id: string;
@@ -47,17 +49,22 @@ export function Executors() {
   const [devices, setDevices] = useState<ExecutorInfo[] | null>(null);
   const [tasks, setTasks] = useState<TaskInfo[] | null>(null);
   const [msg, setMsg] = useState('');
-  const [confirm, setConfirm] = useState<{ kind: 'revoke' | 'cancel'; id: string; label: string } | null>(null);
+  const [loadErr, setLoadErr] = useState(false);
+  // 停用电脑、取消任务用全站同一种确认弹窗（审计 S3；以前是页面里自己的内联确认）
+  const ask = useAsk();
 
   const load = useCallback(async () => {
     try {
       const [d, t] = await Promise.all([api<{ executors: ExecutorInfo[] }>('GET', '/api/executors'), api<{ tasks: TaskInfo[] }>('GET', '/api/tasks')]);
       setDevices(d.executors);
       setTasks(t.tasks);
+      setLoadErr(false);
     } catch (e) {
       setDevices((v) => v ?? []);
       setTasks((v) => v ?? []);
-      setMsg(e instanceof ApiError && e.status === 404 ? '电脑助手功能还没上线，稍后再来' : '加载失败，请稍后再试');
+      // 还没上线（404）只说一句；其它失败给重试（切片 14；页面也每 10 秒自己再读）
+      if (e instanceof ApiError && e.status === 404) setMsg('电脑助手功能还没上线，稍后再来');
+      else setLoadErr(true);
     }
   }, []);
   useEffect(() => {
@@ -66,10 +73,13 @@ export function Executors() {
     return () => clearInterval(timer);
   }, [load]);
 
-  async function doConfirm() {
-    if (!confirm) return;
-    const c = confirm;
-    setConfirm(null);
+  async function doConfirm(c: { kind: 'revoke' | 'cancel'; id: string; label: string }) {
+    const ok = await ask.confirm(
+      c.kind === 'revoke'
+        ? { title: `停用「${c.label}」？`, desc: '停用后这台电脑马上不能再领任务，想恢复要重新配对。', ok: '确认停用', danger: true }
+        : { title: '取消这个任务？', desc: '正在进行的步骤会在下一个检查点停下。', ok: '确认取消任务', danger: true },
+    );
+    if (!ok) return;
     setMsg('');
     try {
       if (c.kind === 'revoke') {
@@ -87,30 +97,16 @@ export function Executors() {
 
   return (
     <div className="page">
-      <h1 className="page-title">电脑助手</h1>
+      <h2 className="page-title">电脑助手</h2>
       {msg && <p role="status">{msg}</p>}
+      {loadErr && <ErrorRetry text="电脑和任务没读到。" what="电脑助手" onRetry={() => void load()} />}
 
-      {confirm && (
-        <div role="alertdialog" aria-labelledby="exec-confirm-title" className="card card-strong">
-          <h2 id="exec-confirm-title" className="group-title">
-            {confirm.kind === 'revoke' ? `停用「${confirm.label}」？` : '取消这个任务？'}
-          </h2>
-          <p className="mt-1 text-[var(--muted)]">{confirm.kind === 'revoke' ? '停用后这台电脑马上不能再领任务，想恢复要重新配对。' : '正在进行的步骤会在下一个检查点停下。'}</p>
-          <div className="mt-3 flex gap-2">
-            <Button type="button" onClick={() => void doConfirm()}>
-              {confirm.kind === 'revoke' ? '确认停用' : '确认取消任务'}
-            </Button>
-            <Button type="button" variant="outline" onClick={() => setConfirm(null)}>
-              先不了
-            </Button>
-          </div>
-        </div>
-      )}
+      {ask.node}
 
       <section aria-labelledby="exec-devices" className="flex flex-col gap-2">
-        <h2 id="exec-devices" className="group-title">
+        <h3 id="exec-devices" className="group-title">
           电脑
-        </h2>
+        </h3>
         {devices === null && <p className="text-[var(--muted)]">正在加载…</p>}
         {devices?.length === 0 && <p className="text-[var(--muted)]">还没有电脑连上来。装好电脑助手并配对后会出现在这里。</p>}
         <ul className="flex flex-col gap-2">
@@ -124,7 +120,7 @@ export function Executors() {
                 {d.platform} · 版本 {d.version} · 最近一次联系 {ago(d.lastSeenAt)}
               </div>
               {d.clientId && (
-                <Button type="button" variant="outline" className="mt-2" onClick={() => setConfirm({ kind: 'revoke', id: d.clientId as string, label: d.deviceName })} aria-label={`停用 ${d.deviceName}`}>
+                <Button type="button" variant="outline" className="mt-2" onClick={() => void doConfirm({ kind: 'revoke', id: d.clientId as string, label: d.deviceName })} aria-label={`停用 ${d.deviceName}`}>
                   停用这台电脑
                 </Button>
               )}
@@ -136,9 +132,9 @@ export function Executors() {
       <Allowlist />
 
       <section aria-labelledby="exec-tasks" className="flex flex-col gap-2">
-        <h2 id="exec-tasks" className="group-title">
+        <h3 id="exec-tasks" className="group-title">
           任务
-        </h2>
+        </h3>
         {tasks === null && <p className="text-[var(--muted)]">正在加载…</p>}
         {tasks?.length === 0 && <p className="text-[var(--muted)]">还没有任务。</p>}
         <ul className="flex flex-col gap-2">
@@ -155,7 +151,7 @@ export function Executors() {
               {t.resultError && <p className="break-words">{t.resultError}</p>}
               <div className="text-[var(--muted)]">{ago(t.createdAt)}创建</div>
               {(t.status === 'queued' || t.status === 'running') && (
-                <Button type="button" variant="outline" className="mt-2" onClick={() => setConfirm({ kind: 'cancel', id: t.id, label: t.site })} aria-label={`取消任务 ${t.site}`}>
+                <Button type="button" variant="outline" className="mt-2" onClick={() => void doConfirm({ kind: 'cancel', id: t.id, label: t.site })} aria-label={`取消任务 ${t.site}`}>
                   取消任务
                 </Button>
               )}

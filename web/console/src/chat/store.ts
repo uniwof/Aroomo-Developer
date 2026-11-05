@@ -219,9 +219,12 @@ export function parseEvent(event: string): StreamEvent | null {
 export class ChatStreamError extends Error {
   /** Core 给了失败码时带上（key_invalid 不显示「重试」，改成「去检查 Key」） */
   readonly code: FailureCode | undefined;
-  constructor(message: string, code?: FailureCode) {
+  /** 对话接口回的 HTTP 状态（没连上 / 流里出错时没有）；从 Shell 打开时 401/403/404 说明要直接打开 Aroomo 网页（审计 C12） */
+  readonly status: number | undefined;
+  constructor(message: string, code?: FailureCode, status?: number) {
     super(message);
     this.code = code;
+    this.status = status;
   }
 }
 
@@ -271,7 +274,7 @@ export async function* streamChat(
         /* 用默认文案 */
       }
     }
-    throw new ChatStreamError(msg);
+    throw new ChatStreamError(msg, undefined, res.status);
   }
   persist.onAccepted?.();
   const reader = res.body.getReader();

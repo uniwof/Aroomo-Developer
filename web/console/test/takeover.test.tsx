@@ -33,7 +33,9 @@ describe('接管卡', () => {
     fireEvent.click(screen.getByRole('button', { name: '我已处理，继续' }));
     await waitFor(() => expect(posts).toHaveLength(1));
     expect(posts[0]).toEqual({ url: '/api/tasks/t1/takeovers/k1/resolve', body: { cancel: false } });
-    fireEvent.click(screen.getByRole('button', { name: '放弃' }));
+    fireEvent.click(await screen.findByRole('button', { name: '放弃' }));
+    // 放弃 = 取消任务：先确认（Poke 行为规范切片 6）
+    fireEvent.click(await screen.findByRole('button', { name: '放弃任务' }));
     await waitFor(() => expect(posts).toHaveLength(2));
     expect(posts[1]?.body).toEqual({ cancel: true });
   });

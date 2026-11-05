@@ -172,11 +172,11 @@ describe('会话栏「助手」', () => {
     expect(within(list).getAllByRole('button')).toHaveLength(1);
   });
 
-  it('家人账号：不请求 /api/assistants，没有新建助手、全部计划', async () => {
+  it('家人账号：不请求 /api/assistants，不显示「助手」分段，没有新建助手、全部计划', async () => {
     sessionStorage.setItem('aroomo.console.user', JSON.stringify({ email: 'kid@example.test', displayName: '小明', role: 'user' }));
     renderPage();
-    fireEvent.click(screen.getByRole('radio', { name: '助手' }));
-    expect(screen.getByText('还没有助手。')).toBeInTheDocument();
+    // #273（审计 C11）：家人账号的会话栏不放「对话 / 助手」切换
+    expect(screen.queryByRole('radio', { name: '助手' })).toBeNull();
     expect(screen.queryByRole('button', { name: '新建助手' })).toBeNull();
     expect(screen.queryByRole('button', { name: '看全部计划' })).toBeNull();
     await new Promise((r) => setTimeout(r, 50));
