@@ -254,7 +254,7 @@ export function SettingsSectionBody({ section, prefs, setPrefs, headingLevel = 2
   const sec = SETTINGS_SECTIONS.find((x) => x.id === section)!;
   const H = headingLevel === 2 ? 'h2' : 'h3';
   return (
-    <section className="page" aria-labelledby={`set-${section}`}>
+    <section className="page page-set" aria-labelledby={`set-${section}`}>
       <div className="page-head">
         <H id={`set-${section}`} className="page-title">
           <sec.Icon aria-hidden="true" />

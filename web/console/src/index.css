@@ -727,3 +727,24 @@ textarea[aria-invalid='true'] {
 .dlg-main .page-head {
   padding-right: 2.5rem;
 }
+
+/* 设置分区里照 sumus：不套卡片，一行一项、行间细线（只有列表类内容才用卡片） */
+.page-set .group {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+}
+.page-set .group > .row,
+.page-set .group > .row-status,
+.page-set .group > .row-pre {
+  padding-left: 0;
+  padding-right: 0;
+}
+.page-set .group > .row-pre {
+  padding: 0.75rem;
+  border-radius: var(--r-sm);
+}
+.page-set .group-title {
+  margin-bottom: 0;
+}
