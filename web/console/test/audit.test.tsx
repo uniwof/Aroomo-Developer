@@ -43,6 +43,8 @@ describe('审计页', () => {
     await waitFor(() => expect(within(list).getAllByRole('listitem')).toHaveLength(3));
     expect(urls).toContain('/api/audit?limit=50&cursor=cur1');
     expect(screen.queryByRole('button', { name: '加载更多' })).toBeNull();
+    // 按钮没了：焦点落到状态行（Groq 审查点）
+    await waitFor(() => expect(screen.getByRole('status')).toHaveFocus());
     expect(within(list).getByText('失败')).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('动作开头'), { target: { value: 'gateway.' } });

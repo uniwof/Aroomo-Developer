@@ -3,7 +3,7 @@
  * audit:read 只给所有者（设计如此）：账号用户打开时后端回 403，页面只说明一句，不报错。
  * 筛选（动作前缀、结果）在已加载的记录上做：后端 action 参数是精确匹配，前缀筛选不往后端传。
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Search } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
 
@@ -52,6 +52,7 @@ export function Audit() {
   const [prefix, setPrefix] = useState('');
   const [result, setResult] = useState('');
   const [clientNames, setClientNames] = useState<Record<string, string>>({});
+  const statusRef = useRef<HTMLParagraphElement>(null);
 
   const loadPage = useCallback(async (after: string | null) => {
     setBusy(true);
@@ -62,6 +63,8 @@ export function Audit() {
       const r = await api<{ entries: AuditRow[]; nextCursor: string | null }>('GET', `/api/audit?${qs.toString()}`);
       setRows((prev) => (after && prev ? [...prev, ...r.entries] : r.entries));
       setCursor(r.nextCursor);
+      // 「加载更多」点完没有下一页时按钮会消失：焦点放到状态行，键盘用户不会掉回页首
+      if (after && !r.nextCursor) requestAnimationFrame(() => statusRef.current?.focus());
     } catch (e) {
       if (e instanceof ApiError && e.status === 403) setForbidden(true);
       else setMsg(e instanceof ApiError ? e.message : '加载失败，请稍后再试');
@@ -124,7 +127,7 @@ export function Audit() {
         </div>
       </div>
 
-      <p role="status" aria-live="polite" className="note">
+      <p ref={statusRef} tabIndex={-1} role="status" aria-live="polite" className="note">
         {rows === null ? '正在加载…' : msg || `显示 ${shown.length} 条（已加载 ${rows.length} 条）`}
       </p>
 

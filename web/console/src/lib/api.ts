@@ -145,6 +145,20 @@ export async function login(email: string, password: string, fetchImpl: typeof f
  * 从 Shell 打开时退出：POST /aroomo/logout（Shell 作废 Core 会话、清 Cookie，返回下一步地址），再整页跳过去。
  * 只跳同站相对地址（/ 开头、不是 //），防止被带去别的网站；没拿到地址就回 /aroomo/login。失败时抛出给人看的话，不跳。
  */
+/**
+ * 只认同站路径：/ 开头，第二个字符不是 / 或 \（浏览器把 /\evil.com 当成 //evil.com），解析后同源，且不含控制字符。
+ * 返回规范化后的路径；不合格返回 null。
+ */
+export function sameSitePath(v: unknown): string | null {
+  if (typeof v !== 'string' || !/^\/(?![/\\])/.test(v) || /[\u0000-\u001f\\]/.test(v)) return null;
+  try {
+    const u = new URL(v, window.location.origin);
+    return u.origin === window.location.origin ? u.pathname + u.search + u.hash : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function shellLogout(fetchImpl: typeof fetch = fetch, go: (url: string) => void = (u) => window.location.assign(u)): Promise<void> {
   let res: Response;
   try {
@@ -154,7 +168,7 @@ export async function shellLogout(fetchImpl: typeof fetch = fetch, go: (url: str
   }
   if (!res.ok) throw new ApiError(res.status, 'HTTP_' + res.status, '退出失败，请稍后再试');
   const j = (await res.json().catch(() => null)) as { location?: unknown } | null;
-  const loc = typeof j?.location === 'string' && /^\/(?!\/)/.test(j.location) ? j.location : '/aroomo/login';
+  const loc = sameSitePath(j?.location) ?? '/aroomo/login';
   session.set(null);
   try {
     sessionStorage.removeItem(USER_KEY);

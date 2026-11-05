@@ -28,7 +28,7 @@ describe('从 Shell 打开时退出登录（/aroomo/logout）', () => {
   });
 
   it('不跳去别的网站：地址不是同站相对路径就回 /aroomo/login', async () => {
-    for (const location of ['https://evil.example/x', '//evil.example', 42]) {
+    for (const location of ['https://evil.example/x', '//evil.example', '/\\evil.example', '/\t/evil.example', 'javascript:alert(1)', 42]) {
       const go = vi.fn();
       await shellLogout((async () => json(200, { ok: true, location })) as unknown as typeof fetch, go);
       expect(go).toHaveBeenCalledWith('/aroomo/login');

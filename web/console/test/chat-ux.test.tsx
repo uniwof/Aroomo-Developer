@@ -22,8 +22,8 @@ const okResponse = (body: string) =>
   );
 
 describe('store 小工具', () => {
-  it('列表预览：带图的回复写「[图片]」，不露网址；链接只留文字；去署名和 Markdown 符号', () => {
-    expect(previewText('看这张：\n![一只猫](https://img.example/cat.png)\n\n— FreeBot')).toBe('看这张： [图片]');
+  it('列表预览：带图的回复写「[图片：说明]」，不露网址；链接只留文字；去署名和 Markdown 符号', () => {
+    expect(previewText('看这张：\n![一只猫](https://img.example/cat.png)\n\n— FreeBot')).toBe('看这张： [图片：一只猫]');
     expect(previewText('![](https://x/a.png)')).toBe('[图片]');
     expect(previewText('**粗体** 和 [官网](https://example.com/a?b=1)')).toBe('粗体 和 官网');
     expect(previewText('<img src="https://x/y.png">')).toBe('[图片]');

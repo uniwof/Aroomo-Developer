@@ -133,7 +133,8 @@ export function Inbox({ onBack }: { onBack?: () => void } = {}) {
       {data &&
         shown > 0 &&
         groups
-          .filter((g) => show === 'all' || (view[g.key] ?? []).length > 0)
+          // 空的组不占地方（「全部」里也一样，不再一个个写「暂时没有」）
+          .filter((g) => (view[g.key] ?? []).length > 0)
           .map((g) => (
           <div key={g.key} className="group-block">
             <div className="group-head">
@@ -144,8 +145,7 @@ export function Inbox({ onBack }: { onBack?: () => void } = {}) {
                 </Button>
               )}
             </div>
-            {(view[g.key] ?? []).length === 0 && <p className="group-empty">{g.key === 'decision' ? '没有要你决定的事' : '暂时没有'}</p>}
-            <ul className={(view[g.key] ?? []).length ? 'group' : 'hidden'}>
+            <ul className="group">
               {(view[g.key] ?? []).map((i) => (
                 <li key={i.id} className="row row-stack">
                   <p className="row-label">
