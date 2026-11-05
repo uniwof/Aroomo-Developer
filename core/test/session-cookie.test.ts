@@ -38,7 +38,26 @@ describe("控制台会话 Cookie（A 类：鉴权）", () => {
     expect(c).toContain("SameSite=Strict");
     expect(c).toContain("Path=/");
     expect(c).not.toContain("Secure");
-    expect(cookieOf(await cookieLogin({ "x-forwarded-proto": "https" }))).toContain("Secure");
+    // https：__Host- 前缀，Secure、Path=/、不带 Domain（staging 不能顶替生产的 Cookie，#264 必改 1）
+    const s = cookieOf(await cookieLogin({ "x-forwarded-proto": "https" }));
+    expect(s).toMatch(/^__Host-aroomo_session=ars_/);
+    expect(s).toContain("Secure");
+    expect(s).toContain("Path=/");
+    expect(s).not.toMatch(/Domain=/i);
+  });
+
+  it("过渡：https 上旧名 aroomo_session 仍能读；两个都在时以 __Host- 为准；退出两个名字一起清", async () => {
+    const { app, cookieLogin } = await setup();
+    const tok = pair(cookieOf(await cookieLogin({ "x-forwarded-proto": "https" }))).split("=")[1]!;
+    const https = { "x-forwarded-proto": "https" };
+    expect((await app.inject({ method: "GET", url: "/api/auth/me", headers: { ...https, cookie: `aroomo_session=${tok}` } })).statusCode).toBe(200);
+    // 被顶替的旧名 Cookie（比如别的子域写进来的）不会盖过 __Host- 的
+    expect(readSessionCookie(`aroomo_session=ars_planted0000; __Host-aroomo_session=${tok}`)).toBe(tok);
+    const out = await app.inject({ method: "POST", url: "/api/auth/logout", headers: { ...https, cookie: `__Host-aroomo_session=${tok}`, "x-aroomo-request": "1" } });
+    expect(out.statusCode).toBe(204);
+    const cleared = ([] as string[]).concat(out.headers["set-cookie"] as string | string[]);
+    expect(cleared.some((c) => c.startsWith("__Host-aroomo_session=; Max-Age=0") && c.includes("Secure"))).toBe(true);
+    expect(cleared.some((c) => c.startsWith("aroomo_session=; Max-Age=0"))).toBe(true);
   });
 
   it("不要 cookie 的登录照旧返回 token、不写 Cookie", async () => {
@@ -83,7 +102,10 @@ describe("控制台会话 Cookie（A 类：鉴权）", () => {
     expect(readSessionCookie("aroomo_session=bad value")).toBeNull();
     expect(readSessionCookie("other=1")).toBeNull();
     expect(readSessionCookie(undefined)).toBeNull();
-    expect(sessionCookie("ars_abcdefgh12", new Date(1000 * 100), new Date(0), true)).toBe("aroomo_session=ars_abcdefgh12; Max-Age=100; Path=/; HttpOnly; SameSite=Strict; Secure");
-    expect(clearSessionCookie(false)).toContain("Max-Age=0");
+    expect(readSessionCookie("__Host-aroomo_session=ars_abcdefgh12")).toBe("ars_abcdefgh12");
+    expect(readSessionCookie("__Host-aroomo_session=bad value; aroomo_session=ars_abcdefgh12")).toBeNull();
+    expect(sessionCookie("ars_abcdefgh12", new Date(1000 * 100), new Date(0), true)).toBe("__Host-aroomo_session=ars_abcdefgh12; Max-Age=100; Path=/; HttpOnly; SameSite=Strict; Secure");
+    expect(sessionCookie("ars_abcdefgh12", new Date(1000 * 100), new Date(0), false)).toBe("aroomo_session=ars_abcdefgh12; Max-Age=100; Path=/; HttpOnly; SameSite=Strict");
+    expect(clearSessionCookie(false)).toEqual(["aroomo_session=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict"]);
   });
 });

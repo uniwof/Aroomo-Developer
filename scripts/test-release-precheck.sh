@@ -84,7 +84,7 @@ R
 chmod +x "$nets" "$routes"
 mkdir -p "$work/deploy"
 envf="$work/deploy/.env"
-printf 'CORE_CHAT_TOKEN=abc\nSHELL_OWNER_EMAIL=old@example.com\nSHELL_OWNER_USER_ID=owner-secret-mark-uid\n' >"$envf"
+printf 'CORE_CHAT_TOKEN=abc\nSHELL_OWNER_EMAIL=owner-secret-mark-mail@example.com\nSHELL_OWNER_USER_ID=owner-secret-mark-uid\n' >"$envf"
 export RELEASE_ROOT="$work" RELEASE_PSQL="$RELEASE_TEST_PSQL" RELEASE_BACKUP_CMD="$bk" RELEASE_SNAPSHOTS_CMD="$snaps"
 export RELEASE_DOCKER_NETS_CMD="$nets" RELEASE_IP_ROUTE_CMD="$routes"
 
@@ -190,10 +190,37 @@ mv "$work/scripts/lib/rls-tables.txt" "$work/rls.bak"
 run "没有 RLS 表清单 → 失败" 1 --no-backup
 mv "$work/rls.bak" "$work/scripts/lib/rls-tables.txt"
 
-# 检查 4：SHELL_OWNER_USER_ID（#252 起只认它；SHELL_OWNER_EMAIL 有值也不算）
+# 检查 4：按 SHELL_AUTH 看所有者。core-session（默认，PR #259）看 SHELL_OWNER_EMAIL；lobe-session 看 SHELL_OWNER_USER_ID（#252）
 cp "$envf" "$work/env.bak"
 sed -i '/^SHELL_OWNER_USER_ID=/d' "$envf"
-run "只有 SHELL_OWNER_EMAIL、没有 SHELL_OWNER_USER_ID → 失败" 1 --no-backup
+run "core-session（没写 SHELL_AUTH，按 compose 默认）：只有 SHELL_OWNER_EMAIL → 通过" 0 --no-backup
+has "SHELL_AUTH=core-session"; has "SHELL_OWNER_EMAIL 已设置"
+echo 'SHELL_AUTH=core-session' >>"$envf"
+run "SHELL_AUTH=core-session 写明：只有 SHELL_OWNER_EMAIL → 通过" 0 --no-backup
+cp "$work/env.bak" "$envf"; sed -i '/^SHELL_OWNER_EMAIL=/d' "$envf"
+run "core-session：没有 SHELL_OWNER_EMAIL（只有 SHELL_OWNER_USER_ID 也不算）→ 失败" 1 --no-backup
+has "SHELL_OWNER_EMAIL 没有设置、为空或不像邮箱"
+echo 'SHELL_OWNER_EMAIL=' >>"$envf"
+run "core-session：SHELL_OWNER_EMAIL 为空 → 失败" 1 --no-backup
+sed -i '/^SHELL_OWNER_EMAIL=/d' "$envf"; echo 'SHELL_OWNER_EMAIL=""' >>"$envf"
+run "core-session：SHELL_OWNER_EMAIL 是空引号 → 失败" 1 --no-backup
+sed -i '/^SHELL_OWNER_EMAIL=/d' "$envf"; echo 'SHELL_OWNER_EMAIL=not-an-email' >>"$envf"
+run "core-session：SHELL_OWNER_EMAIL 不像邮箱 → 失败" 1 --no-backup
+sed -i '/^SHELL_OWNER_EMAIL=/d' "$envf"; echo '#SHELL_OWNER_EMAIL=a@b.c' >>"$envf"
+run "core-session：SHELL_OWNER_EMAIL 被注释掉 → 失败" 1 --no-backup
+cp "$work/env.bak" "$envf"; echo 'SHELL_OWNER_EMAIL=other@example.com' >>"$envf"
+run "core-session：SHELL_OWNER_EMAIL 出现两行 → 失败" 1 --no-backup
+cp "$work/env.bak" "$envf"; echo 'SHELL_AUTH=off' >>"$envf"
+run "SHELL_AUTH=off → 失败" 1 --no-backup
+has "SHELL_AUTH 只能是"
+out_has -q 'owner-secret-mark' && bad "输出里出现了 SHELL_OWNER_EMAIL 的值" || ok "core-session 各种情况都不打印值"
+
+# lobe-session（回退旧登录）：只认 SHELL_OWNER_USER_ID，SHELL_OWNER_EMAIL 有值也不算
+cp "$work/env.bak" "$work/env.lobe"; echo 'SHELL_AUTH=lobe-session' >>"$work/env.lobe"
+cp "$work/env.lobe" "$envf"
+run "lobe-session：两项都有 → 通过" 0 --no-backup
+sed -i '/^SHELL_OWNER_USER_ID=/d' "$envf"
+run "lobe-session：只有 SHELL_OWNER_EMAIL、没有 SHELL_OWNER_USER_ID → 失败" 1 --no-backup
 has "SHELL_OWNER_USER_ID 没有设置或为空"
 echo 'SHELL_OWNER_USER_ID=' >>"$envf"
 run "SHELL_OWNER_USER_ID 为空 → 失败" 1 --no-backup
@@ -203,9 +230,9 @@ sed -i '/^SHELL_OWNER_USER_ID=/d' "$envf"; echo 'SHELL_OWNER_USER_ID= abc' >>"$e
 run "SHELL_OWNER_USER_ID 等号后是空白 → 失败" 1 --no-backup
 sed -i '/^SHELL_OWNER_USER_ID=/d' "$envf"; echo '#SHELL_OWNER_USER_ID=abc' >>"$envf"
 run "SHELL_OWNER_USER_ID 被注释掉 → 失败" 1 --no-backup
-cp "$work/env.bak" "$envf"; echo 'SHELL_OWNER_USER_ID=other' >>"$envf"
+cp "$work/env.lobe" "$envf"; echo 'SHELL_OWNER_USER_ID=other' >>"$envf"
 run "SHELL_OWNER_USER_ID 出现两行 → 失败" 1 --no-backup
-cp "$work/env.bak" "$envf"; sed -i 's/^SHELL_OWNER_USER_ID=/  SHELL_OWNER_USER_ID=/' "$envf"
+cp "$work/env.lobe" "$envf"; sed -i 's/^SHELL_OWNER_USER_ID=/  SHELL_OWNER_USER_ID=/' "$envf"
 run "行首有空白的 SHELL_OWNER_USER_ID 也认" 0 --no-backup
 cp "$work/env.bak" "$envf"
 mv "$envf" "$work/env.moved"

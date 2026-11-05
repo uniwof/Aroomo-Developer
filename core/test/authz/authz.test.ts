@@ -7,7 +7,8 @@
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { memoryDeps } from '../../src/deps.js';
-import { twoAccounts, type TwoAccounts } from '../helpers/two-accounts.js';
+import { XIAOHAO_TEST_EMAIL, XIAOHAO_TEST_PASSWORD, twoAccounts, type TwoAccounts } from '../helpers/two-accounts.js';
+import { OWNER_TOKEN } from '../helpers/db.js';
 import { OWNER_ONLY_BASELINE } from './owner-only-baseline.js';
 import { concretize, seenRoutes } from './route-registry.js';
 
@@ -87,6 +88,20 @@ describe('D208 权限声明', () => {
       if (res.statusCode !== 403 && res.statusCode !== 401) bad.push(`${r.method} ${r.url} → ${res.statusCode}`);
     }
     expect(bad).toEqual([]);
+  });
+
+  // #264 必改 3：路由表是 onRoute 钩子自动收集的（route-registry.ts），/api/chat/stream 已在上面「每条都声明 / 无令牌 401 / 小号不 5xx」里；
+  // 这里再钉一条，免得它悄悄掉出表。跨账号（别人的成员叫不到、看不出存在）在 test/chat-stream.test.ts「两个账号」「不能冒充」两条里。
+  it('原生对话 POST /api/chat/stream：在表里且声明 chat:use + userRoute；任何 Bearer 令牌 401；Cookie 不带 CSRF 头 403', async () => {
+    const r = seenRoutes.find((x) => x.method === 'POST' && x.url === '/api/chat/stream');
+    expect(r?.config).toMatchObject({ capability: 'chat:use', userRoute: true });
+    const payload = { messages: [{ role: 'user', content: 'hi' }] };
+    for (const headers of [t.xiaoHeaders, { authorization: `Bearer ${OWNER_TOKEN}` }]) {
+      expect((await t.app.inject({ method: 'POST', url: '/api/chat/stream', headers, payload })).statusCode).toBe(401);
+    }
+    const login = await t.app.inject({ method: 'POST', url: '/auth/login', payload: { email: XIAOHAO_TEST_EMAIL, password: XIAOHAO_TEST_PASSWORD, cookie: true } });
+    const cookie = String(login.headers['set-cookie']).split(';')[0]!;
+    expect((await t.app.inject({ method: 'POST', url: '/api/chat/stream', headers: { cookie }, payload })).statusCode).toBe(403);
   });
 
   it('小号访问 userRoute 路由不会 5xx', async () => {
