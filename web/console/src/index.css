@@ -182,7 +182,15 @@ body {
 }
 .btn:disabled {
   cursor: not-allowed;
-  opacity: 0.5;
+}
+/* 自审 A22：禁用一眼看得出——不再是半透明黑按钮，统一成浅灰底 + 灰字 + 虚线框（不只靠颜色）；按钮文字里写明为什么不能点 */
+.btn:disabled,
+.btn-primary:disabled {
+  border: 1px dashed var(--input);
+  background: var(--seg);
+  color: var(--muted);
+  box-shadow: none;
+  opacity: 1;
 }
 .btn-outline {
   border-color: var(--border);
