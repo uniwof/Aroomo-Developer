@@ -15,8 +15,8 @@ import { ConvFilter, RunningTag, applyConvFilter } from '@/chat/conv-filter';
 afterEach(cleanup);
 
 describe('开关', () => {
-  it('阶段 2 的开关默认全关（接口好之前用户点不到）', () => {
-    expect(Object.values(FLAGS).every((v) => v === false)).toBe(true);
+  it('integrate/stage2：Core 助手接口已并入，除快速回复（Core 还没有反问数据块）外全部打开', () => {
+    expect(FLAGS).toEqual({ taskCards: true, quickReplies: false, convFilter: true, schedulePage: true, assistantDraft: true, assistants: true });
   });
 });
 
@@ -136,7 +136,7 @@ describe('X-02 计划的人话和定时列表', () => {
     expect(scheduleText('weekly', { time: '08:30', days: [3, 1] })).toBe('每周一、三 08:30');
     expect(scheduleText('manual')).toBe('只在我叫它时');
     expect(scheduleText('daily', {})).toBe('计划没设好');
-    expect(scheduleText('interval', { hours: 0 })).toBe('计划没设好');
+    expect(scheduleText('interval', { everyHours: 0 })).toBe('计划没设好');
     expect(zoneText('Asia/Shanghai', 'Asia/Shanghai')).toBe('本机时区');
     expect(zoneText('America/New_York', 'Asia/Shanghai')).toBe('America/New_York');
     expect(whenText(null)).toBe('—');
