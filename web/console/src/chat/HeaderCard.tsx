@@ -112,7 +112,8 @@ export function HeaderCard({
                 onView();
               }}
             >
-              <span>{kind === 'lead' ? '查看所有成员' : '查看成员'}</span>
+              {/* 群聊打开的也是全部成员（成员页不按群筛）：字照实说（审计 C15） */}
+              <span>{kind === 'member' ? '查看成员' : '查看所有成员'}</span>
               <ArrowUpRight aria-hidden="true" />
             </button>
           )}
