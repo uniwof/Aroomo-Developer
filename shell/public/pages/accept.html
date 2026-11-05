@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>设置密码 · Aroomo</title>
+<link rel="icon" href="/aroomo/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/aroomo/static/auth.css">
+</head>
+<body>
+<main>
+<img class="logo" src="/aroomo/static/logo.svg" alt="" width="56" height="56">
+<h1>设置你的密码</h1>
+<form id="auth-form" data-kind="accept" novalidate>
+<label for="password">新密码（至少 8 位）</label>
+<input id="password" name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="400">
+<label for="password2">再输一次</label>
+<input id="password2" name="password2" type="password" autocomplete="new-password" required minlength="8" maxlength="400">
+<p id="msg" role="alert" aria-live="assertive"></p>
+<button type="submit">设好并登录</button>
+</form>
+<p class="hint">这个链接只能用一次。设好以后用邮箱和这个密码登录。</p>
+</main>
+<script src="/aroomo/static/auth.js"></script>
+</body>
+</html>

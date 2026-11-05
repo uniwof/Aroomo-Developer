@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>登录 Aroomo</title>
+<link rel="icon" href="/aroomo/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/aroomo/static/auth.css">
+</head>
+<body>
+<main>
+<img class="logo" src="/aroomo/static/logo.svg" alt="" width="56" height="56">
+<h1>登录 Aroomo</h1>
+<form id="auth-form" data-kind="login" novalidate>
+<label for="email">邮箱</label>
+<input id="email" name="email" type="email" autocomplete="username" required maxlength="254">
+<label for="password">密码</label>
+<input id="password" name="password" type="password" autocomplete="current-password" required maxlength="400">
+<p id="msg" role="alert" aria-live="assertive"></p>
+<button type="submit">登录</button>
+</form>
+<p class="hint">忘了密码或还没有账号，请让管理员给你发一个设密码链接。</p>
+</main>
+<script src="/aroomo/static/auth.js"></script>
+</body>
+</html>
