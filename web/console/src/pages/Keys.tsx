@@ -66,7 +66,7 @@ export function Keys() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="page">
       <h1 className="page-title">Key 与接入</h1>
       {msg && <p role="status">{msg}</p>}
       <ul className="flex flex-col gap-2">

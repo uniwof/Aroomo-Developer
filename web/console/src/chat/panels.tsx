@@ -306,7 +306,9 @@ export function SettingsSectionBody({ section, prefs, setPrefs, headingLevel = 2
       {section === 'external' && (
         <div className="group">
           <McpSection />
-          <ClientTokens />
+          <div className="row row-stack">
+            <ClientTokens />
+          </div>
         </div>
       )}
       {section === 'shortcuts' && <ShortcutList />}

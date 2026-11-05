@@ -86,7 +86,7 @@ export function Executors() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="page">
       <h1 className="page-title">本机执行员</h1>
       {msg && <p role="status">{msg}</p>}
 

@@ -90,7 +90,7 @@ export function Library() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="page">
       <h1 className="page-title">资源库</h1>
       <form onSubmit={(e) => void add(e)} className="flex flex-col gap-3" aria-label="收进资源库">
         <textarea name="text" required rows={2} maxLength={20000} placeholder="粘贴链接，或写一个点子" aria-label="链接或点子" className={field + ' py-2'} />
