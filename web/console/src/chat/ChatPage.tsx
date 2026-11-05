@@ -244,19 +244,20 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     return () => window.removeEventListener('keydown', onKey);
   }, [start, wide]);
 
+  // 按会话 id 存（切片 1）：回复在后台结束时，存进它自己的会话，不是当时正看着的那个
   const onMessages = useCallback(
-    (turns: ChatTurn[]) => {
+    (id: string, turns: ChatTurn[]) => {
       setList((l) =>
         l
           .map((c) =>
-            c.id === currentId
+            c.id === id
               ? { ...c, messages: turns, updatedAt: Date.now(), title: c.title === '新对话' ? titleFrom(turns.find((t) => t.role === 'user')?.text ?? '') : c.title }
               : c,
           )
           .sort((a, b) => b.updatedAt - a.updatedAt),
       );
     },
-    [currentId],
+    [],
   );
 
   const pick = (id: string) => {
@@ -433,11 +434,11 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
       </div>
     ) : null;
 
-  let main: React.ReactNode;
-  if (view.kind === 'chat') {
-    main = (
+  const inChat = view.kind === 'chat';
+  // 对话区一直挂着（切片 1 / 审计 C1）：打开面板时只藏起来，回复不断、输入不丢
+  const chatMain = (
       <>
-        <header className="main-head">
+        <header className="main-head" hidden={!inChat}>
           {menuButton}
           <HeaderCard
             title={
@@ -536,7 +537,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
             }
           />
         </header>
-        {viaShell && (
+        {viaShell && inChat && (
           <p role="alert" className="chat-error main-note">
             对话要直接打开 Aroomo 网页才能用，请从书签或首页进入。
           </p>
@@ -544,8 +545,10 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         <Thread
           key={current.id}
           conversation={current}
-          onMessages={onMessages}
+          onMessages={(turns) => onMessages(current.id, turns)}
           insert={insert}
+          onInserted={() => setInsert(null)}
+          hidden={!inChat}
           members={current.group?.length ? current.group : memberNames}
           speechRate={prefs.speechRate}
           speechOnline={prefs.speechOnline}
@@ -556,8 +559,9 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           {...(fetchImpl ? { fetchImpl } : {})}
         />
       </>
-    );
-  } else {
+  );
+  let main: React.ReactNode = null;
+  if (!inChat) {
     const parent = phone ? phoneParent(view) : parentOf(view);
     const member = view.kind === 'member' ? members.find((m) => m.id === view.id) : undefined;
     const title = view.kind === 'member' ? (member?.name ?? '成员') : view.kind === 'settings' && view.section ? SETTINGS_SECTIONS.find((x) => x.id === view.section)!.label : TITLES[view.kind];
@@ -708,7 +712,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           {open && sidebar}
         </dialog>
       )}
-      {phone && open && view.kind === 'chat' ? (
+      {phone && open && view.kind === 'chat' && (
         <main className="main phone-list" aria-labelledby="phone-list-title">
           {/* 自审 B12：手机列表页也有 main 地标和 h1 */}
           <h1 id="phone-list-title" className="sr-only">
@@ -716,8 +720,9 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           </h1>
           {sidebar}
         </main>
-      ) : (
+      )}
         <main
+          hidden={phone && open && view.kind === 'chat'}
           className="main"
           aria-labelledby={view.kind === 'chat' ? 'chat-title' : undefined}
           aria-label={view.kind === 'chat' ? undefined : '面板'}
@@ -728,9 +733,9 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
             if (on !== (scrolledKey === k)) setScrolledKey(on ? k : '');
           }}
         >
+          {chatMain}
           {main}
         </main>
-      )}
       {phone && tab && (
         <nav className="tabbar" aria-label="主导航">
           <button type="button" className="tab hit" aria-current={tab === 'chats' ? 'page' : undefined} onClick={() => { setView({ kind: 'chat' }); setOpen(true); }}>

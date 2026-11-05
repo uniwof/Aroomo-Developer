@@ -16,7 +16,6 @@ import {
   useAuiState,
   useExternalStoreRuntime,
   type AppendMessage,
-  type ThreadMessage,
   type ThreadMessageLike,
 } from '@assistant-ui/react';
 import { ArrowDown, Copy, KeyRound, RotateCcw, Send, Square, Volume2, VolumeX } from 'lucide-react';
@@ -29,18 +28,7 @@ import { DEFAULT_RATE, pickVoice, speaker, speechSupported } from './speech';
 const LazyMarkdown = lazy(() => import('./Markdown'));
 const NEW_DRAFT = 'new';
 
-const textOfMessage = (m: ThreadMessage): string =>
-  m.content
-    .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
-    .map((p) => p.text)
-    .join('\n');
 
-function toTurns(messages: readonly ThreadMessage[]): ChatTurn[] {
-  return messages
-    .filter((m) => m.role === 'user' || m.role === 'assistant')
-    .map((m) => ({ role: m.role as 'user' | 'assistant', text: textOfMessage(m), ...(m.createdAt ? { at: m.createdAt.getTime() } : {}) }))
-    .filter((t) => t.text.trim() !== '');
-}
 
 /** 对话区里的一条消息（本地状态） */
 export interface UiMessage {
@@ -75,6 +63,8 @@ export function toThreadMessage(m: UiMessage): ThreadMessageLike {
 }
 
 const turnsOf = (list: UiMessage[]): ChatTurn[] => list.filter((m) => m.text.trim() !== '').map((m) => ({ role: m.role, text: m.text }));
+/** 存本机用：带时间（Poke 行为规范切片 1：发出即存、结束再存，离开对话区也不丢） */
+const savedTurnsOf = (list: UiMessage[]): ChatTurn[] => list.filter((m) => m.text.trim() !== '').map((m) => ({ role: m.role, text: m.text, ...(m.at ? { at: m.at } : {}) }));
 
 const MarkdownText: FC<{ text: string }> = ({ text }) => (
   <Suspense fallback={<p className="chat-md chat-plain">{stripSignature(text)}</p>}>
@@ -311,6 +301,10 @@ export interface ThreadProps {
   onMessages: (turns: ChatTurn[]) => void;
   /** 外部（抽屉里点成员）要插入到输入框的文字，例如「@张三 」 */
   insert?: { text: string; seq: number } | null;
+  /** 插入完了：外面清掉 insert，免得对话区重新挂载或换会话时再插一次（审计 C2） */
+  onInserted?: () => void;
+  /** 面板打开时对话区仍挂着但藏起来（回复不断、输入不丢；审计 C1） */
+  hidden?: boolean;
   members?: string[];
   fetchImpl?: typeof fetch;
   /** 朗读语速（0.8–1.5，默认 1.0） */
@@ -328,10 +322,18 @@ export interface ThreadProps {
   notice?: ReactNode;
 }
 
-export function Thread({ conversation, onMessages, insert, members = [], fetchImpl, speechRate = DEFAULT_RATE, speechOnline = false, onAllowOnlineSpeech, memberName, onRunning, intro, notice }: ThreadProps) {
+export function Thread({ conversation, onMessages, insert, onInserted, hidden = false, members = [], fetchImpl, speechRate = DEFAULT_RATE, speechOnline = false, onAllowOnlineSpeech, memberName, onRunning, intro, notice }: ThreadProps) {
   const convRef = useRef(conversation);
   convRef.current = conversation;
-  const [messages, setMessages] = useState<UiMessage[]>(() => conversation.messages.map((m) => ({ id: newId(), role: m.role, text: m.text, ...(m.at ? { at: m.at } : {}), state: 'done' as const })));
+  const save = useRef(onMessages);
+  save.current = onMessages;
+  const [messages, setMessagesState] = useState<UiMessage[]>(() => conversation.messages.map((m) => ({ id: newId(), role: m.role, text: m.text, ...(m.at ? { at: m.at } : {}), state: 'done' as const })));
+  // 最新的消息列表（不等 React 渲染）：回复结束时即使对话区已卸载，也能把完整的一轮存下
+  const msgsRef = useRef(messages);
+  const setMessages = useCallback((next: UiMessage[] | ((l: UiMessage[]) => UiMessage[])) => {
+    msgsRef.current = typeof next === 'function' ? next(msgsRef.current) : next;
+    setMessagesState(msgsRef.current);
+  }, []);
   const [isRunning, setIsRunning] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   // 换会话或离开页面时，停掉还在进行的回复，也停掉朗读
@@ -354,6 +356,8 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
       // 开始新回复：停掉正在读的
       speaker.stop();
       setMessages([...history, reply]);
+      // 发出即存：回复没完就离开、刷新，这句话也不丢
+      save.current(savedTurnsOf(history));
       setIsRunning(true);
       const ac = new AbortController();
       abortRef.current = ac;
@@ -373,9 +377,11 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
       } finally {
         if (abortRef.current === ac) abortRef.current = null;
         setIsRunning(false);
+        // 结束（完成 / 停止 / 出错）就存：不靠界面订阅，对话区已卸载也存得下
+        save.current(savedTurnsOf(msgsRef.current));
       }
     },
-    [fetchImpl],
+    [fetchImpl, setMessages],
   );
 
   const runtime = useExternalStoreRuntime<UiMessage>({
@@ -396,8 +402,6 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
     onCancel: async () => abortRef.current?.abort(),
   });
   const [status, setStatus] = useState('');
-  const save = useRef(onMessages);
-  save.current = onMessages;
   const runningCb = useRef(onRunning);
   runningCb.current = onRunning;
   useEffect(() => {
@@ -422,7 +426,6 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
         else if (st?.type === 'incomplete' && st.reason === 'error')
           setStatus((s.messages[s.messages.length - 1]?.metadata?.custom as { errorCode?: string } | undefined)?.errorCode === 'key_invalid' ? '出错了：Key 无效，可以点「去检查 Key」' : '出错了，可以点「重试」');
         else setStatus('回复完成');
-        save.current(toTurns(s.messages));
       }
       wasRunning = s.isRunning;
     });
@@ -457,7 +460,10 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
     const cur = c.getState().text;
     c.setText(cur && !cur.endsWith(' ') ? `${cur} ${insert.text}` : cur + insert.text);
     document.getElementById('chat-input')?.focus();
+    insertedCb.current?.();
   }, [insert, runtime]);
+  const insertedCb = useRef(onInserted);
+  insertedCb.current = onInserted;
 
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionAt, setMentionAt] = useState(0);
@@ -490,7 +496,7 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
     <SpeechContext.Provider value={speech}>
     <ThreadInfoContext.Provider value={info}>
     <AssistantRuntimeProvider runtime={runtime}>
-      <ThreadPrimitive.Root className={memberName ? 'chat-thread chat-single' : 'chat-thread'}>
+      <ThreadPrimitive.Root className={memberName ? 'chat-thread chat-single' : 'chat-thread'} hidden={hidden}>
         <ThreadPrimitive.Viewport className="chat-viewport" role="log" aria-label="对话内容" aria-live="off">
           <div className="chat-column">
             <ThreadPrimitive.Empty>
