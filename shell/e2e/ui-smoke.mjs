@@ -57,9 +57,51 @@ const login = await api.post('/api/auth/sign-in/email', {
   headers: { origin: base },
 });
 check('登录接口', login.ok(), login.status());
-const storage = await api.storageState();
 
 const browser = await chromium.launch();
+// —— core-session（SHELL_AUTH=core-session）：Core 所有者账号 ——
+const onConsole = (u) => new URL(u).pathname.startsWith('/console');
+{
+  // 设密码页：脚本用主人令牌发的 admin 邀请 → 设密码 → 直接进控制台
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'en-US' });
+  const page = await ctx.newPage();
+  await page.goto(`${base}/aroomo/accept?token=${encodeURIComponent(process.env.E2E_INVITE_TOKEN ?? '')}`, { waitUntil: 'domcontentloaded' });
+  await page.fill('#password', process.env.E2E_PASSWORD);
+  await page.fill('#password2', process.env.E2E_PASSWORD);
+  await page.click('button[type="submit"]');
+  await page.waitForURL(onConsole, { timeout: 30000 }).catch(() => {});
+  await shoot(page, 'desktop-core-accept');
+  check('core-session 设密码页 → /console', onConsole(page.url()), `${page.url()} ${(await page.locator('#msg').textContent().catch(() => '')) ?? ''}`);
+  await ctx.close();
+}
+for (const [label, viewport, isMobile] of [
+  ['desktop', { width: 1280, height: 800 }, false],
+  ['mobile', { width: 390, height: 844 }, true],
+]) {
+  // 登录页：未登录打开 /console → 跳 /aroomo/login → 填邮箱密码 → 回到 /console
+  const ctx = await browser.newContext({ viewport, isMobile, hasTouch: isMobile, locale: 'en-US' });
+  const page = await ctx.newPage();
+  await page.goto(base + '/console/', { waitUntil: 'domcontentloaded' });
+  check(`${label} core-session 未登录跳登录页`, new URL(page.url()).pathname === '/aroomo/login', page.url());
+  await shoot(page, `${label}-core-login`);
+  await page.fill('#email', process.env.E2E_EMAIL);
+  await page.fill('#password', process.env.E2E_PASSWORD);
+  await page.click('button[type="submit"]');
+  await page.waitForURL(onConsole, { timeout: 30000 }).catch(() => {});
+  check(`${label} core-session 登录后进入 /console`, onConsole(page.url()), `${page.url()} ${(await page.locator('#msg').textContent().catch(() => '')) ?? ''}`);
+  const cookies = await ctx.cookies();
+  const c = cookies.find((x) => x.name === 'aroomo_session');
+  check(`${label} core-session 会话 Cookie 是 HttpOnly`, Boolean(c?.httpOnly), JSON.stringify(cookies.map((x) => x.name)));
+  await ctx.close();
+}
+// 后面的对话检查同时需要 LobeHub 会话（对话界面）和 Core 会话（/aroomo/api）：在同一个请求上下文里再登录 Core
+const coreLogin = await api.post('/aroomo/auth/login', {
+  data: { email: process.env.E2E_EMAIL, password: process.env.E2E_PASSWORD },
+  headers: { origin: base, 'x-aroomo-request': '1' },
+});
+check('core-session 登录接口', coreLogin.ok(), coreLogin.status());
+const storage = await api.storageState();
+
 // 登录页（未登录）
 {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'en-US' });
@@ -192,7 +234,7 @@ await browser.close();
 writeFileSync(path.join(out, 'checks.json'), JSON.stringify(checks, null, 1));
 const failed = checks.filter((c) => !c.ok);
 // 第一轮只把核心项设为必须通过；其余写进报告供核对选择器
-const required = /D190 页面未被注入|设置 6 个 Tab|登录接口|填 Key|Key 明文|对话：|进入候选|一键入职|退出登录|敏感内容保护开关|发收件箱卡片|确认卡|倒计时|处理完毕|删除 Key/;
+const required = /core-session|D190 页面未被注入|设置 6 个 Tab|登录接口|填 Key|Key 明文|对话：|进入候选|一键入职|退出登录|敏感内容保护开关|发收件箱卡片|确认卡|倒计时|处理完毕|删除 Key/;
 const hard = failed.filter((c) => required.test(c.name));
 console.log(`\n${checks.length - failed.length}/${checks.length} 通过；必须项失败 ${hard.length}`);
 process.exit(hard.length ? 1 : 0);

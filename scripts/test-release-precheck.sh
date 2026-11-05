@@ -97,6 +97,10 @@ adm "create table vault_secrets (id serial, user_id text not null, name text, de
 adm "create table public_memory (user_id text not null, topic text)" >/dev/null
 adm "create table public_memory_versions (user_id text not null, topic text, version int)" >/dev/null
 adm "create table audit_log (id serial, user_id text, action text)" >/dev/null
+# 迁移 0025–0027 的六张 RLS 表（scripts/lib/rls-tables.txt 里列着，表不存在检查 1 就失败）
+for t in conversations conversation_messages assistants assistant_members assistant_runs run_steps; do
+  adm "create table $t (id serial, user_id text not null)" >/dev/null
+done
 adm "insert into audit_log (user_id, action) values (null, 'system-event')" >/dev/null
 adm "insert into members values ('owner','m1','小明',null),('u-b','m2','小明',null)" >/dev/null
 adm "insert into inbox_items (user_id,kind,related_type,related_id,status) values (null,'k','t','1','open'),('u-b','k','t','1','open'),(null,'k','t','2','done')" >/dev/null
@@ -113,7 +117,7 @@ has() { out_has -qF "$1" && ok "输出含「$1」" || { bad "输出缺「$1」";
 
 run "干净库：全部通过（含备份）" 0
 has "检查 1 空串 user_id"; has "检查 2 唯一索引试算"; has "检查 3 逐表行数可读"; has "aroomo-20261103T100000Z"
-has "检查了 7 张开了 RLS 的表"; has "检查 4"; has "检查 5"
+has "检查了 13 张开了 RLS 的表"; has "检查 4"; has "检查 5"
 has "清单外带 user_id 的表"
 out_has -q 'owner-secret-mark' && bad "输出里出现了 SHELL_OWNER_USER_ID 的值" || ok "不打印 SHELL_OWNER_USER_ID 的值"
 [ -f "$work/.release/precheck.ok" ] && ok "记下了备份通过标记" || bad "没有备份通过标记"
