@@ -57,8 +57,9 @@ const TITLES: Record<Exclude<View['kind'], 'chat' | 'member'>, string> = {
 function parentOf(v: View): { view: View; label: string } | null {
   switch (v.kind) {
     case 'member':
-    case 'capmap':
       return { view: { kind: 'members' }, label: '成员' };
+    case 'capmap':
+      return { view: { kind: 'library' }, label: '资源库' };
     case 'audit':
       return { view: { kind: 'settings', section: 'safety' }, label: '设置' };
     case 'executors':
@@ -78,13 +79,14 @@ const SIDE_MIN = 280;
 const SIDE_MAX = 420;
 const clampSide = (w: number) => Math.min(SIDE_MAX / 16, Math.max(SIDE_MIN / 16, w));
 
+/** 全部成员（成员页要列候选、停用的；对话、@ 只用在职的） */
 function useMembers(): [Member[], () => void] {
   const [members, setMembers] = useState<Member[]>([]);
   const [seq, setSeq] = useState(0);
   useEffect(() => {
     let alive = true;
     api<{ members: Member[] }>('GET', '/api/members')
-      .then((r) => alive && setMembers(r.members.filter((m) => m.enabled && m.status === 'active')))
+      .then((r) => alive && setMembers(r.members))
       .catch(() => undefined);
     return () => {
       alive = false;
@@ -160,7 +162,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   }, [sideW]);
   const [insert, setInsert] = useState<{ text: string; seq: number } | null>(null);
   const [sideUi, setSideUi] = useState<SideUi>(SIDE_UI);
-  const [members, reloadMembers] = useMembers();
+  const [allMembers, reloadMembers] = useMembers();
+  const members = useMemo(() => allMembers.filter((m) => m.enabled && m.status === 'active'), [allMembers]);
   const [dismissed, setDismissed] = useState<string[]>(() => {
     try {
       return JSON.parse(localStorage.getItem(NOTICE_KEY) ?? '[]') as string[];
@@ -589,7 +592,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   let main: React.ReactNode = null;
   if (!inChat) {
     const parent = phone ? phoneParent(view) : parentOf(view);
-    const member = view.kind === 'member' ? members.find((m) => m.id === view.id) : undefined;
+    const member = view.kind === 'member' ? allMembers.find((m) => m.id === view.id) : undefined;
     const title = view.kind === 'member' ? (member?.name ?? '成员') : view.kind === 'settings' && view.section ? SETTINGS_SECTIONS.find((x) => x.id === view.section)!.label : TITLES[view.kind];
     main = (
       <>
@@ -598,7 +601,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           <Later>
           {view.kind === 'members' && (
             <>
-              <MembersPanel members={members} onOpen={(m) => setView({ kind: 'member', id: m.id })} />
+              <MembersPanel members={allMembers} onOpen={(m) => setView({ kind: 'member', id: m.id })} {...(isFamily() ? {} : { onAdd: () => setAddMember({}) })} />
               <div className="panel">
                 <div className="group">
                   <button type="button" className="row row-button" onClick={() => setView({ kind: 'capmap' })}>
@@ -625,6 +628,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           {view.kind === 'group-new' && (
             <GroupNewPanel
               members={members}
+              {...(isFamily() ? {} : { onAdd: () => setAddMember({}) })}
               onStart={(names) => {
                 // 只挑一位 = 和 TA 单聊；两位以上 = 这几位在场，默认负责人回答，@ 谁谁答（落地方案 v2 第 1 节，不让每位都回一遍）
                 const one = names.length === 1 ? members.find((m) => m.name === names[0]) : undefined;
@@ -662,7 +666,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
               </ul>
             </div>
           )}
-          {view.kind === 'library' && <LibraryView onAddMember={(preset) => setAddMember(preset ? { preset } : {})} />}
+          {view.kind === 'library' && <LibraryView members={allMembers} onOpenMember={(m) => setView({ kind: 'member', id: m.id })} onAddMember={(preset) => setAddMember(preset ? { preset } : {})} />}
           {view.kind === 'keys' && <ApiView members={members} />}
           {view.kind === 'audit' && (
             <div className="panel panel-embed">

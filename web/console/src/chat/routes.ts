@@ -34,7 +34,8 @@ export function pathOf(v: View): string {
     case 'member':
       return `/team?member=${encodeURIComponent(v.id)}`;
     case 'capmap':
-      return '/team/capabilities';
+      // 能力地图是资产（模型清单），归资源库，不挂在成员下（规范 §6 / 审计 H1）
+      return '/hub/capabilities';
     case 'group-new':
       return '/chat/new-group';
     case 'settings':
@@ -83,7 +84,7 @@ export function viewOf(pathname: string, search: string): View {
     const id = q.get('member');
     return id ? { kind: 'member', id } : { kind: 'members' };
   }
-  if (p === '/team/capabilities') return { kind: 'capmap' };
+  if (p === '/hub/capabilities' || p === '/team/capabilities') return { kind: 'capmap' };
   if (p === '/chat/new-group') return { kind: 'group-new' };
   if (p === '/hub') return { kind: 'library' };
   if (p === '/hub/tools') return { kind: 'tools' };

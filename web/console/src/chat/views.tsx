@@ -232,7 +232,7 @@ function SaveDialog({ open, onClose, onSaved }: { open: boolean; onClose: () => 
   );
 }
 
-export function LibraryView({ onAddMember }: { onAddMember: (preset?: string) => void }) {
+export function LibraryView({ onAddMember, members = [], onOpenMember }: { onAddMember: (preset?: string) => void; members?: Member[]; onOpenMember?: (m: Member) => void }) {
   const [caps, setCaps] = useState<CapItem[] | null>(null);
   const [capErr, setCapErr] = useState('');
   const [saved, setSaved] = useState<LibraryEntry[] | null>(null);
@@ -326,9 +326,17 @@ export function LibraryView({ onAddMember }: { onAddMember: (preset?: string) =>
             <ul className="lib-grid" aria-label="可以添加的成员">
               {shownCaps.map((c) => {
                 const trial = trialText(c);
+                // 已经是成员的模型：打开这位成员，不再重复添加（切片 5 / 审计 H2）
+                const existing = onOpenMember ? members.find((m) => m.name.toLowerCase() === c.name.toLowerCase()) : undefined;
+                const what = `${c.name}，${c.provider}，${ACCESS_LABEL[c.access]}${trial ? `，${trial}` : ''}`;
                 return (
                   <li key={c.id}>
-                    <button type="button" className="lib-card" aria-label={`添加 ${c.name}，${c.provider}，${ACCESS_LABEL[c.access]}${trial ? `，${trial}` : ''}`} onClick={() => onAddMember(c.name)}>
+                    <button
+                      type="button"
+                      className="lib-card"
+                      aria-label={existing ? `打开成员 ${what}` : `添加 ${what}`}
+                      onClick={() => (existing && onOpenMember ? onOpenMember(existing) : onAddMember(c.name))}
+                    >
                       <span className="lib-card-top">
                         <Avatar name={c.name} size="sm" />
                         <span className="lib-card-name">{c.name}</span>

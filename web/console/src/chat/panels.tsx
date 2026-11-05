@@ -13,6 +13,7 @@ import { FamilySection, GeneralSection, PasswordRow, ProfileSection, SignOutGrou
 import { ClientTokens } from '@/components/ClientTokens';
 import { Dialog } from '@/components/Dialog';
 import { Avatar } from './Avatar';
+import { Empty } from './ui';
 import { SPEECH_RATES, speechSupported } from './speech';
 import { type ChatPrefs } from './store';
 import { FONT_DEFAULT, FONT_MAX, FONT_MIN, clampFont } from '@/lib/display';
@@ -62,15 +63,10 @@ function statusText(m: Member): string {
   return (m.online ?? m.status === 'active') ? '在线' : '离线';
 }
 
-/** 成员：列表 → 详情 */
-export function MembersPanel({ members, onOpen }: { members: Member[]; onOpen: (m: Member) => void }) {
+function MemberRows({ list, onOpen }: { list: Member[]; onOpen: (m: Member) => void }) {
   return (
-    <div className="panel">
-      {members.length === 0 ? (
-        <p className="group-empty">还没有在职成员。在「能力地图」里填一个模型 Key，模型就会成为候选成员。</p>
-      ) : (
-        <Group title={`在职（${members.length}）`}>
-          {members.map((m) => (
+    <>
+          {list.map((m) => (
             <button key={m.id} type="button" className="row row-button" onClick={() => onOpen(m)}>
               <Avatar name={m.name} size="sm" />
               <span className="row-text">
@@ -83,7 +79,51 @@ export function MembersPanel({ members, onOpen }: { members: Member[]; onOpen: (
               <ChevronRight aria-hidden="true" className="row-chevron" />
             </button>
           ))}
-        </Group>
+    </>
+  );
+}
+
+/**
+ * 成员：列表 → 详情。列全部成员，按 在职 / 候选 / 已停用 分组（切片 5 / 审计 M1：以前只列在职，候选、停用的看不到也管不了）。
+ * 空状态 = 一句话 + 直达「添加成员」（审计 M2）。
+ */
+export function MembersPanel({ members, onOpen, onAdd }: { members: Member[]; onOpen: (m: Member) => void; onAdd?: () => void }) {
+  const active = members.filter((m) => m.enabled && m.status === 'active');
+  const candidates = members.filter((m) => m.enabled && m.status === 'candidate');
+  const off = members.filter((m) => !m.enabled);
+  return (
+    <div className="panel">
+      {members.length === 0 ? (
+        <Empty
+          text="还没有成员。"
+          {...(onAdd
+            ? {
+                action: (
+                  <button type="button" className="btn btn-outline" onClick={onAdd}>
+                    添加成员
+                  </button>
+                ),
+              }
+            : {})}
+        />
+      ) : (
+        <>
+          {active.length > 0 && (
+            <Group title={`在职（${active.length}）`}>
+              <MemberRows list={active} onOpen={onOpen} />
+            </Group>
+          )}
+          {candidates.length > 0 && (
+            <Group title={`候选（${candidates.length}）`}>
+              <MemberRows list={candidates} onOpen={onOpen} />
+            </Group>
+          )}
+          {off.length > 0 && (
+            <Group title={`已停用（${off.length}）`}>
+              <MemberRows list={off} onOpen={onOpen} />
+            </Group>
+          )}
+        </>
       )}
     </div>
   );
@@ -132,10 +172,27 @@ export function MemberDetail({ member, onChat, onMention }: { member: Member; on
  * 挑选成员新建（所有者 11-05 12:15）：默认的新对话是全员；这里自己挑。
  * 挑一位 = 和 TA 单聊；挑几位 = 这几位一起回答，对话里 @ 只列这几位。
  */
-export function GroupNewPanel({ members, onStart }: { members: Member[]; onStart: (names: string[]) => void }) {
+export function GroupNewPanel({ members, onStart, onAdd }: { members: Member[]; onStart: (names: string[]) => void; onAdd?: () => void }) {
   const [pick, setPick] = useState<string[]>([]);
   const all = members.length > 0 && pick.length === members.length;
-  if (members.length === 0) return <div className="panel"><p className="group-empty">还没有成员。先在资源库里添加一位。</p></div>;
+  // 空状态直达添加成员（审计 M3）
+  if (members.length === 0)
+    return (
+      <div className="panel">
+        <Empty
+          text="还没有在职成员。"
+          {...(onAdd
+            ? {
+                action: (
+                  <button type="button" className="btn btn-outline" onClick={onAdd}>
+                    添加成员
+                  </button>
+                ),
+              }
+            : {})}
+        />
+      </div>
+    );
   return (
     <div className="panel">
       <fieldset className="group-block">
