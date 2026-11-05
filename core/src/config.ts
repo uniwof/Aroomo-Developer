@@ -7,6 +7,8 @@
  * - 时区默认 Asia/Shanghai（AUDIT P11：日期边界统一按用户时区）。
  */
 
+import { isIP } from 'node:net';
+
 export type LogLevel = 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent';
 
 export interface CoreConfig {
@@ -42,6 +44,12 @@ export interface CoreConfig {
   accessReauth: 'required' | 'off';
   /** 重新验证的有效时限（秒），默认 300 */
   accessReauthMaxAgeS: number;
+  /**
+   * 信任哪些上一跳代理的 X-Forwarded-For（CORE_TRUST_PROXY，逗号分隔：loopback / linklocal / uniquelocal 或 IP / CIDR）。
+   * 未设置 = 不信任（req.ip 就是直连地址）。compose 里设 uniquelocal：Core 只在容器网络里被 Shell / cloudflared 访问，
+   * 登录限速（邮箱 + 来源 IP）才能按真实 IP 算，别人输错密码不会把所有者也锁在外面（#259 负责人必改 2）。
+   */
+  trustProxy?: string;
 }
 
 export class ConfigError extends Error {
@@ -135,6 +143,16 @@ export function loadConfig(env: Env = process.env): CoreConfig {
     throw new ConfigError('CORE_ACCESS_REAUTH_MAX_AGE_S 必须是 30–3600 的整数（秒）');
   }
 
+  const trustProxy = str(env, 'CORE_TRUST_PROXY');
+  if (trustProxy !== undefined) {
+    for (const t of trustProxy.split(',').map((x) => x.trim())) {
+      const [ip, bits, ...rest] = t.split('/');
+      const okName = ['loopback', 'linklocal', 'uniquelocal'].includes(t);
+      const okIp = Boolean(ip) && isIP(ip!) !== 0 && rest.length === 0 && (bits === undefined || (/^\d{1,3}$/.test(bits) && Number(bits) <= (isIP(ip!) === 4 ? 32 : 128)));
+      if (!okName && !okIp) throw new ConfigError('CORE_TRUST_PROXY 只能写 loopback / linklocal / uniquelocal 或 IP / CIDR（逗号分隔）');
+    }
+  }
+
   return {
     host: str(env, 'CORE_HOST') ?? '0.0.0.0',
     port: parsePort(str(env, 'CORE_PORT'), 'CORE_PORT', 8080),
@@ -154,6 +172,7 @@ export function loadConfig(env: Env = process.env): CoreConfig {
     cfAccessAud,
     accessReauth,
     accessReauthMaxAgeS: Number(maxAgeRaw),
+    trustProxy,
   };
 }
 
@@ -177,5 +196,6 @@ export function toSafeJSON(cfg: CoreConfig): Record<string, unknown> {
     cfAccessAud: cfg.cfAccessAud ? '(set)' : '(unset)',
     accessReauth: cfg.accessReauth,
     accessReauthMaxAgeS: cfg.accessReauthMaxAgeS,
+    trustProxy: cfg.trustProxy ?? '(unset)',
   };
 }

@@ -12,10 +12,12 @@ server.listen(cfg.port, cfg.host, () => {
       core: cfg.coreUpstream.origin,
       auth: cfg.auth,
       coreTokenConfigured: Boolean(cfg.coreOwnerToken),
-      ownerConfigured: Boolean(cfg.ownerUserId || cfg.localOwner),
+      ownerConfigured: Boolean(cfg.auth === 'core-session' ? cfg.ownerEmail : cfg.ownerUserId || cfg.localOwner),
     }) + '\n',
   );
-  if (cfg.auth !== 'off' && !cfg.ownerUserId && !cfg.localOwner)
+  if (cfg.auth === 'core-session' && !cfg.ownerEmail)
+    process.stdout.write(JSON.stringify({ level: 'warn', msg: '没有设置 SHELL_OWNER_EMAIL：控制台和 /aroomo/api 对所有人返回 403' }) + '\n');
+  if (cfg.auth === 'lobe-session' && !cfg.ownerUserId && !cfg.localOwner)
     process.stdout.write(JSON.stringify({ level: 'warn', msg: '没有设置 SHELL_OWNER_USER_ID：控制台和 /aroomo/api 对所有人返回 403' }) + '\n');
 });
 const stop = () => server.close(() => process.exit(0));

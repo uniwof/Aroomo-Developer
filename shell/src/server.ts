@@ -3,9 +3,10 @@
  *   /aroomo/static/*   Aroomo 的静态资源（不需要登录，不含任何秘密）
  *   /mcp               → Core /mcp（外部 MCP 客户端用；原样带客户端自己的 Authorization，不附加主人令牌，不要 LobeHub 登录）
  *   /aroomo/api/*      → Core /api/*（要求已登录 LobeHub；由这里附加主人令牌，浏览器永远拿不到令牌）
- *   /console/*         控制台（要求已登录 LobeHub；API 走 /aroomo/api）
+ *   /console/*         控制台（要求已登录；API 走 /aroomo/api）
+ *   /aroomo/login、/aroomo/accept、/aroomo/auth/*  core-session 的登录页、设密码页和它们的接口（不需要先登录）
  *   /aroomo、/aroomo/* Aroomo 页面（成员、Key 与接入、收件箱、收藏、设置）
- *   其余               → 官方 LobeHub，原样转发（含流式输出与 WebSocket）。
+ *   其余               → 官方 LobeHub，原样转发（含流式输出与 WebSocket）；core-session 下先删掉 aroomo_session，所有者的 Core 会话不给 LobeHub。
  *
  * D190：不再改 LobeHub——不注入 CSS / JS、不替换品牌和图标、不按路径隐藏或拦截页面与接口。
  * LobeHub 功能取舍只用官方 FEATURE_FLAGS（deploy/docker-compose.yml）。
@@ -16,9 +17,10 @@ import { createReadStream } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { Duplex } from 'node:stream';
+import { BlockList, isIP } from 'node:net';
 import type { ShellConfig } from './config.js';
-import { allowAll, LobeSessionChecker, type SessionChecker } from './session.js';
-import { handleLogout } from './logout.js';
+import { allowAll, CORE_SESSION_COOKIE, coreSessionCookie, CoreSessionChecker, LobeSessionChecker, type SessionChecker } from './session.js';
+import { handleCoreLogout, handleLogout } from './logout.js';
 import { AUTOLOGIN_MARK, LobeLocalAutoLogin, safeCallback, type AutoLogin } from './autologin.js';
 
 const HOP_BY_HOP = new Set([
@@ -53,6 +55,9 @@ export const PREPARING_HTML = `<!doctype html><html lang="zh-CN"><head><meta cha
 <h1>Aroomo 正在准备</h1><p>后台正在启动，好了会自动打开。第一次可能需要几分钟。</p>
 <div class="bar" aria-hidden="true"><span></span></div></main></body></html>`;
 
+/** core-session 下不转给 LobeHub 的 Cookie */
+const LOBE_DROP_COOKIES = [CORE_SESSION_COOKIE] as const;
+
 export interface ShellDeps {
   session?: SessionChecker;
   autoLogin?: AutoLogin;
@@ -85,6 +90,32 @@ function forwardHeaders(req: IncomingMessage, extra: Record<string, string | und
   return h;
 }
 
+/** 直连方是本机或私有网段（Shell 前面的 cloudflared / nginx 都在这里）时，才信它给的来源 IP 头 */
+const TRUSTED_PEERS = new BlockList();
+TRUSTED_PEERS.addSubnet('127.0.0.0', 8, 'ipv4');
+TRUSTED_PEERS.addSubnet('10.0.0.0', 8, 'ipv4');
+TRUSTED_PEERS.addSubnet('172.16.0.0', 12, 'ipv4');
+TRUSTED_PEERS.addSubnet('192.168.0.0', 16, 'ipv4');
+TRUSTED_PEERS.addAddress('::1', 'ipv6');
+TRUSTED_PEERS.addSubnet('fc00::', 7, 'ipv6');
+
+function trustedPeer(addr: string): boolean {
+  const v4 = addr.startsWith('::ffff:') ? addr.slice(7) : addr;
+  const t = isIP(v4);
+  return t !== 0 && TRUSTED_PEERS.check(v4, t === 4 ? 'ipv4' : 'ipv6');
+}
+
+/** 浏览器的真实 IP：只在直连方可信、且头的值是一个合法 IP 时取头，否则用直连地址（不信公网客户端自己填的头） */
+export function clientIp(req: IncomingMessage, header: string | undefined): string {
+  const peer = req.socket.remoteAddress ?? '';
+  if (header && trustedPeer(peer)) {
+    const raw = req.headers[header];
+    const v = (Array.isArray(raw) ? raw[0] : raw)?.trim() ?? '';
+    if (isIP(v)) return v;
+  }
+  return peer;
+}
+
 function responseHeaders(up: IncomingMessage, drop: string[] = []) {
   const h: Record<string, string | string[]> = {};
   for (const [k, v] of Object.entries(up.headers)) {
@@ -96,6 +127,16 @@ function responseHeaders(up: IncomingMessage, drop: string[] = []) {
 
 function hasCookie(cookieHeader: string | undefined, name: string): boolean {
   return (cookieHeader ?? '').split(';').some((c) => c.trim().startsWith(`${name}=`));
+}
+
+/** 从 Cookie 头里删掉某个 Cookie（core-session 下转给 LobeHub 前删 aroomo_session；#259 负责人必改 1）；删完为空返回 undefined */
+export function dropCookie(header: string | undefined, names: readonly string[]): string | undefined {
+  if (!header) return undefined;
+  const kept = header
+    .split(';')
+    .map((c) => c.trim())
+    .filter((c) => c && !names.includes(c.slice(0, c.indexOf('=') < 0 ? c.length : c.indexOf('=')).trim()));
+  return kept.length ? kept.join('; ') : undefined;
 }
 
 function wantsHtml(req: IncomingMessage): boolean {
@@ -127,16 +168,51 @@ export function hostAllowed(hostHeader: string | undefined, allowed: string[]): 
   return allowed.includes(name);
 }
 
+/** 登录 / 设密码后跳去哪：只接受站内 /console 开头的相对路径（防开放跳转），其余一律回 /console/ */
+export function safeNext(raw: string | null): string {
+  if (!raw || !/^\/console(\/|\?|$)/.test(raw) || raw.includes('\\') || raw.includes('//')) return '/console/';
+  return raw;
+}
+
+const AUTH_BODY_MAX = 4096;
+
+async function readJson(req: IncomingMessage): Promise<Record<string, unknown> | null> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const c of req as AsyncIterable<Buffer>) {
+    size += c.length;
+    if (size > AUTH_BODY_MAX) return null;
+    chunks.push(c);
+  }
+  try {
+    const v = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+    return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 const SEC_HEADERS = {
   'content-security-policy': "frame-ancestors 'none'; default-src 'self'",
   'x-frame-options': 'DENY',
 };
 
 export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
+  const coreAuth = cfg.auth === 'core-session';
   const session: SessionChecker =
-    deps.session ?? (cfg.auth === 'off' ? allowAll : new LobeSessionChecker(cfg.lobeUpstream, cfg.sessionCacheMs));
-  const autoLogin: AutoLogin | undefined =
-    deps.autoLogin ?? (cfg.localOwner ? new LobeLocalAutoLogin(cfg.lobeUpstream, cfg.localOwner) : undefined);
+    deps.session ??
+    (cfg.auth === 'off'
+      ? allowAll
+      : coreAuth
+        ? new CoreSessionChecker(cfg.coreUpstream, cfg.sessionCacheMs)
+        : new LobeSessionChecker(cfg.lobeUpstream, cfg.sessionCacheMs));
+  // LobeHub 自动登录只属于 lobe-session（Windows 独立版）；core-session 下不创建（config 也拒绝同时设置）
+  const autoLogin: AutoLogin | undefined = coreAuth
+    ? undefined
+    : (deps.autoLogin ?? (cfg.localOwner ? new LobeLocalAutoLogin(cfg.lobeUpstream, cfg.localOwner) : undefined));
+  const pagesRoot = path.resolve(cfg.publicDir, 'pages');
+  const loginLocation = (next: string) =>
+    coreAuth ? `/aroomo/login?next=${encodeURIComponent(next)}` : `/signin?callbackUrl=${encodeURIComponent(next)}`;
   const staticRoot = path.resolve(cfg.publicDir, 'static');
   const consoleRoot = path.resolve(cfg.consoleDir);
 
@@ -150,6 +226,12 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
   async function ownerOk(cookie: string | undefined): Promise<boolean> {
     if (!(await session.check(cookie))) return false;
     if (cfg.auth === 'off') return true;
+    // core-session：Core 账号必须是 admin，且邮箱等于 SHELL_OWNER_EMAIL（主人令牌只给所有者，不给任意 admin）
+    if (coreAuth) {
+      if (!cfg.ownerEmail || !session.role || !session.email) return false;
+      const [role, email] = await Promise.all([session.role(cookie), session.email(cookie)]);
+      return role === 'admin' && Boolean(email) && email === cfg.ownerEmail;
+    }
     if (cfg.ownerUserId) {
       if (!session.userId) return false;
       const id = await session.userId(cookie);
@@ -215,6 +297,66 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
     }
   }
 
+  /** core-session 的登录页 / 设密码页：不缓存、不带来源（设密码链接里的令牌不随 Referer 外泄） */
+  async function servePage(req: IncomingMessage, res: ServerResponse, name: 'login' | 'accept') {
+    try {
+      const html = await readFile(path.join(pagesRoot, `${name}.html`));
+      res.writeHead(200, {
+        'content-type': MIME['.html']!,
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+        'referrer-policy': 'no-referrer',
+        ...SEC_HEADERS,
+      });
+      res.end(req.method === 'HEAD' ? undefined : html);
+    } catch {
+      sendJson(res, 404, { error: { code: 'NOT_FOUND', message: '找不到' } });
+    }
+  }
+
+  /**
+   * POST /aroomo/auth/login、/aroomo/auth/accept → Core /auth/login、/auth/accept（一律 cookie:true：令牌只进 HttpOnly Cookie）。
+   * 只转发白名单字段；Core 的 Set-Cookie 原样带回；响应体去掉 token（双保险）。
+   */
+  async function proxyCoreAuth(req: IncomingMessage, res: ServerResponse, kind: 'login' | 'accept') {
+    const b = await readJson(req);
+    if (!b) return sendJson(res, 400, { error: { code: 'BAD_REQUEST', message: '请求格式不对' } });
+    const str = (v: unknown) => (typeof v === 'string' ? v : '');
+    const body =
+      kind === 'login'
+        ? { email: str(b.email), password: str(b.password), cookie: true }
+        : { token: str(b.token), password: str(b.password), ...(typeof b.displayName === 'string' ? { displayName: b.displayName } : {}), cookie: true };
+    const proto = String(req.headers['x-forwarded-proto'] ?? 'http').split(',')[0]!.trim();
+    const ip = clientIp(req, cfg.clientIpHeader);
+    let r: Response;
+    try {
+      r = await fetch(new URL(`/auth/${kind}`, cfg.coreUpstream), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json',
+          'x-forwarded-proto': proto,
+          // 真实来源 IP（Core 登录按「邮箱 + IP」限速；都填 nginx/cloudflared 的地址会让别人把所有者锁在外面）
+          'x-forwarded-for': ip,
+          'x-real-ip': ip,
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15_000),
+      });
+    } catch {
+      return sendJson(res, 502, { error: { code: 'CORE_UNAVAILABLE', message: 'Aroomo 后台暂时不可用，请稍后再试' } });
+    }
+    const out = (await r.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!r.ok) {
+      const err = (out?.error as { code?: unknown; message?: unknown } | undefined) ?? {};
+      return sendJson(res, r.status, {
+        error: { code: typeof err.code === 'string' ? err.code : 'HTTP_' + r.status, message: typeof err.message === 'string' ? err.message : '没有成功，请稍后再试' },
+      });
+    }
+    const setCookie = r.headers.getSetCookie().filter((c) => c.startsWith('aroomo_session='));
+    return sendJson(res, 200, { ok: true }, setCookie.length ? ({ 'set-cookie': setCookie } as unknown as Record<string, string>) : {});
+  }
+
   function proxyCore(req: IncomingMessage, res: ServerResponse, url: URL) {
     if (!cfg.coreOwnerToken) {
       return sendJson(res, 503, { error: { code: 'CORE_NOT_CONFIGURED', message: 'Aroomo 后台还没有配置好（缺少主人令牌）' } });
@@ -251,7 +393,7 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
     }
     headers.host = target.host;
     headers['x-forwarded-proto'] = (req.headers['x-forwarded-proto'] as string | undefined) ?? 'http';
-    headers['x-forwarded-for'] = req.socket.remoteAddress ?? '';
+    headers['x-forwarded-for'] = clientIp(req, cfg.clientIpHeader);
     const up = clientFor(target).request(target, { method: req.method, headers }, (upRes) => {
       res.writeHead(upRes.statusCode ?? 502, { ...responseHeaders(upRes, ['set-cookie']), 'cache-control': 'no-store' });
       upRes.pipe(res);
@@ -264,12 +406,15 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
     req.pipe(up);
   }
 
+  /** 转给 LobeHub 的 Cookie：core-session 下不带所有者的 Core 会话 */
+  const lobeCookie = (header: string | undefined) => (coreAuth ? dropCookie(header, LOBE_DROP_COOKIES) : header);
+
   function proxyLobe(req: IncomingMessage, res: ServerResponse, url: URL) {
     const html = wantsHtml(req);
-    const cookie = req.headers.cookie;
+    const cookie = lobeCookie(req.headers.cookie);
     // 新访客默认简体中文：只设 LobeHub 官方的语言 Cookie，不改页面内容
     const setLocale = !hasCookie(cookie, 'LOBE_LOCALE');
-    const extra: Record<string, string | undefined> = {};
+    const extra: Record<string, string | undefined> = { cookie };
     if (setLocale) {
       extra.cookie = [cookie, `LOBE_LOCALE=${cfg.defaultLocale}`].filter(Boolean).join('; ');
       extra['accept-language'] = `${cfg.defaultLocale},zh;q=0.9`;
@@ -313,7 +458,28 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
     // 退出登录（§8.3 账号）：只接受同源 POST
     if (p === '/aroomo/logout') {
       if (req.method !== 'POST' || !csrfOk(req)) return sendJson(res, 403, { error: { code: 'CSRF', message: '请求来源不对' } });
+      if (coreAuth) {
+        session.forget?.(req.headers.cookie);
+        return handleCoreLogout(req, res, cfg.coreUpstream, coreSessionCookie(req.headers.cookie));
+      }
       return handleLogout(req, res, cfg.lobeUpstream);
+    }
+
+    // core-session：登录页、设密码页和它们的接口（不需要先登录）
+    if (coreAuth) {
+      if (p === '/aroomo/login' || p === '/aroomo/accept') {
+        if (req.method !== 'GET' && req.method !== 'HEAD') return sendJson(res, 405, { error: { code: 'METHOD_NOT_ALLOWED', message: '只接受 GET' } }, { allow: 'GET, HEAD' });
+        return servePage(req, res, p === '/aroomo/login' ? 'login' : 'accept');
+      }
+      if (p === '/aroomo/auth/session') {
+        // 登录页打开时同源问一次（从 Cloudflare Access 跳回时，SameSite=Strict 的 Cookie 不随第一跳发出）
+        const ok = await session.check(req.headers.cookie);
+        return sendJson(res, 200, { loggedIn: ok, owner: ok ? await ownerOk(req.headers.cookie) : false, next: safeNext(url.searchParams.get('next')) });
+      }
+      if (p === '/aroomo/auth/login' || p === '/aroomo/auth/accept') {
+        if (req.method !== 'POST' || !csrfOk(req)) return sendJson(res, 403, { error: { code: 'CSRF', message: '请求来源不对' } });
+        return proxyCoreAuth(req, res, p === '/aroomo/auth/login' ? 'login' : 'accept');
+      }
     }
 
     // 外部 MCP 客户端：鉴权在 Core（Bearer arc_… / 账号令牌），这里不要求 LobeHub 登录
@@ -343,7 +509,7 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
 
     if (p === '/console' || p.startsWith('/console/')) {
       if (!(await session.check(req.headers.cookie))) {
-        res.writeHead(302, { location: `/signin?callbackUrl=${encodeURIComponent(p + url.search)}`, 'cache-control': 'no-store' });
+        res.writeHead(302, { location: loginLocation(p + url.search), 'cache-control': 'no-store' });
         return res.end();
       }
       if (!(await ownerOk(req.headers.cookie))) return sendJson(res, 403, { error: { code: 'NOT_OWNER', message: '这个账号没有权限使用所有者的控制台' } });
@@ -352,7 +518,7 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
 
     if (p === '/aroomo' || p.startsWith('/aroomo/')) {
       if (!(await session.check(req.headers.cookie))) {
-        res.writeHead(302, { location: `/signin?callbackUrl=${encodeURIComponent(p + url.search)}`, 'cache-control': 'no-store' });
+        res.writeHead(302, { location: loginLocation(p + url.search), 'cache-control': 'no-store' });
         return res.end();
       }
       if (!(await ownerOk(req.headers.cookie))) return sendJson(res, 403, { error: { code: 'NOT_OWNER', message: '这个账号没有权限使用所有者的控制台' } });
@@ -370,6 +536,9 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
     const target = new URL(url.pathname + url.search, cfg.lobeUpstream);
     const headers: Record<string, string | string[]> = {};
     for (const [k, v] of Object.entries(req.headers)) if (v !== undefined) headers[k] = v;
+    const cookie = lobeCookie(req.headers.cookie);
+    if (cookie === undefined) delete headers.cookie;
+    else headers.cookie = cookie;
     const up = clientFor(target).request(target, { method: req.method, headers });
     up.on('upgrade', (upRes, upSocket, upHead) => {
       const lines = [`HTTP/1.1 ${upRes.statusCode} ${upRes.statusMessage}`];

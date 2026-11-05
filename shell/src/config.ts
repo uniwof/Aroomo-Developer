@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { isLoopbackHost } from './autologin.js';
 
-export type AuthMode = 'lobe-session' | 'off';
+export type AuthMode = 'core-session' | 'lobe-session' | 'off';
 
 export interface ShellConfig {
   host: string;
@@ -18,7 +18,8 @@ export interface ShellConfig {
   /** 转发 /aroomo/api/* 到 Core 时附加的主人令牌；未设置时 /aroomo/api 一律 503 */
   coreOwnerToken: string | undefined;
   /**
-   * lobe-session（默认）：Aroomo 页面和 /aroomo/api 要求已登录 LobeHub（Better Auth 会话，经 LobeHub 校验）；
+   * core-session（服务器版 compose 默认）：Aroomo 页面和 /aroomo/api 要求已登录 Aroomo Core 账号（aroomo_session Cookie，经 Core /api/auth/me 校验）；
+   * lobe-session（代码默认，只留给冻结的 Windows 独立版和回退）：要求已登录 LobeHub；
    * off：不校验（只用于测试）。
    */
   auth: AuthMode;
@@ -33,6 +34,11 @@ export interface ShellConfig {
    * 服务器版生产必填；获取方法：所有者登录后访问 /api/auth/get-session，看 user.id。未设置时一律 403（独立版见 localOwner）。
    */
   ownerUserId: string | undefined;
+  /**
+   * core-session：所有者的 Core 账号邮箱（SHELL_OWNER_EMAIL，小写）。只有这个邮箱、且 role=admin 的账号能用控制台和 /aroomo/api；
+   * 未设置时一律 403（默认拒绝，同 #245）。lobe-session 不用它。
+   */
+  ownerEmail: string | undefined;
   /** 会话校验结果缓存时长 */
   sessionCacheMs: number;
   /**
@@ -44,6 +50,11 @@ export interface ShellConfig {
    * 服务器版不限制（undefined）。可用 SHELL_ALLOWED_HOSTS（逗号分隔）覆盖。
    */
   allowedHosts: string[] | undefined;
+  /**
+   * 真实来源 IP 从哪个头取（SHELL_CLIENT_IP_HEADER：cf-connecting-ip 或 x-real-ip）。只在直连方是本机 / 容器网络（私有地址）时才信，
+   * 公网直连来的请求一律用直连地址。转给 Core 登录 / MCP 做限速用（#259 负责人必改 2）。未设置 = 只用直连地址。
+   */
+  clientIpHeader: 'cf-connecting-ip' | 'x-real-ip' | undefined;
 }
 
 export class ConfigError extends Error {}
@@ -72,7 +83,7 @@ export function loadConfig(env: Env = process.env): ShellConfig {
   const portRaw = str(env, 'SHELL_PORT') ?? '3000';
   if (!/^\d+$/.test(portRaw) || Number(portRaw) < 1 || Number(portRaw) > 65535) throw new ConfigError('SHELL_PORT 必须是 1–65535 的整数');
   const auth = (str(env, 'SHELL_AUTH') ?? 'lobe-session') as AuthMode;
-  if (auth !== 'lobe-session' && auth !== 'off') throw new ConfigError('SHELL_AUTH 只能是 lobe-session 或 off');
+  if (auth !== 'core-session' && auth !== 'lobe-session' && auth !== 'off') throw new ConfigError('SHELL_AUTH 只能是 core-session、lobe-session 或 off');
   // #245：auth=off 只用于测试；生产环境开着它等于谁都能拿所有者令牌，直接拒绝启动
   if (auth === 'off' && str(env, 'NODE_ENV') === 'production') throw new ConfigError('生产环境不允许 SHELL_AUTH=off');
   const token = str(env, 'CORE_OWNER_TOKEN');
@@ -81,6 +92,8 @@ export function loadConfig(env: Env = process.env): ShellConfig {
   const ownerPassword = str(env, 'SHELL_LOCAL_OWNER_PASSWORD');
   let localOwner: ShellConfig['localOwner'];
   if (ownerEmail || ownerPassword) {
+    // LobeHub 自动登录只属于旧的 lobe-session（Windows 独立版）；Core 账号模式下不允许，免得误以为还在生效
+    if (auth === 'core-session') throw new ConfigError('SHELL_AUTH=core-session 不支持本机主人自动登录（SHELL_LOCAL_OWNER_*），请去掉这两项');
     if (!ownerEmail || !ownerPassword) throw new ConfigError('SHELL_LOCAL_OWNER_EMAIL 和 SHELL_LOCAL_OWNER_PASSWORD 必须同时设置');
     if (!isLoopbackHost(host)) throw new ConfigError('本机主人自动登录只能在 SHELL_HOST 为 127.0.0.1 / ::1 / localhost 时开启');
     if (ownerPassword.length < 8 || ownerPassword.length > 64) throw new ConfigError('SHELL_LOCAL_OWNER_PASSWORD 长度必须是 8–64');
@@ -93,6 +106,10 @@ export function loadConfig(env: Env = process.env): ShellConfig {
     : localOwner
       ? ['localhost', '127.0.0.1']
       : undefined;
+  const ipHeader = str(env, 'SHELL_CLIENT_IP_HEADER')?.toLowerCase();
+  if (ipHeader !== undefined && ipHeader !== 'cf-connecting-ip' && ipHeader !== 'x-real-ip') {
+    throw new ConfigError('SHELL_CLIENT_IP_HEADER 只能是 cf-connecting-ip 或 x-real-ip');
+  }
   return {
     host,
     port: Number(portRaw),
@@ -104,8 +121,10 @@ export function loadConfig(env: Env = process.env): ShellConfig {
     publicDir: str(env, 'SHELL_PUBLIC_DIR') ?? defaultPublicDir(),
     consoleDir: str(env, 'SHELL_CONSOLE_DIR') ?? '/app/console',
     ownerUserId: str(env, 'SHELL_OWNER_USER_ID'),
+    ownerEmail: str(env, 'SHELL_OWNER_EMAIL')?.toLowerCase(),
     sessionCacheMs: 30_000,
     localOwner,
     allowedHosts,
+    clientIpHeader: ipHeader,
   };
 }
