@@ -277,6 +277,7 @@ export function AssistantDetail({ id, members, onChanged, onInbox }: { id: strin
   const [open, setOpen] = useState<string | null>(null);
   const [busy, setBusy] = useState('');
   const [note, setNote] = useState('');
+  const [noteErr, setNoteErr] = useState(false);
   const lastSeq = useRef<number | undefined>(undefined);
 
   const refresh = useCallback(async () => {
@@ -298,8 +299,8 @@ export function AssistantDetail({ id, members, onChanged, onInbox }: { id: strin
     setRuns(null);
     setErr('');
     setNote('');
+    // refresh 拿到消息时已经清过未读，这里只通知会话栏刷新
     refresh()
-      .then(() => assistantsApi.markRead(id))
       .then(onChanged)
       .catch((e: unknown) => setErr(errText(e, '这个助手没加载出来')));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -330,8 +331,10 @@ export function AssistantDetail({ id, members, onChanged, onInbox }: { id: strin
       await fn();
       await refresh();
       onChanged();
+      setNoteErr(false);
       setNote(done);
     } catch (e) {
+      setNoteErr(true);
       setNote(errText(e, '没做成，请稍后再试'));
     } finally {
       setBusy('');
@@ -339,13 +342,17 @@ export function AssistantDetail({ id, members, onChanged, onInbox }: { id: strin
   };
 
   const loadMore = async () => {
-    if (!more) return;
+    if (!more || busy) return;
+    setBusy('more');
     try {
       const r = await assistantsApi.runs(id, more);
       setRuns((old) => [...(old ?? []), ...r.runs]);
       setMore(r.nextBefore);
     } catch (e) {
+      setNoteErr(true);
       setNote(errText(e, '更早的记录没加载出来'));
+    } finally {
+      setBusy('');
     }
   };
 
@@ -389,7 +396,7 @@ export function AssistantDetail({ id, members, onChanged, onInbox }: { id: strin
         )}
       </div>
       {note && (
-        <p role="status" className="note">
+        <p role={noteErr ? 'alert' : 'status'} className={noteErr ? 'note note-error' : 'note'}>
           {note}
         </p>
       )}
@@ -450,7 +457,7 @@ export function AssistantDetail({ id, members, onChanged, onInbox }: { id: strin
           </ul>
         )}
         {more && (
-          <button type="button" className="btn btn-outline" onClick={() => void loadMore()}>
+          <button type="button" className="btn btn-outline" disabled={busy === 'more'} onClick={() => void loadMore()}>
             更早的记录
           </button>
         )}
@@ -478,23 +485,29 @@ export function toRow(a: Assistant, members: Member[]): ScheduleRow {
 }
 
 export function ScheduleView({ list, error, members, onOpen, onChanged }: { list: Assistant[] | null; error: string; members: Member[]; onOpen: (id: string) => void; onChanged: () => void }) {
-  const [note, setNote] = useState('');
+  const [note, setNote] = useState<{ text: string; err: boolean } | null>(null);
+  // 同一个助手的开关请求没回来之前再点不发第二次（避免暂停 / 继续互相覆盖）
+  const pending = useRef(new Set<string>());
   const toggle = async (id: string, on: boolean) => {
-    setNote('');
+    if (pending.current.has(id)) return;
+    pending.current.add(id);
+    setNote(null);
     try {
       await (on ? assistantsApi.resume(id) : assistantsApi.pause(id));
       onChanged();
-      setNote(on ? '已继续' : '已暂停');
+      setNote({ text: on ? '已继续' : '已暂停', err: false });
     } catch (e) {
-      setNote(errText(e, '没改成，请稍后再试'));
+      setNote({ text: errText(e, '没改成，请稍后再试'), err: true });
+    } finally {
+      pending.current.delete(id);
     }
   };
   return (
     <div className="panel">
       <SchedulePage rows={list ? list.map((a) => toRow(a, members)) : null} {...(error ? { error } : {})} onToggle={(id, on) => void toggle(id, on)} onOpen={onOpen} />
       {note && (
-        <p role="status" className="note">
-          {note}
+        <p role={note.err ? 'alert' : 'status'} className={note.err ? 'note note-error' : 'note'}>
+          {note.text}
         </p>
       )}
     </div>
