@@ -32,8 +32,11 @@ export function speakableText(md: string): string {
   t = t.replace(/\b(?:https?:\/\/|www\.)[^\s<>()（）]+/gi, '');
   // 行内代码：留下内容
   t = t.replace(/`([^`]*)`/g, '$1');
-  // HTML 标签
-  t = t.replace(/<\/?[a-z][^>]*>/gi, '');
+  // HTML 标签：反复去到不再变（「<scr<b>ipt>」去一遍会拼出新标签；CodeQL js/incomplete-multi-character-sanitization）
+  for (let prev = ''; prev !== t; ) {
+    prev = t;
+    t = t.replace(/<\/?[a-z][^>]*>/gi, '');
+  }
   // 标题、引用、列表符号、分隔线、表格竖线
   t = t.replace(/^[ \t]*#{1,6}[ \t]+/gm, '');
   t = t.replace(/^[ \t]*>+[ \t]?/gm, '');
