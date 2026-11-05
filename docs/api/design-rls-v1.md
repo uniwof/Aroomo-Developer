@@ -21,7 +21,9 @@
      - `assistants(id, user_id, name, brief 任务说明, conversation_id 固定会话, enabled 启停, schedule_cron, schedule_tz, next_run_at, created_at, updated_at, deleted_at)`
      - `assistant_members(assistant_id, user_id, member_id, duty 分工, is_lead, position)`，外键 `(assistant_id,user_id)` 和 `(member_id,user_id)` → 只能挂本人的成员。
      - `assistant_runs(id, assistant_id, user_id, trigger manual|schedule, scheduled_for, status queued|running|ok|failed|cancelled, started_at, finished_at, summary, error_code)`，唯一键 `(assistant_id, scheduled_for)` = 定时触发的幂等键。
-     - 将来的定时执行器：只用 `systemScoped` 读 `(id, user_id, next_run_at)` 这三列找到期任务（进 systemScoped 白名单），真正执行一律切到 `userScoped(user_id)`；不跨 `u<id>/`。本轮不写执行器，`/api/assistants` 的「立即运行」在执行器做好前不出现。
+     - 三张表对应方案 v2.1「三张表一次建全」（代码在 `core/src/assistants/*`，阶段 2）；字段名以指南附录 C 为准，我这里还没拿到附录 C 原文，阶段 1 的助手一页纸会逐项对齐。
+     - 第一版只有所有者能建和看（v2.1 第 1 节）：`/api/assistants*` 只放行 `scopeOf = 'owner'`（所有者令牌 / 方案 A 的所有者账号），家人账号 403；RLS 照样按 `user_id` 隔离，为以后放开给家人留好。
+     - 定时执行器（`core/src/scheduler/*`，阶段 3，`ASSISTANT_SCHEDULER_ENABLED=false` 默认关）：只用 `systemScoped` 读 `(id, user_id, next_run_at)` 三列找到期任务（进 systemScoped 白名单），执行一律切到 `userScoped(user_id)`；不跨 `u<id>/`；先写 `assistant_runs`（唯一键占位）再干活，崩溃重启不重复跑。本轮不写执行器。
 
 ## 3. 谁能调用 / 返回什么
 - RLS 不新增接口。现有 `userRoute` 接口照旧：账号会话 → 本人数据；所有者令牌、操作员 → `'owner'`；客户端令牌 → 令牌主人。
