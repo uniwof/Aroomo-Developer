@@ -370,7 +370,7 @@
   max-width: 100%;
 }
 .tool-toggle.btn {
-  min-height: 2rem;
+  min-height: 2.75rem; /* 点击区 ≥44px（所有者规则）；用 rem 跟着字号放大 */
   max-width: 100%;
   padding: 0.25rem 0.5rem;
   margin-left: -0.5rem;
