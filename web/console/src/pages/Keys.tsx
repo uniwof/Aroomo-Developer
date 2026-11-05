@@ -91,11 +91,27 @@ export function Keys() {
       </ul>
       <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-3">
         <h2 className="font-medium">新增 Key</h2>
-        <input name="name" required maxLength={64} placeholder="名称" aria-label="名称" className={field} />
-        <input name="sourceUrl" required type="url" placeholder="获取网址" aria-label="获取网址" className={field} />
-        <input name="apiKey" required type="password" autoComplete="off" placeholder="Key" aria-label="Key" className={field} />
-        <input name="model" required placeholder="模型，如 openai/gpt-4o" aria-label="模型" className={field} />
-        <input name="apiBase" type="url" placeholder="接口地址（可选）" aria-label="接口地址" className={field} />
+        {/* 自审 B4：每一栏的名字一直显示在框上方，占位文字只示例格式 */}
+        <label className="flex flex-col gap-1">
+          <span>名称（必填）</span>
+          <input name="name" required maxLength={64} placeholder="如 我的 OpenRouter" className={field} />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span>在哪儿申请的（网址，必填）</span>
+          <input name="sourceUrl" required type="url" placeholder="https://…" className={field} />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span>Key（必填）</span>
+          <input name="apiKey" required type="password" autoComplete="off" className={field} />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span>模型（必填）</span>
+          <input name="model" required placeholder="如 openai/gpt-4o" className={field} />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span>接口地址（可不填）</span>
+          <input name="apiBase" type="url" placeholder="https://…" className={field} />
+        </label>
         <Button type="submit" disabled={busy}>
           保存
         </Button>

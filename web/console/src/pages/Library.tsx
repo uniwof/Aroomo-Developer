@@ -93,9 +93,19 @@ export function Library() {
     <div className="page">
       <h1 className="page-title">资源库</h1>
       <form onSubmit={(e) => void add(e)} className="flex flex-col gap-3" aria-label="收进资源库">
-        <textarea name="text" required rows={2} maxLength={20000} placeholder="粘贴链接，或写一个点子" aria-label="链接或点子" className={field + ' py-2'} />
-        <input name="title" maxLength={200} placeholder="标题（可不填）" aria-label="标题" className={field} />
-        <input name="tags" placeholder="标签，用空格或逗号分开（可不填）" aria-label="标签" className={field} />
+        {/* 自审 B4：标签在框上方 */}
+        <label className="flex flex-col gap-1">
+          <span>链接或点子（必填）</span>
+          <textarea name="text" required rows={2} maxLength={20000} placeholder="粘贴一个网址，或写一句话" className={field + ' py-2'} />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span>标题（可不填）</span>
+          <input name="title" maxLength={200} className={field} />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span>标签（可不填）</span>
+          <input name="tags" placeholder="用空格或逗号分开" className={field} />
+        </label>
         <Button type="submit" disabled={busy}>
           收进来
         </Button>
