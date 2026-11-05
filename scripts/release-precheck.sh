@@ -233,7 +233,7 @@ fi
 # 检查 6（方案 A，负责人必改 4）：设了 CORE_OWNER_ACCOUNT_ID 时，它和 Shell 的 SHELL_OWNER_EMAIL 必须是同一个账号，
 # 且这个账号是启用的管理员（Core 启动检查同样要求）。没设 = Core 不映射，通过。只读一条 count，不打印邮箱和 id。
 core_owner_id=""
-[ ! -f "$env_file" ] || core_owner_id="$(env_val CORE_OWNER_ACCOUNT_ID | tr 'A-F' 'a-f')"
+[ ! -f "$env_file" ] || core_owner_id="$(env_val CORE_OWNER_ACCOUNT_ID | tr '[:upper:]' '[:lower:]')"
 if [ -z "$core_owner_id" ]; then
   pass "检查 6 没设 CORE_OWNER_ACCOUNT_ID：Core 不把所有者账号映射到所有者数据，无需比对"
 elif ! [[ "$core_owner_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
@@ -241,7 +241,7 @@ elif ! [[ "$core_owner_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[
 elif [ "$shell_auth" != core-session ]; then
   fail "检查 6 设了 CORE_OWNER_ACCOUNT_ID，但 SHELL_AUTH 不是 core-session：没法和 Shell 的所有者账号比对（去掉它，或改回 core-session）"
 else
-  owner_email="$(env_val SHELL_OWNER_EMAIL | tr 'A-Z' 'a-z')"
+  owner_email="$(env_val SHELL_OWNER_EMAIL | tr '[:upper:]' '[:lower:]')"
   if ! [[ "$owner_email" =~ ^[a-z0-9._%+-]+@[a-z0-9.-]+$ ]]; then
     fail "检查 6 SHELL_OWNER_EMAIL 含邮箱以外的字符（或为空），不拼进 SQL，无法比对"
   elif ! n="$(sql "select count(*) from users where id = '$core_owner_id'::uuid and lower(email) = '$owner_email' and role = 'admin' and status = 'active'")"; then
