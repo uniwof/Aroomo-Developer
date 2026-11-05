@@ -6,13 +6,18 @@
  * - convFilter      X-27 全部/未读/进行中、X-22 进行中置顶——等会话存库（未读、运行中由 Core 给）
  * - schedulePage    X-02 定时列表整页——等 /api/assistants
  * - assistantDraft  X-15 助手草稿卡——等 data-aroomo-assistant-draft 数据块和 POST /api/assistants
+ * - assistants      会话栏「助手」列表、新建助手、助手详情（固定会话 + 运行记录 + 立即运行 + 暂停继续）——等 /api/assistants
+ *
+ * integrate/stage2（2026-11-05）：Core 助手接口已并进这条分支，除 quickReplies（Core 还没有成员反问的数据块）外全部打开。
+ * 只在这条分支打开；进 spike / dev 之前由负责人审（11-08）。
  */
 export const FLAGS = {
-  taskCards: false,
+  taskCards: true,
   quickReplies: false,
-  convFilter: false,
-  schedulePage: false,
-  assistantDraft: false,
+  convFilter: true,
+  schedulePage: true,
+  assistantDraft: true,
+  assistants: true,
 } as const;
 
 export type FlagName = keyof typeof FLAGS;

@@ -322,3 +322,28 @@
     font-size: 0.75rem;
   }
 }
+
+/* ---------- 助手详情（固定会话、运行记录） ---------- */
+.assistant-msgs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.run-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.run-steps {
+  padding: 0 0.75rem 0.75rem;
+}
+.check-grid-wide {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 11em), 1fr));
+}
+.assistant-detail .btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-top: 0.75rem;
+}

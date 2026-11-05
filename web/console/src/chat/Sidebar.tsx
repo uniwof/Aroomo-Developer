@@ -10,8 +10,11 @@
  * 桌面常显；手机上它就是唯一一层抽屉（外层 <dialog>）：最上面多一排分类（资源库 / 工具 / API / 成员）。
  */
 import { useEffect, useMemo, useState } from 'react';
-import { Activity, Bell, Bot, ChevronDown, MessagesSquare, Pin, Plus, Search, Shapes, SquarePen, Users, X } from 'lucide-react';
+import { Activity, Bell, Bot, CalendarClock, ChevronDown, MessagesSquare, Pin, Plus, Search, Shapes, SquarePen, Users, X } from 'lucide-react';
 import { isFamily, type Member } from '@/lib/api';
+import type { Assistant } from '@/lib/assistants';
+import { FLAGS } from '@/lib/flags';
+import { ConvFilter, RunningTag, applyConvFilter, type ConvFilterValue } from './conv-filter';
 import type { UsageRow } from '@/lib/usage';
 import { Avatar, type AvatarKind } from './Avatar';
 import { quotaState, type RailTarget } from './Rail';
@@ -30,6 +33,10 @@ interface Row {
   size?: number;
   lead?: boolean;
   pinned?: boolean;
+  /** 助手行 */
+  assistantId?: string;
+  unread?: boolean;
+  running?: boolean;
 }
 
 function previewOf(c: Conversation): string {
@@ -55,10 +62,19 @@ export interface SidebarProps {
   /** 手机抽屉里才有「关闭」和分类横排 */
   onClose?: () => void;
   usage: UsageRow[] | null;
+  /** 助手列表（只给所有者、开关 FLAGS.assistants 打开时）；null = 不显示「助手」分段 */
+  assistants?: Assistant[] | null;
+  assistantsError?: string;
+  currentAssistant?: string | null;
+  onAssistant?: (id: string) => void;
+  onNewAssistant?: () => void;
+  onSchedule?: () => void;
 }
 
-export function Sidebar({ list, currentId, members, inboxCount, active, onPick, onMember, onLead, onNew, onOpen, onClose, usage }: SidebarProps) {
+export function Sidebar({ list, currentId, members, inboxCount, active, onPick, onMember, onLead, onNew, onOpen, onClose, usage, assistants, assistantsError, currentAssistant, onAssistant, onNewAssistant, onSchedule }: SidebarProps) {
   const [tab, setTab] = useState<Tab>('chats');
+  const [filter, setFilter] = useState<ConvFilterValue>('all');
+  // 家人账号、开关关着时 assistants 为空：「助手」分段照旧显示空列表，不放新建、筛选、全部计划
   const [q, setQ] = useState('');
   const [folded, setFolded] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
@@ -106,14 +122,29 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
     return out;
   }, [list, members, currentId]);
 
-  // 助手（所有者 11-05 12:16 / 12:38）：为一个长期、可定时的任务设的成员小队。不预置示例，Core 接口（/api/assistants）好之前列表为空、不放「新建助手」按钮
-  const staff: Row[] = [];
+  // 助手（所有者 11-05 12:16 / 12:38）：为一个长期、可定时的任务设的成员小队。数据来自 GET /api/assistants（不预置示例）
+  const staff = useMemo<Row[]>(
+    () =>
+      (assistants ?? []).map((a) => ({
+        key: a.id,
+        kind: 'group' as const,
+        name: a.name,
+        preview: a.status === 'paused' ? '已暂停' : a.lastRun?.summary || (a.schedule.text ?? '只在我叫它时'),
+        at: a.lastRun?.finishedAt ? Date.parse(a.lastRun.finishedAt) : undefined,
+        assistantId: a.id,
+        size: a.members.length,
+        unread: !!a.unread,
+        running: a.status === 'running',
+      })),
+    [assistants],
+  );
 
   const k = q.trim().toLowerCase();
-  const rows = (tab === 'staff' ? staff : chats).filter((r) => !k || r.name.toLowerCase().includes(k) || r.preview.toLowerCase().includes(k));
+  const rows = (tab === 'staff' ? (FLAGS.convFilter ? applyConvFilter(staff, filter) : staff) : chats).filter((r) => !k || r.name.toLowerCase().includes(k) || r.preview.toLowerCase().includes(k));
   const isCurrent = (r: Row) =>
-    tab === 'chats' ? !!r.convId && r.convId === currentId : r.lead ? current?.model === 'aroomo' && !current.group?.length : !!r.member && current?.model === `aroomo/${r.member.id}`;
+    tab === 'chats' ? !!r.convId && r.convId === currentId : r.assistantId ? r.assistantId === currentAssistant : r.lead ? current?.model === 'aroomo' && !current.group?.length : !!r.member && current?.model === `aroomo/${r.member.id}`;
   const labelOf = (r: Row) => {
+    if (r.assistantId) return `助手 ${r.name}，${r.size ?? 0} 位成员${r.running ? '，进行中' : ''}${r.unread ? '，有新结果' : ''}，${r.preview}${r.at ? `，${listTimeLabel(r.at)}` : ''}`;
     const head = r.kind === 'group' ? `群聊 ${r.name}，${r.size ?? 0} 人` : r.name;
     const q2 = r.member && tab === 'staff' ? `，${quotaState(usage?.find((u) => u.memberId === r.member!.id)).label}` : '';
     return `${head}${r.pinned ? '，已置顶' : ''}${q2}，${tab === 'staff' ? '' : '最后一条：'}${r.preview}${r.at ? `，${listTimeLabel(r.at)}` : ''}`;
@@ -153,10 +184,15 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
         <div className="side-search">
           <label className="search2">
             <Search aria-hidden="true" />
-            <span className="sr-only">搜索对话</span>
-            <input type="search" placeholder="搜索对话" value={q} onChange={(e) => setQ(e.target.value)} />
+            <span className="sr-only">{tab === 'staff' ? '搜索助手' : '搜索对话'}</span>
+            <input type="search" placeholder={tab === 'staff' ? '搜索助手' : '搜索对话'} value={q} onChange={(e) => setQ(e.target.value)} />
           </label>
-          {/* 新建对话菜单（所有者 11-05 12:15）：默认全员（不 @ 由负责人安排，@ 谁谁答）/ 自己挑成员 / 和某一位单聊；所有者另有「添加成员」 */}
+          {/* 新建对话菜单（所有者 11-05 12:15）：默认全员（不 @ 由负责人安排，@ 谁谁答）/ 自己挑成员 / 和某一位单聊；所有者另有「添加成员」。「助手」分段里这个位置是「新建助手」 */}
+          {tab === 'staff' && onNewAssistant ? (
+            <button type="button" className="icon-btn hit" aria-label="新建助手" title="新建助手" onClick={onNewAssistant}>
+              <SquarePen aria-hidden="true" />
+            </button>
+          ) : (
           <div className="topic">
             <button type="button" className="icon-btn hit" aria-label="新建对话" title="新建对话" aria-haspopup="true" aria-expanded={newOpen} onClick={() => setNewOpen((o) => !o)}>
               <SquarePen aria-hidden="true" />
@@ -199,14 +235,24 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
               </ul>
             )}
           </div>
+          )}
         </div>
+        {tab === 'staff' && FLAGS.convFilter && !!assistants?.length && <ConvFilter value={filter} onChange={setFilter} label="筛选助手" />}
       </div>
 
       <div className="conv-scroll">
-        <button type="button" className="conv-group hit" aria-expanded={!folded} onClick={() => setFolded((f) => !f)}>
-          <span>{groupLabel}</span>
-          <ChevronDown aria-hidden="true" className={folded ? 'folded' : undefined} />
-        </button>
+        <div className="conv-group-row">
+          <button type="button" className="conv-group hit" aria-expanded={!folded} onClick={() => setFolded((f) => !f)}>
+            <span>{groupLabel}</span>
+            <ChevronDown aria-hidden="true" className={folded ? 'folded' : undefined} />
+          </button>
+          {tab === 'staff' && FLAGS.schedulePage && onSchedule && (
+            <button type="button" className="foot-link hit conv-group-link" aria-current={active === 'schedule' ? 'page' : undefined} onClick={onSchedule}>
+              <CalendarClock aria-hidden="true" />
+              <span>看全部计划</span>
+            </button>
+          )}
+        </div>
         {!folded && (
           <ul className="conv-list" aria-label={tab === 'staff' ? '助手列表' : '会话列表'}>
             {rows.map((r) => (
@@ -216,7 +262,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
                   className="conv"
                   aria-current={isCurrent(r) ? 'true' : undefined}
                   aria-label={labelOf(r)}
-                  onClick={() => (tab === 'chats' && r.convId ? onPick(r.convId) : r.lead ? onLead() : r.member ? onMember(r.member) : r.convId && onPick(r.convId))}
+                  onClick={() => (r.assistantId ? onAssistant?.(r.assistantId) : tab === 'chats' && r.convId ? onPick(r.convId) : r.lead ? onLead() : r.member ? onMember(r.member) : r.convId && onPick(r.convId))}
                 >
                   <Avatar name={r.name} kind={r.kind} />
                   <span className="conv-text">
@@ -229,18 +275,28 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
                         )}
                         {r.name}
                         {r.kind === 'group' && <Users aria-hidden="true" className="conv-badge" />}
+                        {r.running && <RunningTag />}
                       </span>
                       {r.at && <span className="conv-time">{listTimeLabel(r.at)}</span>}
                     </span>
                     <span className="conv-bottom">
                       <span className="conv-preview">{r.preview}</span>
                       {r.pinned && <Pin aria-hidden="true" className="conv-pin" />}
+                      {r.unread && <span className="bell-dot conv-unread" aria-hidden="true" />}
                     </span>
                   </span>
                 </button>
               </li>
             ))}
-            {rows.length === 0 && <li className="conv-empty">{q ? '没有找到。换个词试试。' : tab === 'staff' ? '还没有助手。' : '还没有会话。'}</li>}
+            {rows.length === 0 && (
+              <li className="conv-empty">
+                {q
+                  ? '没有找到。换个词试试。'
+                  : tab === 'staff'
+                    ? assistantsError || (filter === 'all' ? (onNewAssistant ? '还没有助手。点右上角的笔新建一个。' : '还没有助手。') : filter === 'unread' ? '没有新结果。' : '没有进行中的助手。')
+                    : '还没有会话。'}
+              </li>
+            )}
           </ul>
         )}
       </div>

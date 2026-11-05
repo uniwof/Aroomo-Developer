@@ -21,6 +21,8 @@ import { BackButton, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SET
 import { applyDisplay } from '@/lib/display';
 import { listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
 import { useAsk } from '@/components/Dialog';
+import { FLAGS } from '@/lib/flags';
+import { useAssistants } from '@/lib/assistants';
 import './chat.css';
 
 // 不常开的面板点开才下载（#250：对话页包 ≤150 KB gz）。设置、成员随对话页一起加载，打开不用等。
@@ -31,6 +33,10 @@ const AddMemberDialog = lazy(() => import('./views').then((m) => ({ default: m.A
 const Inbox = lazy(() => import('@/pages/Inbox').then((m) => ({ default: m.Inbox })));
 const Audit = lazy(() => import('@/pages/Audit').then((m) => ({ default: m.Audit })));
 const Executors = lazy(() => import('@/pages/Executors').then((m) => ({ default: m.Executors })));
+// 助手（#250 integrate/stage2）：详情、新建弹窗、全部计划都点开才下载
+const AssistantDetail = lazy(() => import('./pages/assistants/AssistantPages').then((m) => ({ default: m.AssistantDetail })));
+const NewAssistantDialog = lazy(() => import('./pages/assistants/AssistantPages').then((m) => ({ default: m.NewAssistantDialog })));
+const ScheduleView = lazy(() => import('./pages/assistants/AssistantPages').then((m) => ({ default: m.ScheduleView })));
 const CapabilityPanel = lazy(() => import('./capability-panel').then((m) => ({ default: m.CapabilityPanel })));
 
 /** 懒加载面板下载时：一句静态文字（不转圈，无动画） */
@@ -54,9 +60,13 @@ type View =
   | { kind: 'audit' }
   | { kind: 'executors' }
   /** 手机底部栏「我」：设置、资源库、工具、API（负责人落地文档第 12 章） */
-  | { kind: 'me' };
+  | { kind: 'me' }
+  /** 助手详情（固定会话 + 运行记录）、X-02 全部计划；只给所有者 */
+  | { kind: 'assistant'; id: string }
+  | { kind: 'schedule' };
 
-const TITLES: Record<Exclude<View['kind'], 'chat' | 'member'>, string> = {
+const TITLES: Record<Exclude<View['kind'], 'chat' | 'member' | 'assistant'>, string> = {
+  schedule: '全部计划',
   me: '我',
   members: '成员',
   capmap: '能力地图',
@@ -184,6 +194,9 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   /** 添加成员弹窗（落地文档 8.2）：资源库卡片带出名字，会话栏「+ 添加」、新建菜单「添加成员」打开空白的 */
   const [addMember, setAddMember] = useState<{ preset?: string } | null>(null);
   const inboxCount = useInboxCount();
+  const assistantsOn = FLAGS.assistants && !isFamily();
+  const { list: assistants, error: assistantsError, reload: reloadAssistants } = useAssistants(assistantsOn);
+  const [newAssistant, setNewAssistant] = useState(false);
   const layout = useLayout();
   const wide = layout.side;
   /** 手机排法（<48em，或字号调大后放不下）：不用抽屉，每一层整页 + 底部栏（负责人落地文档第 12 章） */
@@ -203,8 +216,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   }, [prefs]);
   // 浏览器标签页标题跟着会话走（读屏切标签时能听到在哪个会话）
   useEffect(() => {
-    document.title = `${view.kind === 'chat' ? current.title : view.kind === 'member' ? '成员' : TITLES[view.kind]} · Aroomo`;
-  }, [current.title, view]);
+    document.title = `${view.kind === 'chat' ? current.title : view.kind === 'member' ? '成员' : view.kind === 'assistant' ? (assistants?.find((a) => a.id === view.id)?.name ?? '助手') : TITLES[view.kind]} · Aroomo`;
+  }, [current.title, view, assistants]);
   useEffect(() => {
     const d = dialog.current;
     if (!d) return;
@@ -368,6 +381,29 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
       }}
       onOpen={(k) => goto({ kind: k })}
       usage={usage}
+      {...(assistantsOn
+        ? {
+            assistants,
+            assistantsError,
+            currentAssistant: view.kind === 'assistant' ? view.id : null,
+            onAssistant: (id: string) => {
+              setOpen(false);
+              setView({ kind: 'assistant', id });
+            },
+            onNewAssistant: () => {
+              setOpen(false);
+              setNewAssistant(true);
+            },
+            ...(FLAGS.schedulePage
+              ? {
+                  onSchedule: () => {
+                    setOpen(false);
+                    setView({ kind: 'schedule' });
+                  },
+                }
+              : {}),
+          }
+        : {})}
       {...(wide || phone ? {} : { onClose: () => setOpen(false) })}
     />
   );
@@ -377,7 +413,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     if (v.kind === 'members' || v.kind === 'me') return null;
     if (v.kind === 'settings' && v.section) return { go: () => setView({ kind: 'settings' }), label: '设置' };
     if (v.kind === 'settings' || v.kind === 'library' || v.kind === 'tools' || v.kind === 'keys') return { go: () => setView({ kind: 'me' }), label: '我' };
-    if (v.kind === 'inbox' || v.kind === 'group-new') return { go: () => { setView({ kind: 'chat' }); setOpen(true); }, label: '对话', aria: '返回对话列表' };
+    if (v.kind === 'inbox' || v.kind === 'group-new' || v.kind === 'assistant' || v.kind === 'schedule') return { go: () => { setView({ kind: 'chat' }); setOpen(true); }, label: '对话', aria: '返回对话列表' };
     const p = parentOf(v);
     return p ? { go: () => setView(p.view), label: p.label } : null;
   };
@@ -560,7 +596,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   } else {
     const parent = phone ? phoneParent(view) : parentOf(view);
     const member = view.kind === 'member' ? members.find((m) => m.id === view.id) : undefined;
-    const title = view.kind === 'member' ? (member?.name ?? '成员') : view.kind === 'settings' && view.section ? SETTINGS_SECTIONS.find((x) => x.id === view.section)!.label : TITLES[view.kind];
+    const title = view.kind === 'member' ? (member?.name ?? '成员') : view.kind === 'assistant' ? (assistants?.find((a) => a.id === view.id)?.name ?? '助手') : view.kind === 'settings' && view.section ? SETTINGS_SECTIONS.find((x) => x.id === view.section)!.label : TITLES[view.kind];
     main = (
       <>
         <PanelHeader title={title} lead={phone ? null : menuButton} {...(parent ? { onBack: () => ('go' in parent ? parent.go() : parent.view.kind === 'settings' ? goto(parent.view) : setView(parent.view)), backLabel: parent.label, ...('aria' in parent && parent.aria ? { backAria: parent.aria } : {}) } : {})} />
@@ -592,6 +628,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
             />
           )}
           {view.kind === 'capmap' && <CapabilityPanel />}
+          {view.kind === 'assistant' && <AssistantDetail id={view.id} members={members} onChanged={reloadAssistants} onInbox={() => setView({ kind: 'inbox' })} />}
+          {view.kind === 'schedule' && <ScheduleView list={assistants} error={assistantsError} members={members} onOpen={(id) => setView({ kind: 'assistant', id })} onChanged={reloadAssistants} />}
           {view.kind === 'group-new' && (
             <GroupNewPanel
               members={members}
@@ -701,6 +739,19 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         onAdded={() => reloadMembers()}
         {...(view.kind === 'library' ? {} : { onExplore: () => { setAddMember(null); goto({ kind: 'library' }); } })}
       />
+        </Suspense>
+      )}
+      {newAssistant && (
+        <Suspense fallback={null}>
+          <NewAssistantDialog
+            members={members}
+            onClose={() => setNewAssistant(false)}
+            onCreated={(a) => {
+              setNewAssistant(false);
+              reloadAssistants();
+              setView({ kind: 'assistant', id: a.id });
+            }}
+          />
         </Suspense>
       )}
       {!wide && !phone && (

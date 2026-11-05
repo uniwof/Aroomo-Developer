@@ -2064,3 +2064,24 @@ kbd.row-value {
   height: auto;
   border-radius: var(--r-sm, 8px);
 }
+
+/* 助手分段（#250 integrate/stage2）：分组标题右边「看全部计划」；未读小点不靠颜色单独传达（行的读屏名称里写「有新结果」） */
+.conv-group-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0 calc(0.5 * var(--k));
+}
+.conv-group-link {
+  margin-bottom: calc(0.5 * var(--k));
+  font-size: calc(0.8125 * var(--k));
+}
+.conv-unread {
+  position: static;
+  flex: none;
+  box-shadow: none;
+}
+.side-tools > .pill-filter {
+  margin-top: calc(0.125 * var(--k));
+}
