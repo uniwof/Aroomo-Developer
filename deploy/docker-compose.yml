@@ -156,6 +156,11 @@ services:
       CF_ACCESS_AUD: ${CF_ACCESS_AUD:-}
       CORE_ACCESS_REAUTH: ${CORE_ACCESS_REAUTH:-required}
       CORE_ACCESS_REAUTH_MAX_AGE_S: ${CORE_ACCESS_REAUTH_MAX_AGE_S:-300}
+      # X-08 推送提醒（默认关）：开时三项 VAPID 必须一起设（scripts/gen-vapid-keys.mjs 生成）
+      PUSH_ENABLED: ${PUSH_ENABLED:-false}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
       # LobeHub 服务端连 Core /mcp 的固定内部地址（#235）；/api/mcp/config 会把它作为 lobehubUrl 返回
       CORE_MCP_LOBEHUB_URL: http://${CORE_MCP_IP:-172.29.77.2}:8080/mcp
     healthcheck:

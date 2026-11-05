@@ -1,0 +1,14 @@
+{
+  "name": "Aroomo",
+  "short_name": "Aroomo",
+  "lang": "zh-CN",
+  "start_url": "/console/chat",
+  "scope": "/console/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ff7f50",
+  "icons": [
+    { "src": "/console/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/console/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
