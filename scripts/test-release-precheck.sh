@@ -237,6 +237,41 @@ mv "$work/env.moved" "$envf"
 run "SHELL_OWNER_USER_ID 恢复后通过" 0 --no-backup
 out_has -q 'owner-secret-mark' && bad "输出里出现了 SHELL_OWNER_USER_ID 的值" || ok "检查 4 各种情况都不打印值"
 
+# 检查 6（方案 A，负责人必改 4）：Shell 的 SHELL_OWNER_EMAIL 与 Core 的 CORE_OWNER_ACCOUNT_ID 指同一个账号
+adm "alter table users add column email text, add column role text not null default 'user', add column status text not null default 'active'" >/dev/null
+adm "insert into users (id,email,role,status) values ('4e000000-0000-4000-8000-00000000a001','Owner-Secret-Mark-Mail@example.com','admin','active'),('4e000000-0000-4000-8000-00000000b002','other-secret-mark@example.com','admin','active'),('4e000000-0000-4000-8000-00000000c003','owner-secret-mark-mail@example.com.cn','user','active')" >/dev/null
+run "没设 CORE_OWNER_ACCOUNT_ID：不映射，检查 6 通过" 0 --no-backup
+has "检查 6"
+echo 'CORE_OWNER_ACCOUNT_ID=4e000000-0000-4000-8000-00000000a001' >>"$envf"
+run "CORE_OWNER_ACCOUNT_ID 与 SHELL_OWNER_EMAIL 是同一个启用的管理员账号（邮箱大小写不同也算）→ 通过" 0 --no-backup
+has "检查 6 SHELL_OWNER_EMAIL 与 CORE_OWNER_ACCOUNT_ID 是同一个账号"
+cp "$work/env.bak" "$envf"; echo 'CORE_OWNER_ACCOUNT_ID="4E000000-0000-4000-8000-00000000A001"' >>"$envf"
+run "CORE_OWNER_ACCOUNT_ID 大写、带引号（Core 会转小写）→ 通过" 0 --no-backup
+cp "$work/env.bak" "$envf"; echo 'CORE_OWNER_ACCOUNT_ID=4e000000-0000-4000-8000-00000000b002' >>"$envf"
+run "CORE_OWNER_ACCOUNT_ID 是另一个管理员账号 → 失败" 1 --no-backup
+has "不是同一个账号"
+cp "$work/env.bak" "$envf"; echo 'CORE_OWNER_ACCOUNT_ID=4e000000-0000-4000-8000-00000000ffff' >>"$envf"
+run "CORE_OWNER_ACCOUNT_ID 指向不存在的账号 → 失败" 1 --no-backup
+cp "$work/env.bak" "$envf"; echo 'CORE_OWNER_ACCOUNT_ID=4e000000-0000-4000-8000-00000000a001' >>"$envf"
+adm "update users set role = 'user' where id = '4e000000-0000-4000-8000-00000000a001'" >/dev/null
+run "同一个账号但不是管理员 → 失败" 1 --no-backup
+adm "update users set role = 'admin', status = 'disabled' where id = '4e000000-0000-4000-8000-00000000a001'" >/dev/null
+run "同一个账号但已停用 → 失败" 1 --no-backup
+adm "update users set status = 'active' where id = '4e000000-0000-4000-8000-00000000a001'" >/dev/null
+run "恢复启用的管理员后通过" 0 --no-backup
+cp "$work/env.bak" "$envf"; echo 'CORE_OWNER_ACCOUNT_ID=owner' >>"$envf"
+run "CORE_OWNER_ACCOUNT_ID 不是 UUID → 失败" 1 --no-backup
+has "不是 UUID"
+cp "$work/env.bak" "$envf"; sed -i '/^SHELL_OWNER_EMAIL=/d' "$envf"; printf '%s\n' 'SHELL_OWNER_EMAIL=a\b;select@example.com' 'CORE_OWNER_ACCOUNT_ID=4e000000-0000-4000-8000-00000000a001' >>"$envf"
+run "SHELL_OWNER_EMAIL 带反斜杠、分号等特殊字符（检查 4 放行）：不拼进 SQL，检查 6 直接失败" 1 --no-backup
+has "检查 6 SHELL_OWNER_EMAIL 含邮箱以外的字符"
+cp "$work/env.lobe" "$envf"; echo 'CORE_OWNER_ACCOUNT_ID=4e000000-0000-4000-8000-00000000a001' >>"$envf"
+run "lobe-session 下设了 CORE_OWNER_ACCOUNT_ID（没法和 Shell 的所有者比对）→ 失败" 1 --no-backup
+has "core-session"
+out_has -q 'owner-secret-mark\|4e000000' && bad "检查 6 输出里出现了邮箱或账号 id" || ok "检查 6 不打印邮箱和账号 id"
+cp "$work/env.bak" "$envf"
+run "去掉 CORE_OWNER_ACCOUNT_ID 后恢复通过" 0 --no-backup
+
 # 检查 5：MCP 网段冲突
 NETS_MODE=clash run "别的 docker 网络占了 172.29.77.0/29 → 失败" 1 --no-backup
 has "MCP_NET_SUBNET"; has "CORE_MCP_IP"; has "other_net"
