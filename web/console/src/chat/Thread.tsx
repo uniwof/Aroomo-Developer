@@ -305,6 +305,8 @@ export interface ThreadProps {
   onInserted?: () => void;
   /** 面板打开时对话区仍挂着但藏起来（回复不断、输入不丢；审计 C1） */
   hidden?: boolean;
+  /** 输入框里的「/路由」（规范 §3 Omnibox）：只有选中或回车认得的路由才导航；不认得的照常当一句话发 */
+  routes?: { cmd: string; label: string; go: () => void }[];
   members?: string[];
   fetchImpl?: typeof fetch;
   /** 朗读语速（0.8–1.5，默认 1.0） */
@@ -322,7 +324,7 @@ export interface ThreadProps {
   notice?: ReactNode;
 }
 
-export function Thread({ conversation, onMessages, insert, onInserted, hidden = false, members = [], fetchImpl, speechRate = DEFAULT_RATE, speechOnline = false, onAllowOnlineSpeech, memberName, onRunning, intro, notice }: ThreadProps) {
+export function Thread({ conversation, onMessages, insert, onInserted, hidden = false, routes = [], members = [], fetchImpl, speechRate = DEFAULT_RATE, speechOnline = false, onAllowOnlineSpeech, memberName, onRunning, intro, notice }: ThreadProps) {
   const convRef = useRef(conversation);
   convRef.current = conversation;
   const save = useRef(onMessages);
@@ -467,6 +469,27 @@ export function Thread({ conversation, onMessages, insert, onInserted, hidden = 
 
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionAt, setMentionAt] = useState(0);
+  // 「/路由」建议（切片 4）：整句只有 /字母 时才算路由输入
+  const [routeQ, setRouteQ] = useState<string | null>(null);
+  const [routeAt, setRouteAt] = useState(0);
+  useEffect(() => {
+    const c = runtime.thread.composer;
+    return c.subscribe(() => {
+      const t = c.getState().text;
+      const next = /^\/[a-z/]*$/.test(t) ? t : null;
+      setRouteQ((q) => {
+        if (q !== next) setRouteAt(0);
+        return next;
+      });
+    });
+  }, [runtime]);
+  const routeMatches = routeQ !== null ? routes.filter((r) => r.cmd.startsWith(routeQ)) : [];
+  const goRoute = (r: { go: () => void }) => {
+    runtime.thread.composer.setText('');
+    setRouteQ(null);
+    r.go();
+  };
+  const sugg: 'mention' | 'route' | null = mentionOpen && members.length > 0 ? 'mention' : routeMatches.length > 0 ? 'route' : null;
   // 输入「@」（在开头或空格后）就弹出成员列表（sumus / 方案：「输入 @ 后弹出成员列表」）
   useEffect(() => {
     const c = runtime.thread.composer;
@@ -545,23 +568,48 @@ export function Thread({ conversation, onMessages, insert, onInserted, hidden = 
               ))}
             </ul>
           )}
+          {sugg === 'route' && (
+            // 「/路由」建议：和点名列表同一种组合框、同一种 .pop（不另起样式）
+            <ul id="route-list" role="listbox" className="pop mention-pop" aria-label="前往页面">
+              {routeMatches.map((r, i) => (
+                <li
+                  key={r.cmd}
+                  id={`route-${i}`}
+                  role="option"
+                  aria-selected={i === routeAt}
+                  aria-label={`前往${r.label}（${r.cmd}）`}
+                  className="pop-item"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    goRoute(r);
+                  }}
+                >
+                  <span>{r.cmd}</span>
+                  <span>{r.label}</span>
+                </li>
+              ))}
+            </ul>
+          )}
           <div
             className="composer-keys"
             onKeyDownCapture={(e) => {
-              if (!mentionOpen || !members.length) return;
+              if (!sugg) return;
               const k = e.key;
+              const n = sugg === 'mention' ? members.length : routeMatches.length;
               if (k === 'ArrowDown' || k === 'ArrowUp') {
                 e.preventDefault();
                 e.stopPropagation();
-                setMentionAt((i) => (i + (k === 'ArrowDown' ? 1 : members.length - 1)) % members.length);
+                (sugg === 'mention' ? setMentionAt : setRouteAt)((i) => (i + (k === 'ArrowDown' ? 1 : n - 1)) % n);
               } else if ((k === 'Enter' && !e.shiftKey) || k === 'Tab') {
                 e.preventDefault();
                 e.stopPropagation();
-                mention(members[mentionAt] ?? members[0]!);
+                if (sugg === 'route') goRoute(routeMatches[routeAt] ?? routeMatches[0]!);
+                else mention(members[mentionAt] ?? members[0]!);
               } else if (k === 'Escape') {
                 e.preventDefault();
                 e.stopPropagation();
                 setMentionOpen(false);
+                setRouteQ(null);
               }
             }}
           >
@@ -572,7 +620,7 @@ export function Thread({ conversation, onMessages, insert, onInserted, hidden = 
               placeholder={placeholder}
               aria-label="输入消息"
               aria-describedby="chat-input-hint"
-              {...(mentionOpen && members.length ? { role: 'combobox', 'aria-expanded': true, 'aria-controls': 'mention-list', 'aria-activedescendant': `mention-${mentionAt}`, 'aria-autocomplete': 'list' as const } : {})}
+              {...(sugg ? { role: 'combobox', 'aria-expanded': true, 'aria-controls': sugg === 'mention' ? 'mention-list' : 'route-list', 'aria-activedescendant': sugg === 'mention' ? `mention-${mentionAt}` : `route-${routeAt}`, 'aria-autocomplete': 'list' as const } : {})}
               rows={1}
               autoFocus
             />

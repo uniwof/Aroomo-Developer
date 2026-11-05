@@ -293,6 +293,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     }
     setView(v);
   };
+  const gotoRef = useRef(goto);
+  gotoRef.current = goto;
   const closeSettings = () => navigate(settingsBg, { replace: false });
 
   // 旧链接 /keys、/members… 和 ?view=：换成新地址（替换历史，不多一步后退）；家人打开只给所有者的面板 → 对话
@@ -351,6 +353,24 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   };
 
+  /** 输入框里的「/路由」（规范 §3 Omnibox）：家人看不到只给所有者的页面 */
+  const omniRoutes = useMemo(
+    () =>
+      (
+        [
+          ['/chat', '对话', { kind: 'chat' }],
+          ['/team', '成员', { kind: 'members' }],
+          ['/hub', '资源库', { kind: 'library' }],
+          ['/hub/tools', '工具', { kind: 'tools' }],
+          ['/hub/keys', 'API', { kind: 'keys' }],
+          ['/inbox', '收件箱', { kind: 'inbox' }],
+          ['/settings', '设置', { kind: 'settings' }],
+        ] as [string, string, View][]
+      )
+        .filter(([, , v]) => !(isFamily() && OWNER_ONLY.includes(v.kind)))
+        .map(([cmd, label, v]) => ({ cmd, label, go: () => gotoRef.current(v) })),
+    [],
+  );
   const allowOnlineSpeech = useCallback(() => setPrefs((p) => ({ ...p, speechOnline: true })), []);
   const memberNames = useMemo(() => members.map((m) => m.name), [members]);
 
@@ -553,7 +573,9 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           insert={insert}
           onInserted={() => setInsert(null)}
           hidden={!inChat}
-          members={current.group?.length ? current.group : memberNames}
+          // 单独对话只发给这一位，不弹 @ 列表（切片 4 / 审计 C8）
+          members={current.group?.length ? current.group : singleName ? [] : memberNames}
+          routes={omniRoutes}
           speechRate={prefs.speechRate}
           speechOnline={prefs.speechOnline}
           onAllowOnlineSpeech={allowOnlineSpeech}

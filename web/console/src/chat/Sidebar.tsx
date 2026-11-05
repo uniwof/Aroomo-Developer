@@ -9,7 +9,7 @@
  * 不放点了没反应的按钮。
  * 桌面常显；手机上它就是唯一一层抽屉（外层 <dialog>）：最上面多一排分类（资源库 / 工具 / API / 成员）。
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, Bell, Bot, ChevronDown, MessagesSquare, Pin, Plus, Search, Shapes, SquarePen, Users, X } from 'lucide-react';
 import { isFamily, type Member } from '@/lib/api';
 import type { UsageRow } from '@/lib/usage';
@@ -133,6 +133,22 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
     return `${head}${r.pinned ? '，已置顶' : ''}${q2}，${tab === 'staff' ? '' : '最后一条：'}${r.preview}${r.at ? `，${listTimeLabel(r.at)}` : ''}`;
   };
   const groupLabel = tab === 'staff' ? '助手' : '对话';
+  const listRef = useRef<HTMLUListElement>(null);
+  const openRow = (r: Row) => (tab === 'chats' && r.convId ? onPick(r.convId) : r.lead ? onLead() : r.member ? onMember(r.member) : r.convId && onPick(r.convId));
+  /** 搜索框键盘（切片 4 / 审计 C7）：回车打开第一条结果，↓ 进入结果列表；没结果时回车不做事（列表里已写「没有找到」） */
+  const onSearchKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && rows[0]) {
+      e.preventDefault();
+      if (folded) setFolded(() => false);
+      openRow(rows[0]);
+    } else if (e.key === 'ArrowDown') {
+      const first = listRef.current?.querySelector<HTMLElement>('button.conv');
+      if (first) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  };
 
   return (
     <div className="side-inner">
@@ -168,7 +184,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
           <label className="search2">
             <Search aria-hidden="true" />
             <span className="sr-only">搜索对话</span>
-            <input type="search" placeholder="搜索对话" value={q} onChange={(e) => setQ(e.target.value)} />
+            <input type="search" placeholder="搜索对话" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onSearchKey} />
           </label>
           {/* 新建对话菜单（所有者 11-05 12:15）：默认全员（不 @ 由负责人安排，@ 谁谁答）/ 自己挑成员 / 和某一位单聊；所有者另有「添加成员」 */}
           <div className="topic">
@@ -222,7 +238,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
           <ChevronDown aria-hidden="true" className={folded ? 'folded' : undefined} />
         </button>
         {!folded && (
-          <ul className="conv-list" aria-label={tab === 'staff' ? '助手列表' : '会话列表'}>
+          <ul ref={listRef} className="conv-list" aria-label={tab === 'staff' ? '助手列表' : '会话列表'}>
             {rows.map((r) => (
               <li key={r.key}>
                 <button
@@ -230,7 +246,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
                   className="conv"
                   aria-current={isCurrent(r) ? 'true' : undefined}
                   aria-label={labelOf(r)}
-                  onClick={() => (tab === 'chats' && r.convId ? onPick(r.convId) : r.lead ? onLead() : r.member ? onMember(r.member) : r.convId && onPick(r.convId))}
+                  onClick={() => openRow(r)}
                 >
                   <Avatar name={r.name} kind={r.kind} />
                   <span className="conv-text">
