@@ -1929,6 +1929,7 @@ kbd.row-value {
 }
 /* 筛选照 sumus 分类标签：靠左、按内容宽，不拉满整行 */
 .panel > .seg,
+.page > .inbox-filter,
 .group-block > .seg {
   align-self: flex-start;
 }
