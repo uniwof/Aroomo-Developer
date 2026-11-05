@@ -41,7 +41,7 @@ import { PgUserStore } from './users/pg.js';
 import type { UserStore } from './users/types.js';
 import { MemoryAssistantStore } from './assistants/memory.js';
 import { PgAssistantStore } from './assistants/pg.js';
-import type { AssistantStore } from './assistants/types.js';
+import type { AssistantStore, BudgetLevel } from './assistants/types.js';
 import { MemoryConversationStore } from './conversations/memory.js';
 import { PgConversationStore } from './conversations/pg.js';
 import type { ConversationStore } from './conversations/types.js';
@@ -75,7 +75,10 @@ export interface CoreDeps {
   litellm?: LiteLLMAdmin;
   /** 测试时注入：助手每次最长运行时间（秒 → 毫秒）的换算，和「是否免费模型」的判定 */
   assistantTimeoutMs?: (sec: number) => number;
-  assistantIsFree?: (memberName: string) => boolean;
+  /** 按真实模型串（Key 的 model）判断免费；不传 = 能力种子清单 */
+  assistantIsFree?: (model: string) => boolean;
+  /** 测试用：每次 / 每天调用上限 */
+  assistantBudgets?: Record<BudgetLevel, { perRun: number; perDay: number }>;
   /** 有数据库时才有；关闭服务时一并关闭 */
   db?: Db;
 }

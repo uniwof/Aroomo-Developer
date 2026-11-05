@@ -10,6 +10,7 @@
  * - 重启：进行中的运行改成 failed/server_restart（recoverAfterRestart，启动时调用）。
  *   shortcut: 按单实例实现（进程内记着哪些在跑），多实例部署时改成心跳 + 超时认领。
  */
+import { createHash } from 'node:crypto';
 import type { AuditFn } from '../audit/types.js';
 import { handoffAllowed, notificationText, stripToolMarkup } from '../borrowed/ekko.js';
 import { CAPABILITY_SEED } from '../capabilities/seed.js';
@@ -38,14 +39,34 @@ export const BUDGETS: Record<BudgetLevel, { perRun: number; perDay: number }> = 
 };
 const CONTENT_MAX = 20_000;
 
+/** 种子清单里免费文字模型的服务商 → LiteLLM 模型串前缀。别的服务商（含不带前缀的串，LiteLLM 默认按 openai 走）一律当付费。 */
+const FREE_PROVIDER_PREFIX: Record<string, string> = { Groq: 'groq', 'NVIDIA NIM': 'nvidia_nim', 'Google Gemini': 'gemini' };
+
 /**
- * 是否免费模型：按能力清单（种子数据）里 access=free 的文字模型名比对成员名。判不出来一律当付费。
- * shortcut: 只认种子清单，成员接入新的免费模型时要补清单；以后改读 LiteLLM 的模型价格。
+ * 是否免费模型：按真实模型串（Key 的 model，例如 groq/gpt-oss-120b）比对能力清单（种子数据）里 access=free 的文字模型，
+ * 服务商前缀也要对上。成员名字 / Key 里自取的对外名都是可以随便起的，不参与判断。判不出来一律当付费。
+ * shortcut: 只认种子清单；成员接入新的免费模型时要补清单（免钥匙的 Pollinations / Workers AI 现在也当付费）；以后改读 LiteLLM 的模型价格。
  */
-export function isFreeModel(memberName: string): boolean {
-  const n = memberName.trim().toLowerCase();
-  return CAPABILITY_SEED.items.some((i) => i.kind === 'text' && i.access === 'free' && (n === i.name.toLowerCase() || n.endsWith(`/${i.name.toLowerCase()}`)));
+export function isFreeModel(model: string): boolean {
+  const n = model.trim().toLowerCase();
+  return CAPABILITY_SEED.items.some((i) => {
+    const prefix = FREE_PROVIDER_PREFIX[i.provider];
+    return i.kind === 'text' && i.access === 'free' && prefix !== undefined && n === `${prefix}/${i.name.toLowerCase()}`;
+  });
 }
+
+/** 成员 → 它在模型网关里实际会调到的模型串（成员名 = Key 的对外名 modelName；同名多个部署时 LiteLLM 会轮着用，所以全算上） */
+export type DeploymentModel = { modelName: string; model: string };
+const modelsOf = (m: Member, deployments: DeploymentModel[]): string[] =>
+  [...new Set(deployments.filter((d) => d.modelName.trim().toLowerCase() === m.name.trim().toLowerCase()).map((d) => d.model.trim().toLowerCase()))].sort();
+
+/** 付费确认卡上那组成员 + 它们的真实模型的指纹；同意只对这一组有效 */
+export function paidSetHash(paid: Array<{ member: Member; models: string[] }>): string {
+  const rows = paid.map((p) => [p.member.id, p.member.name, p.models]).sort((x, y) => String(x[0]).localeCompare(String(y[0])));
+  return createHash('sha256').update(JSON.stringify(rows)).digest('hex').slice(0, 16);
+}
+/** 确认步骤的 detail 开头记指纹（界面上 foldSteps 会去掉） */
+export const SET_MARK = /^\[set:([0-9a-f]{16})\] /;
 
 export type ChatCall = (req: Record<string, unknown>, signal: AbortSignal) => Promise<ChatResult>;
 
@@ -61,7 +82,12 @@ export interface RunnerDeps {
   now: () => Date;
   /** 「每天」的边界按这个时区（CORE_TIMEZONE） */
   timezone: string;
-  isFree?: (memberName: string) => boolean;
+  /** 这个账号的 Key 部署（对外名 → 真实模型串），判断成员是不是免费模型用 */
+  deploymentsFor: (userId: string) => Promise<DeploymentModel[]>;
+  /** 按真实模型串判断免费（默认 isFreeModel） */
+  isFree?: (model: string) => boolean;
+  /** 测试用：换掉每次 / 每天的调用上限 */
+  budgets?: Record<BudgetLevel, { perRun: number; perDay: number }>;
   /** 测试用：把 max_runtime_sec 换算成毫秒 */
   timeoutMs?: (sec: number) => number;
 }
@@ -204,7 +230,10 @@ export class AssistantRunner implements RunLauncher {
       if (run) break;
     }
     const confirm = events.filter((e) => e.action === 'confirm');
-    return { run, events, confirmStep: confirm.at(-1)?.stepNo ?? null, approved: confirm.some((e) => e.status === 'done') };
+    // 同意只对最近一次等确认时卡上那组成员有效：记下那次的指纹，执行时和当前成员组比
+    const waiting = confirm.filter((e) => e.status === 'waiting_confirmation').at(-1);
+    const approvedSet = waiting && confirm.some((e) => e.seq > waiting.seq && e.status === 'done') ? (SET_MARK.exec(waiting.detail)?.[1] ?? null) : null;
+    return { run, events, confirmStep: confirm.at(-1)?.stepNo ?? null, approvedSet };
   }
 
   async #step(userId: string, runId: string, stepNo: number, memberId: string | null, action: StepAction, status: StepStatus, detail = ''): Promise<void> {
@@ -218,17 +247,24 @@ export class AssistantRunner implements RunLauncher {
     if (!a) return;
     const run = await this.d.store.updateRun(userId, runId, ['queued'], { status: 'running', ...(ctx.run.startedAt ? {} : { startedAt: this.d.now() }) });
     if (!run) return;
-    const budget = BUDGETS[a.budgetLevel];
-    const dayUsed = await this.d.store.callsSince(userId, startOfDay(this.d.now(), this.d.timezone));
+    const budget = (this.d.budgets ?? BUDGETS)[a.budgetLevel];
+    const dayStart = startOfDay(this.d.now(), this.d.timezone);
     let calls = run.calls;
     const timer = setTimeout(() => ctrl.abort('timeout'), (this.d.timeoutMs ?? ((s) => s * 1000))(a.maxRuntimeSec));
     const chat = this.d.chatFor(userId);
     let nextStep = ctx.events.reduce((n, e) => Math.max(n, e.stepNo + 1), 0);
     const usage = (): UsageState => (calls >= budget.perRun ? 'exhausted' : calls >= budget.perRun * 0.75 ? 'tight' : 'ample');
 
+    // 每个成员这次运行开始时的模型（名字 + 真实模型串）；中途被改名 / 换了 Key 的模型 → 停下，不拿旧的确认去调新模型
+    const snapshot = new Map<string, string>();
+    const modelKey = (m: Member, deps: DeploymentModel[]) => JSON.stringify([m.name, modelsOf(m, deps)]);
     const ask = async (m: Member, prompt: string): Promise<string> => {
-      if (calls >= budget.perRun || dayUsed + calls >= budget.perDay) throw new RunFail('budget');
-      calls++;
+      const [now, deps] = await Promise.all([this.d.membersFor(userId).get(m.id), this.d.deploymentsFor(userId)]);
+      if (!now || !usableMember(now) || modelKey(now, deps) !== snapshot.get(m.id)) throw new RunFail('no_member');
+      // 每次调用前在库里原子占名额（并发的运行也冲不破每天上限）
+      const n = await this.d.store.reserveCall(userId, runId, dayStart, budget.perRun, budget.perDay);
+      if (n === null) throw new RunFail('budget');
+      calls = Math.max(calls, n);
       const res = await chat(
         {
           model: `aroomo/${m.id}`,
@@ -246,21 +282,28 @@ export class AssistantRunner implements RunLauncher {
     };
 
     try {
-      const live = (await this.d.membersFor(userId).listAll()).filter(usableMember);
+      const [all, deployments] = await Promise.all([this.d.membersFor(userId).listAll(), this.d.deploymentsFor(userId)]);
+      const live = all.filter(usableMember);
       const pick = (id: string | null) => live.find((m) => m.id === id) ?? null;
       const lead = pick(a.leadMemberId);
       if (!lead) throw new RunFail('no_member');
       let workers = a.members.filter((m) => m.role === 'worker').map((m) => pick(m.memberId)).filter((m): m is Member => m !== null);
+      for (const m of [lead, ...workers]) snapshot.set(m.id, modelKey(m, deployments));
+      // 免费 = 它实际会调到的每个真实模型都在种子清单的免费项里；找不到 Key 部署 → 当付费
+      const isFree = (m: Member) => {
+        const ms = modelsOf(m, deployments);
+        return ms.length > 0 && ms.every(this.#isFree);
+      };
 
-      // 额度：low 只用免费模型；mid/high 有付费成员先等确认
+      // 额度：low 只用免费模型；mid/high 有付费成员先等确认（同意只认卡上那组成员和模型）
       if (a.budgetLevel === 'low') {
-        if (!this.#isFree(lead.name)) throw new RunFail('budget');
-        for (const w of workers.filter((x) => !this.#isFree(x.name))) await this.#step(userId, runId, nextStep++, w.id, 'work', 'skipped', '低额度只用免费模型');
-        workers = workers.filter((x) => this.#isFree(x.name));
-      } else if (!ctx.approved) {
-        const paid = [lead, ...workers].filter((x) => !this.#isFree(x.name));
-        if (paid.length > 0) {
-          await this.#waitForConfirmation(a, run, paid, nextStep);
+        if (!isFree(lead)) throw new RunFail('budget');
+        for (const w of workers.filter((x) => !isFree(x))) await this.#step(userId, runId, nextStep++, w.id, 'work', 'skipped', '低额度只用免费模型');
+        workers = workers.filter(isFree);
+      } else {
+        const paid = [lead, ...workers].filter((x) => !isFree(x)).map((member) => ({ member, models: modelsOf(member, deployments) }));
+        if (paid.length > 0 && ctx.approvedSet !== paidSetHash(paid)) {
+          await this.#waitForConfirmation(a, run, paid, nextStep, ctx.approvedSet !== null);
           throw new Paused('waiting');
         }
       }
@@ -309,7 +352,7 @@ export class AssistantRunner implements RunLauncher {
       summary = (summary || '（组长没有给出结果）').slice(0, CONTENT_MAX);
       const msg = await this.d.service.postAsAssistant(userId, a.id, a.conversationId, { role: 'member', memberId: lead.id, runId, content: summary });
       const done = await this.d.store.updateRun(userId, runId, ['running'], {
-        status: 'succeeded', finishedAt: this.d.now(), summary, calls, usageState: usage(), messageIds: [...run.messageIds, msg.id],
+        status: 'succeeded', finishedAt: this.d.now(), summary, usageState: usage(), messageIds: [...run.messageIds, msg.id],
       });
       if (!done) return; // 中途被取消 / 被重启恢复改掉了
       if (a.notify) {
@@ -322,11 +365,11 @@ export class AssistantRunner implements RunLauncher {
       await this.#auditRun(a, done, [lead, ...workers]);
     } catch (e) {
       if (e instanceof Paused) {
-        if (e.message === 'cancelled') await this.d.store.updateRun(userId, runId, ['running'], { status: 'cancelled', finishedAt: this.d.now(), calls });
+        if (e.message === 'cancelled') await this.d.store.updateRun(userId, runId, ['running'], { status: 'cancelled', finishedAt: this.d.now() });
         return;
       }
       const code: RunFailureCode = e instanceof RunFail ? e.code : ((e as { code?: ChatFailureCode }).code ?? 'upstream_error');
-      const failed = await this.d.store.updateRun(userId, runId, ['running'], { status: 'failed', failureCode: code, finishedAt: this.d.now(), calls, usageState: usage() });
+      const failed = await this.d.store.updateRun(userId, runId, ['running'], { status: 'failed', failureCode: code, finishedAt: this.d.now(), usageState: usage() });
       if (failed) await this.#reportFailure(a, failed, code);
     } finally {
       clearTimeout(timer);
@@ -345,9 +388,11 @@ export class AssistantRunner implements RunLauncher {
     }
   }
 
-  async #waitForConfirmation(a: Assistant, run: AssistantRun, paid: Member[], stepNo: number): Promise<void> {
+  async #waitForConfirmation(a: Assistant, run: AssistantRun, paidSet: Array<{ member: Member; models: string[] }>, stepNo: number, changed: boolean): Promise<void> {
+    const paid = paidSet.map((p) => p.member);
     const names = paid.map((m) => m.name).join('、');
-    await this.#step(a.userId, run.id, stepNo, null, 'confirm', 'waiting_confirmation', `要调用付费模型：${names}`);
+    const why = changed ? '成员或模型变了，之前的同意作废，需要重新确认。' : '';
+    await this.#step(a.userId, run.id, stepNo, null, 'confirm', 'waiting_confirmation', `[set:${paidSetHash(paidSet)}] ${why}要调用付费模型：${names}`);
     await this.d.store.updateRun(a.userId, run.id, ['running'], { status: 'waiting_confirmation' });
     await this.d.service.postAsAssistant(a.userId, a.id, a.conversationId, { role: 'system', memberId: null, runId: run.id, content: `这次运行要调用付费模型（${names}），等你在铃铛里确认。` });
     await this.d.inbox.createInboxItem(

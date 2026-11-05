@@ -133,6 +133,13 @@ async function insertRunQ(q: Queryable, r: AssistantRun): Promise<InsertRunResul
   return rows[0] ? 'ok' : 'conflict';
 }
 
+async function insertMessageQ(q: Queryable, userId: string, m: ConversationMessage): Promise<void> {
+  await q.query(
+    'INSERT INTO conversation_messages (id, conversation_id, user_id, role, member_id, run_id, content, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+    [m.id, m.conversationId, userId, m.role, m.memberId, m.runId, m.content, m.createdAt],
+  );
+}
+
 async function writeMembers(q: Queryable, a: Assistant): Promise<void> {
   await q.query('DELETE FROM assistant_members WHERE assistant_id = $1 AND user_id = $2', [a.id, a.userId]);
   for (const m of a.members) {
@@ -187,7 +194,7 @@ export class PgAssistantStore implements AssistantStore {
     return rows[0] ? toAssistant(rows[0]) : null;
   }
 
-  async createAssistant(userId: string, a: Assistant, c: Conversation): Promise<InsertRunResult> {
+  async createAssistant(userId: string, a: Assistant, c: Conversation, opening: ConversationMessage): Promise<InsertRunResult> {
     try {
       await this.#u(userId).tx(async (q) => {
         await q.query(
@@ -202,6 +209,7 @@ export class PgAssistantStore implements AssistantStore {
             a.budgetLevel, a.notify, a.conversationId, a.nextRunAt, a.pausedAt, a.idempotencyKey, a.idempotencyHash, a.createdAt, a.updatedAt],
         );
         await writeMembers(q, { ...a, userId });
+        await insertMessageQ(q, userId, opening);
       });
       return 'ok';
     } catch (e) {
@@ -286,9 +294,19 @@ export class PgAssistantStore implements AssistantStore {
     }
   }
 
-  async callsSince(userId: string, since: Date): Promise<number> {
-    const { rows } = await this.#u(userId).query<{ n: number }>('SELECT coalesce(sum(calls), 0)::int AS n FROM assistant_runs WHERE user_id = $1 AND requested_at >= $2', [userId, since]);
-    return Number(rows[0]?.n ?? 0);
+  async reserveCall(userId: string, runId: string, since: Date, perRun: number, perDay: number): Promise<number | null> {
+    return this.#u(userId).tx(async (q) => {
+      // 同一账号的占用排队：拿到锁后这条 UPDATE 用新快照，看得到别的运行刚提交的 +1
+      await q.query("SELECT pg_advisory_xact_lock(hashtext('aroomo.assistant_calls'), hashtext($1))", [userId]);
+      const { rows } = await q.query<{ calls: number }>(
+        `UPDATE assistant_runs SET calls = calls + 1
+          WHERE id = $1 AND user_id = $2 AND calls < $3
+            AND (SELECT coalesce(sum(calls), 0) FROM assistant_runs WHERE user_id = $2 AND requested_at >= $4) < $5
+        RETURNING calls`,
+        [runId, userId, perRun, since, perDay],
+      );
+      return rows[0] ? Number(rows[0].calls) : null;
+    });
   }
 
   async appendStep(userId: string, e: Omit<RunStepEvent, 'seq'>): Promise<RunStepEvent> {
@@ -311,10 +329,7 @@ export class PgAssistantStore implements AssistantStore {
   }
 
   async appendMessage(userId: string, m: ConversationMessage): Promise<void> {
-    await this.#u(userId).query(
-      'INSERT INTO conversation_messages (id, conversation_id, user_id, role, member_id, run_id, content, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
-      [m.id, m.conversationId, userId, m.role, m.memberId, m.runId, m.content, m.createdAt],
-    );
+    await insertMessageQ(this.#u(userId), userId, m);
   }
 
   async listMessages(userId: string, conversationId: string, limit: number, afterSeq?: number): Promise<ConversationMessage[]> {

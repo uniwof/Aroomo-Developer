@@ -381,8 +381,11 @@ export function buildServer(
     audit: bindAudit(deps.auditLog, { type: "system", id: "assistants" }),
     now: deps.now,
     timezone: cfg.timezone,
+    // 成员名 = Key 的对外名；免费与否按 Key 的真实模型串判断（账号只看自己的 Key）
+    deploymentsFor: async (u) => (await deps.keys.list(u === "owner" ? undefined : u)).map((k) => ({ modelName: k.modelName, model: k.model })),
     ...(deps.assistantTimeoutMs ? { timeoutMs: deps.assistantTimeoutMs } : {}),
     ...(deps.assistantIsFree ? { isFree: deps.assistantIsFree } : {}),
+    ...(deps.assistantBudgets ? { budgets: deps.assistantBudgets } : {}),
   });
   assistantSvc.setLauncher(assistantRunner);
   // 控制台原生对话（#250 spike）：控制台会话 Cookie + CSRF 头 → 同一个 ChatService 和 ctxFor（D31 路由 / 署名不变）

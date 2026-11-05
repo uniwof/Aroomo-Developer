@@ -28,7 +28,7 @@
 
 ## 4. 「运行一次」与执行器
 - 在 Core 进程内跑，**整次运行都在建它的账号的数据范围里（userScoped），不用超级权限**。组长分工（要求 JSON，解析失败就把任务说明原样给每位成员）→ 成员各做 → 组长汇总写 summary；只有组长一人时组长直接做。转交深度上限 4（借 Ekko handoff-depth）。成员调用复用 ChatService 的 `aroomo/<成员>` 路径（规矩、用量计数照旧）。
-- 硬限制：max_runtime_sec 到时整次中止 → failed/timeout；每次与每天调用次数按 budget_level（low 8/40、mid 16/80、high 32/160，配置在 `assistants/budget.ts`，前端不显示数字），超出 → failed/budget；**low 只用免费模型**（按能力清单判定，判不出算付费）：付费成员跳过，组长付费则 failed/budget；mid/high 有付费成员 → 先停在 waiting_confirmation，收件箱发「付费调用」重要确认卡（kind=payment），同意后同一条运行继续，拒绝 → cancelled。外发、删除类动作本阶段成员没有工具可调，不会发生。
+- 硬限制：max_runtime_sec 到时整次中止 → failed/timeout；每次与每天调用次数按 budget_level（low 8/40、mid 16/80、high 32/160，配置在 `assistants/budget.ts`，前端不显示数字），每次调用前在库里原子占名额（PG 按账号 advisory lock + UPDATE … RETURNING 带上限条件），并发运行也冲不破每天上限，超出 → failed/budget；**low 只用免费模型**（按成员对应 Key 的真实模型串 `model` 对能力清单的免费项和服务商前缀判定；成员名 / Key 对外名不参与；找不到 Key 部署或判不出算付费；运行中途成员的名字或模型变了 → failed/no_member）：付费成员跳过，组长付费则 failed/budget；mid/high 有付费成员 → 先停在 waiting_confirmation，收件箱发「付费调用」重要确认卡（kind=payment），同意后同一条运行继续，拒绝 → cancelled；同意只对卡上那组付费成员和模型有效（确认步骤记指纹），等确认期间成员组或模型变了 → 同意作废、重发确认卡。外发、删除类动作本阶段成员没有工具可调，不会发生。
 - 每次运行写审计 `assistant.run`（谁的助手、触发方式、用了哪些成员、结果）。
 - **重启中途**：启动时把 queued/running 的运行改成 failed/server_restart，并在固定会话追加一行系统消息、进收件箱（shortcut：按单实例实现，多实例时改心跳）。跨账号查找用 systemScoped 只读（进白名单），改写切 userScoped。
 - 定时循环 `core/src/scheduler/*` 已写、**默认关**（`ASSISTANT_SCHEDULER_ENABLED=false` 时根本不注册任务）：两步认领（systemScoped 只读找到期 → userScoped `FOR UPDATE SKIP LOCKED`）、同一助手不并发、错过的运行：skip 记一条 skipped / latest 只补最近一次、最短间隔 1 小时。阶段 3 才开。

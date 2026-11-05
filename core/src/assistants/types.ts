@@ -141,8 +141,8 @@ export interface AssistantStore {
   listAssistants(userId: string): Promise<AssistantSummary[]>;
   getAssistant(userId: string, id: string): Promise<Assistant | null>;
   findAssistantByKey(userId: string, key: string): Promise<Assistant | null>;
-  /** 原子：会话 + 助手 + 成员组；同一个幂等键已存在 → 'conflict' */
-  createAssistant(userId: string, a: Assistant, conv: Conversation): Promise<InsertRunResult>;
+  /** 原子：会话 + 助手 + 成员组 + 开场白（一个事务，任何一步失败都不留半个助手）；同一个幂等键已存在 → 'conflict' */
+  createAssistant(userId: string, a: Assistant, conv: Conversation, opening: ConversationMessage): Promise<InsertRunResult>;
   /** 整行覆盖（含成员组）；不属于 userId → false */
   updateAssistant(userId: string, a: Assistant): Promise<boolean>;
   /** 删除助手（运行、步骤随之删除）和它的固定会话 */
@@ -155,8 +155,11 @@ export interface AssistantStore {
   listRuns(userId: string, assistantId: string, limit: number, before?: Date): Promise<AssistantRun[]>;
   /** 比较并交换：只有当前状态在 from 里才改，返回改后的运行 */
   updateRun(userId: string, runId: string, from: readonly RunStatus[], patch: Partial<Omit<AssistantRun, 'id' | 'assistantId' | 'userId'>>): Promise<AssistantRun | null>;
-  /** 今天（since 之后请求的运行）一共调用了多少次 */
-  callsSince(userId: string, since: Date): Promise<number>;
+  /**
+   * 原子地占一次模型调用：这次运行的 calls < perRun，且本账号 since 之后请求的运行合计 < perDay，才把 calls +1 并返回新值；
+   * 不够 → null。同一账号的并发运行在这里排队（PG：按账号的事务级 advisory lock），每天上限不会被并发冲破。
+   */
+  reserveCall(userId: string, runId: string, since: Date, perRun: number, perDay: number): Promise<number | null>;
 
   appendStep(userId: string, e: Omit<RunStepEvent, 'seq'>): Promise<RunStepEvent>;
   listSteps(userId: string, runId: string): Promise<RunStepEvent[]>;
