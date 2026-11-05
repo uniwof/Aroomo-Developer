@@ -25,8 +25,16 @@ export interface ChatMessageMeta {
   /** X-05：这条回复里的工具调用（已脱敏；家人账号的只有摘要），只由 Core 写 */
   tools?: ToolPartData[];
   imported?: true;
+  /** X-19 摘要行（role = 'system'）：text 给模型看；toSeq = 被整理的最后一条原文；keep = 当时留着没整理的条数 */
+  summary?: SummaryMeta;
   /** 回复是哪几位成员答的：成员 id + 名字快照（裁定 16/17；Core 选的人，不收浏览器传来的） */
   answeredBy?: Array<{ memberId: string; name: string }>;
+}
+
+export interface SummaryMeta {
+  text: string;
+  toSeq: number;
+  keep: number;
 }
 
 export interface ChatMessage {
@@ -35,7 +43,8 @@ export interface ChatMessage {
   seq?: number;
   conversationId: string;
   userId: string;
-  role: 'user' | 'assistant';
+  /** system = X-19 摘要行（content 是给人看的那行灰字，摘要在 meta.summary） */
+  role: 'user' | 'assistant' | 'system';
   content: string;
   meta: ChatMessageMeta | null;
   createdAt: Date;
@@ -61,6 +70,12 @@ export interface ListQuery {
 
 export type CreateResult = 'ok' | 'exists' | 'conflict';
 
+/** X-09 搜索的一条命中（只有用户话和回复；摘要行不算） */
+export interface SearchHit {
+  message: ChatMessage;
+  title: string;
+}
+
 /**
  * 存储：每个方法都带 userId，只读写这个账号的行（PG 实现每个事务开头设 app.user_id，D206 RLS）。
  * 只认 kind = 'chat' 的会话：助手会话的 id 当作不存在。
@@ -75,6 +90,12 @@ export interface ConversationStore {
   append(userId: string, m: ChatMessage): Promise<ChatMessage | null>;
   /** 按 seq 分页：afterSeq = 往后（升序）；beforeSeq = 往前（取最近的 limit 条，仍按升序返回）；都不给 = 最近的 limit 条 */
   messages(userId: string, conversationId: string, q: { limit: number; afterSeq?: number; beforeSeq?: number }): Promise<ChatMessage[]>;
+  /** X-09：本账号未归档聊天会话里，正文包含 text（不分大小写、子串）的用户话和回复，按 seq 倒序 */
+  search(userId: string, q: { text: string; limit: number; beforeSeq?: number }): Promise<SearchHit[]>;
+  /** X-19：这个会话最新的摘要行；没有 = null */
+  latestSummary(userId: string, conversationId: string): Promise<ChatMessage | null>;
+  /** X-19：这个账号从 since 起写了几行摘要（每天的次数上限） */
+  countSummariesSince(userId: string, since: Date): Promise<number>;
 }
 
 export const TITLE_MAX = 200;

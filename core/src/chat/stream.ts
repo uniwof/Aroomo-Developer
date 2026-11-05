@@ -13,6 +13,7 @@
  * - 落库（会话存库）：请求带 conversationId 时，先确认是本账号的聊天会话（否则 404，和不存在一样），
  *   追加用户这句话（retry = true 时不追加：重试是同一句话再问一次），回复完整结束后追加回复（点了停止就存已收到的部分，出错不存）。
  *   只追加（X-21）；生成期间这个会话算「进行中」（X-27）。不带 conversationId = 不落库（旧前端、本机会话）。
+ * - 长会话（X-19）：带 conversationId 时先交给 Compactor，太长就用免费模型压缩，发给模型的是「摘要 + 之后的原文」（原文不删）。
  */
 import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
@@ -22,6 +23,7 @@ import { CSRF_HEADER, readSessionCookie } from '../auth/session-cookie.js';
 import { HttpError } from '../http/errors.js';
 import { CHAT_MODEL, MEMBER_MODEL_PREFIX, type ChatFailureCode, type ChatService, type ChatUserCtx } from './service.js';
 import type { ConversationService } from '../conversations/service.js';
+import type { Compactor, Turn } from '../conversations/compact.js';
 import type { ChatMessageMeta } from '../conversations/types.js';
 import { TOOL_PART, ToolCollector, fitForStorage, type ToolDetail, type ToolPartData } from './tool-parts.js';
 
@@ -133,6 +135,11 @@ export const FAILURE_TEXT: Record<ChatFailureCode, string> = {
 };
 /** 失败码随 error 一起发给浏览器（AI SDK UI Message Stream 的 data-* 部件，transient = 不进消息历史），界面据此决定显示「重试」还是「去检查 Key」 */
 export const FAILURE_PART = 'data-aroomo-failure';
+/** X-19：这次发话前刚压缩过（transient）：{ keep: 留着原文的条数, text: 灰字 }，前端在留下的原文前插那行灰字 */
+export const COMPACTED_PART = 'data-aroomo-compacted';
+/** 该压缩却没压成、只带了最近的原文（transient，不存库）：{ text }，前端在这条回复上面放这行灰字（负责人阶段 3 必改 3） */
+export const TRUNCATED_PART = 'data-aroomo-truncated';
+export const TRUNCATED_TEXT = '这段对话太长，这次只带了最近的内容';
 const failureEvents = (code: ChatFailureCode) => [sse({ type: FAILURE_PART, data: { code }, transient: true }), sse({ type: 'error', errorText: FAILURE_TEXT[code] })];
 
 /**
@@ -152,6 +159,10 @@ export function toUiMessageStream(
     toolDetail?: ToolDetail;
     /** 上游读失败时问一句：是不是浏览器先断开的（是 = 当作停止） */
     wasAborted?: () => boolean;
+    /** X-19：开头先发一个「刚压缩过」部件 */
+    compacted?: { keep: number; text: string } | null;
+    /** 压缩没跑成、只带了最近的原文：开头发一行灰字部件 */
+    truncated?: boolean;
   } = {},
 ): ReadableStream<Uint8Array> {
   const messageId = opts.messageId ?? `msg_${randomUUID()}`;
@@ -225,6 +236,8 @@ export function toUiMessageStream(
       if (!started) {
         started = true;
         c.enqueue(sse({ type: 'start', messageId }));
+        if (opts.compacted) c.enqueue(sse({ type: COMPACTED_PART, data: opts.compacted, transient: true }));
+        if (opts.truncated) c.enqueue(sse({ type: TRUNCATED_PART, data: { text: TRUNCATED_TEXT }, transient: true }));
         c.enqueue(sse({ type: 'start-step' }));
         c.enqueue(sse({ type: 'text-start', id: textId }));
         if (!reader) return await finish(c);
@@ -304,6 +317,8 @@ export interface ChatStreamOptions {
   now?: () => number;
   /** 会话存库：给了才认请求里的 conversationId */
   conversations?: ConversationService;
+  /** X-19 长会话自动压缩（只对带 conversationId 的请求） */
+  compactor?: Compactor;
 }
 
 /** 只认控制台会话：没有 Cookie / 带了 Authorization / 不是账号 / 没有 CSRF 头 → 拒绝；返回数据范围（scopeOf：账号 id，所有者自己的账号 = 'owner'） */
@@ -388,7 +403,17 @@ export function registerChatStreamRoute(app: FastifyInstance, chat: ChatService,
         try {
           // 浏览器已经走了：不再调模型（中断的信号也会让上游请求立刻失败，这里省掉那一次）
           if (ctrl.signal.aborted) throw new Error('client gone');
-          const out = await chat.complete({ model, stream: true, messages }, ctrl.signal, scope === 'owner' ? undefined : opts.ctxFor(scope));
+          // X-19：会话太长时先压缩（免费模型、原文不删）；发给模型的是「摘要 + 摘要之后的原文」。出错就照旧用浏览器发来的
+          let send: Turn[] = messages;
+          let compacted: { keep: number; text: string } | null = null;
+          let truncated = false;
+          if (convs && convId && opts.compactor) {
+            const p = await opts.compactor.prepare(scope, convId, messages, req.body.retry === true, ctrl.signal).catch(() => null);
+            if (p) ({ messages: send, compacted } = p);
+            truncated = p?.truncated === true;
+            if (ctrl.signal.aborted) throw new Error('client gone');
+          }
+          const out = await chat.complete({ model, stream: true, messages: send }, ctrl.signal, scope === 'owner' ? undefined : opts.ctxFor(scope));
           if (out.failure) {
             // 整条回复都失败：不发那段提示文字，改发 error（只有固定的一句话 + 失败码）。/v1 不走这里，行为不变
             await out.stream?.cancel().catch(() => undefined);
@@ -411,12 +436,14 @@ export function registerChatStreamRoute(app: FastifyInstance, chat: ChatService,
               onFinish: (t, tl) => save('assistant', t, metaWith(tl)),
               onCancel: (t, tl) => void save('assistant', t, metaWith(tl)),
               wasAborted: () => ctrl.signal.aborted,
+              compacted,
+              truncated,
             });
           }
           else {
             // 理论上 stream:true 总是返回流；万一是 JSON，就把文字一次性发出去
             const text = (out.json as { choices?: Array<{ message?: { content?: unknown } }> } | undefined)?.choices?.[0]?.message?.content;
-            body = toUiMessageStream(oneShot(typeof text === 'string' ? text : ''), { onDone: release, onFinish: (t) => save('assistant', t, out.answeredBy ? { answeredBy: out.answeredBy } : null) });
+            body = toUiMessageStream(oneShot(typeof text === 'string' ? text : ''), { onDone: release, onFinish: (t) => save('assistant', t, out.answeredBy ? { answeredBy: out.answeredBy } : null), compacted, truncated });
           }
         } catch {
           body = errorStream('upstream_error');

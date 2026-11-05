@@ -2,15 +2,15 @@
  * 会话列表栏（2026-11-04 所有者：完全照 sumus 登录后的界面，300px 宽、极浅灰底；之后再逐个改功能）：
  *   顶部 48px：「Aroomo」+ 右边小铃铛（通知 / 收件箱）
  *   分段控件「对话 / 助手」（所有者 11-05 12:16 定名：助手=为一个长期任务设的单位，一个成员或几个成员的小团队）（sumus 的 Chat / Activity 位置；同一栏的两种列表，不是标签页）
- *   搜索框 + 新对话
+ *   搜索框 + 新对话（X-09：「对话」里输入时，下面多一组「消息」= 在 Core 里搜消息正文，点一条打开那个会话并停在那条消息；Ctrl/⌘K 聚焦搜索框）
  *   分组标题「对话 ∨」（点了收起 / 展开）
  *   会话行：头像 + 名字 + 时间 / 一行预览 + 置顶图钉
  *   底部：「资源库 · + 添加」「成员」（负责人落地文档 3.5；「邀请」「连接应用」、用户行不放）
  * 不放点了没反应的按钮。
  * 桌面常显；手机上它就是唯一一层抽屉（外层 <dialog>）：最上面多一排分类（资源库 / 工具 / API / 成员）。
  */
-import { useEffect, useMemo, useState } from 'react';
-import { Activity, Bell, Bot, CalendarClock, ChevronDown, MessagesSquare, Pin, Plus, Search, Shapes, SquarePen, Users, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Activity, Bell, Bot, CalendarClock, ChevronDown, MessageSquareText, MessagesSquare, Pin, Plus, Search, Shapes, SquarePen, Users, X } from 'lucide-react';
 import { isFamily, type Member } from '@/lib/api';
 import type { Assistant } from '@/lib/assistants';
 import { FLAGS } from '@/lib/flags';
@@ -19,6 +19,7 @@ import type { UsageRow } from '@/lib/usage';
 import { Avatar, type AvatarKind } from './Avatar';
 import { quotaState, type RailTarget } from './Rail';
 import { listTimeLabel, previewText, type Conversation } from './store';
+import { searchMessages, type SearchResult } from './saved';
 
 type Tab = 'staff' | 'chats';
 
@@ -74,9 +75,24 @@ export interface SidebarProps {
   filterable?: boolean;
   /** 本页正在生成回复的会话（Core 的进行中要等列表刷新） */
   runningId?: string | null;
+  /** X-09：会话存在 Core 时才有：搜消息正文，点结果打开会话并停在那条消息 */
+  onOpenMessage?: (conversationId: string, messageId: string) => void;
 }
 
-export function Sidebar({ list, currentId, members, inboxCount, active, onPick, onMember, onLead, onNew, onOpen, onClose, usage, assistants, assistantsError, currentAssistant, onAssistant, onNewAssistant, onSchedule, filterable = false, runningId = null }: SidebarProps) {
+/** 片段里把搜索词加粗（不分大小写；只是显示，读屏照常读整句） */
+function Marked({ text, q }: { text: string; q: string }) {
+  const i = text.toLowerCase().indexOf(q.toLowerCase());
+  if (!q || i < 0) return <>{text}</>;
+  return (
+    <>
+      {text.slice(0, i)}
+      <mark>{text.slice(i, i + q.length)}</mark>
+      {text.slice(i + q.length)}
+    </>
+  );
+}
+
+export function Sidebar({ list, currentId, members, inboxCount, active, onPick, onMember, onLead, onNew, onOpen, onClose, usage, assistants, assistantsError, currentAssistant, onAssistant, onNewAssistant, onSchedule, filterable = false, runningId = null, onOpenMessage }: SidebarProps) {
   const [tab, setTab] = useState<Tab>('chats');
   const [filter, setFilter] = useState<ConvFilterValue>('all');
   // 家人账号、开关关着时 assistants 为空：「助手」分段照旧显示空列表，不放新建、筛选、全部计划
@@ -99,6 +115,39 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
     };
   }, [newOpen]);
   const current = list.find((c) => c.id === currentId);
+
+  // X-09：「对话」里输入时去 Core 搜消息正文（停顿 300ms 再搜；晚到的旧结果丢掉）
+  const searchRef = useRef<HTMLInputElement>(null);
+  const term = q.trim();
+  const msgSearch = tab === 'chats' && !!onOpenMessage && term.length > 0;
+  const [hits, setHits] = useState<{ q: string; state: 'loading' | 'done' | 'error'; list: SearchResult[] }>({ q: '', state: 'done', list: [] });
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    if (!msgSearch) return;
+    let live = true;
+    setHits({ q: term, state: 'loading', list: [] });
+    const t = setTimeout(() => {
+      searchMessages(term).then(
+        (list) => live && setHits({ q: term, state: 'done', list }),
+        () => live && setHits({ q: term, state: 'error', list: [] }),
+      );
+    }, 300);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [msgSearch, term, retry]);
+  // Ctrl/⌘K：聚焦搜索框（只认看得见的那个：手机抽屉没打开时不抢焦点）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'k' || !searchRef.current?.offsetParent) return;
+      e.preventDefault();
+      setTab('chats');
+      searchRef.current.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const chats = useMemo<Row[]>(() => {
     const out: Row[] = [];
@@ -193,7 +242,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
           <label className="search2">
             <Search aria-hidden="true" />
             <span className="sr-only">{tab === 'staff' ? '搜索助手' : '搜索对话'}</span>
-            <input type="search" placeholder={tab === 'staff' ? '搜索助手' : '搜索对话'} value={q} onChange={(e) => setQ(e.target.value)} />
+            <input ref={searchRef} type="search" placeholder={tab === 'staff' ? '搜索助手' : '搜索对话'} aria-keyshortcuts="Control+K Meta+K" value={q} onChange={(e) => setQ(e.target.value)} />
           </label>
           {/* 新建对话菜单（所有者 11-05 12:15）：默认全员（不 @ 由负责人安排，@ 谁谁答）/ 自己挑成员 / 和某一位单聊；所有者另有「添加成员」。「助手」分段里这个位置是「新建助手」 */}
           {tab === 'staff' && onNewAssistant ? (
@@ -296,7 +345,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
                 </button>
               </li>
             ))}
-            {rows.length === 0 && (
+            {rows.length === 0 && !msgSearch && (
               <li className="conv-empty">
                 {q
                   ? '没有找到。换个词试试。'
@@ -310,6 +359,55 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
               </li>
             )}
           </ul>
+        )}
+        {msgSearch && (
+          <section className="msg-hits" aria-label="消息里找到的">
+            <div className="conv-group-row">
+              <h3 className="conv-group">消息</h3>
+            </div>
+            {/* 读屏：搜完播一句结果数（静态文字，不转圈） */}
+            <p className="sr-only" aria-live="polite">
+              {hits.state === 'done' ? (hits.list.length ? `消息里找到 ${hits.list.length} 条` : '消息里没有找到') : hits.state === 'error' ? '没能搜消息' : ''}
+            </p>
+            {hits.state === 'loading' && <p className="conv-empty">正在搜消息…</p>}
+            {hits.state === 'error' && (
+              <p className="conv-empty">
+                没能搜消息：连不上 Aroomo。
+                <button type="button" className="pill hit" onClick={() => setRetry((n) => n + 1)}>
+                  重试
+                </button>
+              </p>
+            )}
+            {hits.state === 'done' && hits.list.length === 0 && <p className="conv-empty">{rows.length ? '消息里没有找到。' : '没有找到。换个词试试。'}</p>}
+            {hits.list.length > 0 && (
+              <ul className="conv-list" aria-label="消息搜索结果">
+                {hits.list.map((h) => (
+                  <li key={h.messageId}>
+                    <button
+                      type="button"
+                      className="conv"
+                      aria-label={`${h.title}，${h.role === 'user' ? '我说' : '回复'}：${h.snippet}，${listTimeLabel(Date.parse(h.createdAt))}，打开并跳到这条`}
+                      onClick={() => onOpenMessage?.(h.conversationId, h.messageId)}
+                    >
+                      <span className="hit-icon" aria-hidden="true">
+                        <MessageSquareText />
+                      </span>
+                      <span className="conv-text">
+                        <span className="conv-top">
+                          <span className="conv-name">{h.title}</span>
+                          <span className="conv-time">{listTimeLabel(Date.parse(h.createdAt))}</span>
+                        </span>
+                        <span className="hit-snippet">
+                          {h.role === 'user' ? '我：' : ''}
+                          <Marked text={h.snippet} q={hits.q} />
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
         )}
       </div>
 

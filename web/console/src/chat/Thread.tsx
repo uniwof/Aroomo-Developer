@@ -34,6 +34,10 @@ const NEW_DRAFT = 'new';
 const ChatDraftCard = lazy(() => import('./pages/assistants/ChatDraftCard'));
 
 const draftOfMessage = (m: { metadata?: { custom?: unknown } }): ChatDraft | undefined => (m.metadata?.custom as { draft?: ChatDraft } | undefined)?.draft;
+/** X-19：这条上面那行「已整理成摘要」的灰字 */
+const noteOfMessage = (m: { metadata?: { custom?: unknown } }): string | undefined => (m.metadata?.custom as { note?: string } | undefined)?.note;
+/** 「这段对话太长，这次只带了最近的内容」：只在这次的流里显示，不进存档（noteOfMessage 不读它） */
+const streamNoteOfMessage = (m: { metadata?: { custom?: unknown } }): string | undefined => (m.metadata?.custom as { streamNote?: string } | undefined)?.streamNote;
 const toolsOfMessage = (m: { metadata?: { custom?: unknown } }): ChatTool[] | undefined => (m.metadata?.custom as { tools?: ChatTool[] } | undefined)?.tools;
 
 const textOfMessage = (m: ThreadMessage): string =>
@@ -50,6 +54,7 @@ function toTurns(messages: readonly ThreadMessage[]): ChatTurn[] {
     .filter((m) => m.role === 'user' || m.role === 'assistant')
     .map((m) => {
       const draft = draftOfMessage(m);
+      const note = noteOfMessage(m);
       const tools = toolsOfMessage(m);
       return {
         ...(CORE_ID.test(m.id) ? { id: m.id } : {}),
@@ -58,6 +63,7 @@ function toTurns(messages: readonly ThreadMessage[]): ChatTurn[] {
         ...(m.createdAt ? { at: m.createdAt.getTime() } : {}),
         ...(draft ? { draft } : {}),
         ...(tools?.length ? { tools } : {}),
+        ...(note ? { note } : {}),
       };
     })
     .filter((t) => t.text.trim() !== '');
@@ -77,6 +83,10 @@ export interface UiMessage {
   errorCode?: FailureCode | undefined;
   /** X-15 助手草稿卡（只在回复上） */
   draft?: ChatDraft;
+  /** X-19：这条上面那行灰字 */
+  note?: string;
+  /** 压缩没跑成时这条回复上面的灰字：只在界面上，不存库、不存本机 */
+  streamNote?: string;
   /** X-05 工具调用（只在回复上） */
   tools?: ChatTool[];
 }
@@ -91,7 +101,7 @@ export function toThreadMessage(m: UiMessage): ThreadMessageLike {
     role: m.role,
     content: [{ type: 'text' as const, text: m.text }],
     ...(m.at ? { createdAt: new Date(m.at) } : {}),
-    ...(m.draft || m.tools?.length ? { metadata: { custom: { ...(m.draft ? { draft: m.draft } : {}), ...(m.tools?.length ? { tools: m.tools } : {}) } } } : {}),
+    ...(m.draft || m.tools?.length || m.note || m.streamNote ? { metadata: { custom: { ...(m.draft ? { draft: m.draft } : {}), ...(m.tools?.length ? { tools: m.tools } : {}), ...(m.note ? { note: m.note } : {}), ...(m.streamNote ? { streamNote: m.streamNote } : {}) } } } : {}),
   };
   if (m.role === 'user') return base;
   if (m.state === 'running') return { ...base, status: { type: 'running' } };
@@ -100,7 +110,7 @@ export function toThreadMessage(m: UiMessage): ThreadMessageLike {
     return {
       ...base,
       status: { type: 'incomplete', reason: 'error', error: m.error ?? '对话出错了，请稍后再试。' },
-      ...(m.errorCode ? { metadata: { custom: { ...(m.tools?.length ? { tools: m.tools } : {}), errorCode: m.errorCode } } } : {}),
+      ...(m.errorCode ? { metadata: { custom: { ...(m.tools?.length ? { tools: m.tools } : {}), errorCode: m.errorCode, ...(m.note ? { note: m.note } : {}), ...(m.streamNote ? { streamNote: m.streamNote } : {}) } } } : {}),
     };
   return { ...base, status: { type: 'complete', reason: 'stop' } };
 }
@@ -142,6 +152,16 @@ const DaySep: FC = () => {
   );
 };
 
+/** X-19：长会话压缩过的那行静态灰字，放在留下的第一条原文上面（不动、不闪；读屏当作提示读出来） */
+const CompactNote: FC = () => {
+  const note = useAuiState((s) => noteOfMessage(s.message) ?? streamNoteOfMessage(s.message));
+  return note ? (
+    <p className="msg-compact" role="note">
+      {note}
+    </p>
+  ) : null;
+};
+
 const MessageTime: FC = () => {
   const at = useAuiState((s) => s.message.createdAt?.getTime());
   const t = timeLabel(at);
@@ -155,6 +175,7 @@ const useMsgDomId = () => `msg-${useAuiState((s) => s.message.id)}`;
 const UserMessage: FC = () => (
   <MessagePrimitive.Root className="msg msg-user" id={useMsgDomId()}>
     <DaySep />
+    <CompactNote />
     <div className="msg-row">
       <Avatar name="我" kind="user" size="msg" />
       <div className="msg-main">
@@ -341,6 +362,7 @@ const AssistantMessage: FC = () => {
   return (
     <MessagePrimitive.Root className="msg msg-assistant" id={domId}>
       <DaySep />
+      <CompactNote />
       <div className="msg-row">
         <Avatar name={who.name} kind={who.lead ? 'lead' : 'member'} size="msg" />
         <div className="msg-main">
@@ -417,6 +439,7 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
       ...(m.at ? { at: m.at } : {}),
       ...(m.draft ? { draft: m.draft } : {}),
       ...(m.tools?.length ? { tools: m.tools } : {}),
+      ...(m.note ? { note: m.note } : {}),
       state: 'done' as const,
     })),
   );
@@ -460,7 +483,15 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
             throw new ChatStreamError('这段对话没能保存到 Aroomo，请稍后点「重试」。');
           }
         }
-        const opts = conversationId ? { conversationId, retry: savedUser.current.has(lastUser.id), onAccepted: () => savedUser.current.add(lastUser.id) } : {};
+        // X-19：Core 刚压缩过 → 在留下的 keep 条原文（含这句）的第一条上面放那行灰字
+        const onCompacted = ({ keep, text }: { keep: number; text: string }) => {
+          const kept = history.filter((m) => m.text.trim() !== '');
+          const first = kept[Math.max(0, kept.length - keep)];
+          if (first) setMessages((l) => l.map((m) => (m.id === first.id ? { ...m, note: text } : m)));
+        };
+        // 该压缩却没压成：这条回复上面一行灰字（只在界面上，不存库、不存本机）
+        const onTruncated = (text: string) => update({ streamNote: text });
+        const opts = conversationId ? { conversationId, retry: savedUser.current.has(lastUser.id), onAccepted: () => savedUser.current.add(lastUser.id), onCompacted, onTruncated } : {};
         const onTool = (t: ChatTool) => setMessages((l) => l.map((m) => (m.id === reply.id ? { ...m, tools: upsertTool(m.tools, t) } : m)));
         for await (const text of streamChat(turns, convRef.current.model, ac.signal, fetchImpl, (draft) => update({ draft }), opts, onTool)) update({ text });
         update({ state: 'done' });
@@ -507,7 +538,7 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
   const setDraftState = useCallback((messageId: string, state: 'done' | 'dismissed') => {
     const next = latest.current.map((m) => (m.id === messageId && m.draft ? { ...m, draft: { ...m.draft, state } } : m));
     setMessages(next);
-    save.current(next.filter((m) => m.text.trim() !== '').map((m) => ({ role: m.role, text: m.text, ...(m.at ? { at: m.at } : {}), ...(m.draft ? { draft: m.draft } : {}), ...(m.tools?.length ? { tools: m.tools } : {}) })));
+    save.current(next.filter((m) => m.text.trim() !== '').map((m) => ({ role: m.role, text: m.text, ...(m.at ? { at: m.at } : {}), ...(m.draft ? { draft: m.draft } : {}), ...(m.tools?.length ? { tools: m.tools } : {}), ...(m.note ? { note: m.note } : {}) })));
   }, []);
   const draftCtx = { actions: draftActions, setState: setDraftState };
   const runningCb = useRef(onRunning);

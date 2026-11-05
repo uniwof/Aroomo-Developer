@@ -1,5 +1,5 @@
 /** 内存实现（测试、没配数据库时）。和 PG 实现同一套语义：只看本账号、只追加。 */
-import type { ChatConversation, ChatMessage, ConversationStore, ConversationSummary, CreateResult, ListQuery } from './types.js';
+import type { ChatConversation, ChatMessage, ConversationStore, ConversationSummary, CreateResult, ListQuery, SearchHit } from './types.js';
 
 const cloneC = (c: ChatConversation): ChatConversation => ({ ...c, groupNames: [...c.groupNames] });
 const cloneM = (m: ChatMessage): ChatMessage => ({ ...m, meta: m.meta ? structuredClone(m.meta) : null });
@@ -23,7 +23,7 @@ export class MemoryConversationStore implements ConversationStore {
       .map((c) => {
         const ms = this.#messages.filter((m) => m.conversationId === c.id);
         const last = ms.at(-1);
-        const unread = ms.some((m) => m.role !== 'user' && (!c.readAt || m.createdAt.getTime() > c.readAt.getTime()));
+        const unread = ms.some((m) => m.role === 'assistant' && (!c.readAt || m.createdAt.getTime() > c.readAt.getTime()));
         return { conversation: cloneC(c), unread, messageCount: ms.length, last: last ? { role: last.role, content: last.content, createdAt: last.createdAt } : null };
       })
       .filter((s) => !q.unreadOnly || s.unread);
@@ -65,5 +65,26 @@ export class MemoryConversationStore implements ConversationStore {
     if (q.afterSeq !== undefined) return all.filter((m) => m.seq! > q.afterSeq!).slice(0, q.limit).map(cloneM);
     const before = q.beforeSeq;
     return all.filter((m) => before === undefined || m.seq! < before).slice(-q.limit).map(cloneM);
+  }
+
+  async search(userId: string, q: { text: string; limit: number; beforeSeq?: number }): Promise<SearchHit[]> {
+    const k = q.text.toLowerCase();
+    return this.#messages
+      .filter((m) => {
+        const c = this.#own(userId, m.conversationId);
+        return c && !c.archivedAt && m.userId === userId && m.role !== 'system' && (q.beforeSeq === undefined || m.seq! < q.beforeSeq) && m.content.toLowerCase().includes(k);
+      })
+      .sort((a, b) => b.seq! - a.seq!)
+      .slice(0, q.limit)
+      .map((m) => ({ message: cloneM(m), title: this.#convs.get(m.conversationId)!.title }));
+  }
+
+  async latestSummary(userId: string, conversationId: string): Promise<ChatMessage | null> {
+    const m = this.#messages.filter((x) => x.userId === userId && x.conversationId === conversationId && x.role === 'system' && x.meta?.summary).at(-1);
+    return m ? cloneM(m) : null;
+  }
+
+  async countSummariesSince(userId: string, since: Date): Promise<number> {
+    return this.#messages.filter((x) => x.userId === userId && x.role === 'system' && x.meta?.summary && x.createdAt.getTime() >= since.getTime()).length;
   }
 }

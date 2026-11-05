@@ -60,7 +60,7 @@ export function isFreeModel(model: string): boolean {
 
 /** 成员 → 它在模型网关里实际会调到的模型串（成员名 = Key 的对外名 modelName；同名多个部署时 LiteLLM 会轮着用，所以全算上） */
 export type DeploymentModel = { modelName: string; model: string };
-const modelsOf = (m: Member, deployments: DeploymentModel[]): string[] =>
+export const modelsOf = (m: Member, deployments: DeploymentModel[]): string[] =>
   [...new Set(deployments.filter((d) => d.modelName.trim().toLowerCase() === m.name.trim().toLowerCase()).map((d) => d.model.trim().toLowerCase()))].sort();
 
 /** 付费确认卡上那组成员 + 它们的真实模型的指纹；同意只对这一组有效 */

@@ -44,6 +44,15 @@ export class RunningConversations {
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) : s);
 const cleanTitle = (t: string | undefined) => clip((t ?? '').replace(/\s+/g, ' ').trim(), TITLE_MAX) || DEFAULT_TITLE;
 
+/** 命中处前 30 字、后 60 字；两头截断加「…」（换行压成空格） */
+export function snippet(content: string, q: string): string {
+  const flat = content.replace(/\s+/g, ' ').trim();
+  const i = Math.max(0, flat.toLowerCase().indexOf(q.toLowerCase()));
+  const from = Math.max(0, i - 30);
+  const to = Math.min(flat.length, i + q.length + 60);
+  return `${from > 0 ? '…' : ''}${flat.slice(from, to)}${to < flat.length ? '…' : ''}`;
+}
+
 export function encodeCursor(c: ChatConversation): string {
   return Buffer.from(`${c.updatedAt.toISOString()}|${c.id}`).toString('base64url');
 }
@@ -63,6 +72,8 @@ export function messageJson(m: ChatMessage) {
     ...(m.meta?.draft ? { draft: m.meta.draft } : {}),
     ...(m.meta?.tools?.length ? { tools: m.meta.tools } : {}),
     ...(m.meta?.imported ? { imported: true } : {}),
+    // X-19 摘要行：只给位置（放在 seq = toSeq 那条之后），摘要正文不出 Core
+    ...(m.meta?.summary ? { summary: { toSeq: m.meta.summary.toSeq } } : {}),
     ...(m.meta?.answeredBy?.length ? { answeredBy: m.meta.answeredBy } : {}),
     createdAt: m.createdAt.toISOString(),
   };
@@ -172,6 +183,28 @@ export class ConversationService {
     const more = rows.length > q.limit;
     const page = !more ? rows : q.afterSeq !== undefined ? rows.slice(0, q.limit) : rows.slice(1);
     return { messages: page.map(messageJson), hasMore: more };
+  }
+
+  /**
+   * X-09 搜索消息正文：本账号未归档的聊天会话，用户话和回复（摘要行不算），最近的在前；nextBeforeSeq 翻下一页。
+   */
+  async search(userId: string, q: { q: string; limit: number; beforeSeq?: number }) {
+    const text = q.q.trim();
+    if (!text) throw new HttpError(400, 'BAD_REQUEST', '搜索词不能是空的');
+    const hits = await this.d.store.search(userId, { text, limit: q.limit + 1, ...(q.beforeSeq !== undefined ? { beforeSeq: q.beforeSeq } : {}) });
+    const page = hits.slice(0, q.limit);
+    return {
+      results: page.map(({ message: m, title }) => ({
+        conversationId: m.conversationId,
+        title,
+        messageId: m.id,
+        seq: m.seq ?? null,
+        role: m.role,
+        snippet: snippet(m.content, text),
+        createdAt: m.createdAt.toISOString(),
+      })),
+      nextBeforeSeq: hits.length > q.limit ? (page[page.length - 1]!.message.seq ?? null) : null,
+    };
   }
 
   /** 聊天流落库：只追加。会话不是本账号的聊天会话 → null（调用方当作没找到） */

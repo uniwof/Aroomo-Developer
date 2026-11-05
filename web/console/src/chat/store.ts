@@ -73,6 +73,8 @@ export interface ChatTurn {
   at?: number;
   /** 只在回复上：助手草稿卡 */
   draft?: ChatDraft;
+  /** X-19：这条上面那行灰字（「已把 … 之前的内容整理成摘要…」）；只来自 Core */
+  note?: string;
   /** 只在回复上：X-05 工具调用 */
   tools?: ChatTool[];
 }
@@ -110,7 +112,7 @@ export interface RemoteInfo {
   /** 消息条数（没取消息时判断列表里显不显示） */
   count: number;
   /** 最后一条的预览（没取消息时列表用） */
-  last?: { role: 'user' | 'assistant'; text: string; at: number | undefined };
+  last?: { role: 'user' | 'assistant' | 'system'; text: string; at: number | undefined };
 }
 
 /** 发一轮时要不要让 Core 存：conversationId = 存到哪个会话；retry = 重试（Core 不再存用户这句） */
@@ -119,6 +121,33 @@ export interface PersistOpts {
   retry?: boolean;
   /** Core 收下了这次请求（HTTP 200）：用户这句已经存了 */
   onAccepted?: () => void;
+  /** X-19：Core 发话前刚压缩过：keep = 留着原文的条数（含这句），text = 灰字 */
+  onCompacted?: (c: { keep: number; text: string }) => void;
+  /** Core 该压缩却没压成，这次只带了最近的内容：text = 灰字（只在流里，不存库） */
+  onTruncated?: (text: string) => void;
+}
+
+/** X-19：Core 发来的「刚压缩过」部件 */
+export const COMPACTED_PART = 'data-aroomo-compacted';
+/** 该压缩却没压成、只带了最近的原文（负责人阶段 3 必改 3）：这条回复上面一行灰字，只在流里、不存库 */
+export const TRUNCATED_PART = 'data-aroomo-truncated';
+export const TRUNCATED_TEXT = '这段对话太长，这次只带了最近的内容';
+
+/**
+ * 发给 Core 的历史只取最近 ≤ 100 条、≤ 120,000 字（至少最后一句）：以前超过 200 条直接 400。
+ * 存库的会话由 Core 按库里的原文 + 摘要拼上下文（X-19），本机会话就只带最近这些。
+ */
+export const SEND_MAX_TURNS = 100;
+export const SEND_MAX_CHARS = 120_000;
+export function capTurns(turns: ChatTurn[]): ChatTurn[] {
+  let n = 0;
+  let total = 0;
+  for (let i = turns.length - 1; i >= 0 && n < SEND_MAX_TURNS; i--) {
+    total += turns[i]!.text.length;
+    if (n > 0 && total > SEND_MAX_CHARS) break;
+    n++;
+  }
+  return turns.slice(turns.length - n);
 }
 
 /**
@@ -150,6 +179,8 @@ export type StreamEvent =
   | { type: 'error'; text: string }
   | { type: 'failure'; code: FailureCode }
   | { type: 'draft'; draft: ChatDraft }
+  | { type: 'compacted'; keep: number; text: string }
+  | { type: 'truncated'; text: string }
   | { type: 'tool'; tool: ChatTool }
   | { type: 'finish' }
   | { type: 'done' };
@@ -164,12 +195,14 @@ export function parseEvent(event: string): StreamEvent | null {
   if (!data) return null;
   if (data === '[DONE]') return { type: 'done' };
   try {
-    const j = JSON.parse(data) as { type?: string; delta?: unknown; errorText?: unknown; data?: { code?: unknown } };
+    const j = JSON.parse(data) as { type?: string; delta?: unknown; errorText?: unknown; data?: { code?: unknown; keep?: unknown; text?: unknown } };
     if (j.type === 'text-delta' && typeof j.delta === 'string') return { type: 'delta', text: j.delta };
     if (j.type === DRAFT_PART) {
       const d = asDraft(j);
       return d ? { type: 'draft', draft: d } : null;
     }
+    if (j.type === COMPACTED_PART && typeof j.data?.keep === 'number' && typeof j.data.text === 'string') return { type: 'compacted', keep: j.data.keep, text: j.data.text };
+    if (j.type === TRUNCATED_PART) return { type: 'truncated', text: typeof j.data?.text === 'string' ? j.data.text : TRUNCATED_TEXT };
     if (j.type === TOOL_PART) {
       const t = asTool(j.data);
       return t ? { type: 'tool', tool: t } : null;
@@ -216,7 +249,7 @@ export async function* streamChat(
       credentials: 'same-origin',
       body: JSON.stringify({
         model,
-        messages: turns.map((t) => ({ role: t.role, content: t.text })),
+        messages: capTurns(turns).map((t) => ({ role: t.role, content: t.text })),
         ...(persist.conversationId ? { conversationId: persist.conversationId, ...(persist.retry ? { retry: true } : {}) } : {}),
       }),
       signal,
@@ -259,6 +292,8 @@ export async function* streamChat(
           text += ev.text;
           yield text;
         } else if (ev.type === 'draft') onDraft?.(ev.draft);
+        else if (ev.type === 'compacted') persist.onCompacted?.({ keep: ev.keep, text: ev.text });
+        else if (ev.type === 'truncated') persist.onTruncated?.(ev.text);
         else if (ev.type === 'tool') onTool?.(ev.tool);
         else if (ev.type === 'failure') code = ev.code;
         else if (ev.type === 'error') throw new ChatStreamError(ev.text, code);
