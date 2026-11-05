@@ -3,6 +3,7 @@
  *   /aroomo/static/*   Aroomo 的静态资源（不需要登录，不含任何秘密）
  *   /mcp               → Core /mcp（外部 MCP 客户端用；原样带客户端自己的 Authorization，不附加主人令牌，不要 LobeHub 登录）
  *   /aroomo/api/*      → Core /api/*（要求已登录 LobeHub；由这里附加主人令牌，浏览器永远拿不到令牌）
+ *   CORE_COOKIE_ROUTES → Core 同名路径（core-session 才开；只带会话 Cookie，不带主人令牌；逐条白名单，绝不整段 /api/*）
  *   /console/*         控制台（要求已登录；API 走 /aroomo/api）
  *   /aroomo/login、/aroomo/accept、/aroomo/auth/*  core-session 的登录页、设密码页和它们的接口（不需要先登录）
  *   /aroomo、/aroomo/* Aroomo 页面（成员、Key 与接入、收件箱、收藏、设置）
@@ -54,6 +55,24 @@ export const PREPARING_HTML = `<!doctype html><html lang="zh-CN"><head><meta cha
 <img class="logo" src="/aroomo/static/logo.svg" alt="Aroomo" width="72" height="72">
 <h1>Aroomo 正在准备</h1><p>后台正在启动，好了会自动打开。第一次可能需要几分钟。</p>
 <div class="bar" aria-hidden="true"><span></span></div></main></body></html>`;
+
+/**
+ * 浏览器 → Core 直通（负责人 2026-11-05 19:47 裁定：聊天走 Shell 同源转发，不另开前端聊天子域名）。
+ * 只带账号自己的会话 Cookie，鉴权、CSRF、限速都由 Core 判（Shell 先挡一遍明显不对的）；从不附加主人令牌。
+ * 逐条白名单：每加一条都要单独审，绝不写成 /api/* 前缀匹配。第 1 批只有对话流。
+ */
+export const CORE_COOKIE_ROUTES: readonly { readonly method: string; readonly path: string }[] = [
+  { method: 'POST', path: '/api/chat/stream' },
+];
+
+/** 这条路径在白名单里吗（精确匹配，不认前缀）；返回允许的方法，不在返回 undefined */
+export function coreCookieRouteMethods(pathname: string): string[] | undefined {
+  const m = CORE_COOKIE_ROUTES.filter((r) => r.path === pathname).map((r) => r.method);
+  return m.length ? m : undefined;
+}
+
+/** 直通 Core 时从浏览器带过去的头（Cookie 另外只挑会话那一个；Authorization 永远不带） */
+const CORE_COOKIE_FORWARD_HEADERS = ['content-type', 'accept', 'x-aroomo-request'];
 
 /** core-session 下不转给 LobeHub 的 Cookie */
 const LOBE_DROP_COOKIES = CORE_SESSION_COOKIES;
@@ -379,6 +398,46 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
     req.pipe(up);
   }
 
+  /**
+   * 白名单路由直通 Core（CORE_COOKIE_ROUTES）：只带会话 Cookie、CSRF 头、content-type、accept 和 Shell 自己算的真实来源 IP；
+   * 不带 Authorization、不带主人令牌、不带浏览器的其他 Cookie 和 x-forwarded-*。Core 的 Set-Cookie 一律删掉。
+   * 流式输出原样逐块转发（不缓冲）；浏览器断开立刻中止上游请求，Core 那边随之取消模型调用。
+   */
+  function proxyCoreCookie(req: IncomingMessage, res: ServerResponse, url: URL, cookie: string) {
+    const target = new URL(url.pathname + url.search, cfg.coreUpstream);
+    const ip = clientIp(req, cfg.clientIpHeader);
+    const headers: Record<string, string | string[]> = { host: target.host, cookie, 'x-forwarded-for': ip, 'x-real-ip': ip };
+    for (const k of CORE_COOKIE_FORWARD_HEADERS) {
+      const v = req.headers[k];
+      if (v !== undefined) headers[k] = v;
+    }
+    let done = false;
+    const up = clientFor(target).request(target, { method: req.method, headers }, (upRes) => {
+      res.writeHead(upRes.statusCode ?? 502, {
+        ...responseHeaders(upRes, ['set-cookie', 'content-length']),
+        'cache-control': 'no-store',
+        'x-accel-buffering': 'no',
+      });
+      res.flushHeaders();
+      upRes.on('end', () => {
+        done = true;
+      });
+      upRes.pipe(res);
+      upRes.on('error', () => res.destroy());
+    });
+    up.setNoDelay(true);
+    up.on('error', () => {
+      if (done) return;
+      if (!res.headersSent) sendJson(res, 502, { error: { code: 'CORE_UNAVAILABLE', message: 'Aroomo 后台暂时不可用，请稍后再试' } });
+      else res.destroy();
+    });
+    // 浏览器断开（点「停止」或关页面）：上游还没结束就立刻中止
+    res.on('close', () => {
+      if (!done) up.destroy();
+    });
+    req.pipe(up);
+  }
+
   /** 外部 MCP 客户端（#235）：只转发 POST/GET；令牌由客户端自己带，这里不加主人令牌、不转发 Cookie */
   function proxyMcp(req: IncomingMessage, res: ServerResponse, url: URL) {
     if (req.method !== 'POST' && req.method !== 'GET') {
@@ -484,6 +543,18 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
 
     // 外部 MCP 客户端：鉴权在 Core（Bearer arc_… / 账号令牌），这里不要求 LobeHub 登录
     if (p === '/mcp') return proxyMcp(req, res, url);
+
+    // 白名单直通 Core（只在 core-session 下；其余 /api/* 照旧给 LobeHub，Core 收不到）
+    if (coreAuth) {
+      const methods = coreCookieRouteMethods(p);
+      if (methods) {
+        if (!methods.includes(req.method ?? '')) return sendJson(res, 405, { error: { code: 'METHOD_NOT_ALLOWED', message: '不支持这个请求方法' } }, { allow: methods.join(', ') });
+        if (!csrfOk(req)) return sendJson(res, 403, { error: { code: 'CSRF', message: '请求来源不对' } });
+        const cookie = coreSessionCookie(req.headers.cookie);
+        if (!cookie) return sendJson(res, 401, { error: { code: 'UNAUTHORIZED', message: '请先登录' } });
+        return proxyCoreCookie(req, res, url, cookie);
+      }
+    }
 
     // Windows 独立版（D78）：没登录的页面请求，替本机主人登录后跳回原页面（登录页 / 注册页跳到 callbackUrl）
     if (autoLogin && wantsHtml(req) && !hasCookie(req.headers.cookie, AUTOLOGIN_MARK) && !(await session.check(req.headers.cookie))) {
