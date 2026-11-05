@@ -45,11 +45,18 @@ const SECRET_KEY = /(api[_-]?key|apikey|token|secret|passw(or)?d|pwd|cookie|auth
 const SECRET_VALUE = /\b(?:sk|pk|rk|gsk|xai|ghp|gho|github_pat|glpat|AKIA|AIza|ya29|eyJ)[A-Za-z0-9_\-.]{12,}|\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}|\b[A-Fa-f0-9]{32,}\b|\b[A-Za-z0-9+_-]{40,}={0,2}/g;
 const URL_RE = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi;
 
-/** 网址：去掉账号密码、查询参数、#片段（留下域名和路径，够她认出是哪个网页） */
+/** 路径里像凭据的一段：key=… / token:… 这类，或 24 位以上字母数字混排（如 /bot<令牌>/、/hooks/<密钥>）（Groq 小审） */
+const SECRET_SEGMENT = /(?:api[_-]?key|key|token|secret|sig|signature|auth|password|passwd|session)[=:]|^(?=[A-Za-z0-9:_-]*\d)(?=[A-Za-z0-9:_-]*[A-Za-z])[A-Za-z0-9:_-]{24,}$/i;
+
+/** 网址：去掉账号密码、查询参数、#片段，路径里像凭据的段换掉（留下域名和其余路径，够她认出是哪个网页） */
 export function redactUrl(u: string): string {
-  const m = /^([a-z][a-z0-9+.-]*:\/\/)(?:[^@/?#\s]*@)?([^?#]*)([?#].*)?$/i.exec(u);
+  const m = /^([a-z][a-z0-9+.-]*:\/\/)(?:[^@/?#\s]*@)?([^/?#]*)([^?#]*)([?#].*)?$/i.exec(u);
   if (!m) return u;
-  return `${m[1]}${m[2]}${m[3] ? '?…' : ''}`;
+  const path = m[3]!
+    .split('/')
+    .map((seg) => (SECRET_SEGMENT.test(seg) ? HIDDEN : seg))
+    .join('/');
+  return `${m[1]}${m[2]}${path}${m[4] ? '?…' : ''}`;
 }
 
 /** 一段文字：网址去参数，像密钥的串换掉 */

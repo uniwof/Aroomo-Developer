@@ -39,6 +39,10 @@ describe('X-05 脱敏', () => {
     expect(redactUrl('https://user:pw@example.com/a/b?q=1#frag')).toBe('https://example.com/a/b?…');
     expect(redactUrl('https://example.com/a')).toBe('https://example.com/a');
     expect(redactText('看 http://x.test/p?key=1 和 https://y.test/')).toBe('看 http://x.test/p?… 和 https://y.test/');
+    // 路径里的凭据（Groq 小审）：key=… 这类段、24 位以上字母数字混排的段；普通路径不动
+    expect(redactUrl('https://example.com/api/key=ABC123/list')).toBe(`https://example.com/api/${HIDDEN}/list`);
+    expect(redactUrl('https://api.example.org/bot123456789:AAEhBP0av28Zz1x2y3w4v5u6t7/sendMessage')).toBe(`https://api.example.org/${HIDDEN}/sendMessage`);
+    expect(redactUrl('https://example.com/blog/2026/how-to-pick-a-free-model')).toBe('https://example.com/blog/2026/how-to-pick-a-free-model');
   });
 
   it('文字里像密钥的串换掉：sk- / Bearer / 长十六进制', () => {
