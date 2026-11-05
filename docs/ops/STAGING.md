@@ -102,3 +102,18 @@ sudo systemctl enable --now aroomo-staging-deploy.timer
 ## 验收记录
 
 - 2026-11-01：合并本说明的一次小文档 PR 作为验收提交，由服务器 timer 自动拉取部署（不手动触发），结果与耗时记录在工单 #170 评论。
+
+## chat-staging.pcmanai.com（原生对话直连 staging Core，仅 staging）
+
+> 绝不在生产使用：下面的脚本和 timer 只装在 staging 用途，不进生产部署流程。
+
+- 用途：原生聊天界面（#250 / #264）在 staging 直连 staging Core。生产 cloudflared 通过别名 `aroomo-staging-core-edge` 找到一个 socat 转发小容器，再转到 staging Core；staging Core 本身不进生产网络。
+- 文件：`deploy/staging/aroomo-staging-core-edge.sh`（装到 `/usr/local/bin/`）、`aroomo-staging-core-edge.service` / `.timer`（装到 `/etc/systemd/system/`，每分钟幂等检查一次）。
+- 入口保护：`chat-staging.pcmanai.com` 与 `staging.pcmanai.com` 同在 Access 应用「Aroomo staging」后面。
+- 安装：
+  ```bash
+  sudo install -m 755 /opt/aroomo-staging/deploy/staging/aroomo-staging-core-edge.sh /usr/local/bin/
+  sudo cp /opt/aroomo-staging/deploy/staging/aroomo-staging-core-edge.{service,timer} /etc/systemd/system/
+  sudo systemctl daemon-reload && sudo systemctl enable --now aroomo-staging-core-edge.timer
+  ```
+- 撤销：`systemctl disable --now aroomo-staging-core-edge.timer`；`docker rm -f aroomo-staging-core-edge`；删脚本和 unit；Cloudflare 删 tunnel 路由 `chat-staging.pcmanai.com` 和 Access 应用里的这个域名。

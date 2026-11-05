@@ -1,0 +1,6 @@
+# 仅 staging，绝不在生产使用（见 aroomo-staging-core-edge.sh 开头说明）。装在 /etc/systemd/system/。
+[Unit]
+Description=Aroomo staging: socat edge for staging core for native chat (server-side, #250)
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/aroomo-staging-core-edge.sh
