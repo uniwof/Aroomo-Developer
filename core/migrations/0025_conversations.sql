@@ -17,6 +17,8 @@ CREATE INDEX conversations_user_idx ON conversations (user_id, updated_at DESC) 
 -- X-21：消息只追加。编辑 / 重试都是新增一行；删除只随会话整体删除（ON DELETE CASCADE）。
 CREATE TABLE conversation_messages (
   id              uuid        PRIMARY KEY,
+  -- 会话内顺序与分页游标（同一毫秒写入的消息也有确定顺序）
+  seq             bigint      GENERATED ALWAYS AS IDENTITY UNIQUE,
   conversation_id uuid        NOT NULL,
   user_id         text        NOT NULL CONSTRAINT conversation_messages_user_id_nonempty CHECK (user_id <> ''),
   role            text        NOT NULL CHECK (role IN ('user', 'member', 'system')),
@@ -27,7 +29,7 @@ CREATE TABLE conversation_messages (
   CHECK ((role = 'member') = (member_id IS NOT NULL)),
   FOREIGN KEY (conversation_id, user_id) REFERENCES conversations (id, user_id) ON DELETE CASCADE
 );
-CREATE INDEX conversation_messages_conv_idx ON conversation_messages (conversation_id, created_at, id);
+CREATE INDEX conversation_messages_conv_idx ON conversation_messages (conversation_id, seq);
 
 CREATE FUNCTION aroomo_append_only() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
