@@ -109,6 +109,8 @@ const clampSide = (w: number) => Math.min(SIDE_MAX / 16, Math.max(SIDE_MIN / 16,
 const hasMsgs = (c: Conversation) => c.messages.length > 0 || !!c.remote?.count;
 /** 存库的会话列表多久刷新一次（未读、进行中） */
 const LIST_REFRESH_MS = 60_000;
+/** 列表还没到时先发的话：最多等这么久，还没到就退回本机（话存本机，不丢） */
+export const LIST_WAIT_MS = 8_000;
 
 function useMembers(): [Member[], () => void] {
   const [members, setMembers] = useState<Member[]>([]);
@@ -172,11 +174,42 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   currentRef.current = currentId;
   const remoteRef = useRef(remote);
   remoteRef.current = remote;
-  /** Core 的列表盖上来：已取过的消息、正打开的本机新会话留着 */
+  /** 列表到了（或退回本机）就放行：列表没到时先发的话在这儿排队 */
+  const ready = useRef<{ wait: Promise<void>; done: () => void } | null>(null);
+  if (!ready.current) {
+    let done = () => {};
+    const wait = new Promise<void>((r) => (done = r));
+    ready.current = { wait, done };
+  }
+  useEffect(() => {
+    if (remote !== null) ready.current!.done();
+  }, [remote]);
+  /** 打开页面时本机已有的会话和它们当时的消息数（这些会导入 Core）；比这多出来的消息是还没存的 */
+  const atMount = useRef<Map<string, number> | null>(null);
+  if (!atMount.current) atMount.current = new Map(list.filter((c) => !c.remote).map((c) => [c.id, c.messages.length]));
+  /** 正在排队等列表的会话（话还在对话区里、没进列表，列表盖上来时不能丢） */
+  const waiting = useRef(new Set<string>());
+  /** 本机会话里还没存到 Core 的话（列表没到时就发了，或建会话失败） */
+  const unsaved = (c: Conversation) => !c.remote && (waiting.current.has(c.id) || c.messages.length > (atMount.current!.get(c.id) ?? 0));
+  /** Core 的列表盖上来：已取过的消息、正打开的本机新会话、还没存的话都留着 */
   const adopt = useCallback((prev: Conversation[], fresh: Conversation[]) => {
-    // 本机会话里只留正打开的空白新会话；有消息的本机会话已经导入过（id 可能换成了算出来的 uuid），以 Core 那份为准
-    const next = mergeRemote(prev.filter((c) => c.remote || (c.id === currentRef.current && c.messages.length === 0)), fresh, currentRef.current);
+    // 有消息的本机旧会话已经导入过（id 可能换成了算出来的 uuid），以 Core 那份为准；但多出来没存的话一条不丢
+    const dirty = new Map(prev.filter(unsaved).map((c) => [c.id, c]));
+    const next = mergeRemote(prev.filter((c) => c.remote || dirty.has(c.id) || (c.id === currentRef.current && c.messages.length === 0)), fresh, currentRef.current).map((c) => {
+      const d = dirty.get(c.id);
+      // 同一个 id 在 Core 已有（导入过的旧会话里又说了话）：用本机这份消息，下一句发出时 Core 照常追加
+      return d && c.remote ? { ...c, messages: d.messages, remote: { ...c.remote, loaded: true } } : c;
+    });
     return next.length ? next : [newConversation()];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  /** 已经定了用 Core 还是本机：之后晚到的列表不再改主意 */
+  const settled = useRef(false);
+  /** 退回本机：本机模式会把列表（含没存的话）写进浏览器 */
+  const fallBack = useCallback(() => {
+    if (settled.current) return;
+    settled.current = true;
+    setRemote(false);
   }, []);
   useEffect(() => {
     if (!saved) return;
@@ -186,7 +219,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         // 所有者：本机旧会话导入一次（本机那份不删）；导入失败不挡着打开，下次再试
         if (!isFamily()) await importLocalOnce(loadConversations()).catch(() => 0);
         const fresh = await fetchConversations();
-        if (!alive) return;
+        if (!alive || settled.current) return;
+        settled.current = true;
         setList((prev) => {
           const next = adopt(prev, fresh);
           if (!next.some((c) => c.id === currentRef.current)) setCurrentId(next[0]!.id);
@@ -194,13 +228,13 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         });
         setRemote(true);
       } catch {
-        if (alive) setRemote(false);
+        if (alive) fallBack();
       }
     })();
     return () => {
       alive = false;
     };
-  }, [saved, adopt]);
+  }, [saved, adopt, fallBack]);
   useEffect(() => {
     if (remote !== true) return;
     const t = setInterval(() => {
@@ -307,6 +341,19 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
 
   /** 发第一句时在 Core 建会话（id 用本机这个，一般不变）；本机模式返回 null */
   const persist = useCallback(async (text: string): Promise<string | null> => {
+    // 列表还没到：这句先排队，等列表（最多 LIST_WAIT_MS），等不到就退回本机存
+    if (remoteRef.current === null) {
+      const id = currentRef.current;
+      waiting.current.add(id);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([ready.current!.wait, new Promise<void>((r) => (timer = setTimeout(r, LIST_WAIT_MS)))]);
+      } finally {
+        clearTimeout(timer);
+        waiting.current.delete(id);
+      }
+      if (remoteRef.current === null) fallBack();
+    }
     if (remoteRef.current !== true) return null;
     const c = listRef.current.find((x) => x.id === currentRef.current);
     if (!c) return null;
@@ -316,7 +363,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     // 万一 Core 换了 id（本机 id 撞上了别的会话）：跟着换
     if (made.id !== c.id) setCurrentId(made.id);
     return made.id;
-  }, []);
+  }, [fallBack]);
   useEffect(() => {
     savePrefs(prefs);
     // 字号和主题作用到整页：面板里嵌的管理页面也一起变大，不割裂
@@ -761,7 +808,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           {...(notice ? { notice } : {})}
           {...(draftActions ? { draftActions } : {})}
           {...(fetchImpl ? { fetchImpl } : {})}
-          {...(remote === true ? { persist } : {})}
+          {...(remote !== false ? { persist } : {})}
           {...(focusMsg ? { focusMessageId: focusMsg } : {})}
           onRunning={(r) => setRunningId(r ? current.id : null)}
         />

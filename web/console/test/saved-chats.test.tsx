@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { ChatPage } from '@/chat/ChatPage';
+import { ChatPage, LIST_WAIT_MS } from '@/chat/ChatPage';
 import { conversationLink } from '@/pages/Inbox';
 import { IMPORTED_KEY, importLocalOnce, isUuid, mergeRemote } from '@/chat/saved';
 import { loadConversations, saveConversations, streamChat, type Conversation } from '@/chat/store';
@@ -51,7 +51,7 @@ interface Call {
   body: unknown;
 }
 
-function stubCore(opts: { fail?: boolean } = {}) {
+function stubCore(opts: { fail?: boolean; listGate?: Promise<void>; extra?: ReturnType<typeof row>[] } = {}) {
   const calls: Call[] = [];
   vi.stubGlobal(
     'fetch',
@@ -63,9 +63,10 @@ function stubCore(opts: { fail?: boolean } = {}) {
       if (url === '/api/assistants') return json({ assistants: [] });
       if (url.startsWith('/api/conversations') && opts.fail) return json({ error: { code: 'X', message: '坏了' } }, 503);
       if (url === '/api/conversations/import') return json({ imported: body.conversations.length, skipped: 0, ids: {} });
+      if (url.startsWith('/api/conversations?') && opts.listGate) await opts.listGate;
       if (url.startsWith('/api/conversations?'))
         return json({
-          conversations: [row(A, '周末去哪'), row(B, '买菜清单', { running: true, updatedAt: '2026-11-05T05:30:00.000Z' }), row(C, '读书笔记', { unread: true, updatedAt: '2026-11-05T05:00:00.000Z' })],
+          conversations: [row(A, '周末去哪'), row(B, '买菜清单', { running: true, updatedAt: '2026-11-05T05:30:00.000Z' }), row(C, '读书笔记', { unread: true, updatedAt: '2026-11-05T05:00:00.000Z' }), ...(opts.extra ?? [])],
           nextCursor: null,
         });
       if (url.endsWith('/messages?limit=200'))
@@ -186,6 +187,90 @@ describe('会话存库（对话页）', () => {
     const [first, second] = chat.map((c) => JSON.parse(String(c.body)) as Record<string, unknown>);
     expect(first!.retry).toBeUndefined();
     expect(second).toMatchObject({ conversationId: first!.conversationId, retry: true });
+  });
+
+  it('列表还没到就发了一句：先排队，列表到了在 Core 建会话再发，话不丢', async () => {
+    let open!: () => void;
+    const calls = stubCore({ listGate: new Promise<void>((r) => (open = r)) });
+    const chat: RequestInit[] = [];
+    const f = (async (_u: unknown, init: RequestInit) => {
+      chat.push(init);
+      return stream('收到了');
+    }) as unknown as typeof fetch;
+    renderPage(f);
+    const log = () => within(screen.getByRole('log', { name: '对话内容' }));
+    fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '列表没到我先说' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect(await log().findByText('列表没到我先说')).toBeInTheDocument();
+    // 还在等列表：不发流请求、不建会话
+    await new Promise((r) => setTimeout(r, 50));
+    expect(chat).toHaveLength(0);
+    expect(calls.some((c) => c.url === '/api/conversations' && c.method === 'POST')).toBe(false);
+    open();
+    expect(await log().findByText('收到了')).toBeInTheDocument();
+    const made = calls.find((c) => c.url === '/api/conversations' && c.method === 'POST')!;
+    expect(made.body).toMatchObject({ title: '列表没到我先说' });
+    expect(JSON.parse(String(chat[0]!.body))).toMatchObject({ conversationId: (made.body as { id: string }).id });
+    // 列表盖上来以后这句还在，会话也在列表里
+    const list = await screen.findByRole('list', { name: '会话列表' });
+    await within(list).findByRole('button', { name: /^列表没到我先说/ });
+    expect(log().getByText('列表没到我先说')).toBeInTheDocument();
+    expect(within(list).getByRole('button', { name: /^周末去哪/ })).toBeInTheDocument();
+  });
+
+  it('列表一直不到：等够时间就退回本机，这句照发、存本机，晚到的列表不再把它盖掉', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let open!: () => void;
+      const calls = stubCore({ listGate: new Promise<void>((r) => (open = r)) });
+      const chat: RequestInit[] = [];
+      const f = (async (_u: unknown, init: RequestInit) => {
+        chat.push(init);
+        return stream('本机先回');
+      }) as unknown as typeof fetch;
+      renderPage(f);
+      fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '一直等不到' } });
+      fireEvent.click(screen.getByRole('button', { name: '发送' }));
+      await vi.advanceTimersByTimeAsync(LIST_WAIT_MS + 10);
+      const log = within(screen.getByRole('log', { name: '对话内容' }));
+      expect(await log.findByText('本机先回')).toBeInTheDocument();
+      expect(JSON.parse(String(chat[0]!.body))).not.toHaveProperty('conversationId');
+      await waitFor(() => expect(loadConversations().flatMap((c) => c.messages.map((m) => m.text))).toContain('一直等不到'));
+      open();
+      await vi.advanceTimersByTimeAsync(50);
+      expect(log.getByText('一直等不到')).toBeInTheDocument();
+      expect(calls.some((c) => c.url === '/api/conversations' && c.method === 'POST')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('列表没到时在本机旧会话里接着说：列表到了用 Core 那份，但新说的话留着并带上 conversationId', async () => {
+    saveConversations([local]);
+    localStorage.setItem(IMPORTED_KEY, JSON.stringify([LOCAL]));
+    let open!: () => void;
+    // 这个旧会话之前已经导入过，Core 里有同一个 id
+    const calls = stubCore({ listGate: new Promise<void>((r) => (open = r)), extra: [row(LOCAL, '本机的旧会话', { updatedAt: '2026-11-05T07:00:00.000Z' })] });
+    const chat: RequestInit[] = [];
+    const f = (async (_u: unknown, init: RequestInit) => {
+      chat.push(init);
+      return stream('接着回');
+    }) as unknown as typeof fetch;
+    renderPage(f);
+    const log = () => within(screen.getByRole('log', { name: '对话内容' }));
+    expect(await log().findByText('旧问题')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '旧会话里新说一句' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect(await log().findByText('旧会话里新说一句')).toBeInTheDocument();
+    open();
+    expect(await log().findByText('接着回')).toBeInTheDocument();
+    expect(log().getByText('旧会话里新说一句')).toBeInTheDocument();
+    // 用 Core 里已有的那个会话（不再新建），旧话和新话都带上
+    const body = JSON.parse(String(chat[0]!.body)) as { conversationId: string; messages: unknown[] };
+    expect(body.conversationId).toBe(LOCAL);
+    expect(JSON.stringify(body.messages)).toContain('旧问题');
+    expect(calls.some((c) => c.url === '/api/conversations' && c.method === 'POST')).toBe(false);
+    expect(log().getByText('旧问题')).toBeInTheDocument();
   });
 
   it('Core 拿不到：退回本机列表，发消息不带 conversationId，照旧存本机', async () => {
