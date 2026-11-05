@@ -417,6 +417,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     if (v.kind === 'members' || v.kind === 'me') return null;
     if (v.kind === 'settings' && v.section) return { go: () => setView({ kind: 'settings' }), label: '设置' };
     if (v.kind === 'settings' || v.kind === 'library' || v.kind === 'tools' || v.kind === 'keys') return { go: () => setView({ kind: 'me' }), label: '我' };
+    // 从对话里的额度提示进来的「挑选成员」：返回回这段对话，不是会话列表（审计 C13）
+    if (v.kind === 'group-new' && (location.state as { back?: unknown } | null)?.back === 'chat') return { go: () => setView({ kind: 'chat' }), label: '对话', aria: '返回对话' };
     if (v.kind === 'inbox' || v.kind === 'group-new') return { go: () => { setView({ kind: 'chat' }); setOpen(true); }, label: '对话', aria: '返回对话列表' };
     const p = parentOf(v);
     return p ? { go: () => setView(p.view), label: p.label } : null;
@@ -463,7 +465,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         <CircleAlert aria-hidden="true" className="notice-icon" />
         <p className="notice-title">{who.name} 今天的额度用完了</p>
         <p className="notice-text">消息还能发出去，但 TA 暂时不会回复。可以换一位成员，或者到「成员」里调高每天上限。</p>
-        <button type="button" className="notice-btn hit" onClick={() => setView({ kind: 'group-new' })}>
+        <button type="button" className="notice-btn hit" onClick={() => setView({ kind: 'group-new' }, { state: { back: 'chat' } })}>
           换个成员
           <ArrowRight aria-hidden="true" />
         </button>
@@ -691,7 +693,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
             </div>
           )}
           {view.kind === 'library' && <LibraryView members={allMembers} onOpenMember={(m) => setView({ kind: 'member', id: m.id })} onAddMember={(preset) => setAddMember(preset ? { preset } : {})} />}
-          {view.kind === 'keys' && <ApiView members={members} />}
+          {view.kind === 'keys' && <ApiView members={members} onOpenMember={(id) => setView({ kind: 'member', id })} />}
           {view.kind === 'audit' && (
             <div className="panel panel-embed">
               <Audit />

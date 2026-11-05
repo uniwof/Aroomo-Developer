@@ -487,6 +487,12 @@ export function ToolsView({ onGo }: { onGo: (k: 'keys') => void }) {
                 {t.note && <span className="row-hint">{t.note}</span>}
               </span>
               <span className="row-value">{STATUS_LABEL[t.status] ?? t.status}</span>
+              {/* 缺 Key 的工具就地给去处（审计 H4；以前只有空状态有） */}
+              {t.status === 'missing' && (
+                <button type="button" className="btn btn-outline" aria-label={`${t.name}：去 API 填 Key`} onClick={() => onGo('keys')}>
+                  去 API
+                </button>
+              )}
             </div>
           ))}
         </Group>
@@ -597,7 +603,7 @@ function memberState(m: Member): string {
   return (m.online ?? m.status === 'active') ? '在线' : '离线';
 }
 
-export function ApiView({ members }: { members: Member[] }) {
+export function ApiView({ members, onOpenMember }: { members: Member[]; onOpenMember?: (id: string) => void }) {
   const [keys, setKeys] = useState<KeyItem[] | null>(null);
   const [keyErr, setKeyErr] = useState('');
   const [status, setStatus] = useState('');
@@ -689,15 +695,27 @@ export function ApiView({ members }: { members: Member[] }) {
         {members.length === 0 ? (
           <p className="row muted">还没有成员。</p>
         ) : (
-          members.map((m) => (
-            <div key={m.id} className="row">
-              <Avatar name={m.name} size="sm" off={memberState(m) !== '在线'} />
-              <span className="row-text">
-                <span className="row-label">{m.name}</span>
-              </span>
-              <span className="row-value">{memberState(m)}</span>
-            </div>
-          ))
+          // 这一组其实是成员（Key 和成员的对应 Core 还没给）：点一行打开这位成员（审计 H3）
+          members.map((m) => {
+            const inner = (
+              <>
+                <Avatar name={m.name} size="sm" off={memberState(m) !== '在线'} />
+                <span className="row-text">
+                  <span className="row-label">{m.name}</span>
+                </span>
+                <span className="row-value">{memberState(m)}</span>
+              </>
+            );
+            return onOpenMember ? (
+              <button key={m.id} type="button" className="row row-button" aria-label={`打开成员 ${m.name}，${memberState(m)}`} onClick={() => onOpenMember(m.id)}>
+                {inner}
+              </button>
+            ) : (
+              <div key={m.id} className="row">
+                {inner}
+              </div>
+            );
+          })
         )}
       </Group>
 
@@ -717,7 +735,7 @@ export function ApiView({ members }: { members: Member[] }) {
                 <span className="row-value">{total} 次</span>
               </div>
               {rows.map((r) => (
-                <UsageRowLine key={r.memberId} row={r} />
+                <UsageRowLine key={r.memberId} row={r} {...(onOpenMember ? { onOpen: () => onOpenMember(r.memberId) } : {})} />
               ))}
             </>
           )}
@@ -736,19 +754,26 @@ export function ApiView({ members }: { members: Member[] }) {
   );
 }
 
-function UsageRowLine({ row }: { row: UsageRow }) {
+/** 用量一行；给了 onOpen 就整行可点，进成员详情改每天上限（审计 M6：上限只在成员详情改，这里给去处） */
+function UsageRowLine({ row, onOpen }: { row: UsageRow; onOpen?: () => void }) {
   const q = quotaState(row);
-  return (
-    <div className="row">
+  const hint = `今天 ${row.today.requests} 次${row.today.errors ? `，出错 ${row.today.errors} 次` : ''}`;
+  const inner = (
+    <>
       <QuotaRing used={row.quota.used} limit={row.quota.limit} size={20} />
       <span className="row-text">
         <span className="row-label">{row.name}</span>
-        <span className="row-hint">
-          今天 {row.today.requests} 次{row.today.errors ? `，出错 ${row.today.errors} 次` : ''}
-        </span>
+        <span className="row-hint">{hint}</span>
       </span>
       <span className="row-value">{q.label}</span>
-    </div>
+    </>
+  );
+  return onOpen ? (
+    <button type="button" className="row row-button" aria-label={`${row.name} 今天的用量：${hint}，${q.label}。打开成员设每天上限`} onClick={onOpen}>
+      {inner}
+    </button>
+  ) : (
+    <div className="row">{inner}</div>
   );
 }
 

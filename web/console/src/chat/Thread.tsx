@@ -27,7 +27,8 @@ import { useAsk } from '@/components/Dialog';
 
 // Markdown 引擎单独打包、按需加载（首屏先出对话框和输入框）；没到之前按纯文字显示（同样不渲染 HTML）
 const LazyMarkdown = lazy(() => import('./Markdown'));
-const NEW_DRAFT = 'new';
+/** 还没发过消息的新对话：草稿按对象记（全员 / 某位成员 / 某个群），换一位新开对话不带出别人的草稿（审计 C14） */
+const newDraftKey = (c: Conversation) => `new:${c.model}${c.group?.length ? `:${c.group.join('、')}` : ''}`;
 
 
 
@@ -449,7 +450,7 @@ export function Thread({ conversation, onMessages, insert, onInserted, hidden = 
   const hasMessages = useRef(messages.length > 0);
   hasMessages.current = messages.length > 0;
   useEffect(() => {
-    const key = () => (hasMessages.current ? conversation.id : NEW_DRAFT);
+    const key = () => (hasMessages.current ? conversation.id : newDraftKey(convRef.current));
     const c = runtime.thread.composer;
     const draft = loadDraft(key());
     if (draft && !c.getState().text) c.setText(draft);

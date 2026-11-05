@@ -128,7 +128,13 @@ export function Audit() {
       </div>
 
       <p ref={statusRef} tabIndex={-1} role="status" aria-live="polite" className="note">
-        {rows === null ? '正在加载…' : msg || `显示 ${shown.length} 条（已加载 ${rows.length} 条）`}
+        {rows === null
+          ? '正在加载…'
+          : msg ||
+            // 筛选只在已加载的记录里做：还有更早的就说清楚，免得以为没有（审计 S2）
+            ((p || result) && cursor
+              ? `显示 ${shown.length} 条。只在已加载的 ${rows.length} 条里找，还有更早的记录，点下面「加载更多」接着找。`
+              : `显示 ${shown.length} 条（已加载 ${rows.length} 条）`)}
       </p>
 
       {rows !== null && shown.length === 0 && !msg ? (
