@@ -1,13 +1,24 @@
 /** 助手测试基建：两账号 + 假模型网关（按提示词回分工 JSON / 成员结果 / 汇总）+ 所有者名下三位成员。 */
+import { randomUUID } from 'node:crypto';
 import { expect } from 'vitest';
+import type { CoreDeps } from '../../src/deps.js';
 import { LiteLLMAdmin } from '../../src/keys/litellm.js';
 import { MOCK_MASTER_KEY, type MockLiteLLM, startMockLiteLLM } from './mock-litellm.js';
 import { type DepsEnv, twoAccounts, type TwoAccounts } from './two-accounts.js';
 
-/** 种子清单里的免费模型名（isFreeModel 认得）+ 一个付费的 */
-export const LEAD = { name: 'gpt-oss-120b', id: 'gpt-oss-120b' };
-export const WORKER = { name: 'qwen3.8-27b', id: 'qwen3-8-27b' };
-export const PAID = { name: 'PaidBot', id: 'paidbot' };
+/** 成员名 = Key 的对外名；model 是 Key 的真实模型串（isFreeModel 按它判断）：两位种子清单里的免费模型 + 一个付费的 */
+export const LEAD = { name: 'gpt-oss-120b', id: 'gpt-oss-120b', model: 'groq/gpt-oss-120b' };
+export const WORKER = { name: 'qwen3.8-27b', id: 'qwen3-8-27b', model: 'groq/qwen3.8-27b' };
+export const PAID = { name: 'PaidBot', id: 'paidbot', model: 'openai/gpt-5' };
+
+/** 直接在 Key 存储里记一个部署（不经确认流程；只给测试用） */
+export async function addDeployment(t: Pick<TwoAccounts, 'deps' | 'clock'>, modelName: string, model: string, userId?: string): Promise<void> {
+  const now = t.clock.now();
+  await t.deps.keys.insert({
+    id: randomUUID(), ...(userId ? { userId } : {}), name: `key-${modelName}`, sourceUrl: 'https://example.test', last4: '0000', model, modelName,
+    apiBase: null, litellmModelId: `aroomo-${randomUUID()}`, status: 'active', modelsSyncedAt: null, createdAt: now, updatedAt: now,
+  });
+}
 
 export interface FakeGateway {
   /** 每次上游调用的模型名 */
@@ -16,6 +27,8 @@ export interface FakeGateway {
   slow: Set<string>;
   /** 这些模型返回这个 HTTP 状态 */
   failStatus: Map<string, number>;
+  /** 设了就先等它再回（测试用来让几次运行同时卡在调用上） */
+  gate: Promise<void> | null;
 }
 
 export interface AssistantEnv extends TwoAccounts {
@@ -34,9 +47,12 @@ export const baseBody = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-export async function assistantEnv(env: DepsEnv, opts: { timeoutMs?: number; extraEnv?: Record<string, string> } = {}): Promise<AssistantEnv> {
+export async function assistantEnv(
+  env: DepsEnv,
+  opts: { timeoutMs?: number; extraEnv?: Record<string, string>; budgets?: CoreDeps['assistantBudgets'] } = {},
+): Promise<AssistantEnv> {
   const mock = await startMockLiteLLM();
-  const gw: FakeGateway = { calls: [], slow: new Set(), failStatus: new Map() };
+  const gw: FakeGateway = { calls: [], slow: new Set(), failStatus: new Map(), gate: null };
   const t = await twoAccounts(
     {
       name: env.name,
@@ -44,9 +60,11 @@ export async function assistantEnv(env: DepsEnv, opts: { timeoutMs?: number; ext
         const deps = await env.make(now);
         deps.litellm = new LiteLLMAdmin({ baseUrl: mock.url, masterKey: MOCK_MASTER_KEY, timeoutMs: 2000 });
         if (opts.timeoutMs !== undefined) deps.assistantTimeoutMs = () => opts.timeoutMs!;
+        if (opts.budgets) deps.assistantBudgets = opts.budgets;
         deps.chatFetch = (async (_u: unknown, init?: { body?: string; signal?: AbortSignal }) => {
           const b = JSON.parse(String(init?.body)) as { model: string; messages: Array<{ role: string; content: string }> };
           gw.calls.push(b.model);
+          if (gw.gate) await gw.gate;
           if (gw.slow.has(b.model)) {
             await new Promise<void>((_r, rej) => init?.signal?.addEventListener('abort', () => rej(new Error('aborted')), { once: true }));
           }
@@ -69,6 +87,7 @@ export async function assistantEnv(env: DepsEnv, opts: { timeoutMs?: number; ext
     const r = await t.owner('POST', '/api/members', { name: m.name });
     expect(r.statusCode, r.body).toBeLessThan(300);
     expect(r.json().member.id).toBe(m.id);
+    await addDeployment(t, m.name, m.model);
   }
   return {
     ...t,

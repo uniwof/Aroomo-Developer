@@ -380,8 +380,11 @@ export function buildServer(
     audit: bindAudit(deps.auditLog, { type: "system", id: "assistants" }),
     now: deps.now,
     timezone: cfg.timezone,
+    // 成员名 = Key 的对外名；免费与否按 Key 的真实模型串判断（账号只看自己的 Key）
+    deploymentsFor: async (u) => (await deps.keys.list(u === "owner" ? undefined : u)).map((k) => ({ modelName: k.modelName, model: k.model })),
     ...(deps.assistantTimeoutMs ? { timeoutMs: deps.assistantTimeoutMs } : {}),
     ...(deps.assistantIsFree ? { isFree: deps.assistantIsFree } : {}),
+    ...(deps.assistantBudgets ? { budgets: deps.assistantBudgets } : {}),
   });
   assistantSvc.setLauncher(assistantRunner);
   // 付费调用确认卡（kind=payment，重要确认）：同意 → 同一条运行继续；拒绝 → 取消

@@ -60,11 +60,15 @@ export class MemoryAssistantStore implements AssistantStore {
     return a ? clone(a) : null;
   }
 
-  async createAssistant(userId: string, a: Assistant, conv: Conversation): Promise<InsertRunResult> {
-    if (a.userId !== userId || conv.userId !== userId) throw new Error('user mismatch');
+  async createAssistant(userId: string, a: Assistant, conv: Conversation, opening: ConversationMessage): Promise<InsertRunResult> {
+    if (a.userId !== userId || conv.userId !== userId || opening.userId !== userId) throw new Error('user mismatch');
+    if (opening.conversationId !== conv.id) throw new Error('foreign key violation');
     if (a.idempotencyKey && (await this.findAssistantByKey(userId, a.idempotencyKey))) return 'conflict';
+    // 先全部校验完再一起写：不留半个助手
     this.#convs.set(conv.id, clone(conv));
     this.#assistants.set(a.id, clone(a));
+    this.#seq++;
+    this.#messages.push({ ...clone(opening), seq: this.#seq });
     return 'ok';
   }
 
@@ -123,8 +127,14 @@ export class MemoryAssistantStore implements AssistantStore {
     return clone(next);
   }
 
-  async callsSince(userId: string, since: Date): Promise<number> {
-    return [...this.#runs.values()].filter((r) => r.userId === userId && r.requestedAt.getTime() >= since.getTime()).reduce((n, r) => n + r.calls, 0);
+  async reserveCall(userId: string, runId: string, since: Date, perRun: number, perDay: number): Promise<number | null> {
+    // 同步完成（中间没有 await）：单线程下天然原子
+    const r = this.#runs.get(runId);
+    if (!r || r.userId !== userId || r.calls >= perRun) return null;
+    const day = [...this.#runs.values()].filter((x) => x.userId === userId && x.requestedAt.getTime() >= since.getTime()).reduce((n, x) => n + x.calls, 0);
+    if (day >= perDay) return null;
+    r.calls++;
+    return r.calls;
   }
 
   async appendStep(userId: string, e: Omit<RunStepEvent, 'seq'>): Promise<RunStepEvent> {

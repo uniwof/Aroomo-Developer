@@ -91,7 +91,8 @@ export function foldSteps(events: RunStepEvent[]) {
       memberId: e.memberId,
       action: e.action,
       status: e.status,
-      detail: e.detail,
+      // 付费确认步骤开头的成员组指纹只给执行器用，不给界面
+      detail: e.action === 'confirm' ? e.detail.replace(/^\[set:[0-9a-f]{16}\] /, '') : e.detail,
       startedAt: cur?.startedAt ?? e.createdAt.toISOString(),
       updatedAt: e.createdAt.toISOString(),
     });
@@ -250,28 +251,23 @@ export class AssistantService {
       createdAt: now,
       updatedAt: now,
     };
-    const res = await this.d.store.createAssistant(userId, a, {
-      id: a.conversationId,
-      userId,
-      kind: 'assistant',
-      title: a.name,
-      memberIds: a.members.map((m) => m.memberId),
-      readAt: null,
-      createdAt: now,
-      updatedAt: now,
-    });
-    if (res === 'conflict') {
-      const prev = await this.d.store.findAssistantByKey(userId, idempotencyKey!);
-      if (prev) return this.#replay(prev, hash!);
-      throw conflict('请求冲突，请重试', 'CONFLICT');
-    }
-    // 7.11：建好以后固定会话的第一条消息由组长说
+    // 7.11：建好以后固定会话的第一条消息由组长说；和助手同一个事务写（不会有缺开场白的助手）
     // 「每天 09:00 开始」：时间后留空格，「每 3 小时开始」不加
     const when = scheduleText(a.schedule);
     const intro = a.nextRunAt
       ? `我是 ${a.name}，${when}${/\d$/.test(when) ? ' ' : ''}开始，下次 ${shortWhen(a.nextRunAt, a.timezone)}。`
       : `我是 ${a.name}，你叫我时我就开始。`;
-    await this.d.store.appendMessage(userId, { id: randomUUID(), conversationId: a.conversationId, userId, role: 'member', memberId: a.leadMemberId, runId: null, content: intro, createdAt: now });
+    const res = await this.d.store.createAssistant(
+      userId,
+      a,
+      { id: a.conversationId, userId, kind: 'assistant', title: a.name, memberIds: a.members.map((m) => m.memberId), readAt: null, createdAt: now, updatedAt: now },
+      { id: randomUUID(), conversationId: a.conversationId, userId, role: 'member', memberId: a.leadMemberId, runId: null, content: intro, createdAt: now },
+    );
+    if (res === 'conflict') {
+      const prev = await this.d.store.findAssistantByKey(userId, idempotencyKey!);
+      if (prev) return this.#replay(prev, hash!);
+      throw conflict('请求冲突，请重试', 'CONFLICT');
+    }
     await audit('assistant.create', { type: 'assistant', id }, 'ok', `members=${a.members.length} schedule=${a.schedule.kind}`);
     return { assistant: a, created: true };
   }

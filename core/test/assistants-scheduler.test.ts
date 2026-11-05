@@ -136,7 +136,8 @@ describe.each(rlsTargets)('助手存储在应用角色下按账号隔离（$name
       enabled: true, schedule: { kind: 'interval', everyHours: 1 }, timezone: 'Asia/Shanghai', catchUp: 'skip', maxRuntimeSec: 600, budgetLevel: 'low', notify: true,
       conversationId: randomUUID(), nextRunAt: T0, pausedAt: null, idempotencyKey: null, idempotencyHash: null, createdAt: T0, updatedAt: T0,
     };
-    expect(await store.createAssistant(userId, a, { id: a.conversationId, userId, kind: 'assistant', title: 'A', memberIds: ['m-1'], readAt: null, createdAt: T0, updatedAt: T0 })).toBe('ok');
+    const opening = { id: randomUUID(), conversationId: a.conversationId, userId, role: 'member' as const, memberId: 'm-1', runId: null, content: '我是 A', createdAt: T0 };
+    expect(await store.createAssistant(userId, a, { id: a.conversationId, userId, kind: 'assistant', title: 'A', memberIds: ['m-1'], readAt: null, createdAt: T0, updatedAt: T0 }, opening)).toBe('ok');
     return a;
   }
   const run = (a: Assistant, userId: string): AssistantRun => ({
