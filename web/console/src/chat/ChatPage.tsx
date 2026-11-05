@@ -7,27 +7,36 @@
  * - 只调用 Core 的标准接口（/api/*）；会话先存在本机浏览器（localStorage）。
  * 边界：store.ts 管数据和请求，Thread.tsx 管对话区，Sidebar.tsx 管会话列表栏，panels.tsx 管面板，这里管拼装。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, BookOpen, ChevronDown, ChevronRight, CircleAlert, Download, Ellipsis, KeyRound, Menu, MessagesSquare, Pencil, Plus, Settings, SquarePen, Trash2, Users, Wrench } from 'lucide-react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { ArrowRight, BookOpen, ChevronDown, ChevronRight, CircleAlert, Download, Ellipsis, KeyRound, Menu, MessagesSquare, Pencil, Plus, Settings, SquarePen, Trash2, Users, Wrench, X } from 'lucide-react';
 import { api, currentUser, isFamily, viaShell, type Member } from '@/lib/api';
 import { useSearchParams } from 'react-router-dom';
-import { Audit } from '@/pages/Audit';
-import { Executors } from '@/pages/Executors';
 import { useUsage } from '@/lib/usage';
 import { MeFace, Rail, meLabel, quotaState, type RailTarget } from './Rail';
 import { HeaderCard } from './HeaderCard';
-import { Library } from '@/pages/Library';
-import { Keys } from '@/pages/Keys';
-import { Tools } from '@/pages/Tools';
-import { Inbox } from '@/pages/Inbox';
 import { useInboxCount } from '@/lib/inbox';
 import { Thread } from './Thread';
 import { Sidebar } from './Sidebar';
-import { CapabilityPanel, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type SettingsSection } from './panels';
+import { BackButton, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type GoTarget, type SettingsSection } from './panels';
 import { applyDisplay } from '@/lib/display';
-import { listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, stripSignature, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
+import { listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
 import { useAsk } from '@/components/Dialog';
 import './chat.css';
+
+// 不常开的面板点开才下载（#250：对话页包 ≤150 KB gz）。设置、成员随对话页一起加载，打开不用等。
+const LibraryView = lazy(() => import('./views').then((m) => ({ default: m.LibraryView })));
+const ToolsView = lazy(() => import('./views').then((m) => ({ default: m.ToolsView })));
+const ApiView = lazy(() => import('./views').then((m) => ({ default: m.ApiView })));
+const AddMemberDialog = lazy(() => import('./views').then((m) => ({ default: m.AddMemberDialog })));
+const Inbox = lazy(() => import('@/pages/Inbox').then((m) => ({ default: m.Inbox })));
+const Audit = lazy(() => import('@/pages/Audit').then((m) => ({ default: m.Audit })));
+const Executors = lazy(() => import('@/pages/Executors').then((m) => ({ default: m.Executors })));
+const CapabilityPanel = lazy(() => import('./capability-panel').then((m) => ({ default: m.CapabilityPanel })));
+
+/** 懒加载面板下载时：一句静态文字（不转圈，无动画） */
+function Later({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<p role="status" className="note panel-loading">正在加载…</p>}>{children}</Suspense>;
+}
 
 /** 主区域显示什么：对话，或某个面板（带返回的上一层） */
 type View =
@@ -51,7 +60,7 @@ const TITLES: Record<Exclude<View['kind'], 'chat' | 'member'>, string> = {
   me: '我',
   members: '成员',
   capmap: '能力地图',
-  'group-new': '新建群聊',
+  'group-new': '挑选成员',
   settings: '设置',
   tools: '工具',
   inbox: '收件箱',
@@ -81,12 +90,14 @@ function parentOf(v: View): { view: View; label: string } | null {
 
 /** 会话列表宽度：单位是「sumus 像素 / 16」（18.75 = sumus 的 300px），可拖 280–420 */
 const SIDE_KEY = 'aroomo.chat.sideWidth.v1';
+const NOTICE_KEY = 'aroomo.notice.dismissed';
 const SIDE_MIN = 280;
 const SIDE_MAX = 420;
 const clampSide = (w: number) => Math.min(SIDE_MAX / 16, Math.max(SIDE_MIN / 16, w));
 
-function useMembers(): Member[] {
+function useMembers(): [Member[], () => void] {
   const [members, setMembers] = useState<Member[]>([]);
+  const [seq, setSeq] = useState(0);
   useEffect(() => {
     let alive = true;
     api<{ members: Member[] }>('GET', '/api/members')
@@ -95,8 +106,8 @@ function useMembers(): Member[] {
     return () => {
       alive = false;
     };
-  }, []);
-  return members;
+  }, [seq]);
+  return [members, useCallback(() => setSeq((n) => n + 1), [])];
 }
 
 /**
@@ -136,6 +147,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [view, setView] = useState<View>({ kind: 'chat' });
+  // 自审 B16：下面的内容滚到顶栏底下时，顶栏加一条细分隔线（大字号时不再像半行字被切掉）；换页面 / 换会话自动归零
+  const [scrolledKey, setScrolledKey] = useState('');
   const [prefs, setPrefs] = useState<ChatPrefs>(() => loadPrefs());
   const [menu, setMenu] = useState<'none' | 'topic' | 'more'>('none');
   const [sideW, setSideW] = useState<number>(() => {
@@ -150,7 +163,26 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     }
   }, [sideW]);
   const [insert, setInsert] = useState<{ text: string; seq: number } | null>(null);
-  const members = useMembers();
+  const [members, reloadMembers] = useMembers();
+  const [dismissed, setDismissed] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(NOTICE_KEY) ?? '[]') as string[];
+    } catch {
+      return [];
+    }
+  });
+  const dismissNotice = (k: string) =>
+    setDismissed((d) => {
+      const next = [...d.filter((x) => x.endsWith(k.slice(k.indexOf(':')))), k].slice(-50);
+      try {
+        localStorage.setItem(NOTICE_KEY, JSON.stringify(next));
+      } catch {
+        /* 存不了就只在这次打开里不显示 */
+      }
+      return next;
+    });
+  /** 添加成员弹窗（落地文档 8.2）：资源库卡片带出名字，会话栏「+ 添加」、新建菜单「添加成员」打开空白的 */
+  const [addMember, setAddMember] = useState<{ preset?: string } | null>(null);
   const inboxCount = useInboxCount();
   const layout = useLayout();
   const wide = layout.side;
@@ -242,8 +274,12 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
 
   // 设置：桌面和中等宽度照 sumus 是居中弹窗；手机（或字号大到切成手机排法）是整页
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const goto = (v: View) => {
+  const goto = (v: View | { kind: 'add-member' }) => {
     setOpen(false);
+    if (v.kind === 'add-member') {
+      setAddMember({});
+      return;
+    }
     if (v.kind === 'settings' && !phone) {
       setSettingsOpen(true);
       return;
@@ -336,27 +372,29 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     />
   );
 
-  /** 手机上「←」回到哪一层：成员、我是底部栏的顶层页，没有返回；我 里的四项回到 我；收件箱回到对话列表 */
-  const phoneParent = (v: View): { go: () => void; label: string } | null => {
+  /** 手机上「←」回到哪一层：成员、我是底部栏的顶层页，没有返回；我 里的四项回到 我；收件箱、挑选成员回到会话列表（名字和底部栏一样叫「对话」） */
+  const phoneParent = (v: View): { go: () => void; label: string; aria?: string } | null => {
     if (v.kind === 'members' || v.kind === 'me') return null;
     if (v.kind === 'settings' && v.section) return { go: () => setView({ kind: 'settings' }), label: '设置' };
     if (v.kind === 'settings' || v.kind === 'library' || v.kind === 'tools' || v.kind === 'keys') return { go: () => setView({ kind: 'me' }), label: '我' };
-    if (v.kind === 'inbox' || v.kind === 'group-new') return { go: () => { setView({ kind: 'chat' }); setOpen(true); }, label: '对话列表' };
+    if (v.kind === 'inbox' || v.kind === 'group-new') return { go: () => { setView({ kind: 'chat' }); setOpen(true); }, label: '对话', aria: '返回对话列表' };
     const p = parentOf(v);
     return p ? { go: () => setView(p.view), label: p.label } : null;
   };
 
-  const menuButton = !wide || collapsed ? (
+  // 桌面收起列表 / 中等宽度：≡ 打开会话列表。手机对话页：和面板一样的「← 对话」（Poke ③ 返回键全站一种）
+  const menuButton = phone ? (
+    <BackButton label="对话" ariaLabel="返回对话列表" onClick={() => setOpen(true)} />
+  ) : !wide || collapsed ? (
     <button
       type="button"
       className="icon-btn hit"
-      aria-label={phone ? '返回对话列表' : '打开菜单：会话列表、成员、设置'}
-      aria-haspopup={wide || phone ? undefined : 'dialog'}
-      aria-expanded={phone ? undefined : wide ? !collapsed : open}
+      aria-label="打开菜单：会话列表、成员、设置"
+      aria-haspopup={wide ? undefined : 'dialog'}
+      aria-expanded={wide ? !collapsed : open}
       onClick={() => (wide ? setCollapsed(false) : setOpen(true))}
     >
-      {/* 手机照 sumus 用「←」回到会话列表；桌面收起列表后用 ≡ */}
-      {wide ? <Menu aria-hidden="true" /> : <ArrowLeft aria-hidden="true" />}
+      <Menu aria-hidden="true" />
     </button>
   ) : null;
 
@@ -366,26 +404,31 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     ? { name: current.title.replace(/^群聊：/, ''), kind: 'group' as const, type: `群聊 · ${current.group!.length} 位成员`, model: current.group!.join('、') }
     : singleName
       ? { name: singleName, kind: 'member' as const, type: `云端成员 · 今日${currentMember ? quotaState(usage?.find((u) => u.memberId === currentMember.id)).label : '额度未知'}`, model: '—' }
-      : { name: '负责人', kind: 'lead' as const, type: 'Aroomo 内置 · 负责人', model: '自动挑选' };
+      : { name: '全员', kind: 'lead' as const, type: `全员对话 · 负责人和 ${members.length} 位成员`, model: '自动挑选' };
   const intro = isGroup
-    ? '群里的成员一起回答；没写 @ 时，自动 @ 群里每一位。'
+    ? '挑的这几位都在。直接说，负责人回答；@ 谁，谁回答。'
     : currentMember
       ? currentMember.capabilityTags.length
         ? `擅长：${currentMember.capabilityTags.join('、')}。这里的话只发给 TA。`
         : '这里的话只发给 TA。'
       : singleName
         ? '这里的话只发给 TA。'
-        : '没 @ 谁的时候由负责人回答；想找某位成员，用「@名字」。';
+        : '所有成员都在。直接说，负责人回答；@ 谁，谁回答。';
   const q = currentMember ? quotaState(usage?.find((u) => u.memberId === currentMember.id)) : null;
+  // 自审 A16：提示条可关，关了当天这位成员不再出现（只记在本机）
+  const noticeKey = currentMember ? `${currentMember.id}:${new Date().toLocaleDateString('sv-SE')}` : '';
   const notice =
-    q?.tone === 'full' ? (
+    q?.tone === 'full' && !dismissed.includes(noticeKey) ? (
       <div className="notice" role="status">
         <CircleAlert aria-hidden="true" className="notice-icon" />
         <p className="notice-title">{who.name} 今天的额度用完了</p>
         <p className="notice-text">消息还能发出去，但 TA 暂时不会回复。可以换一位成员，或者到「成员」里调高每天上限。</p>
-        <button type="button" className="notice-btn hit" onClick={() => setView({ kind: 'member', id: currentMember!.id })}>
-          查看成员
+        <button type="button" className="notice-btn hit" onClick={() => setView({ kind: 'group-new' })}>
+          换个成员
           <ArrowRight aria-hidden="true" />
+        </button>
+        <button type="button" className="icon-btn hit notice-close" aria-label="关掉提示，今天不再显示" onClick={() => dismissNotice(noticeKey)}>
+          <X aria-hidden="true" />
         </button>
       </div>
     ) : null;
@@ -435,7 +478,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
                                 <span className="pop-topic-title">{c.title}</span>
                                 <span className="pop-topic-time">{listTimeLabel(c.updatedAt)}</span>
                               </span>
-                              <span className="pop-topic-preview">{stripSignature(c.messages[c.messages.length - 1]?.text ?? '').replace(/[#*`>_~[\]()]/g, '').replace(/\s+/g, ' ').trim()}</span>
+                              <span className="pop-topic-preview">{previewText(c.messages[c.messages.length - 1]?.text ?? '')}</span>
                             </span>
                           </button>
                         </li>
@@ -469,7 +512,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
                       <li>
                         <button type="button" className="pop-item" onClick={() => { setMenu('none'); exportMd(current); }}>
                           <Download aria-hidden="true" />
-                          <span>导出这个话题（Markdown）</span>
+                          <span>导出为 Markdown</span>
                         </button>
                       </li>
                     )}
@@ -503,7 +546,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           conversation={current}
           onMessages={onMessages}
           insert={insert}
-          members={memberNames}
+          members={current.group?.length ? current.group : memberNames}
           speechRate={prefs.speechRate}
           speechOnline={prefs.speechOnline}
           onAllowOnlineSpeech={allowOnlineSpeech}
@@ -520,8 +563,9 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     const title = view.kind === 'member' ? (member?.name ?? '成员') : view.kind === 'settings' && view.section ? SETTINGS_SECTIONS.find((x) => x.id === view.section)!.label : TITLES[view.kind];
     main = (
       <>
-        <PanelHeader title={title} lead={phone ? null : menuButton} {...(parent ? { onBack: () => ('go' in parent ? parent.go() : parent.view.kind === 'settings' ? goto(parent.view) : setView(parent.view)), backLabel: parent.label } : {})} />
+        <PanelHeader title={title} lead={phone ? null : menuButton} {...(parent ? { onBack: () => ('go' in parent ? parent.go() : parent.view.kind === 'settings' ? goto(parent.view) : setView(parent.view)), backLabel: parent.label, ...('aria' in parent && parent.aria ? { backAria: parent.aria } : {}) } : {})} />
         <div className="panel-scroll">
+          <Later>
           {view.kind === 'members' && (
             <>
               <MembersPanel members={members} onOpen={(m) => setView({ kind: 'member', id: m.id })} />
@@ -548,16 +592,22 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
             />
           )}
           {view.kind === 'capmap' && <CapabilityPanel />}
-          {view.kind === 'group-new' && <GroupNewPanel members={members} onStart={(names) => start({ title: `群聊：${names.join('、')}`, group: names })} />}
-          {view.kind === 'settings' && <SettingsPanel prefs={prefs} setPrefs={setPrefs} {...(view.section ? { section: view.section } : {})} onOpen={(k) => setView({ kind: 'settings', section: k })} onGo={(k: 'audit' | 'executors') => setView({ kind: k })} />}
-          {view.kind === 'tools' && (
-            <div className="panel panel-embed">
-              <Tools />
-            </div>
+          {view.kind === 'group-new' && (
+            <GroupNewPanel
+              members={members}
+              onStart={(names) => {
+                // 只挑一位 = 和 TA 单聊；两位以上 = 这几位在场，默认负责人回答，@ 谁谁答（落地方案 v2 第 1 节，不让每位都回一遍）
+                const one = names.length === 1 ? members.find((m) => m.name === names[0]) : undefined;
+                if (one) chatWith(one);
+                else start({ title: `群聊：${names.join('、')}`, group: names });
+              }}
+            />
           )}
+          {view.kind === 'settings' && <SettingsPanel prefs={prefs} setPrefs={setPrefs} members={members} {...(view.section ? { section: view.section } : {})} onOpen={(k) => setView({ kind: 'settings', section: k })} onGo={(k: GoTarget) => setView({ kind: k })} />}
+          {view.kind === 'tools' && <ToolsView onGo={(k) => setView({ kind: k })} />}
           {view.kind === 'inbox' && (
             <div className="panel panel-embed">
-              <Inbox />
+              <Inbox onBack={() => setView({ kind: 'chat' })} />
             </div>
           )}
           {view.kind === 'me' && (
@@ -582,16 +632,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
               </ul>
             </div>
           )}
-          {view.kind === 'library' && (
-            <div className="panel panel-embed">
-              <Library />
-            </div>
-          )}
-          {view.kind === 'keys' && (
-            <div className="panel panel-embed">
-              <Keys />
-            </div>
-          )}
+          {view.kind === 'library' && <LibraryView onAddMember={(preset) => setAddMember(preset ? { preset } : {})} />}
+          {view.kind === 'keys' && <ApiView members={members} />}
           {view.kind === 'audit' && (
             <div className="panel panel-embed">
               <Audit />
@@ -602,6 +644,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
               <Executors />
             </div>
           )}
+          </Later>
         </div>
       </>
     );
@@ -648,20 +691,45 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         </aside>
       )}
       {ask.node}
-      <SettingsDialog open={settingsOpen && !phone} onClose={() => setSettingsOpen(false)} prefs={prefs} setPrefs={setPrefs} onGo={(k: 'audit' | 'executors') => { setSettingsOpen(false); setView({ kind: k }); }} />
+      <SettingsDialog open={settingsOpen && !phone} onClose={() => setSettingsOpen(false)} prefs={prefs} setPrefs={setPrefs} members={members} onGo={(k: GoTarget) => { setSettingsOpen(false); setView({ kind: k }); }} />
+      {addMember && (
+        <Suspense fallback={null}>
+      <AddMemberDialog
+        open
+        {...(addMember?.preset ? { preset: addMember.preset } : {})}
+        onClose={() => setAddMember(null)}
+        onAdded={() => reloadMembers()}
+        {...(view.kind === 'library' ? {} : { onExplore: () => { setAddMember(null); goto({ kind: 'library' }); } })}
+      />
+        </Suspense>
+      )}
       {!wide && !phone && (
         <dialog ref={dialog} className="drawer" aria-label="会话列表" onClose={() => setOpen(false)} onCancel={() => setOpen(false)}>
           {open && sidebar}
         </dialog>
       )}
       {phone && open && view.kind === 'chat' ? (
-        <section className="main phone-list" aria-label="对话列表">
+        <main className="main phone-list" aria-labelledby="phone-list-title">
+          {/* 自审 B12：手机列表页也有 main 地标和 h1 */}
+          <h1 id="phone-list-title" className="sr-only">
+            对话列表
+          </h1>
           {sidebar}
-        </section>
+        </main>
       ) : (
-        <section className="main" aria-labelledby={view.kind === 'chat' ? 'chat-title' : undefined} aria-label={view.kind === 'chat' ? undefined : '面板'}>
+        <main
+          className="main"
+          aria-labelledby={view.kind === 'chat' ? 'chat-title' : undefined}
+          aria-label={view.kind === 'chat' ? undefined : '面板'}
+          data-scrolled={scrolledKey === `${view.kind}:${currentId}` ? '' : undefined}
+          onScrollCapture={(e) => {
+            const k = `${view.kind}:${currentId}`;
+            const on = (e.target as HTMLElement).scrollTop > 0;
+            if (on !== (scrolledKey === k)) setScrolledKey(on ? k : '');
+          }}
+        >
           {main}
-        </section>
+        </main>
       )}
       {phone && tab && (
         <nav className="tabbar" aria-label="主导航">

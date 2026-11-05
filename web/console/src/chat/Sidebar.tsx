@@ -1,7 +1,7 @@
 /**
  * 会话列表栏（2026-11-04 所有者：完全照 sumus 登录后的界面，300px 宽、极浅灰底；之后再逐个改功能）：
  *   顶部 48px：「Aroomo」+ 右边小铃铛（通知 / 收件箱）
- *   分段控件「对话 / 专职成员」（sumus 的 Chat / Activity 位置；同一栏的两种列表，不是标签页）
+ *   分段控件「对话 / 助手」（所有者 11-05 12:16 定名：助手=为一个长期任务设的单位，一个成员或几个成员的小团队）（sumus 的 Chat / Activity 位置；同一栏的两种列表，不是标签页）
  *   搜索框 + 新对话
  *   分组标题「对话 ∨」（点了收起 / 展开）
  *   会话行：头像 + 名字 + 时间 / 一行预览 + 置顶图钉
@@ -15,7 +15,7 @@ import { isFamily, type Member } from '@/lib/api';
 import type { UsageRow } from '@/lib/usage';
 import { Avatar, type AvatarKind } from './Avatar';
 import { quotaState, type RailTarget } from './Rail';
-import { listTimeLabel, stripSignature, type Conversation } from './store';
+import { listTimeLabel, previewText, type Conversation } from './store';
 
 type Tab = 'staff' | 'chats';
 
@@ -35,11 +35,11 @@ interface Row {
 function previewOf(c: Conversation): string {
   const last = c.messages[c.messages.length - 1];
   if (!last) return '还没有消息';
-  const text = stripSignature(last.text).replace(/[#*`>_~[\]()]/g, '').replace(/\s+/g, ' ').trim();
+  const text = previewText(last.text);
   return last.role === 'user' ? `我：${text}` : text;
 }
 
-export type SideTarget = RailTarget | 'group-new' | 'inbox' | 'capmap';
+export type SideTarget = RailTarget | 'group-new' | 'inbox' | 'capmap' | 'add-member';
 
 export interface SidebarProps {
   list: Conversation[];
@@ -106,17 +106,8 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
     return out;
   }, [list, members, currentId]);
 
-  const staff = useMemo<Row[]>(() => {
-    const lastOf = (model: string) => list.find((c) => c.model === model && c.messages.length > 0);
-    const lead = lastOf('aroomo');
-    return [
-      { key: 'lead', kind: 'lead', name: '负责人', preview: '没 @ 谁的时候，由负责人回答', at: lead?.updatedAt, lead: true, pinned: true },
-      ...members.map((m): Row => {
-        const c = lastOf(`aroomo/${m.id}`);
-        return { key: m.id, kind: 'member', name: m.name, preview: c ? previewOf(c) : m.capabilityTags.length ? m.capabilityTags.join('、') : '在职成员', at: c?.updatedAt, member: m };
-      }),
-    ];
-  }, [list, members]);
+  // 助手（所有者 11-05 12:16 / 12:38）：为一个长期、可定时的任务设的成员小队。不预置示例，Core 接口（/api/assistants）好之前列表为空、不放「新建助手」按钮
+  const staff: Row[] = [];
 
   const k = q.trim().toLowerCase();
   const rows = (tab === 'staff' ? staff : chats).filter((r) => !k || r.name.toLowerCase().includes(k) || r.preview.toLowerCase().includes(k));
@@ -127,7 +118,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
     const q2 = r.member && tab === 'staff' ? `，${quotaState(usage?.find((u) => u.memberId === r.member!.id)).label}` : '';
     return `${head}${r.pinned ? '，已置顶' : ''}${q2}，${tab === 'staff' ? '' : '最后一条：'}${r.preview}${r.at ? `，${listTimeLabel(r.at)}` : ''}`;
   };
-  const groupLabel = tab === 'staff' ? '专职成员' : '对话';
+  const groupLabel = tab === 'staff' ? '助手' : '对话';
 
   return (
     <div className="side-inner">
@@ -149,7 +140,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
           {(
             [
               ['chats', '对话', MessagesSquare],
-              ['staff', '专职成员', Activity],
+              ['staff', '助手', Activity],
             ] as [Tab, string, typeof Activity][]
           ).map(([v, label, Icon]) => (
             <button key={v} type="button" role="radio" aria-checked={tab === v} className="seg2-item hit" onClick={() => setTab(v)}>
@@ -165,7 +156,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
             <span className="sr-only">搜索对话</span>
             <input type="search" placeholder="搜索对话" value={q} onChange={(e) => setQ(e.target.value)} />
           </label>
-          {/* 新建对话菜单（照 sumus）：新建群聊 / 新建成员 / 和某一位开新对话 */}
+          {/* 新建对话菜单（所有者 11-05 12:15）：默认全员（不 @ 由负责人安排，@ 谁谁答）/ 自己挑成员 / 和某一位单聊；所有者另有「添加成员」 */}
           <div className="topic">
             <button type="button" className="icon-btn hit" aria-label="新建对话" title="新建对话" aria-haspopup="true" aria-expanded={newOpen} onClick={() => setNewOpen((o) => !o)}>
               <SquarePen aria-hidden="true" />
@@ -173,23 +164,30 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
             {newOpen && (
               <ul className="pop pop-right" aria-label="新建对话" onKeyDown={(e) => e.key === 'Escape' && setNewOpen(false)}>
                 <li>
+                  <button type="button" className="pop-item" onClick={() => { setNewOpen(false); onNew(); }}>
+                    <Avatar name="全员" kind="lead" size="xs" />
+                    <span>新对话（全员）</span>
+                  </button>
+                </li>
+                <li>
                   <button type="button" className="pop-item" onClick={() => { setNewOpen(false); onOpen('group-new'); }}>
                     <Users aria-hidden="true" />
-                    <span>新建群聊</span>
+                    <span>挑选成员新建</span>
                   </button>
                 </li>
-                <li>
-                  <button type="button" className="pop-item" onClick={() => { setNewOpen(false); onOpen('members'); }}>
-                    <Bot aria-hidden="true" />
-                    <span>新建成员</span>
-                  </button>
-                </li>
-                <li>
-                  <button type="button" className="pop-item" onClick={() => { setNewOpen(false); onNew(); }}>
-                    <Avatar name="负责人" kind="lead" size="xs" />
-                    <span>负责人</span>
-                  </button>
-                </li>
+                {!isFamily() && (
+                  <li>
+                    <button type="button" className="pop-item" onClick={() => { setNewOpen(false); onOpen('add-member'); }}>
+                      <Bot aria-hidden="true" />
+                      <span>添加成员</span>
+                    </button>
+                  </li>
+                )}
+                {members.length > 0 && (
+                  <li role="presentation">
+                    <p className="pop-label">单独聊</p>
+                  </li>
+                )}
                 {members.map((m) => (
                   <li key={m.id}>
                     <button type="button" className="pop-item" aria-label={`和 ${m.name} 开新对话`} onClick={() => { setNewOpen(false); onMember(m); }}>
@@ -210,7 +208,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
           <ChevronDown aria-hidden="true" className={folded ? 'folded' : undefined} />
         </button>
         {!folded && (
-          <ul className="conv-list" aria-label={tab === 'staff' ? '专职成员' : '会话列表'}>
+          <ul className="conv-list" aria-label={tab === 'staff' ? '助手列表' : '会话列表'}>
             {rows.map((r) => (
               <li key={r.key}>
                 <button
@@ -242,7 +240,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
                 </button>
               </li>
             ))}
-            {rows.length === 0 && <li className="conv-empty">{q ? '没有找到。换个词试试。' : '还没有会话。'}</li>}
+            {rows.length === 0 && <li className="conv-empty">{q ? '没有找到。换个词试试。' : tab === 'staff' ? '还没有助手。' : '还没有会话。'}</li>}
           </ul>
         )}
       </div>
@@ -255,7 +253,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
             <Shapes aria-hidden="true" />
             <span>资源库</span>
           </button>
-          <button type="button" className="pill hit" aria-label="添加成员" onClick={() => onOpen('capmap')}>
+          <button type="button" className="pill hit" aria-label="添加成员" onClick={() => onOpen('add-member')}>
             <Plus aria-hidden="true" />
             <span>添加</span>
           </button>

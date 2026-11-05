@@ -43,6 +43,8 @@ describe('审计页', () => {
     await waitFor(() => expect(within(list).getAllByRole('listitem')).toHaveLength(3));
     expect(urls).toContain('/api/audit?limit=50&cursor=cur1');
     expect(screen.queryByRole('button', { name: '加载更多' })).toBeNull();
+    // 按钮没了：焦点落到状态行（Groq 审查点）
+    await waitFor(() => expect(screen.getByRole('status')).toHaveFocus());
     expect(within(list).getByText('失败')).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('动作开头'), { target: { value: 'gateway.' } });
@@ -50,6 +52,11 @@ describe('审计页', () => {
     fireEvent.change(screen.getByLabelText('结果'), { target: { value: 'denied' } });
     await waitFor(() => expect(within(list).getAllByRole('listitem')).toHaveLength(1));
     expect(screen.getByRole('status')).toHaveTextContent('显示 1 条');
+    // unify5：照 sumus 用细边分组卡（一行一条），不再是灰底卡片；筛不出东西时一句空状态
+    expect(list).toHaveClass('group');
+    expect(document.querySelector('.card-muted')).toBeNull();
+    fireEvent.change(screen.getByLabelText('动作开头'), { target: { value: 'nothing.' } });
+    expect(await screen.findByText('没有符合筛选的记录。')).toBeInTheDocument();
   });
 
   it('账号用户（403）：只说明「审计只有所有者能看」，不报错', async () => {

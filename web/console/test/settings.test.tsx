@@ -107,7 +107,7 @@ describe('设置页', () => {
       }),
     );
     render(<Settings />);
-    expect(await screen.findByText(/今天已来 4 张接管卡/)).toBeInTheDocument();
+    expect(await screen.findByText(/今天提醒了 3 次，静默 1 次/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '增加一次' }));
     await waitFor(() => expect(puts[0]).toEqual({ url: '/api/interrupt-budget', body: { daily: 4 } }));
     expect(screen.getByLabelText('每天提醒次数')).toHaveTextContent('4');

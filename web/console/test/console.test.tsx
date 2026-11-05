@@ -110,10 +110,10 @@ describe('页面', () => {
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'pw' } });
     fireEvent.click(screen.getByRole('button', { name: '登录' }));
     // 旧控制台已并进对话页（自审 C1）：/members 打开对话页里的成员面板，没有第二套侧栏
-    await waitFor(() => expect(screen.getByRole('heading', { name: '成员', level: 1 })).toBeInTheDocument(), { timeout: 4000 });
+    await waitFor(() => expect(screen.getByRole('heading', { name: '成员', level: 1 })).toBeInTheDocument(), { timeout: 15000 });
     await waitFor(() => expect(screen.getAllByText('gpt-oss-20b').length).toBeGreaterThan(0));
     expect(screen.queryByRole('navigation', { name: '控制台' })).toBeNull();
-  });
+  }, 20000); // 机器慢时对话页单独打包的那块要加载几秒
 
   it('登录失败给出提示', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json(401, { error: { code: 'BAD_CREDENTIALS', message: 'x' } })));

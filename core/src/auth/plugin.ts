@@ -2,6 +2,8 @@
  * /api/* 的鉴权：Bearer 令牌 → Principal；每个路由用 requireCapability 声明所需能力。
  * P0 单用户：requireOwner 即「主人令牌」（Issue #5 的占位钩子），后续接入登录态（PRODUCT §11.2 第 9 条）。
  */
+import { createHash } from 'node:crypto';
+import rateLimit from '@fastify/rate-limit';
 import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from 'fastify';
 import { bindAudit } from '../audit/common.js';
 import type { AuditActor, AuditFn, AuditLog } from '../audit/types.js';
@@ -44,6 +46,14 @@ export interface AuthOptions {
   ownerConfigured: boolean;
   /** 必改 1 方案 A：所有者自己的账号 id（CORE_OWNER_ACCOUNT_ID）；未设置 = 不映射 */
   ownerAccountId?: string | undefined;
+  /** 每个凭据（没有凭据按 IP）每分钟最多请求数；默认 1200。防暴力猜令牌 / 刷接口（CodeQL js/missing-rate-limiting） */
+  rateLimitPerMin?: number;
+}
+
+/** 限速按凭据分桶：Shell 代理后所有请求同一个 IP，不能只按 IP；令牌只取摘要，不留原文 */
+function limitKey(req: FastifyRequest): string {
+  const cred = req.headers.authorization ?? readSessionCookie(req.headers.cookie);
+  return cred ? `c:${createHash('sha256').update(cred).digest('base64url').slice(0, 22)}` : `ip:${req.ip}`;
 }
 
 const noAudit: AuditFn = async () => undefined;
@@ -60,14 +70,25 @@ function decodedPath(url: string): string {
 export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
   app.decorateRequest('principal', null);
   app.decorateRequest('audit', noAudit);
+  // 限速（@fastify/rate-limit，MIT）：在下面验身份之前先计数，猜错的令牌也算；超出 → 429，错误格式与全站一致
+  void app.register(rateLimit, {
+    global: false,
+    max: opts.rateLimitPerMin ?? 1200,
+    timeWindow: 60_000,
+    keyGenerator: limitKey,
+    errorResponseBuilder: () => new HttpError(429, 'RATE_LIMITED', '请求太频繁，请稍后再试'),
+  });
+  let limit: ReturnType<FastifyInstance['rateLimit']> | undefined;
 
-  app.addHook('onRequest', async (req: FastifyRequest) => {
+  app.addHook('onRequest', async (req: FastifyRequest, reply: FastifyReply) => {
     // 按匹配到的路由模式判断，不看原始 URL：/%61pi/keys 会被路由库解码后匹配到 /api/keys（#242 必改 1）
     // 没匹配到路由时，用解码后的路径判断（不存在的 /api/* 照样先验身份、操作员照样拒绝并审计；D62），解码失败按受保护处理
     const pattern = req.routeOptions.url ?? decodedPath(req.url);
     const isMcp = pattern === '/mcp';
     // /internal/* 也要验身份：LobeHub 的 SSRF 白名单放行 Core 整个 IP，不能有免验身份的接口（#235）
     if (!pattern.startsWith('/api/') && !pattern.startsWith('/internal/') && !isMcp) return;
+    limit ??= app.rateLimit();
+    await limit.call(app, req, reply);
     if (!opts.ownerConfigured) {
       throw new HttpError(503, 'AUTH_NOT_CONFIGURED', '尚未配置访问令牌（CORE_OWNER_TOKEN），暂时不能使用');
     }

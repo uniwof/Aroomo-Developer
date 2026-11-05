@@ -260,8 +260,12 @@ services:
       LOBE_UPSTREAM: http://lobe:3210
       CORE_UPSTREAM: http://core:8080
       CORE_OWNER_TOKEN: ${CORE_OWNER_TOKEN:-}
-      SHELL_AUTH: lobe-session
-      # 所有者的 LobeHub 用户 id（生产必填，#245）；未设置时控制台和 /aroomo/api 对所有人 403
+      # core-session（默认）：用 Aroomo Core 账号登录（/aroomo/login），LobeHub 停用后的方式；
+      # 回退到旧的 LobeHub 登录：.env 里设 SHELL_AUTH=lobe-session 并重新启动 lobe
+      SHELL_AUTH: ${SHELL_AUTH:-core-session}
+      # core-session：所有者的 Core 账号邮箱（生产必填）；只有这个邮箱且 role=admin 才能用控制台，未设置时对所有人 403
+      SHELL_OWNER_EMAIL: ${SHELL_OWNER_EMAIL:-}
+      # lobe-session 才用：所有者的 LobeHub 用户 id（#245）
       SHELL_OWNER_USER_ID: ${SHELL_OWNER_USER_ID:-}
       SHELL_DEFAULT_LOCALE: zh-CN
     # 控制台静态文件（同 core 的挂载）

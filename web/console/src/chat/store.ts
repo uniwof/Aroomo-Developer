@@ -18,7 +18,7 @@ export interface Conversation {
   title: string;
   /** 'aroomo' = 交给负责人（可 @ 点名）；'aroomo/<成员 id>' = 单独和这位成员对话 */
   model: string;
-  /** 群聊：这些成员一起回答（没写 @ 时自动 @ 他们） */
+  /** 挑选的成员（落地方案 v2：默认只有负责人回答，@ 谁谁答；@ 列表只列这几位） */
   group?: string[];
   messages: ChatTurn[];
   updatedAt: number;
@@ -143,11 +143,6 @@ export async function* streamChat(turns: ChatTurn[], model: string, signal: Abor
   }
 }
 
-/** 群聊里没写 @ 时，自动 @ 群里的成员（只改发出去的文字，界面上显示原话） */
-export function withGroupMentions(text: string, group: string[] | undefined): string {
-  if (!group?.length || /(^|\s)[@＠]\S/.test(text)) return text;
-  return `${group.map((n) => `@${n}`).join(' ')} ${text}`;
-}
 
 // ---- 本机存储 ----
 
@@ -265,6 +260,20 @@ export function signatureOf(text: string): string | null {
 /** 去掉回复末尾的署名行「— 名字」（名字已显示在头像旁边，不再重复） */
 export function stripSignature(text: string): string {
   return text.replace(/\n?\s*[—–]\s*[^\n—–]{1,40}?\s*$/, '').replace(/\s+$/, '');
+}
+
+/**
+ * 会话列表 / 话题菜单的一行预览：去署名，图片写成「[图片：说明]」（没说明就「[图片]」），链接只留文字，再去掉 Markdown 符号。
+ * 以前直接删符号，带图的回复会露出整段图片网址。
+ */
+export function previewText(text: string): string {
+  return stripSignature(text)
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, (_m, alt: string) => (alt.trim() ? ` [图片：${alt.trim()}] ` : ' [图片] '))
+    .replace(/<img\b[^>]*>/gi, ' [图片] ')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/[#*`>_~]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 const pad = (n: number) => String(n).padStart(2, '0');
