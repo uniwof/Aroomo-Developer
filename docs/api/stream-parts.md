@@ -30,7 +30,7 @@
 - **上限**：一条回复最多 20 个调用；存库时整组 ≤15000 字，超了从后往前先去 `result`、再去 `args`，`summary` 总在。
 - 读历史：`GET /api/conversations/:id/messages` 的回复带 `tools: ToolPartData[]`（和流里最后一次发的 data 一样）。
 
-## 2. 助手运行步骤状态（X-06 分工的送达状态，A+，迁移 0029）
+## 2. 助手运行步骤状态（X-06 分工的送达状态，A+，迁移 0030）
 
 `GET /api/assistants/:id/runs/:run` 的 `steps[].status`（每个 step_no 取最后一条事件）。
 

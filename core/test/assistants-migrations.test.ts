@@ -1,12 +1,13 @@
-/** 助手 v1 迁移 0025–0027 + 会话存库 0028 + 送达状态 0029（X-06）：可回退（up → down → up）；消息、步骤只追加（X-21）。 */
+/** 助手 v1 迁移 0025–0027 + 会话存库 0028 + 送达状态 0030（X-06；0029 留给 S3-C 推送订阅）：可回退（up → down → up）；消息、步骤只追加（X-21）。 */
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { assertAppRoleSafe, grantAppRole } from '../src/db/app-role.js';
 import { migrate } from '../src/db/migrate.js';
 import { openPglite } from './helpers/db.js';
 
 const DOWN = fileURLToPath(new URL('../migrations/down/', import.meta.url));
-const NEW = ['0025_conversations.sql', '0026_assistants.sql', '0027_assistant_runs.sql', '0028_saved_conversations.sql', '0029_run_step_received.sql'];
+const NEW = ['0025_conversations.sql', '0026_assistants.sql', '0027_assistant_runs.sql', '0028_saved_conversations.sql', '0030_run_step_received.sql'];
 const NOW = "'2026-11-05T14:00:00+08:00'";
 
 const tables = async (db: Awaited<ReturnType<typeof openPglite>>) =>
@@ -17,7 +18,7 @@ const tables = async (db: Awaited<ReturnType<typeof openPglite>>) =>
     )
   ).rows.map((r) => r.t);
 
-describe('助手迁移 0025–0029', () => {
+describe('助手迁移 0025–0030', () => {
   it('每个新迁移都有回退文件', () => {
     const downs = readdirSync(DOWN);
     for (const f of NEW) expect(downs).toContain(f.replace(/\.sql$/, '.down.sql'));
@@ -48,11 +49,44 @@ describe('助手迁移 0025–0029', () => {
     await expect(
       db.query(`INSERT INTO assistant_runs (id, assistant_id, user_id, trigger, requested_at, status) VALUES ('00000000-0000-4000-8000-000000000005', '00000000-0000-4000-8000-000000000003', 'owner', 'manual', ${NOW}, 'running')`),
     ).rejects.toThrow(/assistant_runs_one_active|duplicate/);
+    // 裁定 12：同一助手最多一条等确认
+    await db.query(`INSERT INTO assistant_runs (id, assistant_id, user_id, trigger, requested_at, status) VALUES ('00000000-0000-4000-8000-000000000006', '00000000-0000-4000-8000-000000000003', 'owner', 'manual', ${NOW}, 'waiting_confirmation')`);
+    await expect(
+      db.query(`INSERT INTO assistant_runs (id, assistant_id, user_id, trigger, requested_at, status) VALUES ('00000000-0000-4000-8000-000000000007', '00000000-0000-4000-8000-000000000003', 'owner', 'manual', ${NOW}, 'waiting_confirmation')`),
+    ).rejects.toThrow(/assistant_runs_one_waiting|duplicate/);
     await db.query(`DELETE FROM assistants`);
     expect((await db.query('SELECT 1 FROM run_steps')).rows).toHaveLength(0);
     await db.query(`DELETE FROM conversations`);
     expect((await db.query('SELECT 1 FROM conversation_messages')).rows).toHaveLength(0);
     await db.close();
+  });
+
+  it('负责人第二批必改 3：应用角色不能直接 DELETE 消息 / 步骤（也不能 TRUNCATE）；删助手、删会话的级联照样删得掉', async () => {
+    const db = await openPglite();
+    try {
+      await db.exec(`
+        INSERT INTO conversations (id, user_id, kind, title, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000021', 'owner', 'assistant', 't', ${NOW}, ${NOW});
+        INSERT INTO conversation_messages (id, conversation_id, user_id, role, content, created_at) VALUES ('00000000-0000-4000-8000-000000000022', '00000000-0000-4000-8000-000000000021', 'owner', 'system', 'hi', ${NOW});
+        INSERT INTO assistants (id, user_id, name, instructions, timezone, conversation_id, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000023', 'owner', 'a', '0123456789', 'Asia/Shanghai', '00000000-0000-4000-8000-000000000021', ${NOW}, ${NOW});
+        INSERT INTO assistant_runs (id, assistant_id, user_id, trigger, requested_at, status) VALUES ('00000000-0000-4000-8000-000000000024', '00000000-0000-4000-8000-000000000023', 'owner', 'manual', ${NOW}, 'queued');
+        INSERT INTO run_steps (run_id, user_id, seq, step_no, action, status, created_at) VALUES ('00000000-0000-4000-8000-000000000024', 'owner', 0, 0, 'plan', 'pending', ${NOW});
+        CREATE ROLE aroomo_core_app NOLOGIN;
+      `);
+      await grantAppRole(db, 'aroomo_core_app');
+      await db.exec(`SET ROLE aroomo_core_app; SELECT set_config('app.user_id', 'owner', false);`);
+      expect(await assertAppRoleSafe(db)).toMatchObject({ truncatable: [], appendOnlyDeletable: [] });
+      expect((await db.query('SELECT 1 FROM conversation_messages')).rows).toHaveLength(1);
+      await expect(db.query('DELETE FROM conversation_messages')).rejects.toThrow(/permission denied for table conversation_messages/);
+      await expect(db.query('DELETE FROM run_steps')).rejects.toThrow(/permission denied for table run_steps/);
+      await expect(db.query('TRUNCATE run_steps')).rejects.toThrow(/permission denied/);
+      // 级联由数据库以表所有者身份执行：删助手带走运行和步骤，删会话带走消息
+      await db.query(`DELETE FROM assistants WHERE id = '00000000-0000-4000-8000-000000000023'`);
+      expect((await db.query('SELECT 1 FROM run_steps')).rows).toHaveLength(0);
+      await db.query(`DELETE FROM conversations WHERE id = '00000000-0000-4000-8000-000000000021'`);
+      expect((await db.query('SELECT 1 FROM conversation_messages')).rows).toHaveLength(0);
+    } finally {
+      await db.close();
+    }
   });
 
   it('跨账号挂接在库层失败：助手不能挂别人的会话，成员组不能挂别人的成员', async () => {
@@ -87,7 +121,7 @@ describe('助手迁移 0025–0029', () => {
     await db.close();
   });
 
-  it('0029（X-06）：步骤能记 received；回退删掉 received 事件行、约束回到 0028 的样子；再 up 一次能用', async () => {
+  it('0030（X-06）：步骤能记 received；回退删掉 received 事件行、约束回到 0028 的样子；再 up 一次能用', async () => {
     const db = await openPglite();
     await db.exec(`
       INSERT INTO conversations (id, user_id, kind, title, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000031', 'owner', 'assistant', 't', ${NOW}, ${NOW});
@@ -100,10 +134,10 @@ describe('助手迁移 0025–0029', () => {
         ('00000000-0000-4000-8000-000000000033', 'owner', 3, 0, 'work', 'done', ${NOW});
     `);
     await expect(db.query(`INSERT INTO run_steps (run_id, user_id, seq, step_no, action, status, created_at) VALUES ('00000000-0000-4000-8000-000000000033', 'owner', 4, 0, 'work', 'read', ${NOW})`)).rejects.toThrow(/check/);
-    await db.exec(readFileSync(`${DOWN}/0029_run_step_received.down.sql`, 'utf8'));
+    await db.exec(readFileSync(`${DOWN}/0030_run_step_received.down.sql`, 'utf8'));
     expect((await db.query<{ status: string }>('SELECT status FROM run_steps ORDER BY seq')).rows.map((r) => r.status)).toEqual(['pending', 'running', 'done']);
     await expect(db.query(`INSERT INTO run_steps (run_id, user_id, seq, step_no, action, status, created_at) VALUES ('00000000-0000-4000-8000-000000000033', 'owner', 5, 0, 'work', 'received', ${NOW})`)).rejects.toThrow(/check/);
-    expect(await migrate(db)).toEqual(['0029_run_step_received.sql']);
+    expect(await migrate(db)).toEqual(['0030_run_step_received.sql']);
     await db.close();
   });
 });

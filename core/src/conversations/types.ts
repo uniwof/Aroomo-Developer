@@ -25,6 +25,8 @@ export interface ChatMessageMeta {
   /** X-05：这条回复里的工具调用（已脱敏；家人账号的只有摘要），只由 Core 写 */
   tools?: ToolPartData[];
   imported?: true;
+  /** 回复是哪几位成员答的：成员 id + 名字快照（裁定 16/17；Core 选的人，不收浏览器传来的） */
+  answeredBy?: Array<{ memberId: string; name: string }>;
 }
 
 export interface ChatMessage {

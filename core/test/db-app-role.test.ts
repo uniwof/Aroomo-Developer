@@ -50,6 +50,31 @@ describe('应用数据库角色（PGlite）', () => {
     }
   });
 
+  it('应用角色没有 TRUNCATE、不能删只追加的表；手工多授了就拒绝启动（负责人 11-05 必改）', async () => {
+    const db = await openPglite();
+    try {
+      await db.exec('CREATE ROLE aroomo_core_app NOLOGIN');
+      await grantAppRole(db, 'aroomo_core_app');
+      await db.exec('SET ROLE aroomo_core_app');
+      expect(await assertAppRoleSafe(db)).toMatchObject({ truncatable: [], appendOnlyDeletable: [] });
+      await expect(db.query('TRUNCATE members')).rejects.toThrow(/permission denied/);
+      await expect(db.query('TRUNCATE audit_log')).rejects.toThrow(/permission denied/);
+      await db.exec('RESET ROLE; GRANT TRUNCATE ON members TO aroomo_core_app; SET ROLE aroomo_core_app');
+      await expect(assertAppRoleSafe(db)).rejects.toThrow(/TRUNCATE members/);
+      await db.exec('RESET ROLE; GRANT DELETE ON audit_log TO aroomo_core_app; SET ROLE aroomo_core_app');
+      await expect(assertAppRoleSafe(db)).rejects.toThrow(/TRUNCATE members/);
+      // 重新授权（每次启动都跑）把多授的收回
+      await db.exec('RESET ROLE');
+      await grantAppRole(db, 'aroomo_core_app');
+      await db.exec('SET ROLE aroomo_core_app');
+      expect(await assertAppRoleSafe(db)).toMatchObject({ truncatable: [], appendOnlyDeletable: [] });
+      await db.exec('RESET ROLE; GRANT DELETE ON audit_log TO aroomo_core_app; SET ROLE aroomo_core_app');
+      await expect(assertAppRoleSafe(db)).rejects.toThrow(/只追加的表 audit_log/);
+    } finally {
+      await db.close();
+    }
+  });
+
   it('非法角色名在配置和授权时都被拒（防注入）', async () => {
     expect(() => loadConfig({ CORE_DB_APP_ROLE: 'x; DROP TABLE members' })).toThrow(/CORE_DB_APP_ROLE/);
     expect(loadConfig({ CORE_DB_APP_ROLE: 'aroomo_core_app' }).dbAppRole).toBe('aroomo_core_app');

@@ -63,6 +63,7 @@ export function messageJson(m: ChatMessage) {
     ...(m.meta?.draft ? { draft: m.meta.draft } : {}),
     ...(m.meta?.tools?.length ? { tools: m.meta.tools } : {}),
     ...(m.meta?.imported ? { imported: true } : {}),
+    ...(m.meta?.answeredBy?.length ? { answeredBy: m.meta.answeredBy } : {}),
     createdAt: m.createdAt.toISOString(),
   };
 }

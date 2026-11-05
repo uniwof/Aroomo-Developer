@@ -397,19 +397,26 @@ export function registerChatStreamRoute(app: FastifyInstance, chat: ChatService,
           } else if (out.stream) {
             // X-05：所有者看参数和结果摘录，家人只看一句摘要（存的和发的一样）
             const toolDetail: ToolDetail = scope === 'owner' ? 'full' : 'summary';
-            const withTools = (t: ToolPartData[]): ChatMessageMeta | null => (t.length ? { tools: fitForStorage(t) } : null);
+            // 裁定 16：存回复时记下是哪位成员答的（Core 自己选的人）；X-05 工具记录一起放 meta
+            const answeredBy = out.answeredBy;
+            const metaWith = (tl: ToolPartData[]): ChatMessageMeta | null => {
+              const m: ChatMessageMeta = {};
+              if (answeredBy) m.answeredBy = answeredBy;
+              if (tl.length) m.tools = fitForStorage(tl);
+              return Object.keys(m).length ? m : null;
+            };
             body = toUiMessageStream(out.stream, {
               toolDetail,
               onDone: release,
-              onFinish: (t, tl) => save('assistant', t, withTools(tl)),
-              onCancel: (t, tl) => void save('assistant', t, withTools(tl)),
+              onFinish: (t, tl) => save('assistant', t, metaWith(tl)),
+              onCancel: (t, tl) => void save('assistant', t, metaWith(tl)),
               wasAborted: () => ctrl.signal.aborted,
             });
           }
           else {
             // 理论上 stream:true 总是返回流；万一是 JSON，就把文字一次性发出去
             const text = (out.json as { choices?: Array<{ message?: { content?: unknown } }> } | undefined)?.choices?.[0]?.message?.content;
-            body = toUiMessageStream(oneShot(typeof text === 'string' ? text : ''), { onDone: release, onFinish: (t) => save('assistant', t) });
+            body = toUiMessageStream(oneShot(typeof text === 'string' ? text : ''), { onDone: release, onFinish: (t) => save('assistant', t, out.answeredBy ? { answeredBy: out.answeredBy } : null) });
           }
         } catch {
           body = errorStream('upstream_error');

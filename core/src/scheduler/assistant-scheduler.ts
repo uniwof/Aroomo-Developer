@@ -7,12 +7,13 @@
  *  2. 对每个助手切到它自己账号的范围，在一个事务里 FOR UPDATE SKIP LOCKED 锁住（Core 重启或多实例也不会重复），
  *     按计划时刻插一条运行（唯一键 (assistant_id, scheduled_for) = 幂等键），推进 next_run_at，提交以后再开始干活。
  *  - 同一个助手同时只跑一次：已有进行中的运行，这一次记 skipped。
+ *  - 上一次还在等确认（裁定 12）：这一次也记 skipped，不再开新的一次、不再发新的确认卡。
  *  - 错过的运行（超过 GRACE_MS）：catch_up=skip 只记一条 skipped；latest 只补最近一次，绝不一次补很多次。
  *  - 最短间隔 1 小时由计划校验保证（schedule.ts）。
  */
 import { randomUUID } from 'node:crypto';
 import { latestDueAt, nextRunAt } from '../assistants/schedule.js';
-import type { Assistant, AssistantRun, AssistantStore } from '../assistants/types.js';
+import { type Assistant, type AssistantRun, type AssistantStore, WAITING_SKIP_TEXT } from '../assistants/types.js';
 import type { Job } from '../jobs/scheduler.js';
 
 export const SCHEDULER_JOB = 'assistant-scheduler';
@@ -26,7 +27,7 @@ export interface SchedulerDeps {
   now: () => Date;
 }
 
-function newRun(a: Assistant, scheduledFor: Date, status: AssistantRun['status'], now: Date): AssistantRun {
+function newRun(a: Assistant, scheduledFor: Date, status: AssistantRun['status'], now: Date, summary: string | null = null): AssistantRun {
   return {
     id: randomUUID(),
     assistantId: a.id,
@@ -39,7 +40,7 @@ function newRun(a: Assistant, scheduledFor: Date, status: AssistantRun['status']
     finishedAt: status === 'skipped' ? now : null,
     status,
     failureCode: null,
-    summary: null,
+    summary,
     usageState: null,
     calls: 0,
     messageIds: [],
@@ -61,7 +62,9 @@ export async function schedulerTick(d: SchedulerDeps): Promise<{ started: number
       } else {
         const slot = missed ? latestDueAt(a.schedule, a.timezone, now, at) : at;
         const run = newRun(a, slot, 'queued', now);
-        if ((await tx.insertRun(run)) === 'ok') runId = run.id;
+        if (await tx.hasWaitingRun(a.id)) {
+          if ((await tx.insertRun(newRun(a, slot, 'skipped', now, WAITING_SKIP_TEXT))) === 'ok') skipped++;
+        } else if ((await tx.insertRun(run)) === 'ok') runId = run.id;
         // 插不进去：同一时刻已经占过（幂等），或者上一次还没跑完 → 记一条 skipped（同一时刻已占过时这条也插不进去，什么都不发生）
         else if ((await tx.insertRun(newRun(a, slot, 'skipped', now))) === 'ok') skipped++;
       }
@@ -84,6 +87,21 @@ export function assistantSchedulerJob(d: SchedulerDeps): Job {
     run: async () => {
       const r = await schedulerTick(d);
       return r.started || r.skipped ? `started=${r.started} skipped=${r.skipped}` : undefined;
+    },
+  };
+}
+
+export const CONFIRM_EXPIRY_JOB = 'assistant-confirm-expiry';
+
+/** 每分钟把等确认超过 24 小时的运行作废（裁定 12）。不受 ASSISTANT_SCHEDULER_ENABLED 影响：立即运行也会停在等确认。 */
+export function confirmExpiryJob(expire: () => Promise<number>): Job {
+  return {
+    name: CONFIRM_EXPIRY_JOB,
+    intervalMs: 60_000,
+    firstDelayMs: 60_000,
+    run: async () => {
+      const n = await expire();
+      return n ? `expired=${n}` : undefined;
     },
   };
 }
