@@ -71,7 +71,10 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
   const [own, setOwn] = useState<SideUi>(SIDE_UI);
   const ui = given ?? own;
   const setUi = onUi ?? setOwn;
-  const { tab, q, folded } = ui;
+  const { q, folded } = ui;
+  // 家人账号的「助手」是空的（dev 上没接；integrate/stage2 接上后家人仍为空）：不显示这个分段，免得点了只看到空列表（审计 C11）
+  const noStaff = isFamily();
+  const tab: Tab = noStaff ? 'chats' : ui.tab;
   const setTab = (t: Tab) => setUi((u) => ({ ...u, tab: t }));
   const setQ = (v: string) => setUi((u) => ({ ...u, q: v }));
   const setFolded = (f: (x: boolean) => boolean) => setUi((u) => ({ ...u, folded: f(u.folded) }));
@@ -166,6 +169,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
       </div>
 
       <div className="side-tools">
+        {!noStaff && (
         <div className="seg2" role="radiogroup" aria-label="列表">
           {(
             [
@@ -179,6 +183,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
             </button>
           ))}
         </div>
+        )}
 
         <div className="side-search">
           <label className="search2">
