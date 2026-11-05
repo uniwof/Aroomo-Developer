@@ -379,10 +379,18 @@ export class ChatService {
     if (!upstream) return textReply(true, prefix + footer.trim());
     // 流式也记用量（请求带了 stream_options.include_usage 时上游最后会发一段 usage；助手运行就是这样调的，X-06）
     const onTokens = !this.d.upstreamModel ? this.d.onTokens : undefined;
+    // 上游可能每块都带累计用量：只记住最后一次看到的，流结束（或被中断）时记一次，没有就记 0（负责人阶段 3 必改 1）
+    let lastUsage = 0;
+    let usageRecorded = false;
     const countUsage = (event: string) => {
       if (!onTokens || !event.includes('"usage"')) return;
       const total = usageTokensOf(event);
-      if (total > 0) onTokens(model, total);
+      if (total > 0) lastUsage = total;
+    };
+    const recordUsage = () => {
+      if (!onTokens || usageRecorded) return;
+      usageRecorded = true;
+      onTokens(model, lastUsage);
     };
     const reader = upstream.getReader();
     const dec = new TextDecoder();
@@ -411,6 +419,7 @@ export class ChatService {
               c.enqueue(enc.encode(buf.endsWith('\n\n') ? buf : buf + '\n\n'));
             }
             putFooter(c);
+            recordUsage();
             c.close();
             return;
           }
@@ -429,6 +438,7 @@ export class ChatService {
         }
       },
       cancel() {
+        recordUsage();
         void reader.cancel().catch(() => undefined);
       },
     });

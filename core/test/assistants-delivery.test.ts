@@ -6,7 +6,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { assistantEnv, type AssistantEnv, LEAD, WORKER } from './helpers/assistants.js';
 import { twoAccountEnvs } from './helpers/two-accounts.js';
-import { usageTokensOf } from '../src/chat/service.js';
+import { ChatService, usageTokensOf } from '../src/chat/service.js';
 
 type J = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -18,6 +18,44 @@ describe('usageTokensOf', () => {
     expect(usageTokensOf('data: {"choices":[{"delta":{"content":"usage"}}]}')).toBe(0);
     expect(usageTokensOf('data: {"usage":{"total_tokens":-1}}')).toBe(0);
     expect(usageTokensOf('data: [DONE]')).toBe(0);
+  });
+});
+
+describe('流式成员调用的用量（负责人阶段 3 必改 1）', () => {
+  const enc = new TextEncoder();
+  const run = async (events: string[]) => {
+    const recorded: Array<[string, number]> = [];
+    const fetchImpl = (async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(c) {
+            for (const ev of events) c.enqueue(enc.encode(`data: ${ev}\n\n`));
+            c.enqueue(enc.encode('data: [DONE]\n\n'));
+            c.close();
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'text/event-stream' } },
+      )) as unknown as typeof fetch;
+    const svc = new ChatService({
+      litellmBaseUrl: 'http://x',
+      litellmKey: 'placeholder-key',
+      listMembers: async () => [{ id: 'm1', name: 'GPT', aliases: [], enabled: true, status: 'active' } as never],
+      lead: { get: async () => ({ effectiveLeadId: 'm1' }) } as never,
+      onTokens: (m, n) => recorded.push([m, n]),
+      fetchImpl,
+    });
+    const r = await svc.complete({ model: 'GPT', stream: true, messages: [{ role: 'user', content: 'hi' }] }, new AbortController().signal);
+    await new Response(r.stream).text();
+    return recorded;
+  };
+  const delta = (s: string, total?: number) =>
+    JSON.stringify({ choices: [{ index: 0, delta: { content: s } }], ...(total === undefined ? {} : { usage: { total_tokens: total } }) });
+
+  it('多块都带（累计）用量：只取最后一块，流结束时记一次', async () => {
+    expect(await run([delta('a', 5), delta('b', 9), delta('c', 12), JSON.stringify({ choices: [], usage: { total_tokens: 15 } })])).toEqual([['GPT', 15]]);
+  });
+  it('没有一块带用量：记 0', async () => {
+    expect(await run([delta('a'), delta('b')])).toEqual([['GPT', 0]]);
   });
 });
 
