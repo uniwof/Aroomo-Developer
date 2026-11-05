@@ -5,8 +5,10 @@
  * - 链接和图片地址一律过 safeUrl：只放行 http、https、mailto，其余（javascript:、data:、vbscript:、file:、相对地址……）
  *   一律清空，不靠 react-markdown 默认的 urlTransform（它还放行 irc、xmpp 和相对地址）；
  * - 链接在新标签页打开，并带 rel="noopener noreferrer"。
+ * - 回复里的图片不自动加载（对方服务器能借图片知道你什么时候看了、你的 IP）：先显示一行「图片：说明 · 点开查看」，
+ *   点了才加载，且不带来源页（referrerPolicy=no-referrer）；只放行 http / https。
  */
-import { useState, type AnchorHTMLAttributes, type FC } from 'react';
+import { useState, type AnchorHTMLAttributes, type FC, type ImgHTMLAttributes } from 'react';
 import { MarkdownTextPrimitive, type CodeHeaderProps } from '@assistant-ui/react-markdown';
 import { Check, Copy } from 'lucide-react';
 import { useAnnounce } from './announce';
@@ -32,6 +34,20 @@ export const SafeLink: FC<AnchorHTMLAttributes<HTMLAnchorElement> & { node?: unk
   );
 };
 
+/** 回复里的图片：点了才加载 */
+export const ClickImage: FC<ImgHTMLAttributes<HTMLImageElement> & { node?: unknown }> = ({ src, alt }) => {
+  const [show, setShow] = useState(false);
+  const safe = typeof src === 'string' && /^https?:/i.test(safeUrl(src)) ? safeUrl(src) : '';
+  const name = alt?.trim() || '没有说明';
+  if (!safe) return <span className="chat-md-badlink">图片：{name}</span>;
+  if (show) return <img src={safe} alt={alt ?? ''} referrerPolicy="no-referrer" className="chat-md-img" />;
+  return (
+    <button type="button" className="chat-md-imgbtn" onClick={() => setShow(true)} aria-label={`图片：${name}，点开查看`}>
+      图片：{name} · 点开查看
+    </button>
+  );
+};
+
 /** 代码块标题栏：语言名 + 一键复制（复制成功会用读屏播报） */
 const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
   const [done, setDone] = useState(false);
@@ -54,5 +70,5 @@ const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
   );
 };
 
-const MarkdownText: FC = () => <MarkdownTextPrimitive skipHtml preprocess={stripSignature} urlTransform={(url) => safeUrl(url)} className="chat-md" components={{ CodeHeader, a: SafeLink }} />;
+const MarkdownText: FC = () => <MarkdownTextPrimitive skipHtml preprocess={stripSignature} urlTransform={(url) => safeUrl(url)} className="chat-md" components={{ CodeHeader, a: SafeLink, img: ClickImage }} />;
 export default MarkdownText;

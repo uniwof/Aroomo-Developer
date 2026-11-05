@@ -2023,3 +2023,22 @@ kbd.row-value {
 .picker-bar {
   margin-bottom: 0.5rem;
 }
+
+/* 回复里的图片：先是一行可点的文字，点了才加载（不自动请求外部图片） */
+.chat-md-imgbtn {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.chat-md-img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--r-sm, 8px);
+}
