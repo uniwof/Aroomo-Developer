@@ -135,6 +135,25 @@ describe.each(stores)('Compactor [$name]', (target) => {
     expect(r.compacted).toBeNull();
   });
 
+  it('同一个会话两条流同时要压：只压一次（另一条先发最近的原文），只写一行摘要', async () => {
+    const cid = '22222222-2222-4222-8222-000000000040';
+    await store.create(U, conv(cid));
+    for (let i = 0; i < 8; i++) await add(cid, i % 2 ? 'assistant' : 'user', `c${i}-${'戊'.repeat(20)}`);
+    await add(cid, 'user', '并发');
+    let open!: () => void;
+    const gate = new Promise<void>((r) => (open = r));
+    let calls = 0;
+    const c = make(async () => { calls++; await gate; return '并发摘要'; });
+    const first = c.prepare(U, cid, [{ role: 'user', content: '并发' }], false, sig());
+    await new Promise((r) => setTimeout(r, 20));
+    const second = await c.prepare(U, cid, [{ role: 'user', content: '并发' }], false, sig());
+    expect(second.compacted).toBeNull();
+    open();
+    expect((await first).compacted).not.toBeNull();
+    expect(calls).toBe(1);
+    expect((await all(cid)).filter((m) => m.role === 'system')).toHaveLength(1);
+  });
+
   it('别的账号的会话：取不到尾部 → 原样用浏览器的，不写进别人的会话', async () => {
     const browser: Turn[] = [{ role: 'user', content: '现在呢' }];
     const p = await new Compactor({ store, summarize: async () => '摘要', now, timezone: 'Asia/Shanghai', limits: { at: 1 } }).prepare('u-other', CID, browser, false, sig());

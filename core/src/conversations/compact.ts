@@ -77,6 +77,11 @@ function keepFromEnd<T extends { content: string }>(list: T[], budget: number): 
 
 export class Compactor {
   readonly #l: CompactLimits;
+  /**
+   * 正在压缩的会话（Groq 小审：同一会话两条流同时压会写两行摘要、多调一次）：正在压的那个会话，另一条流这次不压、先发最近的原文。
+   * shortcut: 进程内、单实例；多实例时改成库里的咨询锁。
+   */
+  readonly #busy = new Set<string>();
   constructor(private readonly d: CompactDeps) {
     this.#l = { ...COMPACT_LIMITS, ...(d.limits ?? {}) };
   }
@@ -116,15 +121,28 @@ export class Compactor {
       return { messages: [...(prevSum ? head(prevSum.text) : []), ...tail.slice(-n).map(turn)], compacted: null };
     };
     if (keep >= tail.length) return fallback();
-    const covered = tail.slice(0, tail.length - keep);
     const used = await this.d.store.countSummariesSince(userId, startOfDay(this.d.now(), this.d.timezone));
     if (used >= this.#l.perDay) {
       this.d.warn?.('conversation compact skipped: daily limit');
       return fallback();
     }
+    const lockKey = `${userId}\n${conversationId}`;
+    if (this.#busy.has(lockKey)) return fallback();
+    this.#busy.add(lockKey);
+    try {
+      return await this.#compact(userId, conversationId, tail, keep, prevSum?.text ?? null, signal, fallback);
+    } finally {
+      this.#busy.delete(lockKey);
+    }
+  }
+
+  async #compact(userId: string, conversationId: string, tail: ChatMessage[], keep: number, prevText: string | null, signal: AbortSignal, fallback: () => Prepared): Promise<Prepared> {
+    const head = (text: string): Turn[] => [{ role: 'system', content: SUMMARY_PREFIX + text }];
+    const covered = tail.slice(0, tail.length - keep);
     const lines = covered.map((m) => `${m.role === 'user' ? '用户' : '助手'}：${m.content.slice(0, this.#l.perMessage)}`);
-    const n = keepFromEnd(lines.map((content) => ({ content })), this.#l.inputMax);
-    const input = `${prevSum ? `之前的摘要：\n${prevSum.text}\n\n` : ''}要整理的对话：\n${lines.slice(-n).join('\n')}`;
+    // 旧摘要也算进输入上限（Groq 小审）
+    const n = keepFromEnd(lines.map((content) => ({ content })), Math.max(this.#l.perMessage, this.#l.inputMax - (prevText?.length ?? 0)));
+    const input = `${prevText ? `之前的摘要：\n${prevText}\n\n` : ''}要整理的对话：\n${lines.slice(-n).join('\n')}`;
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), this.#l.timeoutMs);
     const onAbort = () => ctrl.abort();
