@@ -266,8 +266,10 @@ export class AssistantService {
       throw conflict('请求冲突，请重试', 'CONFLICT');
     }
     // 7.11：建好以后固定会话的第一条消息由组长说
+    // 「每天 09:00 开始」：时间后留空格，「每 3 小时开始」不加
+    const when = scheduleText(a.schedule);
     const intro = a.nextRunAt
-      ? `我是 ${a.name}，${scheduleText(a.schedule)}开始，下次 ${shortWhen(a.nextRunAt, a.timezone)}。`
+      ? `我是 ${a.name}，${when}${/\d$/.test(when) ? ' ' : ''}开始，下次 ${shortWhen(a.nextRunAt, a.timezone)}。`
       : `我是 ${a.name}，你叫我时我就开始。`;
     await this.d.store.appendMessage(userId, { id: randomUUID(), conversationId: a.conversationId, userId, role: 'member', memberId: a.leadMemberId, runId: null, content: intro, createdAt: now });
     await audit('assistant.create', { type: 'assistant', id }, 'ok', `members=${a.members.length} schedule=${a.schedule.kind}`);
