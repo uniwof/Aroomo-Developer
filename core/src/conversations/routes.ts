@@ -3,8 +3,9 @@
  * 所有者和家人账号都能用，数据只按 scopeOf(req) 取（D111）：别人的会话和不存在的一样（404）。
  * 没有删除接口：只归档（删除要所有者定）。消息只能由 /api/chat/stream 和一次性导入写（只追加）。
  */
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { guard, scopeOf } from '../auth/plugin.js';
+import { HttpError } from '../http/errors.js';
 import type { ConversationService, ConvFilter, ImportInput } from './service.js';
 import { CONTENT_MAX, TITLE_MAX } from './types.js';
 
@@ -53,10 +54,21 @@ export function registerConversationRoutes(app: FastifyInstance, svc: Conversati
     },
   );
 
+  // 一次性导入只给所有者（本机旧会话是所有者的）；放在 preValidation：家人账号先 403，不先校验大请求体
+  const importGuard = {
+    config: g.config,
+    preValidation: async function (this: FastifyInstance, req: FastifyRequest, reply: FastifyReply) {
+      await g.preHandler.call(this, req, reply);
+      if (scopeOf(req) !== 'owner') {
+        await req.audit('auth.denied', { type: 'route', id: '/api/conversations/import' }, 'denied', 'POST 导入本机会话只给所有者');
+        throw new HttpError(403, 'FORBIDDEN', '没有权限执行这个操作');
+      }
+    },
+  };
   app.post<{ Body: { conversations: ImportInput[] } }>(
     '/api/conversations/import',
     {
-      ...g,
+      ...importGuard,
       bodyLimit: 16 * 1024 * 1024,
       schema: {
         body: {

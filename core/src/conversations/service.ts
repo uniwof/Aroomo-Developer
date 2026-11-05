@@ -118,7 +118,7 @@ export class ConversationService {
 
   /**
    * 建会话。客户端可以自带 id（本机会话发第一句时建，id 不变，界面不用重挂）：
-   * 本账号已有 → 原样返回（created=false）；被别的会话占用 → 换一个新 id（不回 409，免得看出别人的 id 存在）。
+   * 本账号已有 → 原样返回（created=false）；被别的会话占用 → 换一个新 id（不回 409；不泄露那个会话的内容，但返回的 id 和给的不同，调用方能推知「已被占用」——uuid 随机、猜不中，可接受，见 design-conversations-v1）。
    */
   async create(userId: string, input: { id?: string; title?: string; model?: string; group?: string[] }, messages: ChatMessage[] = [], updatedAt?: Date) {
     const model = input.model ?? 'aroomo';

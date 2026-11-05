@@ -58,6 +58,7 @@ const INSERT_MSG = `INSERT INTO conversation_messages (id, conversation_id, user
   SELECT $1, $2, $3, $4, $5, $6::jsonb, $7
   WHERE EXISTS (SELECT 1 FROM conversations WHERE id = $2 AND user_id = $3 AND kind = 'chat' AND deleted_at IS NULL)
   RETURNING ${M_COLS}`;
+const MSG_BATCH = 500;
 const msgParams = (userId: string, conversationId: string, m: ChatMessage) => [m.id, conversationId, userId, m.role, m.content, m.meta ? JSON.stringify(m.meta) : null, m.createdAt];
 
 export class PgConversationStore implements ConversationStore {
@@ -109,7 +110,12 @@ export class PgConversationStore implements ConversationStore {
         const own = await q.query<{ id: string }>(`SELECT id FROM conversations WHERE id = $1 AND user_id = $2 AND kind = 'chat'`, [c.id, userId]);
         return own.rows[0] ? 'exists' : 'conflict';
       }
-      for (const m of messages) await q.query(INSERT_MSG, msgParams(userId, c.id, m));
+      // 多行一次插（会话刚在同一个事务里建好，不用再逐条查它在不在）；每批 MSG_BATCH 行，参数个数远低于 PG 上限 65535
+      for (let i = 0; i < messages.length; i += MSG_BATCH) {
+        const batch = messages.slice(i, i + MSG_BATCH);
+        const values = batch.map((_, j) => `($${j * 7 + 1},$${j * 7 + 2},$${j * 7 + 3},$${j * 7 + 4},$${j * 7 + 5},$${j * 7 + 6}::jsonb,$${j * 7 + 7})`).join(',');
+        await q.query(`INSERT INTO conversation_messages (id, conversation_id, user_id, role, content, meta, created_at) VALUES ${values}`, batch.flatMap((m) => msgParams(userId, c.id, m)));
+      }
       return 'ok';
     });
   }

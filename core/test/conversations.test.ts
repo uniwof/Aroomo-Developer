@@ -205,6 +205,15 @@ describe.each(twoAccountEnvs)('会话存库 /api/conversations [$name]', (env) =
     expect((await owner()('POST', '/api/conversations/import', { conversations: [{ id: uuid(23), messages: [{ role: 'system', content: 'x' }] }] })).statusCode).toBe(400);
   });
 
+  it('阶段 2 预审：一次性导入只给所有者——家人账号 403（先判权限再校验），什么都不写', async () => {
+    const body = { conversations: [{ id: uuid(30), title: '家人想导入', messages: [{ role: 'user', content: '旧问题' }] }] };
+    const r = await family()('POST', '/api/conversations/import', body);
+    expect(r.statusCode, r.body).toBe(403);
+    expect((await family()('POST', '/api/conversations/import', { conversations: 'x' })).statusCode).toBe(403);
+    expect((await family()('GET', `/api/conversations/${uuid(30)}`)).statusCode).toBe(404);
+    expect((await owner()('GET', `/api/conversations/${uuid(30)}`)).statusCode).toBe(404);
+  });
+
   it('没登录 401；操作员式的无效令牌 401', async () => {
     expect((await e.app.inject({ method: 'GET', url: '/api/conversations' })).statusCode).toBe(401);
     expect((await e.app.inject({ method: 'GET', url: '/api/conversations', headers: { authorization: 'Bearer nope-0000' } })).statusCode).toBe(401);

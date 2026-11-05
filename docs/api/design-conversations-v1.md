@@ -11,7 +11,7 @@ checklist：F-036 会话存进 Core、X-21 只追加、X-27 未读 / 进行中�
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | /api/conversations?filter=all\|unread\|running&archived=&limit≤100&cursor= | 按 updated_at 倒序分页；每行带 unread、running、messageCount、last 预览 |
-| POST | /api/conversations `{id?, title?, model?, group?}` | 客户端可自带 uuid（本机会话发第一句时建，id 不变）；本账号已有 → 200 原样；被别人占用 → 换新 id（不回 409，看不出别人的 id 存在） |
+| POST | /api/conversations `{id?, title?, model?, group?}` | 客户端可自带 uuid（本机会话发第一句时建，id 不变）；本账号已有 → 200 原样；被别人（别的账号或助手会话）占用 → 换新 id 建、201（不回 409、不回 404，不泄露那个会话的任何内容）。注意：这**不能完全藏住存在性**——调用方比对返回的 id 和自己给的不同，就知道这个 uuid 已被占用。可接受的理由：id 是客户端随机生成的 uuid v4（122 位随机），猜中别人的 id 不现实；知道「占用」也拿不到标题、消息或归属。导入（/import）同理，返回的 ids 映射里也看得出来。 |
 | POST | /api/conversations/import `{conversations:[…≤50, messages ≤500]}` | 一次性导入本机旧会话；按 id 幂等；回复带 imported；不导入草稿卡 |
 | GET | /api/conversations/:id | |
 | PATCH | /api/conversations/:id `{title?, archived?}` | 改名、归档 / 取消归档。**没有删除** |
