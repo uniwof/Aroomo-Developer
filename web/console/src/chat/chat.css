@@ -1394,16 +1394,21 @@
 }
 
 
-.mention-list {
-  position: absolute;
-  bottom: calc(100% - 0.5em);
-  left: 1.25em;
-  right: 1.25em;
-  max-width: 20em;
+/* @ 成员列表：和话题 / 新建 / ··· 菜单同一种 .pop，贴在输入卡上方左边 */
+.mention-pop {
+  top: auto;
+  bottom: calc(100% - 0.5rem);
+  left: 1.25rem;
   max-height: 50vh;
   overflow-y: auto;
-  box-shadow: 0 6px 24px rgb(0 0 0 / 0.12);
-  z-index: 2;
+}
+.mention-pop .pop-item[aria-selected='true'] {
+  background: var(--selected);
+  outline: 2px solid var(--fg);
+  outline-offset: -2px;
+}
+.composer-keys {
+  display: contents;
 }
 
 

@@ -437,13 +437,17 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
   }, [insert, runtime]);
 
   const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionAt, setMentionAt] = useState(0);
   // 输入「@」（在开头或空格后）就弹出成员列表（sumus / 方案：「输入 @ 后弹出成员列表」）
   useEffect(() => {
     const c = runtime.thread.composer;
     let prev = c.getState().text;
     return c.subscribe(() => {
       const t = c.getState().text;
-      if (t.length === prev.length + 1 && /(^|\s)@$/.test(t) && members.length) setMentionOpen(true);
+      if (t.length === prev.length + 1 && /(^|\s)@$/.test(t) && members.length) {
+        setMentionAt(0);
+        setMentionOpen(true);
+      } else if (!/(^|\s)@$/.test(t)) setMentionOpen(false);
       prev = t;
     });
   }, [runtime, members.length]);
@@ -491,27 +495,47 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
         <div className="chat-column composer-wrap">
           {notice}
           {mentionOpen && members.length > 0 && (
-            <ul
-              className="group mention-list"
-              aria-label="点名一位成员"
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') {
-                  e.stopPropagation();
-                  setMentionOpen(false);
-                  document.getElementById('chat-input')?.focus();
-                }
-              }}
-            >
-              {members.map((n) => (
-                <li key={n}>
-                  <button type="button" className="row row-button" onClick={() => mention(n)} aria-label={`点名 ${n}`}>
-                    <Avatar name={n} size="sm" />
-                    <span className="row-text">{n}</span>
-                  </button>
+            // 组合框（A1）：焦点留在输入框，↑↓ 选、回车/Tab 点名、Esc 关；读屏经 aria-activedescendant 读出当前项；样式与全站菜单同一种 .pop
+            <ul id="mention-list" role="listbox" className="pop mention-pop" aria-label="点名一位成员">
+              {members.map((n, i) => (
+                <li
+                  key={n}
+                  id={`mention-${i}`}
+                  role="option"
+                  aria-selected={i === mentionAt}
+                  aria-label={`点名 ${n}`}
+                  className="pop-item"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    mention(n);
+                  }}
+                >
+                  <Avatar name={n} size="xs" />
+                  <span>{n}</span>
                 </li>
               ))}
             </ul>
           )}
+          <div
+            className="composer-keys"
+            onKeyDownCapture={(e) => {
+              if (!mentionOpen || !members.length) return;
+              const k = e.key;
+              if (k === 'ArrowDown' || k === 'ArrowUp') {
+                e.preventDefault();
+                e.stopPropagation();
+                setMentionAt((i) => (i + (k === 'ArrowDown' ? 1 : members.length - 1)) % members.length);
+              } else if ((k === 'Enter' && !e.shiftKey) || k === 'Tab') {
+                e.preventDefault();
+                e.stopPropagation();
+                mention(members[mentionAt] ?? members[0]!);
+              } else if (k === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                setMentionOpen(false);
+              }
+            }}
+          >
           <ComposerPrimitive.Root className="composer">
             <ComposerPrimitive.Input
               id="chat-input"
@@ -519,6 +543,7 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
               placeholder={placeholder}
               aria-label="输入消息"
               aria-describedby="chat-input-hint"
+              {...(mentionOpen && members.length ? { role: 'combobox', 'aria-expanded': true, 'aria-controls': 'mention-list', 'aria-activedescendant': `mention-${mentionAt}`, 'aria-autocomplete': 'list' as const } : {})}
               rows={1}
               autoFocus
             />
@@ -540,6 +565,7 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
               </ThreadPrimitive.If>
             </div>
           </ComposerPrimitive.Root>
+          </div>
         </div>
       </ThreadPrimitive.Root>
     </AssistantRuntimeProvider>

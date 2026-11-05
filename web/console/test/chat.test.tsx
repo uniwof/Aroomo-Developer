@@ -149,6 +149,28 @@ describe('原生对话页', () => {
     expect((await screen.findAllByRole('heading', { name: /收件箱/ })).length).toBeGreaterThan(0);
   });
 
+  it('@ 点名（自审 A1）：输入 @ 弹出列表，焦点留在输入框，↓/回车选中成员，不把光秃秃的「@」发出去；Esc 关', async () => {
+    renderPage();
+    const f = fetch as unknown as ReturnType<typeof vi.fn>;
+    await waitFor(() => expect((fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.some(([u]) => u === '/api/members')).toBe(true));
+    await new Promise((r) => setTimeout(r, 500));
+    const box = screen.getByLabelText('输入消息') as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: '@' } });
+    const list = await screen.findByRole('listbox', { name: '点名一位成员' });
+    expect(within(list).getByRole('option', { name: '点名 Kimi' })).toHaveAttribute('aria-selected', 'true');
+    expect(box).toHaveAttribute('aria-activedescendant', 'mention-0');
+    fireEvent.keyDown(box, { key: 'ArrowDown' });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(box.value).toBe('@Kimi '));
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(f.mock.calls.some(([u]) => String(u).includes('/chat'))).toBe(false);
+    fireEvent.change(box, { target: { value: '@Kimi 你好 ' } });
+    fireEvent.change(box, { target: { value: '@Kimi 你好 @' } });
+    await screen.findByRole('listbox');
+    fireEvent.keyDown(box, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
+  });
+
   it('打开 Aroomo（/）直接进对话', async () => {
     session.set(COOKIE_SESSION);
     render(
