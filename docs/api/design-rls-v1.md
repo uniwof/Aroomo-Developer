@@ -25,13 +25,26 @@
      - 第一版只给所有者：`assistants:read/write` 只放行 `scopeOf = 'owner'`（所有者令牌 / 方案 A 的所有者账号），家人账号 403；RLS 照样按 `user_id` 隔离，以后放开给家人不用改表。
      - **执行器和 RLS 的配合（要点）**：系统范围只有只读策略，`SELECT … FOR UPDATE` 在 RLS 下需要 UPDATE 策略，系统范围认领会被过滤成 0 行。所以分两步：① `systemScoped` 只读 `(id, user_id, next_run_at)` 找到期助手（进 systemScoped 白名单）；② 对每个助手切到 `userScoped(user_id)`，在一个事务里 `SELECT … WHERE id=$1 AND enabled AND paused_at IS NULL AND next_run_at<=now() FOR UPDATE SKIP LOCKED` → 插 `assistant_runs`（唯一键占位，重复即 skipped）→ 推进 `next_run_at`，再提交、再干活。整个运行都在建它的账号的数据范围里，不用超级权限。`ASSISTANT_SCHEDULER_ENABLED=false` 默认关；本轮不写执行器。
 
+## 2b. 只追加的表不给 DELETE（负责人 11-05 第二批必改 3）
+1. `audit_log`、`conversation_messages`、`run_steps`：应用角色只有 SELECT / INSERT（UPDATE 由各表触发器拒绝；`audit_log` 另外收回 UPDATE）。`grantAppRole` 每次启动收回这三张表的 DELETE（还没建的表跳过），并显式 `REVOKE TRUNCATE ON ALL TABLES`；启动自检 `assertAppRoleSafe`：应用角色能 TRUNCATE 任何表、或能删其中任何一张只追加表 → 拒绝启动（`core/src/db/app-role.ts`，测试 `core/test/db-app-role.test.ts`）。
+2. 外键 `ON DELETE CASCADE`（删会话带走消息、删运行带走步骤）照样能用：级联由数据库内部以表所有者身份执行，不检查调用者的 DELETE 权限。代码里不直接 `DELETE FROM` 这三张表。
+3. **撤回**「`conversation_messages.member_id` 也用复合外键」：消息是历史记录，成员被彻底删除以后消息也要留着；同账号可见由 RLS 保证，不加外键。
+
+授权清单（应用角色，每次启动由表所有者执行，幂等）：
+| 表 | 权限 |
+|---|---|
+| 一般业务表 | SELECT, INSERT, UPDATE, DELETE（无 TRUNCATE） |
+| `audit_log` | SELECT, INSERT |
+| `conversation_messages`、`run_steps` | SELECT, INSERT, UPDATE（UPDATE 被触发器拒绝） |
+| `core_schema_migrations` | SELECT |
+
 ## 3. 谁能调用 / 返回什么
 - RLS 不新增接口。现有 `userRoute` 接口照旧：账号会话 → 本人数据；所有者令牌、操作员 → `'owner'`；客户端令牌 → 令牌主人。
 - 违规时的表现：读别人的行 = 不存在（404 / 空列表，与「根本没有」一致）；写别人的行 = 改到 0 行 → 404；直接 SQL 插入别人的 `user_id` → 数据库拒绝（42501）→ 500 并写审计，不回显内容。
 
 ## 4. 怎么测（全部进 CI；真 PostgreSQL 必须真跑，不允许 skipped）
 1. **数据库层（每张 RLS 表一组，扩展现有 rls-*.test.ts）**：用应用角色连接；A 写一行 → 切到 B：SELECT 0 行、UPDATE/DELETE 0 行、INSERT `user_id=A` 被拒；不设 `app.user_id`：读 0 行、写被拒；`system_scope=on`：只能读不能写。
-2. **角色自检**：应用角色执行 `RESET ROLE`、`SET ROLE aroomo_core`、`ALTER TABLE members NO FORCE ROW LEVEL SECURITY`、`DELETE FROM audit_log` 全部失败；用所有者连接冒充应用连接 + `CORE_DB_REQUIRE_APP_ROLE=true` → 拒绝启动。
+2. **角色自检**：应用角色执行 `RESET ROLE`、`SET ROLE aroomo_core`、`ALTER TABLE members NO FORCE ROW LEVEL SECURITY`、`DELETE FROM audit_log`、`DELETE FROM conversation_messages`、`DELETE FROM run_steps`、`TRUNCATE` 任何表全部失败；手工多授了 TRUNCATE 或只追加表的 DELETE → 启动自检拒绝；用所有者连接冒充应用连接 + `CORE_DB_REQUIRE_APP_ROLE=true` → 拒绝启动。
 3. **两个账号互相看不到（HTTP 层，复用 two-accounts 基建 + 方案 A 的所有者账号）**：所有者账号和小号各建成员、发一次对话、写一条规矩：互查 `/api/members`、`/api/usage`、`/api/members/:id/card`、`/api/library`、`/api/inbox`、`/api/clients`、执行员任务列表都看不到对方，按对方 id 访问与访问不存在 id 结果相同（`expectSameAsMissing`）；以后的 `/api/conversations`、`/api/assistants`（含 runs）加进同一张表。
 4. **D208**：越权表遍历所有 `userRoute` 路由，新路由没声明数据范围 → CI 失败。
 5. **staging 实测（阶段 1 验收第 4 条）**：备份 → 建角色、写 `.env`、重建 core → 日志里自检通过 → 用所有者账号和小号在浏览器各走一遍，互相看不到成员、用量、会话 → 截图 + 测试日志附进阶段 1 送审包。
