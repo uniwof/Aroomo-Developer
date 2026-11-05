@@ -3,7 +3,7 @@
  * - 桌面：左边会话列表栏常显（标题 + 齿轮、搜索 + 新对话、全部 / 群聊 / 成员 筛选、会话行、底部 成员 / 新建群聊 / 收件箱、最底当前账号），
  *   右边主对话区（顶栏头像 + 名字、居中日期分隔、无气泡消息、大圆角输入卡片）。
  * - 手机（或字号放大后放不下两栏）：会话列表栏就是唯一一层抽屉；点会话、成员、设置后抽屉关上，内容在主区域原地打开，
- *   面板里的下一层用顶栏「‹ 返回」，不开第二层抽屉，不用标签页。
+ *   面板里的下一层用顶栏「← 返回」，不开第二层抽屉，不用标签页。
  * - 只调用 Core 的标准接口（/api/*）；会话先存在本机浏览器（localStorage）。
  * 边界：store.ts 管数据和请求，Thread.tsx 管对话区，Sidebar.tsx 管会话列表栏，panels.tsx 管面板，这里管拼装。
  */
@@ -61,7 +61,7 @@ const TITLES: Record<Exclude<View['kind'], 'chat' | 'member'>, string> = {
   executors: '本机执行员',
 };
 
-/** 上一层是哪里（顶栏「‹ 返回」） */
+/** 上一层是哪里（顶栏「← 返回」） */
 function parentOf(v: View): { view: View; label: string } | null {
   switch (v.kind) {
     case 'member':

@@ -4,7 +4,7 @@
  * 面板内容一律是分组列表（iOS / sumus 式），不用标签页。最终位置等负责人的 sumus→Aroomo 逐屏映射方案再定。
  */
 import { useState, type ReactNode } from 'react';
-import { Bell, ChevronLeft, ChevronRight, Keyboard, Monitor, Moon, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Sun, UserRound, X } from 'lucide-react';
+import { Bell, ArrowLeft, ChevronRight, Keyboard, Monitor, Moon, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Sun, UserRound, X } from 'lucide-react';
 import { isFamily, type Member } from '@/lib/api';
 import { useUsage } from '@/lib/usage';
 import { UsageLine } from '@/pages/Members';
@@ -18,14 +18,14 @@ import { type ChatPrefs } from './store';
 import { FONT_DEFAULT, FONT_MAX, FONT_MIN, clampFont } from '@/lib/display';
 import type { Theme } from '@/lib/display';
 
-/** 面板顶栏：‹ 返回 + 标题（手机上还有「会话列表」按钮，由外层传进来） */
+/** 面板顶栏：← 返回 + 标题（自审 C13：桌面、手机、设置都用同一种「← 上一层名字」）（手机上还有「会话列表」按钮，由外层传进来） */
 export function PanelHeader({ title, onBack, backLabel, lead }: { title: string; onBack?: () => void; backLabel?: string; lead?: ReactNode }) {
   return (
     <header className="main-head">
       {lead}
       {onBack && (
         <button type="button" className="btn btn-quiet" onClick={onBack} aria-label={`返回${backLabel ?? ''}`}>
-          <ChevronLeft aria-hidden="true" />
+          <ArrowLeft aria-hidden="true" />
           <span>{backLabel ?? '返回'}</span>
         </button>
       )}
