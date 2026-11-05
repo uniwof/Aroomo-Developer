@@ -1885,6 +1885,27 @@ kbd.row-value {
   flex: 1 1 14em;
   min-height: max(2.75rem, 44px);
 }
+/* 工具栏里的下拉（审计「结果」）：小标签在左，全站同一种选择框，点击区 ≥44px */
+.toolbar-select {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.toolbar-select-label {
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+.toolbar-select .field-select {
+  min-height: max(2.75rem, 44px);
+}
+/* 审计：没成功的结果用正文色加粗（不只靠颜色），成功用灰字 */
+.audit-bad {
+  color: var(--fg);
+  font-weight: 600;
+}
+.audit-more {
+  align-self: flex-start;
+}
 .panel > .note:empty {
   display: none;
 }
