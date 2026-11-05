@@ -38,7 +38,7 @@ const DAILY_RE = /每天|每日|天天|每早|每晚/;
 const TIME_RE = new RegExp(`(凌晨|早上|早晨|上午|中午|下午|傍晚|晚上|夜里)?\\s*(?:(\\d{1,2})\\s*[:：]\\s*(\\d{2})|${NUM}\\s*点\\s*(半|一刻|(\\d{1,2})\\s*分?)?)`);
 const REQUEST_RE = /帮我|帮忙|替我|给我|提醒我|请你|麻烦你/;
 /** 疑问、否定、管理已有助手：都不是「建一个新的」 */
-const REJECT_RE = /[?？]|怎么|如何|为什么|为啥|是不是|什么|哪|吗|不要|不用|别|取消|停掉|停止|暂停|不再|删|改成|改到|以前|昨天|上周/;
+const REJECT_RE = /[?？]|怎么|如何|为什么|为啥|是不是|什么|哪|吗|不要|不需要|不想|不用|别|取消|停掉|停止|暂停|不再|删|改成|改到|以前|昨天|上周/;
 
 function parseTime(m: RegExpExecArray, evening: boolean): string | null {
   const part = m[1] ?? (evening ? '晚上' : undefined);
@@ -54,6 +54,8 @@ function parseTime(m: RegExpExecArray, evening: boolean): string | null {
     else if (m[6] !== undefined) min = Number(m[6]);
   }
   if (h === null || h > 24 || min > 59) return null;
+  // 「晚上 12 点」是第二天 00:00：配上「每周一」会差一天，宁可不认
+  if ((part === '晚上' || part === '夜里') && h === 12) return null;
   if ((part === '下午' || part === '傍晚' || part === '晚上' || part === '夜里') && h < 12) h += 12;
   else if (part === '中午' && h < 11) h += 12;
   if (h === 24) h = 0;
