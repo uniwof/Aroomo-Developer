@@ -35,7 +35,8 @@ export interface RunStep {
   stepNo: number;
   memberId: string | null;
   action: 'plan' | 'work' | 'summarize' | 'confirm';
-  status: 'pending' | 'running' | 'done' | 'failed' | 'skipped' | 'waiting_confirmation';
+  /** received = X-06「已收到」（成员的模型接下了，还没回字），只出现在成员那一步 */
+  status: 'pending' | 'received' | 'running' | 'done' | 'failed' | 'skipped' | 'waiting_confirmation';
   detail: string;
   startedAt: string;
   updatedAt: string;

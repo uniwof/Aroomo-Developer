@@ -16,6 +16,54 @@ export interface ChatDraft {
   state?: 'done' | 'dismissed';
 }
 
+/**
+ * X-05：回复里的一个工具调用（Core 的 data-aroomo-tool 数据块，docs/api/stream-parts.md §1）。
+ * Core 已经脱敏；家人账号没有 args / result。浏览器只显示，不发回 Core。
+ */
+export interface ChatTool {
+  index: number;
+  name: string;
+  /** 人话：「搜了网页」 */
+  label: string;
+  state: 'done' | 'failed' | 'unavailable';
+  count?: number;
+  summary: string;
+  args?: string;
+  result?: string;
+}
+export const TOOL_PART = 'data-aroomo-tool';
+const TOOL_STATES: readonly string[] = ['done', 'failed', 'unavailable'];
+const str = (v: unknown, max: number): string | undefined => (typeof v === 'string' ? v.slice(0, max) : undefined);
+
+/** 数据块 / 本机存储 / Core 消息里的工具调用要长这样才认（缺字段的丢掉，不渲染半行） */
+export function asTool(v: unknown): ChatTool | null {
+  if (!v || typeof v !== 'object') return null;
+  const o = v as Record<string, unknown>;
+  if (typeof o.index !== 'number' || !Number.isInteger(o.index) || o.index < 0 || o.index > 99) return null;
+  const name = str(o.name, 64);
+  const label = str(o.label, 80);
+  const summary = str(o.summary, 200);
+  if (!name || !label || summary === undefined || typeof o.state !== 'string' || !TOOL_STATES.includes(o.state)) return null;
+  const args = str(o.args, 2000);
+  const result = str(o.result, 3000);
+  return {
+    index: o.index,
+    name,
+    label,
+    state: o.state as ChatTool['state'],
+    summary,
+    ...(typeof o.count === 'number' && Number.isInteger(o.count) && o.count >= 0 ? { count: o.count } : {}),
+    ...(args ? { args } : {}),
+    ...(result ? { result } : {}),
+  };
+}
+export const asTools = (v: unknown): ChatTool[] => (Array.isArray(v) ? v.map(asTool).filter((t): t is ChatTool => t !== null).slice(0, 20) : []);
+
+/** 同一个 index 的新数据覆盖旧的（流里同一个调用会发好几次），按 index 排序 */
+export function upsertTool(list: ChatTool[] | undefined, t: ChatTool): ChatTool[] {
+  return [...(list ?? []).filter((x) => x.index !== t.index), t].sort((a, b) => a.index - b.index);
+}
+
 export interface ChatTurn {
   /** Core 里的消息 id（存库的会话才有；收件箱跳到某条消息用） */
   id?: string;
@@ -27,6 +75,8 @@ export interface ChatTurn {
   draft?: ChatDraft;
   /** X-19：这条上面那行灰字（「已把 … 之前的内容整理成摘要…」）；只来自 Core */
   note?: string;
+  /** 只在回复上：X-05 工具调用 */
+  tools?: ChatTool[];
 }
 
 export const DRAFT_PART = 'data-aroomo-assistant-draft';
@@ -131,6 +181,7 @@ export type StreamEvent =
   | { type: 'draft'; draft: ChatDraft }
   | { type: 'compacted'; keep: number; text: string }
   | { type: 'truncated'; text: string }
+  | { type: 'tool'; tool: ChatTool }
   | { type: 'finish' }
   | { type: 'done' };
 
@@ -152,6 +203,10 @@ export function parseEvent(event: string): StreamEvent | null {
     }
     if (j.type === COMPACTED_PART && typeof j.data?.keep === 'number' && typeof j.data.text === 'string') return { type: 'compacted', keep: j.data.keep, text: j.data.text };
     if (j.type === TRUNCATED_PART) return { type: 'truncated', text: typeof j.data?.text === 'string' ? j.data.text : TRUNCATED_TEXT };
+    if (j.type === TOOL_PART) {
+      const t = asTool(j.data);
+      return t ? { type: 'tool', tool: t } : null;
+    }
     if (j.type === FAILURE_PART && typeof j.data?.code === 'string' && FAILURE_CODES.includes(j.data.code)) return { type: 'failure', code: j.data.code as FailureCode };
     if (j.type === 'error') return { type: 'error', text: typeof j.errorText === 'string' ? j.errorText : '对话出错了，请稍后再试。' };
     if (j.type === 'finish') return { type: 'finish' };
@@ -183,6 +238,8 @@ export async function* streamChat(
   fetchImpl: typeof fetch = fetch,
   onDraft?: (d: ChatDraft) => void,
   persist: PersistOpts = {},
+  /** X-05：每收到一次工具调用的数据（同一个 index 会来好几次，按 index 覆盖） */
+  onTool?: (t: ChatTool) => void,
 ): AsyncGenerator<string, void> {
   let res: Response;
   try {
@@ -237,6 +294,7 @@ export async function* streamChat(
         } else if (ev.type === 'draft') onDraft?.(ev.draft);
         else if (ev.type === 'compacted') persist.onCompacted?.({ keep: ev.keep, text: ev.text });
         else if (ev.type === 'truncated') persist.onTruncated?.(ev.text);
+        else if (ev.type === 'tool') onTool?.(ev.tool);
         else if (ev.type === 'failure') code = ev.code;
         else if (ev.type === 'error') throw new ChatStreamError(ev.text, code);
         else if (ev.type === 'done') return;
@@ -267,9 +325,10 @@ export function loadConversations(storage: Storage | undefined = globalThis.loca
         model: typeof c.model === 'string' ? c.model : 'aroomo',
         messages: c.messages
           .filter((m) => (m.role === 'user' || m.role === 'assistant') && typeof m.text === 'string')
-          .map(({ draft, ...m }) => {
+          .map(({ draft, tools, ...m }) => {
             const d = m.role === 'assistant' ? asDraft(draft) : null;
-            return d ? { ...m, draft: d } : m;
+            const t = m.role === 'assistant' ? asTools(tools) : [];
+            return { ...m, ...(d ? { draft: d } : {}), ...(t.length ? { tools: t } : {}) };
           }),
       }))
       .sort((a, b) => b.updatedAt - a.updatedAt);

@@ -3,6 +3,7 @@
  * 只管聊天会话（conversations.kind = 'chat'）；助手的固定会话（kind = 'assistant'）仍由 /api/assistants 管，这里看不到也写不进。
  * 消息只追加（X-21）：重试 / 编辑都是新增一行，表上的触发器拒绝 UPDATE；会话只归档不删除（删除要所有者定）。
  */
+import type { ToolPartData } from '../chat/tool-parts.js';
 
 export interface ChatConversation {
   id: string;
@@ -18,9 +19,11 @@ export interface ChatConversation {
   updatedAt: Date;
 }
 
-/** Core 生成的结构化部件（目前只有 X-15 助手草稿卡）；imported = 从浏览器本机导入的旧消息 */
+/** Core 生成的结构化部件（X-15 助手草稿卡、X-05 工具调用）；imported = 从浏览器本机导入的旧消息 */
 export interface ChatMessageMeta {
   draft?: { id: string; data: unknown };
+  /** X-05：这条回复里的工具调用（已脱敏；家人账号的只有摘要），只由 Core 写 */
+  tools?: ToolPartData[];
   imported?: true;
   /** X-19 摘要行（role = 'system'）：text 给模型看；toSeq = 被整理的最后一条原文；keep = 当时留着没整理的条数 */
   summary?: SummaryMeta;

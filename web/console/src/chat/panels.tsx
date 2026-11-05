@@ -4,12 +4,13 @@
  * 面板内容一律是分组列表（iOS / sumus 式），不用标签页。最终位置等负责人的 sumus→Aroomo 逐屏映射方案再定。
  */
 import { useState, type ReactNode } from 'react';
-import { Bell, ArrowLeft, ChevronRight, Home, Keyboard, Monitor, Moon, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Sun, UserRound, Users, X } from 'lucide-react';
+import { Bell, BellRing, ArrowLeft, ChevronRight, Home, Keyboard, Monitor, Moon, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Sun, UserRound, Users, X } from 'lucide-react';
 import { isFamily, type Member } from '@/lib/api';
 import { useUsage } from '@/lib/usage';
 import { UsageLine } from '@/pages/Members';
 import { BudgetSection, Field, Group, LeadSection, McpSection, SecuritySection } from '@/pages/Settings';
 import { FamilySection, GeneralSection, PasswordRow, ProfileSection, SignOutGroup } from './settings-sections';
+import { PushSection } from './push-section';
 import { ClientTokens } from '@/components/ClientTokens';
 import { Dialog } from '@/components/Dialog';
 import { Avatar } from './Avatar';
@@ -247,7 +248,7 @@ function Switch({ label, on, onChange }: { label: string; on: boolean; onChange:
 }
 
 /** 设置的分区（照 sumus 设置弹窗左边的分组；Connectors 挪到窄栏「工具」，计费、本地电脑隐藏） */
-export type SettingsSection = 'profile' | 'prefs' | 'safety' | 'general' | 'family' | 'lead' | 'budget' | 'external' | 'shortcuts';
+export type SettingsSection = 'profile' | 'prefs' | 'safety' | 'general' | 'family' | 'lead' | 'push' | 'budget' | 'external' | 'shortcuts';
 export const SETTINGS_SECTIONS: { id: SettingsSection; label: string; sub: string; Icon: typeof Keyboard }[] = [
   { id: 'profile', label: '个人资料', sub: '你在 Aroomo 里的名字和登录账号。', Icon: UserRound },
   { id: 'prefs', label: '偏好', sub: '改动立即生效，不用保存。', Icon: SlidersHorizontal },
@@ -255,6 +256,8 @@ export const SETTINGS_SECTIONS: { id: SettingsSection; label: string; sub: strin
   { id: 'general', label: '通用', sub: '这个 Aroomo 的概况和总额度。', Icon: Home },
   { id: 'family', label: '家人与邀请', sub: '家里谁在用 Aroomo。', Icon: Users },
   { id: 'lead', label: '负责人', sub: '对话里没有 @ 成员时，交给负责人回答。', Icon: UserRound },
+  // X-08：总开关在服务器（PUSH_ENABLED，默认关）；关着时这一节只说一句「服务器还没有打开推送提醒」
+  { id: 'push', label: '推送提醒', sub: '锁屏上收到一句提醒：助手做完了、有事等你确认。', Icon: BellRing },
   { id: 'budget', label: '电脑助手提醒', sub: '电脑助手每天最多提醒你几次。', Icon: Bell },
   { id: 'external', label: '外部接入', sub: '在别的 AI 软件里也能用你的 Aroomo。', Icon: Plug },
   { id: 'shortcuts', label: '键盘快捷键', sub: '不用鼠标也能用。', Icon: Keyboard },
@@ -329,6 +332,7 @@ export function SettingsSectionBody({ section, prefs, setPrefs, onGo, members = 
       )}
       {section === 'general' && <GeneralSection members={members} onUsage={() => onGo('keys')} />}
       {section === 'family' && <FamilySection />}
+      {section === 'push' && <PushSection />}
       {section === 'budget' && (
         <div className="group">
           <BudgetSection />

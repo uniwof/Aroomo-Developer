@@ -25,6 +25,7 @@ import { CHAT_MODEL, MEMBER_MODEL_PREFIX, type ChatFailureCode, type ChatService
 import type { ConversationService } from '../conversations/service.js';
 import type { Compactor, Turn } from '../conversations/compact.js';
 import type { ChatMessageMeta } from '../conversations/types.js';
+import { TOOL_PART, ToolCollector, fitForStorage, type ToolDetail, type ToolPartData } from './tool-parts.js';
 
 export const STREAM_BODY_LIMIT = 256 * 1024;
 export const STREAM_MAX_MESSAGES = 200;
@@ -150,10 +151,12 @@ export function toUiMessageStream(
   opts: {
     messageId?: string;
     onDone?: () => void;
-    /** 回复完整结束（不含出错）：拿到整段文字，等它做完才关流（落库） */
-    onFinish?: (text: string) => Promise<void>;
+    /** 回复完整结束（不含出错）：拿到整段文字和工具调用（X-05），等它做完才关流（落库） */
+    onFinish?: (text: string, tools: ToolPartData[]) => Promise<void>;
     /** 浏览器断开（点停止）：拿到已收到的部分 */
-    onCancel?: (text: string) => void;
+    onCancel?: (text: string, tools: ToolPartData[]) => void;
+    /** X-05 工具调用的详细程度：所有者 full（参数 + 结果摘录），家人 summary（只有一句摘要）；默认 summary */
+    toolDetail?: ToolDetail;
     /** 上游读失败时问一句：是不是浏览器先断开的（是 = 当作停止） */
     wasAborted?: () => boolean;
     /** X-19：开头先发一个「刚压缩过」部件 */
@@ -171,6 +174,15 @@ export function toUiMessageStream(
   let finished = false;
   let wrote = false;
   let full = '';
+  const tools = new ToolCollector();
+  const detail: ToolDetail = opts.toolDetail ?? 'summary';
+  let toolVersion = 0;
+  /** X-05：工具调用有新进展（新调用 / 拿到结果）就发一次；同一个 index 的部件浏览器按 id 覆盖 */
+  const emitTools = (c: ReadableStreamDefaultController<Uint8Array>, force = false) => {
+    if (tools.size === 0 || (!force && tools.version === toolVersion)) return;
+    toolVersion = tools.version;
+    for (const p of tools.parts(detail)) c.enqueue(sse({ type: TOOL_PART, id: `${messageId}_tool_${p.index}`, data: p }));
+  };
   /** 回复的结局只认一次：正常结束（onFinish）和浏览器断开（onCancel）不能都存（Groq 小审：finish 等落库时断开会存两遍） */
   let settled = false;
   const done = () => {
@@ -184,8 +196,9 @@ export function toUiMessageStream(
     settled = true;
     if (error) for (const e of failureEvents(error)) c.enqueue(e);
     else {
-      if (first) await opts.onFinish?.(full).catch(() => undefined);
+      if (first) await opts.onFinish?.(full, tools.parts(detail)).catch(() => undefined);
       c.enqueue(sse({ type: 'text-end', id: textId }));
+      emitTools(c, true);
       c.enqueue(sse({ type: 'finish-step' }));
       c.enqueue(sse({ type: 'finish' }));
     }
@@ -210,9 +223,11 @@ export function toUiMessageStream(
       const choices = Array.isArray(j.choices) ? (j.choices as Json[]) : [];
       for (const ch of choices) {
         const delta = ch.delta as Json | undefined;
+        tools.add(delta);
         const piece = typeof delta?.content === 'string' ? delta.content : '';
         if (piece) { c.enqueue(sse({ type: 'text-delta', id: textId, delta: piece })); full += piece; wrote = true; }
       }
+      if (tools.version !== toolVersion) { emitTools(c); wrote = true; }
     }
     return null;
   };
@@ -269,7 +284,7 @@ export function toUiMessageStream(
           // 浏览器先断开、上游随之被中断：算「点了停止」，存已收到的部分（不论 cancel 和这里谁先到）
           if (opts.wasAborted?.() && !settled) {
             settled = true;
-            opts.onCancel?.(full);
+            opts.onCancel?.(full, tools.parts(detail));
           }
           await finish(c, 'gateway_unreachable');
         }
@@ -279,7 +294,7 @@ export function toUiMessageStream(
       void reader?.cancel().catch(() => undefined);
       if (!settled) {
         settled = true;
-        opts.onCancel?.(full);
+        opts.onCancel?.(full, tools.parts(detail));
       }
       done();
     },
@@ -405,9 +420,25 @@ export function registerChatStreamRoute(app: FastifyInstance, chat: ChatService,
             body = errorStream(out.failure.code);
             release();
           } else if (out.stream) {
-            // 裁定 16：存回复时记下是哪位成员答的（Core 自己选的人）
-            const meta: ChatMessageMeta | null = out.answeredBy ? { answeredBy: out.answeredBy } : null;
-            body = toUiMessageStream(out.stream, { onDone: release, onFinish: (t) => save('assistant', t, meta), onCancel: (t) => void save('assistant', t, meta), wasAborted: () => ctrl.signal.aborted, compacted, truncated });
+            // X-05：所有者看参数和结果摘录，家人只看一句摘要（存的和发的一样）
+            const toolDetail: ToolDetail = scope === 'owner' ? 'full' : 'summary';
+            // 裁定 16：存回复时记下是哪位成员答的（Core 自己选的人）；X-05 工具记录一起放 meta
+            const answeredBy = out.answeredBy;
+            const metaWith = (tl: ToolPartData[]): ChatMessageMeta | null => {
+              const m: ChatMessageMeta = {};
+              if (answeredBy) m.answeredBy = answeredBy;
+              if (tl.length) m.tools = fitForStorage(tl);
+              return Object.keys(m).length ? m : null;
+            };
+            body = toUiMessageStream(out.stream, {
+              toolDetail,
+              onDone: release,
+              onFinish: (t, tl) => save('assistant', t, metaWith(tl)),
+              onCancel: (t, tl) => void save('assistant', t, metaWith(tl)),
+              wasAborted: () => ctrl.signal.aborted,
+              compacted,
+              truncated,
+            });
           }
           else {
             // 理论上 stream:true 总是返回流；万一是 JSON，就把文字一次性发出去

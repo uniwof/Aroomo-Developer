@@ -1,4 +1,4 @@
-/** 助手 v1 迁移 0025–0027 + 会话存库 0028：可回退（up → down → up）；消息、步骤只追加（X-21）。 */
+/** 助手 v1 迁移 0025–0027 + 会话存库 0028 + 送达状态 0030（X-06；0029 留给 S3-C 推送订阅）：可回退（up → down → up）；消息、步骤只追加（X-21）。 */
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -7,7 +7,7 @@ import { migrate } from '../src/db/migrate.js';
 import { openPglite } from './helpers/db.js';
 
 const DOWN = fileURLToPath(new URL('../migrations/down/', import.meta.url));
-const NEW = ['0025_conversations.sql', '0026_assistants.sql', '0027_assistant_runs.sql', '0028_saved_conversations.sql'];
+const NEW = ['0025_conversations.sql', '0026_assistants.sql', '0027_assistant_runs.sql', '0028_saved_conversations.sql', '0030_run_step_received.sql'];
 const NOW = "'2026-11-05T14:00:00+08:00'";
 
 const tables = async (db: Awaited<ReturnType<typeof openPglite>>) =>
@@ -18,7 +18,7 @@ const tables = async (db: Awaited<ReturnType<typeof openPglite>>) =>
     )
   ).rows.map((r) => r.t);
 
-describe('助手迁移 0025–0028', () => {
+describe('助手迁移 0025–0030', () => {
   it('每个新迁移都有回退文件', () => {
     const downs = readdirSync(DOWN);
     for (const f of NEW) expect(downs).toContain(f.replace(/\.sql$/, '.down.sql'));
@@ -118,6 +118,26 @@ describe('助手迁移 0025–0028', () => {
     expect((await db.query<{ role: string }>('SELECT role FROM conversation_messages')).rows.map((r) => r.role)).toEqual(['user']);
     await expect(db.query(`SELECT model FROM conversations`)).rejects.toThrow(/model/);
     expect(await migrate(db)).toEqual(['0028_saved_conversations.sql']);
+    await db.close();
+  });
+
+  it('0030（X-06）：步骤能记 received；回退删掉 received 事件行、约束回到 0028 的样子；再 up 一次能用', async () => {
+    const db = await openPglite();
+    await db.exec(`
+      INSERT INTO conversations (id, user_id, kind, title, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000031', 'owner', 'assistant', 't', ${NOW}, ${NOW});
+      INSERT INTO assistants (id, user_id, name, instructions, timezone, conversation_id, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000032', 'owner', 'a', '0123456789', 'Asia/Shanghai', '00000000-0000-4000-8000-000000000031', ${NOW}, ${NOW});
+      INSERT INTO assistant_runs (id, assistant_id, user_id, trigger, requested_at, status) VALUES ('00000000-0000-4000-8000-000000000033', '00000000-0000-4000-8000-000000000032', 'owner', 'manual', ${NOW}, 'succeeded');
+      INSERT INTO run_steps (run_id, user_id, seq, step_no, action, status, created_at) VALUES
+        ('00000000-0000-4000-8000-000000000033', 'owner', 0, 0, 'work', 'pending', ${NOW}),
+        ('00000000-0000-4000-8000-000000000033', 'owner', 1, 0, 'work', 'received', ${NOW}),
+        ('00000000-0000-4000-8000-000000000033', 'owner', 2, 0, 'work', 'running', ${NOW}),
+        ('00000000-0000-4000-8000-000000000033', 'owner', 3, 0, 'work', 'done', ${NOW});
+    `);
+    await expect(db.query(`INSERT INTO run_steps (run_id, user_id, seq, step_no, action, status, created_at) VALUES ('00000000-0000-4000-8000-000000000033', 'owner', 4, 0, 'work', 'read', ${NOW})`)).rejects.toThrow(/check/);
+    await db.exec(readFileSync(`${DOWN}/0030_run_step_received.down.sql`, 'utf8'));
+    expect((await db.query<{ status: string }>('SELECT status FROM run_steps ORDER BY seq')).rows.map((r) => r.status)).toEqual(['pending', 'running', 'done']);
+    await expect(db.query(`INSERT INTO run_steps (run_id, user_id, seq, step_no, action, status, created_at) VALUES ('00000000-0000-4000-8000-000000000033', 'owner', 5, 0, 'work', 'received', ${NOW})`)).rejects.toThrow(/check/);
+    expect(await migrate(db)).toEqual(['0030_run_step_received.sql']);
     await db.close();
   });
 });

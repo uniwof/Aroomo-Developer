@@ -4,7 +4,7 @@
  * 所有者第一次打开时把浏览器本机的旧会话导入一次（本机那份不删）；家人账号不导入（同一台浏览器上的本机会话是所有者的）。
  */
 import { api } from '@/lib/api';
-import { asDraft, type ChatTurn, type Conversation } from './store';
+import { asDraft, asTools, type ChatTurn, type Conversation } from './store';
 
 export interface ConvJson {
   id: string;
@@ -26,6 +26,7 @@ interface MsgJson {
   content: string;
   draft?: { id: string; data: unknown };
   summary?: { toSeq: number };
+  tools?: unknown;
   createdAt: string;
 }
 
@@ -104,8 +105,9 @@ export async function fetchMessages(id: string): Promise<ChatTurn[]> {
     .filter((m) => m.role !== 'system')
     .map((m) => {
       const draft = m.role === 'assistant' && m.draft ? asDraft(m.draft) : null;
+      const tools = m.role === 'assistant' ? asTools(m.tools) : [];
       const note = notes.get(m.id);
-      return { id: m.id, role: m.role, text: m.content, at: Date.parse(m.createdAt) || undefined, ...(draft ? { draft } : {}), ...(note ? { note } : {}) } as ChatTurn;
+      return { id: m.id, role: m.role, text: m.content, at: Date.parse(m.createdAt) || undefined, ...(draft ? { draft } : {}), ...(tools.length ? { tools } : {}), ...(note ? { note } : {}) } as ChatTurn;
     });
 }
 

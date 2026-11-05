@@ -74,6 +74,8 @@ import { registerAssistantRoutes } from "./assistants/routes.js";
 import { ConversationService } from "./conversations/service.js";
 import { registerConversationRoutes } from "./conversations/routes.js";
 import { Compactor, freeSummarizer } from "./conversations/compact.js";
+import { PushService } from "./push/service.js";
+import { registerPushRoutes } from "./push/routes.js";
 import { assistantSchedulerJob, confirmExpiryJob } from "./scheduler/assistant-scheduler.js";
 
 export const VERSION = "0.0.1";
@@ -261,6 +263,16 @@ export function buildServer(
   registerVaultRoutes(app, vaultSvc);
   registerClientRoutes(app, clients);
   const inbox = new InboxService(deps.inbox, confirm, deps.now);
+  // X-08 推送提醒：PUSH_ENABLED 关着时接口 503、不发推送；只记错误名 / 状态码
+  const push = new PushService({
+    store: deps.push,
+    vapid: cfg.push,
+    now: deps.now,
+    ...(deps.pushFetch ? { fetch: deps.pushFetch } : {}),
+    log: (msg, data) => app.log.warn(data, msg),
+  });
+  inbox.onCreated((item) => push.notifyInbox(item));
+  registerPushRoutes(app, push);
   const interruptBudget = new InterruptBudget((u) => scopedSettings(deps.settings, u), deps.now);
   const executorSvc = new ExecutorService(
     deps.executor,

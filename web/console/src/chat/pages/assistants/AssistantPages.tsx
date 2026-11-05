@@ -219,12 +219,16 @@ export function NewAssistantDialog({ members, onClose, onCreated, initial }: { m
 
 const STEP_STATUS: Record<RunStep['status'], StepStatus> = {
   pending: 'waiting',
+  received: 'running',
   running: 'running',
   done: 'done',
   failed: 'failed',
   skipped: 'skipped',
   waiting_confirmation: 'confirm',
 };
+/** X-06：成员那一步（work）用送达状态 已派出 → 已收到 → 在做 → 已回复 */
+const DELIVERY: Partial<Record<RunStep['status'], StepStatus>> = { pending: 'sent', received: 'received', running: 'working', done: 'replied' };
+const stepStatus = (s: RunStep): StepStatus => (s.action === 'work' && s.memberId ? (DELIVERY[s.status] ?? STEP_STATUS[s.status]) : STEP_STATUS[s.status]);
 const ACTION: Record<RunStep['action'], string> = { plan: '分工', work: '做事', summarize: '汇总', confirm: '付费确认' };
 
 export function stepsToTask(steps: RunStep[], members: Member[]): TaskStep[] {
@@ -234,7 +238,7 @@ export function stepsToTask(steps: RunStep[], members: Member[]): TaskStep[] {
       id: String(s.stepNo),
       who: s.memberId ? nameOf(members, s.memberId) : '系统',
       what: d ? `${ACTION[s.action]}：${d.length > 60 ? `${d.slice(0, 60)}…` : d}` : ACTION[s.action],
-      status: STEP_STATUS[s.status],
+      status: stepStatus(s),
     };
   });
 }

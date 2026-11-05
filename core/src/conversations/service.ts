@@ -70,6 +70,7 @@ export function messageJson(m: ChatMessage) {
     role: m.role,
     content: m.content,
     ...(m.meta?.draft ? { draft: m.meta.draft } : {}),
+    ...(m.meta?.tools?.length ? { tools: m.meta.tools } : {}),
     ...(m.meta?.imported ? { imported: true } : {}),
     // X-19 摘要行：只给位置（放在 seq = toSeq 那条之后），摘要正文不出 Core
     ...(m.meta?.summary ? { summary: { toSeq: m.meta.summary.toSeq } } : {}),
