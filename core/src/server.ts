@@ -71,6 +71,8 @@ import { AssistantService } from "./assistants/service.js";
 import { detectAssistantIntent } from "./assistants/intent.js";
 import { AssistantRunner } from "./assistants/runner.js";
 import { registerAssistantRoutes } from "./assistants/routes.js";
+import { ConversationService } from "./conversations/service.js";
+import { registerConversationRoutes } from "./conversations/routes.js";
 import { assistantSchedulerJob } from "./scheduler/assistant-scheduler.js";
 
 export const VERSION = "0.0.1";
@@ -394,7 +396,9 @@ export function buildServer(
     const r = await assistantSvc.preview("owner", { ...intent, members: [leadId], leadMemberId: leadId, budgetLevel: "low" });
     return { lead: leadMember.name, part: r.part };
   };
-  registerChatStreamRoute(app, chatService, { ctxFor: chatRouting.ctxFor, draftFor, ...(deps.chatStreamLimits ? { limits: deps.chatStreamLimits } : {}) });
+  const conversationSvc = new ConversationService({ store: deps.conversations, now: deps.now });
+  registerConversationRoutes(app, conversationSvc);
+  registerChatStreamRoute(app, chatService, { ctxFor: chatRouting.ctxFor, draftFor, conversations: conversationSvc, ...(deps.chatStreamLimits ? { limits: deps.chatStreamLimits } : {}) });
   // 付费调用确认卡（kind=payment，重要确认）：同意 → 同一条运行继续；拒绝 → 取消
   inbox.registerHandler("assistant.run.confirm", async (item, actionId, audit) => {
     if (item.related?.type !== "assistant_run") return;

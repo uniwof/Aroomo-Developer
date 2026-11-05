@@ -1,4 +1,4 @@
-/** 助手 v1 迁移 0025–0027：可回退（up → down → up）；消息、步骤只追加（X-21）。 */
+/** 助手 v1 迁移 0025–0027 + 会话存库 0028：可回退（up → down → up）；消息、步骤只追加（X-21）。 */
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -6,7 +6,7 @@ import { migrate } from '../src/db/migrate.js';
 import { openPglite } from './helpers/db.js';
 
 const DOWN = fileURLToPath(new URL('../migrations/down/', import.meta.url));
-const NEW = ['0025_conversations.sql', '0026_assistants.sql', '0027_assistant_runs.sql'];
+const NEW = ['0025_conversations.sql', '0026_assistants.sql', '0027_assistant_runs.sql', '0028_saved_conversations.sql'];
 const NOW = "'2026-11-05T14:00:00+08:00'";
 
 const tables = async (db: Awaited<ReturnType<typeof openPglite>>) =>
@@ -17,7 +17,7 @@ const tables = async (db: Awaited<ReturnType<typeof openPglite>>) =>
     )
   ).rows.map((r) => r.t);
 
-describe('助手迁移 0025–0027', () => {
+describe('助手迁移 0025–0028', () => {
   it('每个新迁移都有回退文件', () => {
     const downs = readdirSync(DOWN);
     for (const f of NEW) expect(downs).toContain(f.replace(/\.sql$/, '.down.sql'));
@@ -70,6 +70,20 @@ describe('助手迁移 0025–0027', () => {
     `);
     await expect(db.query(`INSERT INTO assistant_members (assistant_id, user_id, member_id, role) VALUES ('00000000-0000-4000-8000-000000000014', 'u-b', 'm-a', 'lead')`)).rejects.toThrow(/foreign key/);
     await expect(db.query(`UPDATE assistants SET lead_member_id = 'm-a' WHERE id = '00000000-0000-4000-8000-000000000014'`)).rejects.toThrow(/foreign key/);
+    await db.close();
+  });
+  it('0028 回退：聊天回复（role = assistant）先删掉，列和约束回到 0027 的样子；再 up 一次能用', async () => {
+    const db = await openPglite();
+    await db.exec(`
+      INSERT INTO conversations (id, user_id, kind, title, model, group_names, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000021', 'owner', 'chat', 't', 'aroomo/x', '{甲,乙}', ${NOW}, ${NOW});
+      INSERT INTO conversation_messages (id, conversation_id, user_id, role, content, meta, created_at) VALUES ('00000000-0000-4000-8000-000000000022', '00000000-0000-4000-8000-000000000021', 'owner', 'assistant', 'hi', '{"imported":true}', ${NOW});
+      INSERT INTO conversation_messages (id, conversation_id, user_id, role, content, created_at) VALUES ('00000000-0000-4000-8000-000000000023', '00000000-0000-4000-8000-000000000021', 'owner', 'user', 'q', ${NOW});
+    `);
+    await expect(db.query(`INSERT INTO conversations (id, user_id, kind, title, model, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000024', 'owner', 'chat', 't', 'gpt-4o', ${NOW}, ${NOW})`)).rejects.toThrow(/check/);
+    await db.exec(readFileSync(`${DOWN}/0028_saved_conversations.down.sql`, 'utf8'));
+    expect((await db.query<{ role: string }>('SELECT role FROM conversation_messages')).rows.map((r) => r.role)).toEqual(['user']);
+    await expect(db.query(`SELECT model FROM conversations`)).rejects.toThrow(/model/);
+    expect(await migrate(db)).toEqual(['0028_saved_conversations.sql']);
     await db.close();
   });
 });

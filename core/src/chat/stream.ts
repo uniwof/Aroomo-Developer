@@ -10,7 +10,9 @@
  *   出错发 error；响应头 x-vercel-ai-ui-message-stream: v1）。assistant-ui 和 AI SDK useChat 都能直接接。
  * - 中断：浏览器断开（点「停止」= abort fetch）→ 取消上游请求（AbortSignal 透传到 LiteLLM 的 fetch）。
  * - 限制：请求体 ≤256KB；每个账号每分钟 ≤20 次、同时 ≤2 条流（内存态，单实例足够 spike）。
- * - 不落库（S1 再加 conversations / messages 表 + RLS）。
+ * - 落库（会话存库）：请求带 conversationId 时，先确认是本账号的聊天会话（否则 404，和不存在一样），
+ *   追加用户这句话（retry = true 时不追加：重试是同一句话再问一次），回复完整结束后追加回复（点了停止就存已收到的部分，出错不存）。
+ *   只追加（X-21）；生成期间这个会话算「进行中」（X-27）。不带 conversationId = 不落库（旧前端、本机会话）。
  */
 import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
@@ -19,6 +21,7 @@ import { scopeOf } from '../auth/plugin.js';
 import { CSRF_HEADER, readSessionCookie } from '../auth/session-cookie.js';
 import { HttpError } from '../http/errors.js';
 import { CHAT_MODEL, MEMBER_MODEL_PREFIX, type ChatFailureCode, type ChatService, type ChatUserCtx } from './service.js';
+import type { ConversationService } from '../conversations/service.js';
 
 export const STREAM_BODY_LIMIT = 256 * 1024;
 export const STREAM_MAX_MESSAGES = 200;
@@ -130,7 +133,17 @@ const failureEvents = (code: ChatFailureCode) => [sse({ type: FAILURE_PART, data
  * OpenAI chat.completion.chunk SSE 流 → AI SDK UI Message Stream。
  * 只转发文字增量；上游的 error 对象不透传原文（可能带 Key），统一换成一句话。
  */
-export function toUiMessageStream(upstream: ReadableStream<Uint8Array> | undefined, opts: { messageId?: string; onDone?: () => void } = {}): ReadableStream<Uint8Array> {
+export function toUiMessageStream(
+  upstream: ReadableStream<Uint8Array> | undefined,
+  opts: {
+    messageId?: string;
+    onDone?: () => void;
+    /** 回复完整结束（不含出错）：拿到整段文字，等它做完才关流（落库） */
+    onFinish?: (text: string) => Promise<void>;
+    /** 浏览器断开（点停止）：拿到已收到的部分 */
+    onCancel?: (text: string) => void;
+  } = {},
+): ReadableStream<Uint8Array> {
   const messageId = opts.messageId ?? `msg_${randomUUID()}`;
   const textId = `txt_${randomUUID()}`;
   const reader = upstream?.getReader();
@@ -139,14 +152,17 @@ export function toUiMessageStream(upstream: ReadableStream<Uint8Array> | undefin
   let started = false;
   let finished = false;
   let wrote = false;
+  let full = '';
   const done = () => {
     if (finished) return;
     finished = true;
     opts.onDone?.();
   };
-  const finish = (c: ReadableStreamDefaultController<Uint8Array>, error?: ChatFailureCode) => {
+  const finish = async (c: ReadableStreamDefaultController<Uint8Array>, error?: ChatFailureCode) => {
+    if (finished) return;
     if (error) for (const e of failureEvents(error)) c.enqueue(e);
     else {
+      await opts.onFinish?.(full).catch(() => undefined);
       c.enqueue(sse({ type: 'text-end', id: textId }));
       c.enqueue(sse({ type: 'finish-step' }));
       c.enqueue(sse({ type: 'finish' }));
@@ -173,7 +189,7 @@ export function toUiMessageStream(upstream: ReadableStream<Uint8Array> | undefin
       for (const ch of choices) {
         const delta = ch.delta as Json | undefined;
         const piece = typeof delta?.content === 'string' ? delta.content : '';
-        if (piece) { c.enqueue(sse({ type: 'text-delta', id: textId, delta: piece })); wrote = true; }
+        if (piece) { c.enqueue(sse({ type: 'text-delta', id: textId, delta: piece })); full += piece; wrote = true; }
       }
     }
     return null;
@@ -185,10 +201,10 @@ export function toUiMessageStream(upstream: ReadableStream<Uint8Array> | undefin
         c.enqueue(sse({ type: 'start', messageId }));
         c.enqueue(sse({ type: 'start-step' }));
         c.enqueue(sse({ type: 'text-start', id: textId }));
-        if (!reader) return finish(c);
+        if (!reader) return await finish(c);
         return;
       }
-      if (!reader) return finish(c);
+      if (!reader) return await finish(c);
       try {
         for (;;) {
           const { done: end, value } = await reader.read();
@@ -196,9 +212,9 @@ export function toUiMessageStream(upstream: ReadableStream<Uint8Array> | undefin
             if (buf.trim()) {
               const r = handle(c, buf);
               buf = '';
-              if (r && r !== 'done') return finish(c, r.error);
+              if (r && r !== 'done') return await finish(c, r.error);
             }
-            return finish(c);
+            return await finish(c);
           }
           buf += dec.decode(value, { stream: true });
           wrote = false;
@@ -209,22 +225,23 @@ export function toUiMessageStream(upstream: ReadableStream<Uint8Array> | undefin
             const r = handle(c, event);
             if (r === 'done') {
               void reader.cancel().catch(() => undefined);
-              return finish(c);
+              return await finish(c);
             }
             if (r) {
               void reader.cancel().catch(() => undefined);
-              return finish(c, r.error);
+              return await finish(c, r.error);
             }
           }
           if (wrote) return;
         }
       } catch {
         // 上游断了（或被中断）：给浏览器一句固定的话，不带原文
-        if (!finished) finish(c, 'gateway_unreachable');
+        if (!finished) await finish(c, 'gateway_unreachable');
       }
     },
     cancel() {
       void reader?.cancel().catch(() => undefined);
+      if (!finished) opts.onCancel?.(full);
       done();
     },
   });
@@ -244,6 +261,8 @@ export interface ChatStreamOptions {
   draftFor?: (text: string) => Promise<DraftReply | null>;
   limits?: { perMinute?: number; concurrent?: number };
   now?: () => number;
+  /** 会话存库：给了才认请求里的 conversationId */
+  conversations?: ConversationService;
 }
 
 /** 只认控制台会话：没有 Cookie / 带了 Authorization / 不是账号 / 没有 CSRF 头 → 拒绝；返回数据范围（scopeOf：账号 id，所有者自己的账号 = 'owner'） */
@@ -272,7 +291,12 @@ export function registerChatStreamRoute(app: FastifyInstance, chat: ChatService,
         body: {
           type: 'object',
           required: ['messages'],
-          properties: { messages: { type: 'array', minItems: 1, maxItems: STREAM_MAX_MESSAGES }, model: { type: 'string', maxLength: 120 } },
+          properties: {
+            messages: { type: 'array', minItems: 1, maxItems: STREAM_MAX_MESSAGES },
+            model: { type: 'string', maxLength: 120 },
+            conversationId: { type: 'string', pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' },
+            retry: { type: 'boolean' },
+          },
         },
       },
     },
@@ -281,11 +305,27 @@ export function registerChatStreamRoute(app: FastifyInstance, chat: ChatService,
       const scope = sessionUser(req);
       const messages = normalizeMessages(req.body.messages);
       const model = normalizeModel(req.body.model);
-      const release = limiter.acquire(scope);
-      if (!release) {
+      // 会话存库：先确认是本账号的聊天会话（别人的 / 助手的 / 不存在的一律 404，同一句话），再占频率名额
+      const convs = opts.conversations;
+      const convId = convs && typeof req.body.conversationId === 'string' ? req.body.conversationId : null;
+      if (convs && convId) await convs.get(scope, convId);
+      const acquired = limiter.acquire(scope);
+      if (!acquired) {
         await req.audit('auth.denied', { type: 'rate', id: '/api/chat/stream' }, 'denied', '对话请求太频繁');
         throw new HttpError(429, 'RATE_LIMITED', '说得太快了，请稍等一下再发');
       }
+      const endRun = convs && convId ? convs.running.begin(scope, convId) : () => undefined;
+      const release = () => {
+        acquired();
+        endRun();
+      };
+      const last = messages[messages.length - 1]!.content;
+      /** 落库失败不打断对话（回复照样给浏览器），只记一行日志（不记内容） */
+      const save = async (role: 'user' | 'assistant', text: string, meta: { draft: { id: string; data: unknown } } | null = null) => {
+        if (!convs || !convId) return;
+        await convs.append(scope, convId, role, text, meta).catch((err: Error) => req.log.error({ errName: err.name }, 'conversation append failed'));
+      };
+      if (req.body.retry !== true) await save('user', last);
       const ctrl = new AbortController();
       // 浏览器断开（点停止）→ 中断上游。用响应的 close：请求体读完后 req 的 close 也会触发，不能用
       reply.raw.on('close', () => {
@@ -294,9 +334,11 @@ export function registerChatStreamRoute(app: FastifyInstance, chat: ChatService,
       });
       let body: ReadableStream<Uint8Array>;
       // X-15：所有者在负责人对话里说「每周一 9 点帮我…」→ 不调模型，直接回草稿卡（家人账号、单独和成员的对话都不走这里）
-      const draft = scope === 'owner' && model === CHAT_MODEL && opts.draftFor ? await opts.draftFor(messages[messages.length - 1]!.content).catch(() => null) : null;
+      const draft = scope === 'owner' && model === CHAT_MODEL && opts.draftFor ? await opts.draftFor(last).catch(() => null) : null;
       if (draft) {
-        body = draftStream(draft);
+        const draftId = `draft_${randomUUID()}`;
+        await save('assistant', draftText(draft), { draft: { id: draftId, data: draft.part.data } });
+        body = draftStream(draft, draftId);
         release();
       } else {
         try {
@@ -306,11 +348,11 @@ export function registerChatStreamRoute(app: FastifyInstance, chat: ChatService,
             await out.stream?.cancel().catch(() => undefined);
             body = errorStream(out.failure.code);
             release();
-          } else if (out.stream) body = toUiMessageStream(out.stream, { onDone: release });
+          } else if (out.stream) body = toUiMessageStream(out.stream, { onDone: release, onFinish: (t) => save('assistant', t), onCancel: (t) => void save('assistant', t) });
           else {
             // 理论上 stream:true 总是返回流；万一是 JSON，就把文字一次性发出去
             const text = (out.json as { choices?: Array<{ message?: { content?: unknown } }> } | undefined)?.choices?.[0]?.message?.content;
-            body = toUiMessageStream(oneShot(typeof text === 'string' ? text : ''), { onDone: release });
+            body = toUiMessageStream(oneShot(typeof text === 'string' ? text : ''), { onDone: release, onFinish: (t) => save('assistant', t) });
           }
         } catch {
           body = errorStream('upstream_error');
@@ -338,17 +380,19 @@ function oneShot(text: string): ReadableStream<Uint8Array> {
   });
 }
 
-function draftStream(d: DraftReply): ReadableStream<Uint8Array> {
+const draftText = (d: DraftReply) => `${DRAFT_TEXT}\n\n— ${d.lead}（负责人）`;
+
+function draftStream(d: DraftReply, draftId: string): ReadableStream<Uint8Array> {
   const textId = `txt_${randomUUID()}`;
   return new ReadableStream({
     start(c) {
       c.enqueue(sse({ type: 'start', messageId: `msg_${randomUUID()}` }));
       c.enqueue(sse({ type: 'start-step' }));
       c.enqueue(sse({ type: 'text-start', id: textId }));
-      c.enqueue(sse({ type: 'text-delta', id: textId, delta: `${DRAFT_TEXT}\n\n— ${d.lead}（负责人）` }));
+      c.enqueue(sse({ type: 'text-delta', id: textId, delta: draftText(d) }));
       c.enqueue(sse({ type: 'text-end', id: textId }));
       // 不是 transient：草稿卡跟着这条回复留在会话里；id 给「建好」当幂等键
-      c.enqueue(sse({ type: d.part.type, id: `draft_${randomUUID()}`, data: d.part.data }));
+      c.enqueue(sse({ type: d.part.type, id: draftId, data: d.part.data }));
       c.enqueue(sse({ type: 'finish-step' }));
       c.enqueue(sse({ type: 'finish' }));
       c.enqueue(enc.encode('data: [DONE]\n\n'));

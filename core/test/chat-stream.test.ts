@@ -307,6 +307,46 @@ describe.each(twoAccountEnvs)('POST /api/chat/stream（控制台原生对话，#
     const n = await new Promise<number>((r) => t.app.server.getConnections((_e, c) => r(c)));
     expect(n, '服务端连接已关闭（没有挂着的流）').toBe(0);
   });
+
+  it('会话存库：点停止时，已收到的部分作为回复落库（只追加）；正在生成时会话算「进行中」', async () => {
+    const conv = await t.app.inject({ method: 'POST', url: '/api/conversations', headers: { cookie: xiaoCookie, ...CSRF }, payload: {} });
+    expect(conv.statusCode).toBe(201);
+    const id = conv.json().conversation.id as string;
+    mode.v = 'slow';
+    // 上一个用例已经 listen 了：复用同一个端口
+    const a = t.app.server.address();
+    const address = a && typeof a === 'object' ? `http://127.0.0.1:${a.port}` : await t.app.listen({ host: '127.0.0.1', port: 0 });
+    const { request } = await import('node:http');
+    const req = request(`${address}/api/chat/stream`, { method: 'POST', headers: { cookie: xiaoCookie, ...CSRF, 'content-type': 'application/json' } });
+    const firstDelta = new Promise<void>((resolve) => {
+      req.on('response', (res) => {
+        let got = '';
+        res.on('data', (d: Buffer) => {
+          got += d.toString();
+          if (got.includes('XiaoModel')) resolve();
+        });
+        res.on('error', () => undefined);
+      });
+    });
+    req.on('error', () => undefined);
+    req.end(JSON.stringify({ conversationId: id, ...msg('@XiaoModel 讲个长故事') }));
+    await firstDelta;
+    const running = await t.app.inject({ method: 'GET', url: '/api/conversations?filter=running', headers: { cookie: xiaoCookie } });
+    expect(running.json().conversations.map((c: Json) => c.id)).toEqual([id]);
+    req.destroy();
+    const t0 = Date.now();
+    let roles: string[] = [];
+    let msgs: Json[] = [];
+    while (Date.now() - t0 < 2000) {
+      msgs = (await t.app.inject({ method: 'GET', url: `/api/conversations/${id}/messages`, headers: { cookie: xiaoCookie } })).json().messages as Json[];
+      roles = msgs.map((m) => m.role as string);
+      if (roles.length === 2) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(roles).toEqual(['user', 'assistant']);
+    expect(msgs[1]!.content).toMatch(/^你好，我是 .*XiaoModel/i);
+    expect((await t.app.inject({ method: 'GET', url: '/api/conversations?filter=running', headers: { cookie: xiaoCookie } })).json().conversations).toEqual([]);
+  });
 });
 
 describe('/api/chat/stream 频率与并发限制', () => {
