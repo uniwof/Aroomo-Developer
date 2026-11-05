@@ -11,6 +11,7 @@ import type { ChatConversation, ConversationStore } from '../src/conversations/t
 import type { Member } from '../src/members/types.js';
 import { hashPassword } from '../src/users/password.js';
 import { assistantEnv, type AssistantEnv, LEAD } from './helpers/assistants.js';
+import type { CoreDeps } from '../src/deps.js';
 import { dbTargets } from './helpers/db.js';
 import { fakePw, twoAccountEnvs } from './helpers/two-accounts.js';
 
@@ -225,10 +226,14 @@ describe.each(twoAccountEnvs)('/api/chat/stream 长会话自动压缩 [$name]', 
   let cookie = '';
   const OWNER_ACCOUNT_ID = '4e000000-0000-4000-8000-00000000c019';
   beforeAll(async () => {
-    e = await assistantEnv(env, { extraEnv: { CORE_OWNER_ACCOUNT_ID: OWNER_ACCOUNT_ID, CORE_CHAT_TOKEN: 'placeholder-chat-token-0123456789abcdefgh' } });
-    const at = e.clock.now();
     const pw = fakePw(19);
-    await e.deps.users.insertUser({ id: OWNER_ACCOUNT_ID, email: 'owner-x19@example.test', displayName: '宝宝', role: 'admin', status: 'active', passwordHash: await hashPassword(pw), createdAt: at, updatedAt: at });
+    // 所有者账号要在服务启动前就在库里：#268 的启动检查（onReady）认过它，Cookie 会话才映射到所有者数据
+    const seed = async (deps: CoreDeps, now: () => Date) => {
+      const t = now();
+      await deps.users.insertUser({ id: OWNER_ACCOUNT_ID, email: 'owner-x19@example.test', displayName: '宝宝', role: 'admin', status: 'active', passwordHash: await hashPassword(pw), createdAt: t, updatedAt: t });
+    };
+    e = await assistantEnv(env, { seed, extraEnv: { CORE_OWNER_ACCOUNT_ID: OWNER_ACCOUNT_ID, CORE_CHAT_TOKEN: 'placeholder-chat-token-0123456789abcdefgh' } });
+    const at = e.clock.now();
     const r = await e.app.inject({ method: 'POST', url: '/auth/login', payload: { email: 'owner-x19@example.test', password: pw, cookie: true } });
     cookie = String(r.headers['set-cookie']).split(';')[0]!;
     const lead = (await e.deps.members.get(LEAD.id))!;
