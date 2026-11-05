@@ -335,6 +335,15 @@ export function registerChatStreamRoute(app: FastifyInstance, chat: ChatService,
         acquired();
         endRun();
       };
+      const ctrl = new AbortController();
+      // 浏览器断开（点停止）→ 中断上游。用响应的 close：请求体读完后 req 的 close 也会触发，不能用。
+      // 占到名额后马上挂（阶段 2 预审）：存「你说的话」要等数据库，这段时间里断开也要中断上游，不然照样调一次模型
+      const onClose = () => {
+        if (!reply.raw.writableFinished) ctrl.abort();
+        release();
+      };
+      reply.raw.on('close', onClose);
+      if (req.raw.socket?.destroyed) onClose();
       const last = messages[messages.length - 1]!.content;
       /** 落库失败不打断对话（回复照样给浏览器），只记一行日志（不记内容） */
       const save = async (role: 'user' | 'assistant', text: string, meta: { draft: { id: string; data: unknown } } | null = null) => {
@@ -342,12 +351,6 @@ export function registerChatStreamRoute(app: FastifyInstance, chat: ChatService,
         await convs.append(scope, convId, role, text, meta).catch((err: Error) => req.log.error({ errName: err.name }, 'conversation append failed'));
       };
       if (req.body.retry !== true) await save('user', last);
-      const ctrl = new AbortController();
-      // 浏览器断开（点停止）→ 中断上游。用响应的 close：请求体读完后 req 的 close 也会触发，不能用
-      reply.raw.on('close', () => {
-        if (!reply.raw.writableFinished) ctrl.abort();
-        release();
-      });
       let body: ReadableStream<Uint8Array>;
       // X-15：所有者在负责人对话里说「每周一 9 点帮我…」→ 不调模型，直接回草稿卡（家人账号、单独和成员的对话都不走这里）
       const draft = scope === 'owner' && model === CHAT_MODEL && opts.draftFor ? await opts.draftFor(last).catch(() => null) : null;
@@ -358,6 +361,8 @@ export function registerChatStreamRoute(app: FastifyInstance, chat: ChatService,
         release();
       } else {
         try {
+          // 浏览器已经走了：不再调模型（中断的信号也会让上游请求立刻失败，这里省掉那一次）
+          if (ctrl.signal.aborted) throw new Error('client gone');
           const out = await chat.complete({ model, stream: true, messages }, ctrl.signal, scope === 'owner' ? undefined : opts.ctxFor(scope));
           if (out.failure) {
             // 整条回复都失败：不发那段提示文字，改发 error（只有固定的一句话 + 失败码）。/v1 不走这里，行为不变

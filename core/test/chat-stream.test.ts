@@ -371,6 +371,48 @@ describe('/api/chat/stream 频率与并发限制', () => {
     expect(third.json().error.code).toBe('RATE_LIMITED');
     await t.close();
   });
+  it('阶段 2 预审：存「你说的话」还没写完浏览器就断开 → 不再调模型（不白花一次调用），并发名额退还，会话不再算「进行中」', async () => {
+    const env = twoAccountEnvs[0]!;
+    let upstreamAborted: boolean | null = null;
+    const t = await twoAccounts({
+      name: env.name,
+      make: async (now) => {
+        const deps = await env.make(now);
+        deps.chatStreamLimits = { perMinute: 1000, concurrent: 1 };
+        // 存「你说的话」时慢 300ms：浏览器在这段时间里断开
+        const store = deps.conversations;
+        const append = store.append.bind(store);
+        store.append = async (u, m) => {
+          if (m.role === 'user' && m.content.includes('慢')) await new Promise((r) => setTimeout(r, 300));
+          return append(u, m);
+        };
+        deps.chatFetch = (async (_u: unknown, init?: { signal?: AbortSignal }) => {
+          if (upstreamAborted === null) upstreamAborted = init?.signal?.aborted ?? false;
+          return new Response(new ReadableStream({ start(c) { c.enqueue(enc.encode('data: [DONE]\n\n')); c.close(); } }), { status: 200, headers: { 'content-type': 'text/event-stream' } });
+        }) as typeof fetch;
+        return deps;
+      },
+    }, { CORE_CHAT_TOKEN: CHAT_TOKEN, LITELLM_BASE_URL: 'http://127.0.0.1:9', LITELLM_MASTER_KEY: MOCK_MASTER_KEY });
+    const login = await t.app.inject({ method: 'POST', url: '/auth/login', payload: { email: XIAOHAO_TEST_EMAIL, password: XIAOHAO_TEST_PASSWORD, cookie: true } });
+    const ck = String(login.headers['set-cookie']).split(';')[0]!;
+    expect((await t.xiao('POST', '/api/members', { name: 'XiaoModel' })).statusCode).toBeLessThan(300);
+    const conv = await t.app.inject({ method: 'POST', url: '/api/conversations', headers: { cookie: ck, ...CSRF }, payload: {} });
+    const id = conv.json().conversation.id as string;
+    const address = await t.app.listen({ host: '127.0.0.1', port: 0 });
+    const { request } = await import('node:http');
+    const req = request(`${address}/api/chat/stream`, { method: 'POST', headers: { cookie: ck, ...CSRF, 'content-type': 'application/json' } });
+    req.on('error', () => undefined);
+    req.end(JSON.stringify({ conversationId: id, messages: [{ role: 'user', content: '@XiaoModel 慢' }] }));
+    await new Promise((r) => setTimeout(r, 100));
+    req.destroy();
+    await new Promise((r) => setTimeout(r, 600));
+    expect(upstreamAborted, '浏览器已经断开：不调上游（或上游带着已中断的信号）').not.toBe(false);
+    const again = await t.app.inject({ method: 'POST', url: '/api/chat/stream', headers: { cookie: ck, ...CSRF }, payload: { messages: [{ role: 'user', content: '@XiaoModel hi' }] } });
+    expect(again.statusCode, '并发名额已退还').toBe(200);
+    const running = await t.app.inject({ method: 'GET', url: '/api/conversations?filter=running', headers: { cookie: ck } });
+    expect(running.json().conversations).toEqual([]);
+    await t.close();
+  });
 });
 
 describe('toUiMessageStream（OpenAI SSE → AI SDK UI Message Stream）', () => {
