@@ -3,7 +3,7 @@
  * 数据范围 = 'owner'：成员、用量、对话都用所有者名下的那一套，圆环照常计数；
  * 身份仍是账号：所有者令牌专属的接口照旧 403；小号看不到所有者的成员；配置为空 / 配成非管理员账号 = 不映射。
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { ConfigError, loadConfig } from '../src/config.js';
 import type { CoreDeps } from '../src/deps.js';
@@ -124,15 +124,41 @@ describe.each(twoAccountEnvs)('必改 1 方案 A：所有者账号映射到所�
     await mock.close();
   });
 
-  it('配置了：所有者账号（Cookie / 会话令牌）看到的是所有者名下的成员，看不到小号的', async () => {
+  it('配置了：所有者账号用 Cookie 会话登录，看到的是所有者名下的成员，看不到小号的', async () => {
     const e = await start({ CORE_OWNER_ACCOUNT_ID: OWNER_ACCOUNT_ID });
     const ck = await e.cookie(OWNER_EMAIL, OWNER_PW);
     const viaCookie = await e.app.inject({ method: 'GET', url: '/api/members', headers: { cookie: ck } });
     expect(viaCookie.statusCode).toBe(200);
     expect(names(viaCookie)).toContain('OwnerBot');
     expect(names(viaCookie)).not.toContain('XiaoBot');
+  });
+
+  it('负责人必改 1：同一个账号的会话令牌放在 Bearer 头里 → 不映射，只看到自己账号的数据（空）', async () => {
+    const e = await start({ CORE_OWNER_ACCOUNT_ID: OWNER_ACCOUNT_ID });
     const viaBearer = await e.app.inject({ method: 'GET', url: '/api/members', headers: await e.bearer(OWNER_EMAIL, OWNER_PW) });
-    expect(names(viaBearer)).toEqual(names(await e.app.inject({ method: 'GET', url: '/api/members', headers: ownerAuth })));
+    expect(viaBearer.statusCode).toBe(200);
+    expect(names(viaBearer)).toEqual([]);
+  });
+
+  it('负责人必改 2：映射后的审计记录写明 scope=owner(mapped) 和账号 id（操作者仍是这个账号）', async () => {
+    const e = await start({ CORE_OWNER_ACCOUNT_ID: OWNER_ACCOUNT_ID });
+    const ck = await e.cookie(OWNER_EMAIL, OWNER_PW);
+    const r = await e.app.inject({ method: 'POST', url: '/api/members', headers: { cookie: ck, ...CSRF }, payload: { name: 'ViaOwnerAccount' } });
+    expect(r.statusCode).toBeLessThan(300);
+    expect(names(await e.app.inject({ method: 'GET', url: '/api/members', headers: ownerAuth }))).toContain('ViaOwnerAccount');
+    const q = await e.app.inject({ method: 'GET', url: `/api/audit?actorType=user&actorId=${OWNER_ACCOUNT_ID}`, headers: ownerAuth });
+    expect(q.statusCode).toBe(200);
+    const entries = (q.json() as { entries: Array<{ actor: { type: string; id: string }; action: string; note?: string }> }).entries;
+    const create = entries.find((x) => x.action.startsWith('members.'));
+    expect(create).toBeDefined();
+    expect(create!.actor).toEqual({ type: 'user', id: OWNER_ACCOUNT_ID });
+    expect(create!.note ?? '').toContain('scope=owner(mapped)');
+    expect(create!.note ?? '').toContain(`account=${OWNER_ACCOUNT_ID}`);
+    // 小号（没映射）的审计不带这个标记
+    const xb = await e.bearer(XIAOHAO_TEST_EMAIL, XIAOHAO_TEST_PASSWORD);
+    await e.app.inject({ method: 'POST', url: '/api/members', headers: xb, payload: { name: 'XiaoBot2' } });
+    const xq = await e.app.inject({ method: 'GET', url: `/api/audit?actorType=user&actorId=${e.xiaoId}`, headers: ownerAuth });
+    for (const x of (xq.json() as { entries: Array<{ note?: string }> }).entries) expect(x.note ?? '').not.toContain('scope=owner');
   });
 
   it('配置了：所有者账号对话用所有者的成员（上游名不带账号前缀），圆环计数 +1；所有者令牌看到的是同一个数', async () => {
@@ -191,6 +217,57 @@ describe.each(twoAccountEnvs)('必改 1 方案 A：所有者账号映射到所�
     const r = await chat(e, fc, 'aroomo/ownerbot');
     expect(r.body).not.toContain('我是 OwnerBot');
     expect(e.upstream).toEqual([]);
+  });
+});
+
+describe.each(twoAccountEnvs)('负责人必改 3：启动检查——配置的账号必须存在、是管理员、没停用，否则整个进程不映射并告警 [$name]', (dbEnv) => {
+  const opened: FastifyInstance[] = [];
+  afterAll(async () => {
+    for (const a of opened) await a.close();
+  });
+
+  async function boot(configured: string, seed: { role: 'admin' | 'user'; status: 'active' | 'disabled' } | null) {
+    const clock = fakeClock();
+    const deps = await dbEnv.make(clock.now);
+    const at = clock.now();
+    if (seed) await deps.users.insertUser({ id: OWNER_ACCOUNT_ID, email: OWNER_EMAIL, displayName: '宝宝', role: seed.role, status: seed.status, passwordHash: await hashPassword(OWNER_PW), createdAt: at, updatedAt: at });
+    const app = buildServer(loadConfig({ CORE_LOG_LEVEL: 'silent', CORE_OWNER_TOKEN: OWNER_TOKEN, CORE_ACCESS_REAUTH: 'off', CORE_OWNER_ACCOUNT_ID: configured }), deps);
+    opened.push(app);
+    const warn = vi.spyOn(app.log, 'warn');
+    await app.ready();
+    expect((await app.inject({ method: 'POST', url: '/api/members', headers: ownerAuth, payload: { name: 'OwnerBot' } })).statusCode).toBeLessThan(300);
+    const warned = warn.mock.calls.some((c) => JSON.stringify(c).includes('CORE_OWNER_ACCOUNT_ID'));
+    const cookie = async () => {
+      const r = await app.inject({ method: 'POST', url: '/auth/login', payload: { email: OWNER_EMAIL, password: OWNER_PW, cookie: true } });
+      expect(r.statusCode).toBe(200);
+      return String(r.headers['set-cookie']).split(';')[0]!;
+    };
+    const membersVia = async (ck: string) => names(await app.inject({ method: 'GET', url: '/api/members', headers: { cookie: ck } }));
+    return { app, deps, warned, cookie, membersVia, at };
+  }
+  const names = (r: { json: () => unknown }) => ((r.json() as { members: Array<{ name: string }> }).members ?? []).map((m) => m.name);
+
+  it('账号存在、是管理员、没停用：不告警，Cookie 登录映射', async () => {
+    const b = await boot(OWNER_ACCOUNT_ID, { role: 'admin', status: 'active' });
+    expect(b.warned).toBe(false);
+    expect(await b.membersVia(await b.cookie())).toContain('OwnerBot');
+  });
+
+  it('账号不存在：告警', async () => {
+    const b = await boot(OWNER_ACCOUNT_ID, null);
+    expect(b.warned).toBe(true);
+  });
+
+  it('账号已停用：告警', async () => {
+    const b = await boot(OWNER_ACCOUNT_ID, { role: 'admin', status: 'disabled' });
+    expect(b.warned).toBe(true);
+  });
+
+  it('账号不是管理员：告警；之后就算被改成管理员，这个进程也不映射（要重启重新检查）', async () => {
+    const b = await boot(OWNER_ACCOUNT_ID, { role: 'user', status: 'active' });
+    expect(b.warned).toBe(true);
+    await b.deps.users.updateUser(OWNER_ACCOUNT_ID, { role: 'admin' }, b.at);
+    expect(await b.membersVia(await b.cookie())).toEqual([]);
   });
 });
 

@@ -43,21 +43,16 @@ describe('品牌（D7）', () => {
 });
 
 describe('调用 Core', () => {
-  it('登录后令牌存 sessionStorage，之后带 Bearer；改动类请求带 X-Aroomo-Request', async () => {
+  it('响应里带令牌：不收下、不存，当出错处理（只认 Cookie，#264 必改 2）；改动类请求带 X-Aroomo-Request', async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const f = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       calls.push({ url: String(url), init: init ?? {} });
-      if (String(url) === '/auth/login') return json(200, { token: 'placeholder-session', user: { id: 'u1', email: 'a@b.c', role: 'owner' } });
-      return json(200, { members: [] });
+      return json(200, { token: 'placeholder-session', user: { id: 'u1', email: 'a@b.c', role: 'owner' } });
     }) as unknown as typeof fetch;
-    const u = await login('a@b.c', 'pw', f);
-    expect(u.id).toBe('u1');
-    expect(session.token).toBe('placeholder-session');
+    await expect(login('a@b.c', 'pw', f)).rejects.toMatchObject({ code: 'LOGIN_TOKEN_IN_BODY' });
+    expect(session.token).toBeNull();
+    expect(JSON.stringify(sessionStorage)).not.toContain('placeholder-session');
     expect((calls[0]!.init.headers as Record<string, string>)['x-aroomo-request']).toBe('1');
-    await api('GET', '/api/members', undefined, f);
-    const h = calls[1]!.init.headers as Record<string, string>;
-    expect(h.authorization).toBe('Bearer placeholder-session');
-    expect(h['x-aroomo-request']).toBeUndefined();
   });
 
   it('Cookie 登录（Core 不返回令牌）：只记占位标记，之后请求不带 Authorization，靠 Cookie', async () => {
@@ -89,7 +84,7 @@ describe('页面', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string) => {
-        if (url === '/auth/login') return json(200, { token: 'placeholder-session', user: { id: 'u1', email: 'a@b.c', role: 'owner' } });
+        if (url === '/auth/login') return json(200, { user: { id: 'u1', email: 'a@b.c', role: 'owner' } });
         if (url === '/api/members')
           return json(200, {
             members: [

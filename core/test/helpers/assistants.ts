@@ -55,7 +55,13 @@ export const baseBody = (over: Record<string, unknown> = {}) => ({
 
 export async function assistantEnv(
   env: DepsEnv,
-  opts: { timeoutMs?: number; extraEnv?: Record<string, string>; budgets?: CoreDeps['assistantBudgets'] } = {},
+  opts: {
+    timeoutMs?: number;
+    extraEnv?: Record<string, string>;
+    budgets?: CoreDeps['assistantBudgets'];
+    /** 服务启动前往库里放数据（例如 CORE_OWNER_ACCOUNT_ID 指的账号：#268 启动检查只在 onReady 时认它） */
+    seed?: (deps: CoreDeps, now: () => Date) => Promise<void>;
+  } = {},
 ): Promise<AssistantEnv> {
   const mock = await startMockLiteLLM();
   const gw: FakeGateway = { calls: [], slow: new Set(), failStatus: new Map(), gate: null, toolDeltas: [], firstTokenGate: new Map(), streamOptions: [] };
@@ -67,6 +73,7 @@ export async function assistantEnv(
         deps.litellm = new LiteLLMAdmin({ baseUrl: mock.url, masterKey: MOCK_MASTER_KEY, timeoutMs: 2000 });
         if (opts.timeoutMs !== undefined) deps.assistantTimeoutMs = () => opts.timeoutMs!;
         if (opts.budgets) deps.assistantBudgets = opts.budgets;
+        if (opts.seed) await opts.seed(deps, now);
         deps.chatFetch = (async (_u: unknown, init?: { body?: string; signal?: AbortSignal }) => {
           const b = JSON.parse(String(init?.body)) as { model: string; stream?: boolean; stream_options?: unknown; messages: Array<{ role: string; content: string }> };
           gw.calls.push(b.model);

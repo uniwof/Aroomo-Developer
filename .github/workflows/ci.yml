@@ -216,7 +216,7 @@ jobs:
       - run: docker buildx build --platform ${{ matrix.platform }} deploy/backup
 
   ui-e2e:
-    name: 界面端到端冒烟（官方 LobeHub + Aroomo Shell，电脑 + 手机截图）
+    name: 界面端到端冒烟（Aroomo Shell，电脑 + 手机截图）
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:

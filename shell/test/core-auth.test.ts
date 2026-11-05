@@ -10,8 +10,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ConfigError, loadConfig } from '../src/config.js';
-import { createShellServer, safeNext } from '../src/server.js';
-import { coreSessionCookie } from '../src/session.js';
+import type { IncomingMessage } from 'node:http';
+import { clientIp, createShellServer, dropCookie, safeNext } from '../src/server.js';
+import { cachePut, coreSessionCookie, CoreSessionChecker } from '../src/session.js';
 
 const TOKEN = 'placeholder-owner-token-0123456789abcdef';
 const OWNER = 'owner@example.com';
@@ -29,13 +30,16 @@ let core: Server;
 let shell: Server;
 let base = '';
 let coreUrl = '';
-const seen: Array<{ method: string; url: string; cookie?: string; auth?: string; body?: string; csrf?: string }> = [];
+const seen: Array<{ method: string; url: string; cookie?: string; auth?: string; body?: string; csrf?: string; xff?: string; xri?: string }> = [];
+// 假 LobeHub：记下收到的 Cookie（HTTP 和 WebSocket）
+let lobe: Server;
+const lobeSeen: Array<{ kind: 'http' | 'ws'; url: string; cookie?: string }> = [];
 
 const listen = (s: Server) =>
   new Promise<string>((r) => s.listen(0, '127.0.0.1', () => r(`http://127.0.0.1:${(s.address() as AddressInfo).port}`)));
 
 function sessOf(cookie: string | undefined): string | undefined {
-  const m = /(?:^|;\s*)aroomo_session=([^;]+)/.exec(cookie ?? '');
+  const m = /(?:^|;\s*)(?:__Host-)?aroomo_session=([^;]+)/.exec(cookie ?? '');
   return m && !revoked.has(m[1]!) ? m[1] : undefined;
 }
 
@@ -45,7 +49,16 @@ beforeAll(async () => {
     req.on('data', (c: Buffer) => chunks.push(c));
     req.on('end', () => {
       const body = Buffer.concat(chunks).toString('utf8');
-      seen.push({ method: req.method ?? '', url: req.url ?? '', cookie: req.headers.cookie, auth: req.headers.authorization, body, csrf: req.headers['x-aroomo-request'] as string | undefined });
+      seen.push({
+        method: req.method ?? '',
+        url: req.url ?? '',
+        cookie: req.headers.cookie,
+        auth: req.headers.authorization,
+        body,
+        csrf: req.headers['x-aroomo-request'] as string | undefined,
+        xff: req.headers['x-forwarded-for'] as string | undefined,
+        xri: req.headers['x-real-ip'] as string | undefined,
+      });
       const json = (status: number, b: unknown, h: Record<string, string> = {}) => {
         res.writeHead(status, { 'content-type': 'application/json', ...h });
         res.end(JSON.stringify(b));
@@ -79,16 +92,26 @@ beforeAll(async () => {
     });
   });
   coreUrl = await listen(core);
+  lobe = http.createServer((req, res) => {
+    lobeSeen.push({ kind: 'http', url: req.url ?? '', cookie: req.headers.cookie });
+    res.writeHead(200, { 'content-type': 'text/plain' });
+    res.end('lobe');
+  });
+  lobe.on('upgrade', (req, socket) => {
+    lobeSeen.push({ kind: 'ws', url: req.url ?? '', cookie: req.headers.cookie });
+    socket.end('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n');
+  });
+  const lobeUrl = await listen(lobe);
   const consoleDir = mkdtempSync(path.join(tmpdir(), 'console-'));
   writeFileSync(path.join(consoleDir, 'index.html'), '<!doctype html><html><head><title>c</title></head><body></body></html>');
   shell = createShellServer(
-    loadConfig({ SHELL_AUTH: 'core-session', SHELL_CONSOLE_DIR: consoleDir, CORE_UPSTREAM: coreUrl, CORE_OWNER_TOKEN: TOKEN, SHELL_OWNER_EMAIL: 'OWNER@example.com', LOBE_UPSTREAM: 'http://127.0.0.1:9' }),
+    loadConfig({ SHELL_AUTH: 'core-session', SHELL_CONSOLE_DIR: consoleDir, CORE_UPSTREAM: coreUrl, CORE_OWNER_TOKEN: TOKEN, SHELL_OWNER_EMAIL: 'OWNER@example.com', LOBE_UPSTREAM: lobeUrl, SHELL_CLIENT_IP_HEADER: 'cf-connecting-ip' }),
   );
   base = await listen(shell);
 });
 
 afterAll(async () => {
-  for (const s of [shell, core]) {
+  for (const s of [shell, core, lobe]) {
     s.closeAllConnections?.();
     await new Promise((r) => s.close(r));
   }
@@ -214,6 +237,106 @@ describe('core-session：登录 / 设密码 / 退出', () => {
     expect(lo.csrf).toBe('1');
     expect(lo.cookie).toBe(cookie);
     expect((await get('/console/', cookie)).status).toBe(302);
+    revoked.delete('owner_sess_1');
+  });
+});
+
+describe('core-session：不把 aroomo_session 给 LobeHub（#259 必改 1）', () => {
+  it('HTTP 和 WebSocket 转给 LobeHub 前都删掉 aroomo_session，其余 Cookie 照转', async () => {
+    lobeSeen.length = 0;
+    const cookie = 'aroomo_session=owner_sess_1; better-auth.session_token=lobe; LOBE_LOCALE=zh-CN';
+    const r = await fetch(base + '/chat/x', { headers: { cookie } });
+    expect(await r.text()).toBe('lobe');
+    // WebSocket：手写一个升级请求
+    await new Promise<void>((resolve, reject) => {
+      const u = new URL(base);
+      const req = http.request({ host: u.hostname, port: u.port, path: '/ws/x', headers: { connection: 'Upgrade', upgrade: 'websocket', cookie } });
+      req.on('upgrade', (_res, sock) => {
+        sock.destroy();
+        resolve();
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    const h = lobeSeen.find((x) => x.kind === 'http')!;
+    const w = lobeSeen.find((x) => x.kind === 'ws')!;
+    for (const x of [h, w]) {
+      expect(x.cookie).not.toContain('aroomo_session');
+      expect(x.cookie).toContain('better-auth.session_token=lobe');
+    }
+    expect(dropCookie('aroomo_session=a', ['aroomo_session'])).toBeUndefined();
+    expect(dropCookie('x=1; aroomo_session=a; y=2', ['aroomo_session'])).toBe('x=1; y=2');
+  });
+});
+
+describe('core-session：登录带真实来源 IP（#259 必改 2）', () => {
+  it('直连方是本机 / 容器网络：取 CF-Connecting-IP 转给 Core（X-Forwarded-For + X-Real-IP）；值不是 IP 就用直连地址', async () => {
+    seen.length = 0;
+    await post('/aroomo/auth/login', { email: OWNER, password: 'wrong' }, { 'x-aroomo-request': '1', 'cf-connecting-ip': '203.0.113.7' });
+    const a = seen.find((s) => s.url === '/auth/login')!;
+    expect(a.xff).toBe('203.0.113.7');
+    expect(a.xri).toBe('203.0.113.7');
+    seen.length = 0;
+    await post('/aroomo/auth/login', { email: OWNER, password: 'wrong' }, { 'x-aroomo-request': '1', 'cf-connecting-ip': '1.2.3.4, 5.6.7.8' });
+    expect(seen.find((s) => s.url === '/auth/login')!.xff).toBe('127.0.0.1');
+  });
+
+  it('公网直连来的请求不信它自己填的头；没配 SHELL_CLIENT_IP_HEADER 也不信', () => {
+    const req = (peer: string) => ({ socket: { remoteAddress: peer }, headers: { 'cf-connecting-ip': '198.51.100.9' } }) as unknown as IncomingMessage;
+    expect(clientIp(req('203.0.113.5'), 'cf-connecting-ip')).toBe('203.0.113.5');
+    expect(clientIp(req('172.18.0.4'), 'cf-connecting-ip')).toBe('198.51.100.9');
+    expect(clientIp(req('::ffff:10.0.0.2'), 'cf-connecting-ip')).toBe('198.51.100.9');
+    expect(clientIp(req('172.18.0.4'), undefined)).toBe('172.18.0.4');
+    expect(() => loadConfig({ SHELL_CLIENT_IP_HEADER: 'x-forwarded-for' })).toThrow(ConfigError);
+  });
+});
+
+describe('core-session：会话缓存', () => {
+  it('缓存到期后，被停用的账号进不去（停用最多 30 秒生效，D254）', async () => {
+    let t = 0;
+    let active = true;
+    const f = (async () =>
+      new Response(JSON.stringify({ kind: 'user', user: { id: 'u1', email: 'a@b.c', role: 'admin', status: active ? 'active' : 'disabled' } }), { status: 200 })) as unknown as typeof fetch;
+    const c = new CoreSessionChecker(new URL('http://core.invalid'), 30_000, f, () => t);
+    expect(await c.check('aroomo_session=sess_abcdef1')).toBe(true);
+    active = false;
+    t = 29_000;
+    expect(await c.check('aroomo_session=sess_abcdef1')).toBe(true); // 还在缓存里
+    t = 30_001;
+    expect(await c.check('aroomo_session=sess_abcdef1')).toBe(false);
+  });
+
+  it('缓存满了只淘汰最旧的一条，不整个清空', () => {
+    const m = new Map<string, number>();
+    for (let i = 0; i < 5; i++) cachePut(m, `k${i}`, i, 3);
+    expect([...m.keys()]).toEqual(['k2', 'k3', 'k4']);
+    cachePut(m, 'k2', 9, 3); // 刷新的条目挪到最新
+    cachePut(m, 'k5', 5, 3);
+    expect([...m.keys()]).toEqual(['k4', 'k2', 'k5']);
+  });
+});
+
+describe('core-session：__Host- Cookie 名（#264 必改 1）', () => {
+  it('先认 __Host-aroomo_session，没有再认旧名（过渡）；只把认出来的那一个发给 Core', async () => {
+    expect(coreSessionCookie('aroomo_session=planted_000; __Host-aroomo_session=owner_sess_1')).toBe('__Host-aroomo_session=owner_sess_1');
+    expect(coreSessionCookie('aroomo_session=owner_sess_1')).toBe('aroomo_session=owner_sess_1');
+    expect(coreSessionCookie('__Host-aroomo_session=bad value; aroomo_session=owner_sess_1')).toBeUndefined();
+    seen.length = 0;
+    const c = await get('/console/', '__Host-aroomo_session=owner_sess_1; other=1');
+    expect(c.status).toBe(200);
+    const me = seen.find((x) => x.url === '/api/auth/me');
+    if (me) expect(me.cookie).toBe('__Host-aroomo_session=owner_sess_1');
+  });
+
+  it('两个名字都不转给 LobeHub；退出时 __Host- 和旧名一起清', async () => {
+    expect(dropCookie('__Host-aroomo_session=a; aroomo_session=b; x=1', ['__Host-aroomo_session', 'aroomo_session'])).toBe('x=1');
+    lobeSeen.length = 0;
+    await fetch(base + '/chat/y', { headers: { cookie: '__Host-aroomo_session=owner_sess_1; x=1' } });
+    expect(lobeSeen.find((x) => x.kind === 'http')!.cookie).not.toContain('aroomo_session');
+    const r = await fetch(base + '/aroomo/logout', { method: 'POST', headers: { cookie: '__Host-aroomo_session=owner_sess_1', 'x-aroomo-request': '1' } });
+    const sc = r.headers.getSetCookie();
+    expect(sc.some((x) => x.startsWith('__Host-aroomo_session=; Path=/; Max-Age=0') && x.includes('Secure'))).toBe(true);
+    expect(sc.some((x) => x.startsWith('aroomo_session=; Path=/; Max-Age=0'))).toBe(true);
     revoked.delete('owner_sess_1');
   });
 });

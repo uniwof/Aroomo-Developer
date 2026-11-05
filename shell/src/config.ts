@@ -50,6 +50,11 @@ export interface ShellConfig {
    * 服务器版不限制（undefined）。可用 SHELL_ALLOWED_HOSTS（逗号分隔）覆盖。
    */
   allowedHosts: string[] | undefined;
+  /**
+   * 真实来源 IP 从哪个头取（SHELL_CLIENT_IP_HEADER：cf-connecting-ip 或 x-real-ip）。只在直连方是本机 / 容器网络（私有地址）时才信，
+   * 公网直连来的请求一律用直连地址。转给 Core 登录 / MCP 做限速用（#259 负责人必改 2）。未设置 = 只用直连地址。
+   */
+  clientIpHeader: 'cf-connecting-ip' | 'x-real-ip' | undefined;
 }
 
 export class ConfigError extends Error {}
@@ -101,6 +106,10 @@ export function loadConfig(env: Env = process.env): ShellConfig {
     : localOwner
       ? ['localhost', '127.0.0.1']
       : undefined;
+  const ipHeader = str(env, 'SHELL_CLIENT_IP_HEADER')?.toLowerCase();
+  if (ipHeader !== undefined && ipHeader !== 'cf-connecting-ip' && ipHeader !== 'x-real-ip') {
+    throw new ConfigError('SHELL_CLIENT_IP_HEADER 只能是 cf-connecting-ip 或 x-real-ip');
+  }
   return {
     host,
     port: Number(portRaw),
@@ -116,5 +125,6 @@ export function loadConfig(env: Env = process.env): ShellConfig {
     sessionCacheMs: 30_000,
     localOwner,
     allowedHosts,
+    clientIpHeader: ipHeader,
   };
 }
