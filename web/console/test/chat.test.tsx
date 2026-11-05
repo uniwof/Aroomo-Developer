@@ -69,6 +69,7 @@ describe('原生对话页', () => {
             status: 200,
             headers: { 'content-type': 'application/json' },
           });
+        if (url === '/api/assistants') return new Response(JSON.stringify({ assistants: [] }), { status: 200, headers: { 'content-type': 'application/json' } });
         return new Response('{}', { status: 404 });
       }),
     );
@@ -142,7 +143,10 @@ describe('原生对话页', () => {
     expect(screen.getByRole('navigation', { name: '分类' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('radio', { name: '助手' }));
     expect(screen.getByText(/^还没有助手。/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /新建助手/ })).toBeNull();
+    // integrate/stage2：助手开关打开，所有者在「助手」分段里有「新建助手」和「看全部计划」（接 /api/assistants）
+    expect(screen.getByRole('button', { name: '新建助手' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '看全部计划' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('radio', { name: '对话' }));
     fireEvent.click(screen.getByRole('button', { name: '新建对话' }));
     expect(screen.getByRole('button', { name: '新对话（全员）' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '挑选成员新建' })).toBeInTheDocument();

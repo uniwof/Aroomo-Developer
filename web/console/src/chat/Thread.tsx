@@ -19,7 +19,8 @@ import {
   type ThreadMessageLike,
 } from '@assistant-ui/react';
 import { ArrowDown, Copy, KeyRound, RotateCcw, Send, Square, Volume2, VolumeX } from 'lucide-react';
-import { ChatStreamError, type FailureCode, dayLabel, loadDraft, saveDraft, signatureOf, streamChat, stripSignature, timeLabel, type ChatTurn, type Conversation } from './store';
+import { ChatStreamError, type ChatDraft, type ChatTool, type FailureCode, dayLabel, loadDraft, saveDraft, signatureOf, streamChat, stripSignature, timeLabel, upsertTool, type ChatTurn, type Conversation } from './store';
+import { ToolCalls } from './thread/cards/ToolCalls';
 import { Avatar } from './Avatar';
 import { AnnounceContext, useAnnounce } from './announce';
 import { DEFAULT_RATE, pickVoice, speaker, speechSupported } from './speech';
@@ -27,6 +28,19 @@ import { useAsk } from '@/components/Dialog';
 
 // Markdown 引擎单独打包、按需加载（首屏先出对话框和输入框）；没到之前按纯文字显示（同样不渲染 HTML）
 const LazyMarkdown = lazy(() => import('./Markdown'));
+// X-15 草稿卡点开才下载（对话页包 ≤150 KB gz）
+const ChatDraftCard = lazy(() => import('./pages/assistants/ChatDraftCard'));
+
+const draftOfMessage = (m: { metadata?: { custom?: unknown } }): ChatDraft | undefined => (m.metadata?.custom as { draft?: ChatDraft } | undefined)?.draft;
+/** X-19：这条上面那行「已整理成摘要」的灰字 */
+const noteOfMessage = (m: { metadata?: { custom?: unknown } }): string | undefined => (m.metadata?.custom as { note?: string } | undefined)?.note;
+/** 「这段对话太长，这次只带了最近的内容」：只在这次的流里显示，不进存档（noteOfMessage 不读它） */
+const streamNoteOfMessage = (m: { metadata?: { custom?: unknown } }): string | undefined => (m.metadata?.custom as { streamNote?: string } | undefined)?.streamNote;
+const toolsOfMessage = (m: { metadata?: { custom?: unknown } }): ChatTool[] | undefined => (m.metadata?.custom as { tools?: ChatTool[] } | undefined)?.tools;
+
+/** Core 给的消息 id 是 uuid；本页新发的消息用 newId()（m 开头），不当作 Core 的 id */
+const CORE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** 还没发过消息的新对话：草稿按对象记（全员 / 某位成员 / 某个群），换一位新开对话不带出别人的草稿（审计 C14） */
 const newDraftKey = (c: Conversation) => `new:${c.model}${c.group?.length ? `:${c.group.join('、')}` : ''}`;
 
@@ -44,6 +58,14 @@ export interface UiMessage {
   error?: string;
   /** Core 给的失败码：key_invalid 时不显示「重试」，改成「去检查 Key」 */
   errorCode?: FailureCode | undefined;
+  /** X-15 助手草稿卡（只在回复上） */
+  draft?: ChatDraft;
+  /** X-19：这条上面那行灰字 */
+  note?: string;
+  /** 压缩没跑成时这条回复上面的灰字：只在界面上，不存库、不存本机 */
+  streamNote?: string;
+  /** X-05 工具调用（只在回复上） */
+  tools?: ChatTool[];
 }
 
 let seq = 0;
@@ -51,7 +73,13 @@ const newId = () => `m${Date.now().toString(36)}${(seq++).toString(36)}`;
 
 /** UiMessage → assistant-ui 的消息（状态决定「停止 / 出错 / 重试」怎么显示） */
 export function toThreadMessage(m: UiMessage): ThreadMessageLike {
-  const base = { id: m.id, role: m.role, content: [{ type: 'text' as const, text: m.text }], ...(m.at ? { createdAt: new Date(m.at) } : {}) };
+  const base = {
+    id: m.id,
+    role: m.role,
+    content: [{ type: 'text' as const, text: m.text }],
+    ...(m.at ? { createdAt: new Date(m.at) } : {}),
+    ...(m.draft || m.tools?.length || m.note || m.streamNote ? { metadata: { custom: { ...(m.draft ? { draft: m.draft } : {}), ...(m.tools?.length ? { tools: m.tools } : {}), ...(m.note ? { note: m.note } : {}), ...(m.streamNote ? { streamNote: m.streamNote } : {}) } } } : {}),
+  };
   if (m.role === 'user') return base;
   if (m.state === 'running') return { ...base, status: { type: 'running' } };
   if (m.state === 'cancelled') return { ...base, status: { type: 'incomplete', reason: 'cancelled' } };
@@ -59,14 +87,26 @@ export function toThreadMessage(m: UiMessage): ThreadMessageLike {
     return {
       ...base,
       status: { type: 'incomplete', reason: 'error', error: m.error ?? '对话出错了，请稍后再试。' },
-      ...(m.errorCode ? { metadata: { custom: { errorCode: m.errorCode } } } : {}),
+      ...(m.errorCode ? { metadata: { custom: { ...(m.tools?.length ? { tools: m.tools } : {}), errorCode: m.errorCode, ...(m.note ? { note: m.note } : {}), ...(m.streamNote ? { streamNote: m.streamNote } : {}) } } } : {}),
     };
   return { ...base, status: { type: 'complete', reason: 'stop' } };
 }
 
 const turnsOf = (list: UiMessage[]): ChatTurn[] => list.filter((m) => m.text.trim() !== '').map((m) => ({ role: m.role, text: m.text }));
 /** 存本机用：带时间（Poke 行为规范切片 1：发出即存、结束再存，离开对话区也不丢） */
-const savedTurnsOf = (list: UiMessage[]): ChatTurn[] => list.filter((m) => m.text.trim() !== '').map((m) => ({ role: m.role, text: m.text, ...(m.at ? { at: m.at } : {}) }));
+// 带上 Core 的消息 id、草稿卡、工具行、摘要灰字（streamNote 只在这次的流里显示，不存）
+const savedTurnsOf = (list: UiMessage[]): ChatTurn[] =>
+  list
+    .filter((m) => m.text.trim() !== '')
+    .map((m) => ({
+      ...(CORE_ID.test(m.id) ? { id: m.id } : {}),
+      role: m.role,
+      text: m.text,
+      ...(m.at ? { at: m.at } : {}),
+      ...(m.draft ? { draft: m.draft } : {}),
+      ...(m.tools?.length ? { tools: m.tools } : {}),
+      ...(m.note ? { note: m.note } : {}),
+    }));
 
 const MarkdownText: FC<{ text: string }> = ({ text }) => (
   <Suspense fallback={<p className="chat-md chat-plain">{stripSignature(text)}</p>}>
@@ -103,6 +143,16 @@ const DaySep: FC = () => {
   );
 };
 
+/** X-19：长会话压缩过的那行静态灰字，放在留下的第一条原文上面（不动、不闪；读屏当作提示读出来） */
+const CompactNote: FC = () => {
+  const note = useAuiState((s) => noteOfMessage(s.message) ?? streamNoteOfMessage(s.message));
+  return note ? (
+    <p className="msg-compact" role="note">
+      {note}
+    </p>
+  ) : null;
+};
+
 const MessageTime: FC = () => {
   const at = useAuiState((s) => s.message.createdAt?.getTime());
   const t = timeLabel(at);
@@ -110,9 +160,13 @@ const MessageTime: FC = () => {
 };
 
 /** 你说的话：「我」头像 + 名字 + 时间 + 正文（不用气泡，照 sumus）。读屏先听到「你说：」 */
+/** 每条消息的 DOM id（X-04b：收件箱点「打开对话」时滚到这条并给焦点） */
+const useMsgDomId = () => `msg-${useAuiState((s) => s.message.id)}`;
+
 const UserMessage: FC = () => (
-  <MessagePrimitive.Root className="msg msg-user">
+  <MessagePrimitive.Root className="msg msg-user" id={useMsgDomId()}>
     <DaySep />
+    <CompactNote />
     <div className="msg-row">
       <Avatar name="我" kind="user" size="msg" />
       <div className="msg-main">
@@ -258,11 +312,48 @@ const Working: FC<{ name: string }> = ({ name }) => {
   );
 };
 
+/** 草稿卡要的东西（对话页给；家人、开关关时不给 = 不渲染卡） */
+export interface DraftActions {
+  members: import('@/lib/api').Member[];
+  /** 「改一改」：打开新建助手弹窗并预先填好；建好后回调 */
+  onEdit: (input: import('@/lib/assistants').AssistantInput, onCreated: () => void) => void;
+  /** 「建好」成功后（刷新会话栏的助手列表） */
+  onCreated: (a: import('@/lib/assistants').Assistant) => void;
+}
+const DraftContext = createContext<{ actions?: DraftActions | undefined; setState: (messageId: string, state: 'done' | 'dismissed') => void }>({ setState: () => undefined });
+
+/** 回复里带草稿卡时显示卡；只有点「建好」才建 */
+const DraftSlot: FC = () => {
+  const id = useAuiState((s) => s.message.id);
+  const draft = useAuiState((s) => draftOfMessage(s.message));
+  const { actions, setState } = useContext(DraftContext);
+  if (!draft || !actions || isFamily()) return null;
+  return (
+    <Suspense fallback={<p className="msg-note">正在打开助手草稿…</p>}>
+      <ChatDraftCard
+        draft={draft}
+        members={actions.members}
+        onState={(st) => setState(id, st)}
+        onCreated={actions.onCreated}
+        onEdit={(input) => actions.onEdit(input, () => setState(id, 'done'))}
+      />
+    </Suspense>
+  );
+};
+
+/** X-05：回复正文上方一行灰字，点开看做了哪些工具调用 */
+const ToolSlot: FC = () => {
+  const tools = useAuiState((s) => toolsOfMessage(s.message));
+  return tools?.length ? <ToolCalls tools={tools} /> : null;
+};
+
 const AssistantMessage: FC = () => {
   const who = useSpeaker();
+  const domId = useMsgDomId();
   return (
-    <MessagePrimitive.Root className="msg msg-assistant">
+    <MessagePrimitive.Root className="msg msg-assistant" id={domId}>
       <DaySep />
+      <CompactNote />
       <div className="msg-row">
         <Avatar name={who.name} kind={who.lead ? 'lead' : 'member'} size="msg" />
         <div className="msg-main">
@@ -273,8 +364,10 @@ const AssistantMessage: FC = () => {
             <MessageTime />
           </div>
           <div className="msg-body">
+            <ToolSlot />
             <Working name={who.name} />
             <MessagePrimitive.Parts components={{ Text: MarkdownText }} />
+            <DraftSlot />
             <Stopped />
             <MessagePrimitive.Error>
               <div role="alert" className="chat-error-box">
@@ -324,18 +417,36 @@ export interface ThreadProps {
   intro?: string;
   /** 输入卡上方的提示条（例如额度用完了） */
   notice?: ReactNode;
+  /** X-15 助手草稿卡的动作；不给 = 不显示卡（家人、开关关） */
+  draftActions?: DraftActions;
+  /** 会话存库：发之前确保会话已在 Core 建好，返回会话 id（null = 不存，本机模式）；抛错 = 没建成，这次不发 */
+  persist?: (firstUserText: string) => Promise<string | null>;
+  /** X-04b：打开后滚到这条消息并给焦点（收件箱「打开对话」） */
+  focusMessageId?: string;
   /** 一轮对话结束：成功给 null，接口回了错误状态给 HTTP 状态（别的失败给 undefined） */
   onResult?: (status: number | null | undefined) => void;
 }
 
-export function Thread({ conversation, onMessages, insert, onInserted, hidden = false, routes = [], members = [], fetchImpl, speechRate = DEFAULT_RATE, speechOnline = false, onAllowOnlineSpeech, memberName, onRunning, intro, notice, onResult }: ThreadProps) {
+export function Thread({ conversation, onMessages, insert, onInserted, hidden = false, routes = [], members = [], fetchImpl, speechRate = DEFAULT_RATE, speechOnline = false, onAllowOnlineSpeech, memberName, onRunning, intro, notice, onResult, draftActions, persist, focusMessageId }: ThreadProps) {
   const resultCb = useRef(onResult);
   resultCb.current = onResult;
   const convRef = useRef(conversation);
   convRef.current = conversation;
   const save = useRef(onMessages);
   save.current = onMessages;
-  const [messages, setMessagesState] = useState<UiMessage[]>(() => conversation.messages.map((m) => ({ id: newId(), role: m.role, text: m.text, ...(m.at ? { at: m.at } : {}), state: 'done' as const })));
+  const [messages, setMessagesState] = useState<UiMessage[]>(() =>
+    conversation.messages.map((m) => ({
+      id: m.id ?? newId(),
+      role: m.role,
+      text: m.text,
+      ...(m.at ? { at: m.at } : {}),
+      ...(m.draft ? { draft: m.draft } : {}),
+      ...(m.tools?.length ? { tools: m.tools } : {}),
+      ...(m.note ? { note: m.note } : {}),
+      state: 'done' as const,
+    })),
+  );
+
   // 最新的消息列表（不等 React 渲染）：回复结束时即使对话区已卸载，也能把完整的一轮存下
   const msgsRef = useRef(messages);
   const setMessages = useCallback((next: UiMessage[] | ((l: UiMessage[]) => UiMessage[])) => {
@@ -343,6 +454,10 @@ export function Thread({ conversation, onMessages, insert, onInserted, hidden = 
     setMessagesState(msgsRef.current);
   }, []);
   const [isRunning, setIsRunning] = useState(false);
+  const persistRef = useRef(persist);
+  persistRef.current = persist;
+  /** Core 已经存过的用户消息（重试时不再存一遍）：从 Core 取来的，加上这次发出去、Core 收下了的 */
+  const savedUser = useRef(new Set(conversation.messages.filter((m) => m.role === 'user' && m.id).map((m) => m.id!)));
   const abortRef = useRef<AbortController | null>(null);
   // 换会话或离开页面时，停掉还在进行的回复，也停掉朗读
   useEffect(
@@ -370,8 +485,27 @@ export function Thread({ conversation, onMessages, insert, onInserted, hidden = 
       const ac = new AbortController();
       abortRef.current = ac;
       const turns = turnsOf(history);
+      const lastUser = history[history.length - 1]!;
       try {
-        for await (const text of streamChat(turns, convRef.current.model, ac.signal, fetchImpl)) update({ text });
+        let conversationId: string | null = null;
+        if (persistRef.current) {
+          try {
+            conversationId = await persistRef.current(lastUser.text);
+          } catch {
+            throw new ChatStreamError('这段对话没能保存到 Aroomo，请稍后点「重试」。');
+          }
+        }
+        // X-19：Core 刚压缩过 → 在留下的 keep 条原文（含这句）的第一条上面放那行灰字
+        const onCompacted = ({ keep, text }: { keep: number; text: string }) => {
+          const kept = history.filter((m) => m.text.trim() !== '');
+          const first = kept[Math.max(0, kept.length - keep)];
+          if (first) setMessages((l) => l.map((m) => (m.id === first.id ? { ...m, note: text } : m)));
+        };
+        // 该压缩却没压成：这条回复上面一行灰字（只在界面上，不存库、不存本机）
+        const onTruncated = (text: string) => update({ streamNote: text });
+        const opts = conversationId ? { conversationId, retry: savedUser.current.has(lastUser.id), onAccepted: () => savedUser.current.add(lastUser.id), onCompacted, onTruncated } : {};
+        const onTool = (t: ChatTool) => setMessages((l) => l.map((m) => (m.id === reply.id ? { ...m, tools: upsertTool(m.tools, t) } : m)));
+        for await (const text of streamChat(turns, convRef.current.model, ac.signal, fetchImpl, (draft) => update({ draft }), opts, onTool)) update({ text });
         update({ state: 'done' });
         resultCb.current?.(null);
       } catch (e) {
@@ -416,6 +550,15 @@ export function Thread({ conversation, onMessages, insert, onInserted, hidden = 
     onCancel: async () => abortRef.current?.abort(),
   });
   const [status, setStatus] = useState('');
+  // 草稿卡点了「建好」/「不用了」：记在那条回复上并存本机（刷新后卡不再能点）
+  const setDraftState = useCallback(
+    (messageId: string, state: 'done' | 'dismissed') => {
+      setMessages((l) => l.map((m) => (m.id === messageId && m.draft ? { ...m, draft: { ...m.draft, state } } : m)));
+      save.current(savedTurnsOf(msgsRef.current));
+    },
+    [setMessages],
+  );
+  const draftCtx = { actions: draftActions, setState: setDraftState };
   const runningCb = useRef(onRunning);
   runningCb.current = onRunning;
   useEffect(() => {
@@ -466,6 +609,20 @@ export function Thread({ conversation, onMessages, insert, onInserted, hidden = 
       saveDraft(k, t);
     });
   }, [runtime, conversation.id]);
+
+  // X-04b：收件箱「打开对话」→ 滚到那条消息，给焦点框（读屏从这条开始读）
+  useEffect(() => {
+    if (!focusMessageId) return;
+    const t = setTimeout(() => {
+      const el = document.getElementById(`msg-${focusMessageId}`);
+      if (!el) return;
+      el.setAttribute('tabindex', '-1');
+      el.classList.add('msg-focus');
+      el.scrollIntoView({ block: 'center' });
+      el.focus({ preventScroll: true });
+    }, 0);
+    return () => clearTimeout(t);
+  }, [focusMessageId]);
 
   // 抽屉里点了成员：把「@名字 」放进输入框
   useEffect(() => {
@@ -529,6 +686,7 @@ export function Thread({ conversation, onMessages, insert, onInserted, hidden = 
   return (
     <AnnounceContext.Provider value={announce}>
     {ask.node}
+    <DraftContext.Provider value={draftCtx}>
     <SpeechContext.Provider value={speech}>
     <ThreadInfoContext.Provider value={info}>
     <AssistantRuntimeProvider runtime={runtime}>
@@ -661,6 +819,7 @@ export function Thread({ conversation, onMessages, insert, onInserted, hidden = 
     </AssistantRuntimeProvider>
     </ThreadInfoContext.Provider>
     </SpeechContext.Provider>
+    </DraftContext.Provider>
     </AnnounceContext.Provider>
   );
 }

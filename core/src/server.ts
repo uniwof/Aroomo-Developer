@@ -68,8 +68,14 @@ import { registerUserRoutes } from "./users/routes.js";
 import { registerConsole } from "./console/static.js";
 import type { RoutableMember } from "./router/types.js";
 import { AssistantService } from "./assistants/service.js";
+import { detectAssistantIntent } from "./assistants/intent.js";
 import { AssistantRunner } from "./assistants/runner.js";
 import { registerAssistantRoutes } from "./assistants/routes.js";
+import { ConversationService } from "./conversations/service.js";
+import { registerConversationRoutes } from "./conversations/routes.js";
+import { Compactor, freeSummarizer } from "./conversations/compact.js";
+import { PushService } from "./push/service.js";
+import { registerPushRoutes } from "./push/routes.js";
 import { assistantSchedulerJob, confirmExpiryJob } from "./scheduler/assistant-scheduler.js";
 
 export const VERSION = "0.0.1";
@@ -257,6 +263,16 @@ export function buildServer(
   registerVaultRoutes(app, vaultSvc);
   registerClientRoutes(app, clients);
   const inbox = new InboxService(deps.inbox, confirm, deps.now);
+  // X-08 推送提醒：PUSH_ENABLED 关着时接口 503、不发推送；只记错误名 / 状态码
+  const push = new PushService({
+    store: deps.push,
+    vapid: cfg.push,
+    now: deps.now,
+    ...(deps.pushFetch ? { fetch: deps.pushFetch } : {}),
+    log: (msg, data) => app.log.warn(data, msg),
+  });
+  inbox.onCreated((item) => push.notifyInbox(item));
+  registerPushRoutes(app, push);
   const interruptBudget = new InterruptBudget((u) => scopedSettings(deps.settings, u), deps.now);
   const executorSvc = new ExecutorService(
     deps.executor,
@@ -379,8 +395,6 @@ export function buildServer(
     }),
   };
   registerChatRoutes(app, chatService, cfg.chatToken, chatRouting);
-  // 控制台原生对话（#250 spike）：控制台会话 Cookie + CSRF 头 → 同一个 ChatService 和 ctxFor（D31 路由 / 署名不变）
-  registerChatStreamRoute(app, chatService, { ctxFor: chatRouting.ctxFor, ...(deps.chatStreamLimits ? { limits: deps.chatStreamLimits } : {}) });
   // 助手（指南 v1.1 附录 C）：第一版只给所有者；运行走同一个 ChatService（账号走自己的 ctxFor），整次运行在建它的账号的数据范围里
   const membersOf = (u: string) => (u === "owner" ? deps.members : deps.members.forUser(u));
   const assistantSvc = new AssistantService({ store: deps.assistants, membersFor: membersOf, confirm, now: deps.now, timezone: cfg.timezone });
@@ -400,6 +414,34 @@ export function buildServer(
     ...(deps.assistantBudgets ? { budgets: deps.assistantBudgets } : {}),
   });
   assistantSvc.setLauncher(assistantRunner);
+  // 控制台原生对话（#250 spike）：控制台会话 Cookie + CSRF 头 → 同一个 ChatService 和 ctxFor（D31 路由 / 署名不变）
+  // X-15：所有者说「每周一 9 点帮我…」→ 负责人回助手草稿卡（规则判断、不调模型；没有负责人或校验不过就照常对话）
+  const draftFor = async (text: string) => {
+    const intent = detectAssistantIntent(text);
+    if (!intent) return null;
+    const leadId = (await lead.get()).effectiveLeadId;
+    const leadMember = leadId ? await deps.members.get(leadId) : null;
+    if (!leadId || !leadMember) return null;
+    const r = await assistantSvc.preview("owner", { ...intent, members: [leadId], leadMemberId: leadId, budgetLevel: "low" });
+    return { lead: leadMember.name, part: r.part };
+  };
+  const conversationSvc = new ConversationService({ store: deps.conversations, now: deps.now });
+  registerConversationRoutes(app, conversationSvc);
+  // X-19：长会话自动压缩，只用本账号的免费成员（同助手的免费判断），每天次数按低额度档
+  const compactor = new Compactor({
+    store: deps.conversations,
+    summarize: freeSummarizer({
+      membersFor: membersOf,
+      deploymentsFor: async (u) => (await deps.keys.list(u === "owner" ? undefined : u)).map((k) => ({ modelName: k.modelName, model: k.model })),
+      chatFor: (u) => (req, signal) => chatService.complete(req, signal, u === "owner" ? undefined : chatRouting.ctxFor(u)),
+      ...(deps.assistantIsFree ? { isFree: deps.assistantIsFree } : {}),
+    }),
+    now: deps.now,
+    timezone: cfg.timezone,
+    ...(deps.compactLimits ? { limits: deps.compactLimits } : {}),
+    warn: (event) => app.log.warn(event),
+  });
+  registerChatStreamRoute(app, chatService, { ctxFor: chatRouting.ctxFor, draftFor, conversations: conversationSvc, compactor, ...(deps.chatStreamLimits ? { limits: deps.chatStreamLimits } : {}) });
   // 付费调用确认卡（kind=payment，重要确认）：同意 → 同一条运行继续；拒绝 → 取消
   inbox.registerHandler("assistant.run.confirm", async (item, actionId, audit) => {
     if (item.related?.type !== "assistant_run") return;

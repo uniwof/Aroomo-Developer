@@ -42,6 +42,10 @@ import type { UserStore } from './users/types.js';
 import { MemoryAssistantStore } from './assistants/memory.js';
 import { PgAssistantStore } from './assistants/pg.js';
 import type { AssistantStore, BudgetLevel } from './assistants/types.js';
+import { MemoryConversationStore } from './conversations/memory.js';
+import { PgConversationStore } from './conversations/pg.js';
+import type { ConversationStore } from './conversations/types.js';
+import { MemoryPushStore, PgPushStore, type PushStore } from './push/store.js';
 import { MemorySettingsStore, PgSettingsStore, type SettingsStore } from './settings/store.js';
 
 export interface CoreDeps {
@@ -62,6 +66,12 @@ export interface CoreDeps {
   pubmem: PubMemStore;
   library: LibraryStore;
   assistants: AssistantStore;
+  /** 会话存库（聊天会话，kind = 'chat'） */
+  conversations: ConversationStore;
+  /** X-08 推送订阅 */
+  push: PushStore;
+  /** 测试时注入：推送服务的 fetch */
+  pushFetch?: typeof fetch;
   /** 测试时注入：对话入口调用 LiteLLM 用的 fetch */
   chatFetch?: typeof fetch;
   /** 测试时注入：/api/chat/stream 的每账号频率 / 并发限制（默认 20 次/分钟、同时 2 条） */
@@ -72,6 +82,8 @@ export interface CoreDeps {
   assistantTimeoutMs?: (sec: number) => number;
   /** 按真实模型串（Key 的 model）判断免费；不传 = 能力种子清单 */
   assistantIsFree?: (model: string) => boolean;
+  /** 测试用：换掉 X-19 长会话压缩的字数上限 / 每天次数 */
+  compactLimits?: Partial<import('./conversations/compact.js').CompactLimits>;
   /** 测试用：每次 / 每天调用上限 */
   assistantBudgets?: Record<BudgetLevel, { perRun: number; perDay: number }>;
   /** 有数据库时才有；关闭服务时一并关闭 */
@@ -95,6 +107,8 @@ export function memoryDeps(now: () => Date = () => new Date()): CoreDeps {
     pubmem: new MemoryPubMemStore(),
     library: new MemoryLibraryStore(),
     assistants: new MemoryAssistantStore(),
+    conversations: new MemoryConversationStore(),
+    push: new MemoryPushStore(),
   };
 }
 
@@ -116,6 +130,8 @@ export function pgDeps(db: Db, now: () => Date = () => new Date()): CoreDeps {
     pubmem: new PgPubMemStore(db),
     library: new PgLibraryStore(db),
     assistants: new PgAssistantStore(db),
+    conversations: new PgConversationStore(db),
+    push: new PgPushStore(db),
     // 操作员令牌的签发 / 持久化属于负责人体系，后续 Issue 再落库
     operatorTokens: new MemoryOperatorTokenStore(),
   };

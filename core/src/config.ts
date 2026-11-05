@@ -7,6 +7,7 @@
  * - 时区默认 Asia/Shanghai（AUDIT P11：日期边界统一按用户时区）。
  */
 
+import { vapidKeysValid } from './push/webpush.js';
 import { isIP } from 'node:net';
 
 export type LogLevel = 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent';
@@ -51,6 +52,11 @@ export interface CoreConfig {
   accessReauth: 'required' | 'off';
   /** 重新验证的有效时限（秒），默认 300 */
   accessReauthMaxAgeS: number;
+  /**
+   * X-08 推送提醒：PUSH_ENABLED=true 才开（默认关）。开着时必须同时设置 VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY（scripts/gen-vapid-keys.mjs 生成）
+   * 和 VAPID_SUBJECT（mailto: 或 https:）。私钥只在服务器 .env。
+   */
+  push: { publicKey: string; privateKey: string; subject: string } | null;
   /**
    * 信任哪些上一跳代理的 X-Forwarded-For（CORE_TRUST_PROXY，逗号分隔：loopback / linklocal / uniquelocal 或 IP / CIDR）。
    * 未设置 = 不信任（req.ip 就是直连地址）。compose 里设 uniquelocal：Core 只在容器网络里被 Shell / cloudflared 访问，
@@ -154,6 +160,20 @@ export function loadConfig(env: Env = process.env): CoreConfig {
     throw new ConfigError('CORE_ACCESS_REAUTH_MAX_AGE_S 必须是 30–3600 的整数（秒）');
   }
 
+  const pushRaw = (str(env, 'PUSH_ENABLED') ?? 'false').toLowerCase();
+  if (pushRaw !== 'true' && pushRaw !== 'false') throw new ConfigError('PUSH_ENABLED 只能是 true 或 false');
+  let push: CoreConfig['push'] = null;
+  if (pushRaw === 'true') {
+    const publicKey = str(env, 'VAPID_PUBLIC_KEY');
+    const privateKey = str(env, 'VAPID_PRIVATE_KEY');
+    const subject = str(env, 'VAPID_SUBJECT');
+    if (!publicKey || !privateKey || !vapidKeysValid(publicKey, privateKey)) {
+      throw new ConfigError('PUSH_ENABLED=true 时 VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY 必须是一对（用 scripts/gen-vapid-keys.mjs 生成）');
+    }
+    if (!subject || !/^(mailto:[^\s@]+@[^\s@]+|https:\/\/\S+)$/.test(subject)) throw new ConfigError('VAPID_SUBJECT 必须是 mailto:邮箱 或 https:// 网址');
+    push = { publicKey, privateKey, subject };
+  }
+
   const trustProxy = str(env, 'CORE_TRUST_PROXY');
   if (trustProxy !== undefined) {
     for (const t of trustProxy.split(',').map((x) => x.trim())) {
@@ -185,6 +205,7 @@ export function loadConfig(env: Env = process.env): CoreConfig {
     cfAccessAud,
     accessReauth,
     accessReauthMaxAgeS: Number(maxAgeRaw),
+    push,
     trustProxy,
   };
 }
@@ -211,6 +232,8 @@ export function toSafeJSON(cfg: CoreConfig): Record<string, unknown> {
     accessReauth: cfg.accessReauth,
     assistantSchedulerEnabled: cfg.assistantSchedulerEnabled,
     accessReauthMaxAgeS: cfg.accessReauthMaxAgeS,
+    pushEnabled: cfg.push !== null,
+    vapidPrivateKey: cfg.push ? '(set)' : '(unset)',
     trustProxy: cfg.trustProxy ?? '(unset)',
   };
 }

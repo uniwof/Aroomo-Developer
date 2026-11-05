@@ -28,7 +28,19 @@ interface Item {
   summary?: string;
   urgency?: 'urgent' | 'normal' | 'low';
   actions?: Action[];
+  /** 关联对象；type = conversation 时 id 是「会话 id」或「会话 id:消息 id」（X-04b） */
+  related?: { type: string; id: string };
   createdAt: string;
+}
+
+const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const CONV_LINK = new RegExp(`^(${UUID})(?::(${UUID}))?$`, 'i');
+
+/** X-04b：条目关联的会话（和其中的某条消息）；不是会话链接返回 null */
+export function conversationLink(i: Pick<Item, 'related'>): { conversationId: string; messageId?: string } | null {
+  if (i.related?.type !== 'conversation') return null;
+  const m = CONV_LINK.exec(i.related.id);
+  return m ? { conversationId: m[1]!, ...(m[2] ? { messageId: m[2] } : {}) } : null;
 }
 
 /** 要你点一下才算处理完的条目 */
@@ -48,8 +60,8 @@ function formatTime(iso: string): string {
   return `${d.getMonth() + 1}月${d.getDate()}日 ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-/** onBack：空状态的那一个动作（回到对话）；对话页里传入 */
-export function Inbox({ onBack }: { onBack?: () => void } = {}) {
+/** onBack：空状态的那一个动作（回到对话）；onOpenConversation：条目关联了会话时的「打开对话」。都由对话页传入 */
+export function Inbox({ onBack, onOpenConversation }: { onBack?: () => void; onOpenConversation?: (conversationId: string, messageId?: string) => void } = {}) {
   const [data, setData] = useState<Record<string, Item[]> | null>(null);
   const [msg, setMsg] = useState('');
   // 正在两步确认的动作：重要动作第一次点会拿到 428 + 确认卡
@@ -188,6 +200,14 @@ export function Inbox({ onBack }: { onBack?: () => void } = {}) {
                         {a.label}
                       </Button>
                     ))}
+                    {(() => {
+                      const link = onOpenConversation ? conversationLink(i) : null;
+                      return link ? (
+                        <Button variant="outline" aria-label={`打开对话：${i.title}`} onClick={() => onOpenConversation!(link.conversationId, link.messageId)}>
+                          打开对话
+                        </Button>
+                      ) : null;
+                    })()}
                     {canDismiss(i) && (
                       <Button variant="outline" aria-label={`知道了：${i.title}`} disabled={busyId === i.id} onClick={() => dismiss([i.id])}>
                         知道了

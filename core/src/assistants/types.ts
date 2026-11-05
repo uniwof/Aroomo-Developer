@@ -89,7 +89,11 @@ export interface AssistantRun {
 }
 
 export type StepAction = 'plan' | 'work' | 'summarize' | 'confirm';
-export type StepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped' | 'waiting_confirmation';
+/**
+ * 成员那一步（work）的送达状态（X-06）：pending = 已派出，received = 已收到（成员的模型接下了），running = 在做（开始回字），done = 已回复。
+ * 组长那几步（plan / summarize）不经过 received。
+ */
+export type StepStatus = 'pending' | 'received' | 'running' | 'done' | 'failed' | 'skipped' | 'waiting_confirmation';
 /** run_steps 的一行事件（只追加） */
 export interface RunStepEvent {
   runId: string;

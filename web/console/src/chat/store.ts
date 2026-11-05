@@ -1,16 +1,94 @@
 /**
  * 原生对话（#250 spike）：调用 Core 的 POST /api/chat/stream，读 AI SDK UI Message Stream（SSE）。
  * - 只靠控制台会话 Cookie（HttpOnly，脚本读不到）+ X-Aroomo-Request 头；从不发 Authorization，从不碰任何 Key。
- * - 会话列表和消息先存在本机浏览器 localStorage（S1 再落库）。
+ * - 会话列表和消息：开关 FLAGS.savedChats 打开且 Core 可用时存在 Core（saved.ts）；否则存在本机浏览器 localStorage。
  */
 
 import { FONT_VERSION, PREFS_KEY, readDisplayPrefs, type Theme } from '@/lib/display';
+import type { DraftPart } from '@/lib/assistants';
+
+/** X-15：负责人在聊天里回的助手草稿卡（Core 的 data-aroomo-assistant-draft 数据块）+ 她点过什么 */
+export interface ChatDraft {
+  /** Core 给的 id（draft_…），「建好」时当幂等键 */
+  id: string;
+  data: DraftPart['data'];
+  /** 点过「建好」= done，「不用了」= dismissed；没点 = 还能操作 */
+  state?: 'done' | 'dismissed';
+}
+
+/**
+ * X-05：回复里的一个工具调用（Core 的 data-aroomo-tool 数据块，docs/api/stream-parts.md §1）。
+ * Core 已经脱敏；家人账号没有 args / result。浏览器只显示，不发回 Core。
+ */
+export interface ChatTool {
+  index: number;
+  name: string;
+  /** 人话：「搜了网页」 */
+  label: string;
+  state: 'done' | 'failed' | 'unavailable';
+  count?: number;
+  summary: string;
+  args?: string;
+  result?: string;
+}
+export const TOOL_PART = 'data-aroomo-tool';
+const TOOL_STATES: readonly string[] = ['done', 'failed', 'unavailable'];
+const str = (v: unknown, max: number): string | undefined => (typeof v === 'string' ? v.slice(0, max) : undefined);
+
+/** 数据块 / 本机存储 / Core 消息里的工具调用要长这样才认（缺字段的丢掉，不渲染半行） */
+export function asTool(v: unknown): ChatTool | null {
+  if (!v || typeof v !== 'object') return null;
+  const o = v as Record<string, unknown>;
+  if (typeof o.index !== 'number' || !Number.isInteger(o.index) || o.index < 0 || o.index > 99) return null;
+  const name = str(o.name, 64);
+  const label = str(o.label, 80);
+  const summary = str(o.summary, 200);
+  if (!name || !label || summary === undefined || typeof o.state !== 'string' || !TOOL_STATES.includes(o.state)) return null;
+  const args = str(o.args, 2000);
+  const result = str(o.result, 3000);
+  return {
+    index: o.index,
+    name,
+    label,
+    state: o.state as ChatTool['state'],
+    summary,
+    ...(typeof o.count === 'number' && Number.isInteger(o.count) && o.count >= 0 ? { count: o.count } : {}),
+    ...(args ? { args } : {}),
+    ...(result ? { result } : {}),
+  };
+}
+export const asTools = (v: unknown): ChatTool[] => (Array.isArray(v) ? v.map(asTool).filter((t): t is ChatTool => t !== null).slice(0, 20) : []);
+
+/** 同一个 index 的新数据覆盖旧的（流里同一个调用会发好几次），按 index 排序 */
+export function upsertTool(list: ChatTool[] | undefined, t: ChatTool): ChatTool[] {
+  return [...(list ?? []).filter((x) => x.index !== t.index), t].sort((a, b) => a.index - b.index);
+}
 
 export interface ChatTurn {
+  /** Core 里的消息 id（存库的会话才有；收件箱跳到某条消息用） */
+  id?: string;
   role: 'user' | 'assistant';
   text: string;
   /** 发出 / 收到的时间（毫秒）；旧会话没有 */
   at?: number;
+  /** 只在回复上：助手草稿卡 */
+  draft?: ChatDraft;
+  /** X-19：这条上面那行灰字（「已把 … 之前的内容整理成摘要…」）；只来自 Core */
+  note?: string;
+  /** 只在回复上：X-05 工具调用 */
+  tools?: ChatTool[];
+}
+
+export const DRAFT_PART = 'data-aroomo-assistant-draft';
+
+/** 数据块 / 本机存储里的草稿卡要长这样才认（缺字段的当没有，不渲染半张卡） */
+export function asDraft(v: unknown): ChatDraft | null {
+  if (!v || typeof v !== 'object') return null;
+  const o = v as { id?: unknown; data?: unknown; state?: unknown };
+  const d = o.data as Partial<DraftPart['data']> | undefined;
+  if (typeof o.id !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(o.id) || !d || typeof d !== 'object') return null;
+  if (typeof d.name !== 'string' || typeof d.instructions !== 'string' || !Array.isArray(d.members) || typeof d.leadMemberId !== 'string' || !d.schedule || typeof d.schedule.kind !== 'string') return null;
+  return { id: o.id, data: d as DraftPart['data'], ...(o.state === 'done' || o.state === 'dismissed' ? { state: o.state } : {}) };
 }
 
 export interface Conversation {
@@ -22,6 +100,54 @@ export interface Conversation {
   group?: string[];
   messages: ChatTurn[];
   updatedAt: number;
+  /** 存在 Core 里的会话才有（saved.ts）：消息点开时再取 */
+  remote?: RemoteInfo;
+}
+
+export interface RemoteInfo {
+  /** 消息已经取过 */
+  loaded: boolean;
+  unread: boolean;
+  running: boolean;
+  /** 消息条数（没取消息时判断列表里显不显示） */
+  count: number;
+  /** 最后一条的预览（没取消息时列表用） */
+  last?: { role: 'user' | 'assistant' | 'system'; text: string; at: number | undefined };
+}
+
+/** 发一轮时要不要让 Core 存：conversationId = 存到哪个会话；retry = 重试（Core 不再存用户这句） */
+export interface PersistOpts {
+  conversationId?: string;
+  retry?: boolean;
+  /** Core 收下了这次请求（HTTP 200）：用户这句已经存了 */
+  onAccepted?: () => void;
+  /** X-19：Core 发话前刚压缩过：keep = 留着原文的条数（含这句），text = 灰字 */
+  onCompacted?: (c: { keep: number; text: string }) => void;
+  /** Core 该压缩却没压成，这次只带了最近的内容：text = 灰字（只在流里，不存库） */
+  onTruncated?: (text: string) => void;
+}
+
+/** X-19：Core 发来的「刚压缩过」部件 */
+export const COMPACTED_PART = 'data-aroomo-compacted';
+/** 该压缩却没压成、只带了最近的原文（负责人阶段 3 必改 3）：这条回复上面一行灰字，只在流里、不存库 */
+export const TRUNCATED_PART = 'data-aroomo-truncated';
+export const TRUNCATED_TEXT = '这段对话太长，这次只带了最近的内容';
+
+/**
+ * 发给 Core 的历史只取最近 ≤ 100 条、≤ 120,000 字（至少最后一句）：以前超过 200 条直接 400。
+ * 存库的会话由 Core 按库里的原文 + 摘要拼上下文（X-19），本机会话就只带最近这些。
+ */
+export const SEND_MAX_TURNS = 100;
+export const SEND_MAX_CHARS = 120_000;
+export function capTurns(turns: ChatTurn[]): ChatTurn[] {
+  let n = 0;
+  let total = 0;
+  for (let i = turns.length - 1; i >= 0 && n < SEND_MAX_TURNS; i--) {
+    total += turns[i]!.text.length;
+    if (n > 0 && total > SEND_MAX_CHARS) break;
+    n++;
+  }
+  return turns.slice(turns.length - n);
 }
 
 /**
@@ -52,6 +178,10 @@ export type StreamEvent =
   | { type: 'delta'; text: string }
   | { type: 'error'; text: string }
   | { type: 'failure'; code: FailureCode }
+  | { type: 'draft'; draft: ChatDraft }
+  | { type: 'compacted'; keep: number; text: string }
+  | { type: 'truncated'; text: string }
+  | { type: 'tool'; tool: ChatTool }
   | { type: 'finish' }
   | { type: 'done' };
 
@@ -65,8 +195,18 @@ export function parseEvent(event: string): StreamEvent | null {
   if (!data) return null;
   if (data === '[DONE]') return { type: 'done' };
   try {
-    const j = JSON.parse(data) as { type?: string; delta?: unknown; errorText?: unknown; data?: { code?: unknown } };
+    const j = JSON.parse(data) as { type?: string; delta?: unknown; errorText?: unknown; data?: { code?: unknown; keep?: unknown; text?: unknown } };
     if (j.type === 'text-delta' && typeof j.delta === 'string') return { type: 'delta', text: j.delta };
+    if (j.type === DRAFT_PART) {
+      const d = asDraft(j);
+      return d ? { type: 'draft', draft: d } : null;
+    }
+    if (j.type === COMPACTED_PART && typeof j.data?.keep === 'number' && typeof j.data.text === 'string') return { type: 'compacted', keep: j.data.keep, text: j.data.text };
+    if (j.type === TRUNCATED_PART) return { type: 'truncated', text: typeof j.data?.text === 'string' ? j.data.text : TRUNCATED_TEXT };
+    if (j.type === TOOL_PART) {
+      const t = asTool(j.data);
+      return t ? { type: 'tool', tool: t } : null;
+    }
     if (j.type === FAILURE_PART && typeof j.data?.code === 'string' && FAILURE_CODES.includes(j.data.code)) return { type: 'failure', code: j.data.code as FailureCode };
     if (j.type === 'error') return { type: 'error', text: typeof j.errorText === 'string' ? j.errorText : '对话出错了，请稍后再试。' };
     if (j.type === 'finish') return { type: 'finish' };
@@ -94,14 +234,27 @@ export const NETWORK_ERROR = '连不上 Aroomo，请检查网络后点「重试�
  * 发一次对话，逐段产出「到目前为止的完整回复」。中断（signal）时安静结束。
  * 服务端返回错误（401/403/429/400）或流里有 error 事件时抛 ChatStreamError（文案给人看）。
  */
-export async function* streamChat(turns: ChatTurn[], model: string, signal: AbortSignal, fetchImpl: typeof fetch = fetch): AsyncGenerator<string, void> {
+export async function* streamChat(
+  turns: ChatTurn[],
+  model: string,
+  signal: AbortSignal,
+  fetchImpl: typeof fetch = fetch,
+  onDraft?: (d: ChatDraft) => void,
+  persist: PersistOpts = {},
+  /** X-05：每收到一次工具调用的数据（同一个 index 会来好几次，按 index 覆盖） */
+  onTool?: (t: ChatTool) => void,
+): AsyncGenerator<string, void> {
   let res: Response;
   try {
     res = await fetchImpl(STREAM_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'text/event-stream', 'x-aroomo-request': '1' },
       credentials: 'same-origin',
-      body: JSON.stringify({ model, messages: turns.map((t) => ({ role: t.role, content: t.text })) }),
+      body: JSON.stringify({
+        model,
+        messages: capTurns(turns).map((t) => ({ role: t.role, content: t.text })),
+        ...(persist.conversationId ? { conversationId: persist.conversationId, ...(persist.retry ? { retry: true } : {}) } : {}),
+      }),
       signal,
     });
   } catch (e) {
@@ -123,6 +276,7 @@ export async function* streamChat(turns: ChatTurn[], model: string, signal: Abor
     }
     throw new ChatStreamError(msg, undefined, res.status);
   }
+  persist.onAccepted?.();
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   let buf = '';
@@ -140,7 +294,11 @@ export async function* streamChat(turns: ChatTurn[], model: string, signal: Abor
         if (ev.type === 'delta') {
           text += ev.text;
           yield text;
-        } else if (ev.type === 'failure') code = ev.code;
+        } else if (ev.type === 'draft') onDraft?.(ev.draft);
+        else if (ev.type === 'compacted') persist.onCompacted?.({ keep: ev.keep, text: ev.text });
+        else if (ev.type === 'truncated') persist.onTruncated?.(ev.text);
+        else if (ev.type === 'tool') onTool?.(ev.tool);
+        else if (ev.type === 'failure') code = ev.code;
         else if (ev.type === 'error') throw new ChatStreamError(ev.text, code);
         else if (ev.type === 'done') return;
       }
@@ -168,7 +326,13 @@ export function loadConversations(storage: Storage | undefined = globalThis.loca
         ...c,
         title: String(c.title ?? '新对话'),
         model: typeof c.model === 'string' ? c.model : 'aroomo',
-        messages: c.messages.filter((m) => (m.role === 'user' || m.role === 'assistant') && typeof m.text === 'string'),
+        messages: c.messages
+          .filter((m) => (m.role === 'user' || m.role === 'assistant') && typeof m.text === 'string')
+          .map(({ draft, tools, ...m }) => {
+            const d = m.role === 'assistant' ? asDraft(draft) : null;
+            const t = m.role === 'assistant' ? asTools(tools) : [];
+            return { ...m, ...(d ? { draft: d } : {}), ...(t.length ? { tools: t } : {}) };
+          }),
       }))
       .sort((a, b) => b.updatedAt - a.updatedAt);
   } catch {

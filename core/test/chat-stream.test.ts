@@ -278,6 +278,14 @@ describe.each(twoAccountEnvs)('POST /api/chat/stream（控制台原生对话，#
     expect(upstream).toHaveLength(0);
   });
 
+  it('阶段 2 预审：最后一句是空的（空白 / 只有非文字片段）→ 400，不调模型', async () => {
+    upstream.length = 0;
+    expect((await say({ cookie: xiaoCookie, ...CSRF }, { messages: [{ role: 'user', content: '   \n ' }] })).statusCode).toBe(400);
+    expect((await say({ cookie: xiaoCookie, ...CSRF }, { messages: [{ role: 'user', parts: [{ type: 'file', url: 'x' }] }] })).statusCode).toBe(400);
+    expect((await say({ cookie: xiaoCookie, ...CSRF }, { messages: [{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'ok' }, { role: 'user', content: '' }] })).statusCode).toBe(400);
+    expect(upstream).toHaveLength(0);
+  });
+
   it('停止：浏览器中断连接 → 1 秒内取消上游请求', async () => {
     mode.v = 'slow';
     const address = await t.app.listen({ host: '127.0.0.1', port: 0 });
@@ -307,6 +315,46 @@ describe.each(twoAccountEnvs)('POST /api/chat/stream（控制台原生对话，#
     const n = await new Promise<number>((r) => t.app.server.getConnections((_e, c) => r(c)));
     expect(n, '服务端连接已关闭（没有挂着的流）').toBe(0);
   });
+
+  it('会话存库：点停止时，已收到的部分作为回复落库（只追加）；正在生成时会话算「进行中」', async () => {
+    const conv = await t.app.inject({ method: 'POST', url: '/api/conversations', headers: { cookie: xiaoCookie, ...CSRF }, payload: {} });
+    expect(conv.statusCode).toBe(201);
+    const id = conv.json().conversation.id as string;
+    mode.v = 'slow';
+    // 上一个用例已经 listen 了：复用同一个端口
+    const a = t.app.server.address();
+    const address = a && typeof a === 'object' ? `http://127.0.0.1:${a.port}` : await t.app.listen({ host: '127.0.0.1', port: 0 });
+    const { request } = await import('node:http');
+    const req = request(`${address}/api/chat/stream`, { method: 'POST', headers: { cookie: xiaoCookie, ...CSRF, 'content-type': 'application/json' } });
+    const firstDelta = new Promise<void>((resolve) => {
+      req.on('response', (res) => {
+        let got = '';
+        res.on('data', (d: Buffer) => {
+          got += d.toString();
+          if (got.includes('XiaoModel')) resolve();
+        });
+        res.on('error', () => undefined);
+      });
+    });
+    req.on('error', () => undefined);
+    req.end(JSON.stringify({ conversationId: id, ...msg('@XiaoModel 讲个长故事') }));
+    await firstDelta;
+    const running = await t.app.inject({ method: 'GET', url: '/api/conversations?filter=running', headers: { cookie: xiaoCookie } });
+    expect(running.json().conversations.map((c: Json) => c.id)).toEqual([id]);
+    req.destroy();
+    const t0 = Date.now();
+    let roles: string[] = [];
+    let msgs: Json[] = [];
+    while (Date.now() - t0 < 2000) {
+      msgs = (await t.app.inject({ method: 'GET', url: `/api/conversations/${id}/messages`, headers: { cookie: xiaoCookie } })).json().messages as Json[];
+      roles = msgs.map((m) => m.role as string);
+      if (roles.length === 2) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(roles).toEqual(['user', 'assistant']);
+    expect(msgs[1]!.content).toMatch(/^你好，我是 .*XiaoModel/i);
+    expect((await t.app.inject({ method: 'GET', url: '/api/conversations?filter=running', headers: { cookie: xiaoCookie } })).json().conversations).toEqual([]);
+  });
 });
 
 describe('/api/chat/stream 频率与并发限制', () => {
@@ -331,9 +379,75 @@ describe('/api/chat/stream 频率与并发限制', () => {
     expect(third.json().error.code).toBe('RATE_LIMITED');
     await t.close();
   });
+  it('阶段 2 预审：存「你说的话」还没写完浏览器就断开 → 不再调模型（不白花一次调用），并发名额退还，会话不再算「进行中」', async () => {
+    const env = twoAccountEnvs[0]!;
+    let upstreamAborted: boolean | null = null;
+    const t = await twoAccounts({
+      name: env.name,
+      make: async (now) => {
+        const deps = await env.make(now);
+        deps.chatStreamLimits = { perMinute: 1000, concurrent: 1 };
+        // 存「你说的话」时慢 300ms：浏览器在这段时间里断开
+        const store = deps.conversations;
+        const append = store.append.bind(store);
+        store.append = async (u, m) => {
+          if (m.role === 'user' && m.content.includes('慢')) await new Promise((r) => setTimeout(r, 300));
+          return append(u, m);
+        };
+        deps.chatFetch = (async (_u: unknown, init?: { signal?: AbortSignal }) => {
+          if (upstreamAborted === null) upstreamAborted = init?.signal?.aborted ?? false;
+          return new Response(new ReadableStream({ start(c) { c.enqueue(enc.encode('data: [DONE]\n\n')); c.close(); } }), { status: 200, headers: { 'content-type': 'text/event-stream' } });
+        }) as typeof fetch;
+        return deps;
+      },
+    }, { CORE_CHAT_TOKEN: CHAT_TOKEN, LITELLM_BASE_URL: 'http://127.0.0.1:9', LITELLM_MASTER_KEY: MOCK_MASTER_KEY });
+    const login = await t.app.inject({ method: 'POST', url: '/auth/login', payload: { email: XIAOHAO_TEST_EMAIL, password: XIAOHAO_TEST_PASSWORD, cookie: true } });
+    const ck = String(login.headers['set-cookie']).split(';')[0]!;
+    expect((await t.xiao('POST', '/api/members', { name: 'XiaoModel' })).statusCode).toBeLessThan(300);
+    const conv = await t.app.inject({ method: 'POST', url: '/api/conversations', headers: { cookie: ck, ...CSRF }, payload: {} });
+    const id = conv.json().conversation.id as string;
+    const address = await t.app.listen({ host: '127.0.0.1', port: 0 });
+    const { request } = await import('node:http');
+    const req = request(`${address}/api/chat/stream`, { method: 'POST', headers: { cookie: ck, ...CSRF, 'content-type': 'application/json' } });
+    req.on('error', () => undefined);
+    req.end(JSON.stringify({ conversationId: id, messages: [{ role: 'user', content: '@XiaoModel 慢' }] }));
+    await new Promise((r) => setTimeout(r, 100));
+    req.destroy();
+    await new Promise((r) => setTimeout(r, 600));
+    expect(upstreamAborted, '浏览器已经断开：不调上游（或上游带着已中断的信号）').not.toBe(false);
+    const again = await t.app.inject({ method: 'POST', url: '/api/chat/stream', headers: { cookie: ck, ...CSRF }, payload: { messages: [{ role: 'user', content: '@XiaoModel hi' }] } });
+    expect(again.statusCode, '并发名额已退还').toBe(200);
+    const running = await t.app.inject({ method: 'GET', url: '/api/conversations?filter=running', headers: { cookie: ck } });
+    expect(running.json().conversations).toEqual([]);
+    await t.close();
+  });
 });
 
 describe('toUiMessageStream（OpenAI SSE → AI SDK UI Message Stream）', () => {
+
+  it('会话存库：结局只认一次——正常结束后再断开不重复存；上游因浏览器断开而读失败时按「停止」存已收到的部分', async () => {
+    const chunk = (t: string) => enc.encode(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: t } }] })}\n\n`);
+    const saved: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const up = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(chunk('整段')); c.enqueue(enc.encode('data: [DONE]\n\n')); c.close(); } });
+    const s = toUiMessageStream(up, { onFinish: async (t) => { saved.push(`finish:${t}`); await gate; }, onCancel: (t) => saved.push(`cancel:${t}`) });
+    const r = s.getReader();
+    const pump = (async () => { for (;;) { const x = await r.read(); if (x.done) break; } })().catch(() => undefined);
+    await new Promise((x) => setTimeout(x, 20));
+    await r.cancel(); // 落库还没完时浏览器断开
+    release();
+    await pump;
+    expect(saved).toEqual(['finish:整段']);
+
+    const saved2: string[] = [];
+    let aborted = false;
+    const up2 = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(chunk('半句')); setTimeout(() => { aborted = true; c.error(new Error('aborted')); }, 10); } });
+    const s2 = toUiMessageStream(up2, { onFinish: async (t) => void saved2.push(`finish:${t}`), onCancel: (t) => saved2.push(`cancel:${t}`), wasAborted: () => aborted });
+    const r2 = s2.getReader();
+    for (;;) { const x = await r2.read(); if (x.done) break; }
+    expect(saved2).toEqual(['cancel:半句']);
+  });
   const read = async (s: ReadableStream<Uint8Array>) => new Response(s).text();
   const src = (parts: string[]) =>
     new ReadableStream<Uint8Array>({
@@ -350,6 +464,30 @@ describe('toUiMessageStream（OpenAI SSE → AI SDK UI Message Stream）', () =>
     const ev = events(body);
     expect(ev[0]).toEqual({ type: 'start', messageId: 'm1' });
     expect(ev.filter((x) => x !== 'DONE' && x.type === 'finish')).toHaveLength(1);
+    expect(ev.at(-1)).toBe('DONE');
+  });
+
+  it('阶段 2 预审：上游一直不换行（一个事件超过上限）→ 按上游出错收尾、断开上游，不再往内存里攒', async () => {
+    const piece = enc.encode('x'.repeat(64 * 1024));
+    let pulled = 0;
+    let cancelled = false;
+    const total = 64; // 共 4MB，没有一个 \n\n
+    const up = new ReadableStream<Uint8Array>({
+      pull(c) {
+        if (pulled >= total) return c.close();
+        pulled++;
+        c.enqueue(piece);
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const body = await read(toUiMessageStream(up));
+    expect(cancelled).toBe(true);
+    expect(pulled).toBeLessThan(total);
+    const ev = events(body);
+    expect(ev.some((x) => x !== 'DONE' && x.type === 'error')).toBe(true);
+    expect(ev.filter((x) => x !== 'DONE' && x.type === 'finish')).toHaveLength(0);
     expect(ev.at(-1)).toBe('DONE');
   });
 

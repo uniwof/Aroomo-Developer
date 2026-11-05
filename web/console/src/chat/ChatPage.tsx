@@ -4,11 +4,11 @@
  *   右边主对话区（顶栏头像 + 名字、居中日期分隔、无气泡消息、大圆角输入卡片）。
  * - 手机（或字号放大后放不下两栏）：会话列表栏就是唯一一层抽屉；点会话、成员、设置后抽屉关上，内容在主区域原地打开，
  *   面板里的下一层用顶栏「← 返回」，不开第二层抽屉，不用标签页。
- * - 只调用 Core 的标准接口（/api/*）；会话先存在本机浏览器（localStorage）。
+ * - 只调用 Core 的标准接口（/api/*）；会话存在 Core（开关 FLAGS.savedChats，saved.ts），Core 拿不到时退回本机浏览器（localStorage）。
  * 边界：store.ts 管数据和请求，Thread.tsx 管对话区，Sidebar.tsx 管会话列表栏，panels.tsx 管面板，这里管拼装。
  */
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ArrowRight, BookOpen, ChevronDown, ChevronRight, CircleAlert, Download, Ellipsis, KeyRound, Menu, MessagesSquare, Pencil, Plus, Settings, SquarePen, Trash2, Users, Wrench, X } from 'lucide-react';
+import { Archive, ArrowRight, BookOpen, ChevronDown, ChevronRight, CircleAlert, Download, Ellipsis, KeyRound, Menu, MessagesSquare, Pencil, Plus, Settings, SquarePen, Trash2, Users, Wrench, X } from 'lucide-react';
 import { api, currentUser, isFamily, viaShell, type Member } from '@/lib/api';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { OWNER_ONLY, legacyPath, pathOf, viewOf, type View } from './routes';
@@ -16,12 +16,15 @@ import { useUsage } from '@/lib/usage';
 import { MeFace, Rail, meLabel, quotaState, type RailTarget } from './Rail';
 import { HeaderCard } from './HeaderCard';
 import { useInboxCount } from '@/lib/inbox';
-import { Thread } from './Thread';
+import { Thread, type DraftActions } from './Thread';
 import { SIDE_UI, Sidebar, type SideUi } from './Sidebar';
 import { BackButton, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type GoTarget } from './panels';
 import { applyDisplay } from '@/lib/display';
 import { listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
 import { useAsk } from '@/components/Dialog';
+import { FLAGS } from '@/lib/flags';
+import { useAssistants, type AssistantInput } from '@/lib/assistants';
+import { archiveConversation, createConversation, fetchConversation, fetchConversations, fetchMessages, importLocalOnce, markRead, mergeRemote, renameConversation } from './saved';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import './chat.css';
 
@@ -33,6 +36,10 @@ const AddMemberDialog = lazy(() => import('./views').then((m) => ({ default: m.A
 const Inbox = lazy(() => import('@/pages/Inbox').then((m) => ({ default: m.Inbox })));
 const Audit = lazy(() => import('@/pages/Audit').then((m) => ({ default: m.Audit })));
 const Executors = lazy(() => import('@/pages/Executors').then((m) => ({ default: m.Executors })));
+// 助手（#250 integrate/stage2）：详情、新建弹窗、全部计划都点开才下载
+const AssistantDetail = lazy(() => import('./pages/assistants/AssistantPages').then((m) => ({ default: m.AssistantDetail })));
+const NewAssistantDialog = lazy(() => import('./pages/assistants/AssistantPages').then((m) => ({ default: m.NewAssistantDialog })));
+const ScheduleView = lazy(() => import('./pages/assistants/AssistantPages').then((m) => ({ default: m.ScheduleView })));
 const CapabilityPanel = lazy(() => import('./capability-panel').then((m) => ({ default: m.CapabilityPanel })));
 
 /** 懒加载面板下载时：一句静态文字（不转圈，无动画） */
@@ -40,7 +47,8 @@ function Later({ children }: { children: ReactNode }) {
   return <Suspense fallback={<p role="status" className="note panel-loading">正在加载…</p>}>{children}</Suspense>;
 }
 
-const TITLES: Record<Exclude<View['kind'], 'chat' | 'member'>, string> = {
+const TITLES: Record<Exclude<View['kind'], 'chat' | 'member' | 'assistant'>, string> = {
+  schedule: '全部计划',
   me: '我',
   members: '成员',
   capmap: '能力地图',
@@ -79,6 +87,12 @@ const NOTICE_KEY = 'aroomo.notice.dismissed';
 const SIDE_MIN = 280;
 const SIDE_MAX = 420;
 const clampSide = (w: number) => Math.min(SIDE_MAX / 16, Math.max(SIDE_MIN / 16, w));
+/** 有消息的会话（存在 Core 里、还没取消息的看条数） */
+const hasMsgs = (c: Conversation) => c.messages.length > 0 || !!c.remote?.count;
+/** 存库的会话列表多久刷新一次（未读、进行中） */
+const LIST_REFRESH_MS = 60_000;
+/** 列表还没到时先发的话：最多等这么久，还没到就退回本机（话存本机，不丢） */
+export const LIST_WAIT_MS = 8_000;
 
 /**
  * 全部成员（成员页要列候选、停用的；对话、@ 只用在职的）。
@@ -136,11 +150,95 @@ function useLayout(): { side: boolean; rail: boolean } {
 }
 
 export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
+  const saved = FLAGS.savedChats;
   const [list, setList] = useState<Conversation[]>(() => {
-    const l = loadConversations();
+    // 存库模式下家人账号不读本机：同一台浏览器上的本机会话是所有者的
+    const l = saved && isFamily() ? [] : loadConversations();
     return l.length ? l : [newConversation()];
   });
   const [currentId, setCurrentId] = useState(() => list[0]!.id);
+  /** null = 还在问 Core；true = 会话存在 Core；false = 用本机（开关关，或 Core 拿不到） */
+  const [remote, setRemote] = useState<boolean | null>(saved ? null : false);
+  const [msgError, setMsgError] = useState<{ id: string; seq: number } | null>(null);
+  const [focusMsg, setFocusMsg] = useState<string | undefined>();
+  const [runningId, setRunningId] = useState<string | null>(null);
+  const listRef = useRef(list);
+  listRef.current = list;
+  const currentRef = useRef(currentId);
+  currentRef.current = currentId;
+  const remoteRef = useRef(remote);
+  remoteRef.current = remote;
+  /** 列表到了（或退回本机）就放行：列表没到时先发的话在这儿排队 */
+  const ready = useRef<{ wait: Promise<void>; done: () => void } | null>(null);
+  if (!ready.current) {
+    let done = () => {};
+    const wait = new Promise<void>((r) => (done = r));
+    ready.current = { wait, done };
+  }
+  useEffect(() => {
+    if (remote !== null) ready.current!.done();
+  }, [remote]);
+  /** 打开页面时本机已有的会话和它们当时的消息数（这些会导入 Core）；比这多出来的消息是还没存的 */
+  const atMount = useRef<Map<string, number> | null>(null);
+  if (!atMount.current) atMount.current = new Map(list.filter((c) => !c.remote).map((c) => [c.id, c.messages.length]));
+  /** 正在排队等列表的会话（话还在对话区里、没进列表，列表盖上来时不能丢） */
+  const waiting = useRef(new Set<string>());
+  /** 本机会话里还没存到 Core 的话（列表没到时就发了，或建会话失败） */
+  const unsaved = (c: Conversation) => !c.remote && (waiting.current.has(c.id) || c.messages.length > (atMount.current!.get(c.id) ?? 0));
+  /** Core 的列表盖上来：已取过的消息、正打开的本机新会话、还没存的话都留着 */
+  const adopt = useCallback((prev: Conversation[], fresh: Conversation[]) => {
+    // 有消息的本机旧会话已经导入过（id 可能换成了算出来的 uuid），以 Core 那份为准；但多出来没存的话一条不丢
+    const dirty = new Map(prev.filter(unsaved).map((c) => [c.id, c]));
+    const next = mergeRemote(prev.filter((c) => c.remote || dirty.has(c.id) || (c.id === currentRef.current && c.messages.length === 0)), fresh, currentRef.current).map((c) => {
+      const d = dirty.get(c.id);
+      // 同一个 id 在 Core 已有（导入过的旧会话里又说了话）：用本机这份消息，下一句发出时 Core 照常追加
+      return d && c.remote ? { ...c, messages: d.messages, remote: { ...c.remote, loaded: true } } : c;
+    });
+    return next.length ? next : [newConversation()];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  /** 已经定了用 Core 还是本机：之后晚到的列表不再改主意 */
+  const settled = useRef(false);
+  /** 退回本机：本机模式会把列表（含没存的话）写进浏览器 */
+  const fallBack = useCallback(() => {
+    if (settled.current) return;
+    settled.current = true;
+    setRemote(false);
+  }, []);
+  useEffect(() => {
+    if (!saved) return;
+    let alive = true;
+    void (async () => {
+      try {
+        // 所有者：本机旧会话导入一次（本机那份不删）；导入失败不挡着打开，下次再试
+        if (!isFamily()) await importLocalOnce(loadConversations()).catch(() => 0);
+        const fresh = await fetchConversations();
+        if (!alive || settled.current) return;
+        settled.current = true;
+        setList((prev) => {
+          const next = adopt(prev, fresh);
+          if (!next.some((c) => c.id === currentRef.current)) setCurrentId(next[0]!.id);
+          return next;
+        });
+        setRemote(true);
+      } catch {
+        if (alive) fallBack();
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [saved, adopt, fallBack]);
+  useEffect(() => {
+    if (remote !== true) return;
+    const t = setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
+      fetchConversations()
+        .then((fresh) => setList((prev) => adopt(prev, fresh)))
+        .catch(() => undefined);
+    }, LIST_REFRESH_MS);
+    return () => clearInterval(t);
+  }, [remote, adopt]);
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   // 面板由地址决定（切片 2 / 审计 C3）：直接打开、刷新、前进后退都对
@@ -150,7 +248,11 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   navRef.current = { navigate, location };
   const routed = viewOf(location.pathname, location.search);
   /** 只给所有者的面板：家人打开这些地址落到对话 */
-  const blocked = isFamily() && OWNER_ONLY.includes(routed.kind);
+  const blocked =
+    (isFamily() && OWNER_ONLY.includes(routed.kind)) ||
+    // 助手开关关着时这两个地址也落到对话（全部计划另有开关）
+    (routed.kind === 'assistant' && !FLAGS.assistants) ||
+    (routed.kind === 'schedule' && !(FLAGS.assistants && FLAGS.schedulePage));
   const setView = useCallback((v: View, opts: { replace?: boolean; state?: unknown } = {}) => {
     const { navigate: nav, location: loc } = navRef.current;
     const to = pathOf(v);
@@ -196,6 +298,18 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   /** 添加成员弹窗（落地文档 8.2）：资源库卡片带出名字，会话栏「+ 添加」、新建菜单「添加成员」打开空白的 */
   const [addMember, setAddMember] = useState<{ preset?: string } | null>(null);
   const inboxCount = useInboxCount();
+  const assistantsOn = FLAGS.assistants && !isFamily();
+  const { list: assistants, error: assistantsError, reload: reloadAssistants } = useAssistants(assistantsOn);
+  /** 新建助手弹窗：initial = 聊天草稿卡「改一改」带来的内容，onDone = 建好后把那张卡标成已建 */
+  const [newAssistant, setNewAssistant] = useState<{ initial?: AssistantInput; onDone?: () => void } | null>(null);
+  // X-15：聊天里的助手草稿卡（只给所有者；开关关时不显示）
+  const draftActions = useMemo<DraftActions | undefined>(
+    () =>
+      assistantsOn && FLAGS.assistantDraft
+        ? { members, onEdit: (initial, onDone) => setNewAssistant({ initial, onDone }), onCreated: () => reloadAssistants() }
+        : undefined,
+    [assistantsOn, members, reloadAssistants],
+  );
   const layout = useLayout();
   const wide = layout.side;
   /** 手机排法（<48em，或字号调大后放不下）：不用抽屉，每一层整页 + 底部栏（负责人落地文档第 12 章） */
@@ -216,7 +330,62 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   const currentMember = current.model.startsWith('aroomo/') ? members.find((m) => `aroomo/${m.id}` === current.model) : undefined;
   const singleName = currentMember?.name ?? (current.model.startsWith('aroomo/') ? current.title.replace(/^和\s*/, '') : undefined);
 
-  useEffect(() => saveConversations(list.filter((c) => c.messages.length > 0)), [list]);
+  // 本机模式才写本机；存库模式下本机那份（导入前的）原样留着，不覆盖
+  useEffect(() => {
+    if (remote === false) saveConversations(list.filter((c) => c.messages.length > 0 && !c.remote));
+  }, [list, remote]);
+  // 打开存库的会话：消息还没取就取；有未读就标已读
+  const needLoad = !!current.remote && !current.remote.loaded;
+  useEffect(() => {
+    if (!needLoad) return;
+    const id = current.id;
+    let alive = true;
+    fetchMessages(id)
+      .then((messages) => {
+        if (!alive) return;
+        setMsgError(null);
+        setList((l) => l.map((x) => (x.id === id && x.remote ? { ...x, messages, remote: { ...x.remote, loaded: true } } : x)));
+      })
+      .catch(() => alive && setMsgError((e) => ({ id, seq: e?.seq ?? 0 })));
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current.id, needLoad, msgError?.seq]);
+  const unreadNow = view.kind === 'chat' && !!current.remote?.unread;
+  useEffect(() => {
+    if (!unreadNow) return;
+    const id = current.id;
+    void markRead(id).catch(() => undefined);
+    setList((l) => l.map((x) => (x.id === id && x.remote ? { ...x, remote: { ...x.remote, unread: false } } : x)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current.id, unreadNow]);
+
+  /** 发第一句时在 Core 建会话（id 用本机这个，一般不变）；本机模式返回 null */
+  const persist = useCallback(async (text: string): Promise<string | null> => {
+    // 列表还没到：这句先排队，等列表（最多 LIST_WAIT_MS），等不到就退回本机存
+    if (remoteRef.current === null) {
+      const id = currentRef.current;
+      waiting.current.add(id);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([ready.current!.wait, new Promise<void>((r) => (timer = setTimeout(r, LIST_WAIT_MS)))]);
+      } finally {
+        clearTimeout(timer);
+        waiting.current.delete(id);
+      }
+      if (remoteRef.current === null) fallBack();
+    }
+    if (remoteRef.current !== true) return null;
+    const c = listRef.current.find((x) => x.id === currentRef.current);
+    if (!c) return null;
+    if (c.remote) return c.id;
+    const made = await createConversation({ id: c.id, title: c.title === '新对话' ? titleFrom(text) : c.title, model: c.model, ...(c.group ? { group: c.group } : {}) });
+    setList((l) => l.map((x) => (x.id === c.id ? { ...x, id: made.id, title: made.title, remote: { ...made.remote!, loaded: true } } : x)));
+    // 万一 Core 换了 id（本机 id 撞上了别的会话）：跟着换
+    if (made.id !== c.id) setCurrentId(made.id);
+    return made.id;
+  }, [fallBack]);
   useEffect(() => {
     savePrefs(prefs);
     // 字号和主题作用到整页：面板里嵌的管理页面也一起变大，不割裂
@@ -224,8 +393,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   }, [prefs]);
   // 浏览器标签页标题跟着会话走（读屏切标签时能听到在哪个会话）
   useEffect(() => {
-    document.title = `${view.kind === 'chat' ? current.title : view.kind === 'member' ? '成员' : TITLES[view.kind]} · Aroomo`;
-  }, [current.title, view]);
+    document.title = `${view.kind === 'chat' ? current.title : view.kind === 'member' ? '成员' : view.kind === 'assistant' ? (assistants?.find((a) => a.id === view.id)?.name ?? '助手') : TITLES[view.kind]} · Aroomo`;
+  }, [current.title, view, assistants]);
   useEffect(() => {
     const d = dialog.current;
     if (!d) return;
@@ -236,7 +405,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
 
   const start = useCallback((opts: Parameters<typeof newConversation>[0] = {}) => {
     const c = newConversation(opts);
-    setList((l) => [c, ...l.filter((x) => x.messages.length > 0)]);
+    setList((l) => [c, ...l.filter(hasMsgs)]);
     setCurrentId(c.id);
     setView({ kind: 'chat' });
     setOpen(false);
@@ -272,16 +441,25 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         l
           .map((c) =>
             c.id === id
-              ? { ...c, messages: turns, updatedAt: Date.now(), title: c.title === '新对话' ? titleFrom(turns.find((t) => t.role === 'user')?.text ?? '') : c.title }
+              ? {
+                  ...c,
+                  messages: turns,
+                  updatedAt: Date.now(),
+                  title: c.title === '新对话' ? titleFrom(turns.find((t) => t.role === 'user')?.text ?? '') : c.title,
+                  // 正看着这段对话：回复算已读（回复在后台结束、已换到别的会话时不算）
+                  ...(c.remote ? { remote: { ...c.remote, loaded: true, count: turns.length, ...(id === currentRef.current ? { unread: false } : {}) } } : {}),
+                }
               : c,
           )
           .sort((a, b) => b.updatedAt - a.updatedAt),
       );
+      if (id === currentRef.current && listRef.current.find((c) => c.id === id)?.remote) void markRead(id).catch(() => undefined);
     },
     [],
   );
 
   const pick = (id: string) => {
+    setFocusMsg(undefined);
     setCurrentId(id);
     setView({ kind: 'chat' });
     setOpen(false);
@@ -320,9 +498,33 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   }, [location.pathname, location.search, blocked, navigate]);
 
   const ask = useAsk();
+  /** X-04b：收件箱「打开对话」——打开那个会话，滚到那条消息 */
+  const openConversation = async (id: string, messageId?: string) => {
+    if (!listRef.current.some((x) => x.id === id)) {
+      if (remoteRef.current !== true) return;
+      try {
+        const c = await fetchConversation(id);
+        setList((l) => [c, ...l.filter((x) => x.id !== id)]);
+      } catch {
+        return; // 找不到（已归档或不是这个账号的）：留在收件箱
+      }
+    }
+    pick(id);
+    setFocusMsg(messageId);
+  };
+
   const remove = async (id: string) => {
     const c = list.find((x) => x.id === id);
-    if (!c || !(await ask.confirm({ title: `删除会话「${c.title}」？`, desc: '只删本机这一份，删了找不回来。', ok: '删除', danger: true }))) return;
+    if (c?.remote) {
+      // 存库的会话只归档、不删除（删除要所有者定）
+      if (!(await ask.confirm({ title: `归档话题「${c.title}」？`, desc: '归档后不在列表里显示，记录还留在 Aroomo 里。', ok: '归档' }))) return;
+      try {
+        await archiveConversation(id);
+      } catch {
+        await ask.confirm({ title: '没能归档', desc: '连不上 Aroomo，请稍后再试。', ok: '知道了' });
+        return;
+      }
+    } else if (!c || !(await ask.confirm({ title: `删除会话「${c.title}」？`, desc: '只删本机这一份，删了找不回来。', ok: '删除', danger: true }))) return;
     const rest = list.filter((x) => x.id !== id);
     const next = rest.length ? rest : [newConversation()];
     setList(next);
@@ -331,7 +533,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
 
   // 同一个对象（同一位成员 / 同一个群 / 负责人）的其它话题
   const topics = useMemo(
-    () => list.filter((c) => c.messages.length > 0 && c.model === current.model && (c.group ?? []).join('、') === (current.group ?? []).join('、')).slice(0, 8),
+    () => list.filter((c) => hasMsgs(c) && c.model === current.model && (c.group ?? []).join('、') === (current.group ?? []).join('、')).slice(0, 8),
     [list, current.model, current.group],
   );
   useEffect(() => {
@@ -355,8 +557,15 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   const rename = async (id: string) => {
     const c = list.find((x) => x.id === id);
     if (!c) return;
-    const t = (await ask.prompt({ title: '重命名话题', label: '新名字', value: c.title }))?.trim();
-    if (t) setList((l) => l.map((x) => (x.id === id ? { ...x, title: t.slice(0, 60) } : x)));
+    const t = (await ask.prompt({ title: '重命名话题', label: '新名字', value: c.title }))?.trim().slice(0, 60);
+    if (!t) return;
+    setList((l) => l.map((x) => (x.id === id ? { ...x, title: t } : x)));
+    if (c.remote)
+      renameConversation(id, t).catch(() => {
+        // 没存上：改回原来的名字
+        setList((l) => l.map((x) => (x.id === id ? { ...x, title: c.title } : x)));
+        void ask.confirm({ title: '没能改名', desc: '连不上 Aroomo，请稍后再试。', ok: '知道了' });
+      });
   };
   /** 导出成 Markdown 文件（只在本机生成，不上传） */
   const exportMd = (c: Conversation) => {
@@ -400,12 +609,36 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
       onMember={chatWith}
       onNew={() => start()}
       onLead={() => {
-        const c = list.find((x) => x.model === 'aroomo' && !x.group?.length && x.messages.length > 0);
+        const c = list.find((x) => x.model === 'aroomo' && !x.group?.length && hasMsgs(x));
         if (c) pick(c.id);
         else start();
       }}
       onOpen={(k) => goto({ kind: k })}
       usage={usage}
+      {...(remote === true ? { filterable: true, runningId, onOpenMessage: (id: string, msg: string) => void openConversation(id, msg) } : {})}
+      {...(assistantsOn
+        ? {
+            assistants,
+            assistantsError,
+            currentAssistant: view.kind === 'assistant' ? view.id : null,
+            onAssistant: (id: string) => {
+              setOpen(false);
+              setView({ kind: 'assistant', id });
+            },
+            onNewAssistant: () => {
+              setOpen(false);
+              setNewAssistant({});
+            },
+            ...(FLAGS.schedulePage
+              ? {
+                  onSchedule: () => {
+                    setOpen(false);
+                    setView({ kind: 'schedule' });
+                  },
+                }
+              : {}),
+          }
+        : {})}
       ui={sideUi}
       onUi={setSideUi}
       {...(wide || phone ? {} : { onClose: () => setOpen(false) })}
@@ -419,7 +652,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     if (v.kind === 'settings' || v.kind === 'library' || v.kind === 'tools' || v.kind === 'keys') return { go: () => setView({ kind: 'me' }), label: '我' };
     // 从对话里的额度提示进来的「挑选成员」：返回回这段对话，不是会话列表（审计 C13）
     if (v.kind === 'group-new' && (location.state as { back?: unknown } | null)?.back === 'chat') return { go: () => setView({ kind: 'chat' }), label: '对话', aria: '返回对话' };
-    if (v.kind === 'inbox' || v.kind === 'group-new') return { go: () => { setView({ kind: 'chat' }); setOpen(true); }, label: '对话', aria: '返回对话列表' };
+    if (v.kind === 'inbox' || v.kind === 'group-new' || v.kind === 'assistant' || v.kind === 'schedule') return { go: () => { setView({ kind: 'chat' }); setOpen(true); }, label: '对话', aria: '返回对话列表' };
     const p = parentOf(v);
     return p ? { go: () => setView(p.view), label: p.label } : null;
   };
@@ -572,10 +805,17 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
                     </li>
                     {current.messages.length > 0 && (
                       <li>
-                        <button type="button" className="pop-item pop-danger" aria-label={`删除会话「${current.title}」`} onClick={() => { setMenu('none'); void remove(current.id); }}>
-                          <Trash2 aria-hidden="true" />
-                          <span>删除话题</span>
-                        </button>
+                        {current.remote ? (
+                          <button type="button" className="pop-item" aria-label={`归档会话「${current.title}」`} onClick={() => { setMenu('none'); void remove(current.id); }}>
+                            <Archive aria-hidden="true" />
+                            <span>归档话题</span>
+                          </button>
+                        ) : (
+                          <button type="button" className="pop-item pop-danger" aria-label={`删除会话「${current.title}」`} onClick={() => { setMenu('none'); void remove(current.id); }}>
+                            <Trash2 aria-hidden="true" />
+                            <span>删除话题</span>
+                          </button>
+                        )}
                       </li>
                     )}
                   </ul>
@@ -589,6 +829,20 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
             对话要直接打开 Aroomo 网页才能用，请从书签或首页进入。
           </p>
         )}
+        {needLoad ? (
+          msgError?.id === current.id ? (
+            <div className="main-note" role="alert" hidden={!inChat}>
+              <p className="chat-error">没能取到这段对话，请检查网络。</p>
+              <button type="button" className="btn btn-outline hit" onClick={() => setMsgError((e) => ({ id: current.id, seq: (e?.seq ?? 0) + 1 }))}>
+                重试
+              </button>
+            </div>
+          ) : (
+            <p role="status" className="note panel-loading" hidden={!inChat}>
+              正在加载…
+            </p>
+          )
+        ) : (
         <Thread
           key={current.id}
           conversation={current}
@@ -606,15 +860,20 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           intro={intro}
           {...(viaShell ? { onResult: onChatResult } : {})}
           {...(notice ? { notice } : {})}
+          {...(draftActions ? { draftActions } : {})}
           {...(fetchImpl ? { fetchImpl } : {})}
+          {...(remote !== false ? { persist } : {})}
+          {...(focusMsg ? { focusMessageId: focusMsg } : {})}
+          onRunning={(r) => setRunningId(r ? current.id : null)}
         />
+        )}
       </>
   );
   let main: React.ReactNode = null;
   if (!inChat) {
     const parent = phone ? phoneParent(view) : parentOf(view);
     const member = view.kind === 'member' ? allMembers.find((m) => m.id === view.id) : undefined;
-    const title = view.kind === 'member' ? (member?.name ?? '成员') : view.kind === 'settings' && view.section ? SETTINGS_SECTIONS.find((x) => x.id === view.section)!.label : TITLES[view.kind];
+    const title = view.kind === 'member' ? (member?.name ?? '成员') : view.kind === 'assistant' ? (assistants?.find((a) => a.id === view.id)?.name ?? '助手') : view.kind === 'settings' && view.section ? SETTINGS_SECTIONS.find((x) => x.id === view.section)!.label : TITLES[view.kind];
     main = (
       <>
         <PanelHeader title={title} lead={phone ? null : menuButton} {...(parent ? { onBack: () => ('go' in parent ? parent.go() : parent.view.kind === 'settings' && !phone ? setView(parent.view, { state: { bg: '/chat' } }) : setView(parent.view)), backLabel: parent.label, ...('aria' in parent && parent.aria ? { backAria: parent.aria } : {}) } : {})} />
@@ -651,6 +910,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
             />
           )}
           {view.kind === 'capmap' && <CapabilityPanel />}
+          {view.kind === 'assistant' && <AssistantDetail key={view.id} id={view.id} members={members} onChanged={reloadAssistants} onInbox={() => setView({ kind: 'inbox' })} />}
+          {view.kind === 'schedule' && <ScheduleView list={assistants} error={assistantsError} members={members} onOpen={(id) => setView({ kind: 'assistant', id })} onChanged={reloadAssistants} />}
           {view.kind === 'group-new' && (
             <GroupNewPanel
               members={members}
@@ -667,7 +928,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           {view.kind === 'tools' && <ToolsView onGo={(k) => setView({ kind: k })} />}
           {view.kind === 'inbox' && (
             <div className="panel panel-embed">
-              <Inbox onBack={() => setView({ kind: 'chat' })} />
+              <Inbox onBack={() => setView({ kind: 'chat' })} onOpenConversation={(id, msg) => void openConversation(id, msg)} />
             </div>
           )}
           {view.kind === 'me' && (
@@ -774,6 +1035,21 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         }}
         {...(view.kind === 'library' ? {} : { onExplore: () => { setAddMember(null); goto({ kind: 'library' }); } })}
       />
+        </Suspense>
+      )}
+      {newAssistant && (
+        <Suspense fallback={null}>
+          <NewAssistantDialog
+            members={members}
+            {...(newAssistant.initial ? { initial: newAssistant.initial } : {})}
+            onClose={() => setNewAssistant(null)}
+            onCreated={(a) => {
+              newAssistant.onDone?.();
+              setNewAssistant(null);
+              reloadAssistants();
+              setView({ kind: 'assistant', id: a.id });
+            }}
+          />
         </Suspense>
       )}
       {!wide && !phone && (

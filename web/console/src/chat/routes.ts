@@ -2,6 +2,7 @@
  * 对话页里每个面板的地址（Poke 行为规范 §2 / 审计 C3）：能直接打开、刷新不丢、浏览器前进后退按面板走。
  * 地址都在 /console 下：/chat、/team（成员）、/hub（资源库、工具、API）、/inbox、/settings[/分组]、/settings/audit、/settings/executors。
  * 成员详情用 /team?member=<id>，不占 /team/:id（规范：成员详情不能和别的路由撞，也不是进对话）。
+ * 助手（只给所有者、开关打开时）：详情 /assistants?assistant=<id>，全部计划 /assistants/schedule。
  * /console（驾驶舱）、/work（项目与版本）Core 还没有对应数据接口，暂不做页面，落到对话。
  */
 import type { SettingsSection } from './panels';
@@ -21,7 +22,10 @@ export type View =
   | { kind: 'audit' }
   | { kind: 'executors' }
   /** 手机底部栏「我」 */
-  | { kind: 'me' };
+  | { kind: 'me' }
+  /** 助手详情（固定会话 + 运行记录）、X-02 全部计划；只给所有者 */
+  | { kind: 'assistant'; id: string }
+  | { kind: 'schedule' };
 
 const SECTIONS: readonly string[] = ['profile', 'prefs', 'safety', 'general', 'family', 'lead', 'budget', 'external', 'shortcuts'];
 
@@ -54,6 +58,11 @@ export function pathOf(v: View): string {
       return '/settings/executors';
     case 'me':
       return '/me';
+    case 'assistant':
+      // 和成员详情一样用查询参数，不占 /assistants/:id（免得和 /assistants/schedule 撞）
+      return `/assistants?assistant=${encodeURIComponent(v.id)}`;
+    case 'schedule':
+      return '/assistants/schedule';
   }
 }
 
@@ -91,6 +100,11 @@ export function viewOf(pathname: string, search: string): View {
   if (p === '/hub/keys') return { kind: 'keys' };
   if (p === '/inbox') return { kind: 'inbox' };
   if (p === '/me') return { kind: 'me' };
+  if (p === '/assistants/schedule') return { kind: 'schedule' };
+  if (p === '/assistants') {
+    const id = q.get('assistant');
+    if (id) return { kind: 'assistant', id };
+  }
   if (p === '/settings/audit') return { kind: 'audit' };
   if (p === '/settings/executors') return { kind: 'executors' };
   if (p === '/settings') return { kind: 'settings' };
@@ -100,4 +114,4 @@ export function viewOf(pathname: string, search: string): View {
 }
 
 /** 只给所有者的面板（家人账号打开这些地址落到对话） */
-export const OWNER_ONLY: readonly View['kind'][] = ['library', 'tools', 'keys', 'audit', 'executors'];
+export const OWNER_ONLY: readonly View['kind'][] = ['library', 'tools', 'keys', 'audit', 'executors', 'assistant', 'schedule'];

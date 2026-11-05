@@ -33,10 +33,11 @@ describe('切片 3：抽屉', () => {
     await waitFor(() => expect(d.hasAttribute('open')).toBe(false));
     open();
     await waitFor(() => expect(d.hasAttribute('open')).toBe(true));
-    expect((within(d).getByRole('searchbox', { name: '搜索对话' }) as HTMLInputElement).value).toBe('abc');
+    // 停在「助手」分段：搜索框跟着叫「搜索助手」（integrate/stage2）
+    expect((within(d).getByRole('searchbox', { name: '搜索助手' }) as HTMLInputElement).value).toBe('abc');
     expect(within(d).getByRole('radio', { name: '助手' })).toHaveAttribute('aria-checked', 'true');
     // 点抽屉里面不关
-    fireEvent.click(within(d).getByRole('searchbox', { name: '搜索对话' }));
+    fireEvent.click(within(d).getByRole('searchbox', { name: '搜索助手' }));
     expect(d.hasAttribute('open')).toBe(true);
   });
 });
