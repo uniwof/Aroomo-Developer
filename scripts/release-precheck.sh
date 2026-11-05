@@ -15,8 +15,10 @@
 #         （coalesce(user_id,'owner') + 各索引原有列和条件）试算重复，撞了就失败。表名 + 重复组数，不打印任何数据内容。
 # 检查 3  逐表行数可读（scripts/lib/table-counts.sql），结果存 $RELEASE_ROOT/.release/precheck-<时间>.counts.tsv，
 #         部署后可对照。
-# 检查 4  生产 deploy/.env 里 SHELL_OWNER_USER_ID 已设置且非空（#252 起 Shell 只认它，SHELL_OWNER_EMAIL 已无作用）。
-#         判定等价于 grep -cE '^[[:space:]]*SHELL_OWNER_USER_ID=[^[:space:]"'"'"']+' deploy/.env 结果为 1；不打印值。
+# 检查 4  生产 deploy/.env 里 Shell 所有者已设置，按 SHELL_AUTH 分两种（没写 SHELL_AUTH 时按 docker-compose 默认 core-session）：
+#           core-session（PR #259 起默认）：SHELL_OWNER_EMAIL 恰好一行、非空、像邮箱（含 @）；
+#           lobe-session（回退旧登录）：SHELL_OWNER_USER_ID 恰好一行且非空（#252，此时 SHELL_OWNER_EMAIL 无作用）。
+#         只数匹配行，不打印值。SHELL_AUTH 是别的值（含 off）一律失败。
 # 检查 5  MCP 专用网段（.env 的 MCP_NET_SUBNET，默认 172.29.77.0/29）没有被主机上别的 docker 网络或路由占用
 #         （docker network inspect + ip route，只读）。冲突则失败，提示改 MCP_NET_SUBNET 与 CORE_MCP_IP。
 #         Aroomo 自己的 aroomo_aroomo-mcp 网络（上次部署建的）不算冲突。
@@ -189,7 +191,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 检查 4：SHELL_OWNER_USER_ID 已设置且非空（只数匹配行，绝不打印值）
+# 检查 4：Shell 所有者已设置（core-session 看 SHELL_OWNER_EMAIL，lobe-session 看 SHELL_OWNER_USER_ID；只数匹配行，绝不打印值）
 env_file="$ROOT/deploy/.env"
 env_val() { # env_val <键>：取 .env 里最后一次出现的值，去掉首尾空白和成对引号；不输出到日志
   local v
@@ -199,16 +201,30 @@ env_val() { # env_val <键>：取 .env 里最后一次出现的值，去掉首�
   v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"
   printf '%s' "$v"
 }
+shell_auth=""
+[ ! -f "$env_file" ] || shell_auth="$(env_val SHELL_AUTH)"
+shell_auth="${shell_auth:-core-session}" # 与 deploy/docker-compose.yml 的 ${SHELL_AUTH:-core-session} 一致
+case "$shell_auth" in
+  core-session) owner_key=SHELL_OWNER_EMAIL; owner_re='^[[:space:]]*SHELL_OWNER_EMAIL=["'"'"']?[^[:space:]"'"'"'@]+@[^[:space:]"'"'"'@]+' ;;
+  lobe-session) owner_key=SHELL_OWNER_USER_ID; owner_re='^[[:space:]]*SHELL_OWNER_USER_ID=[^[:space:]"'"'"']+' ;;
+  *) owner_key="" ;;
+esac
 owner_lines=0
-[ ! -f "$env_file" ] || owner_lines="$(grep -cE '^[[:space:]]*SHELL_OWNER_USER_ID=[^[:space:]"'"'"']+' "$env_file" || true)"
+[ ! -f "$env_file" ] || [ -z "$owner_key" ] || owner_lines="$(grep -cE "$owner_re" "$env_file" || true)"
+key_lines=0
+[ ! -f "$env_file" ] || [ -z "$owner_key" ] || key_lines="$(grep -cE "^[[:space:]]*(export[[:space:]]+)?$owner_key=" "$env_file" || true)"
 if [ ! -f "$env_file" ]; then
   fail "检查 4 找不到 deploy/.env"
+elif [ -z "$owner_key" ]; then
+  fail "检查 4 deploy/.env 里 SHELL_AUTH 只能是 core-session 或 lobe-session（生产不允许 off），现在是别的值（不显示）"
+elif [ "$key_lines" -gt 1 ]; then
+  fail "检查 4 deploy/.env 里 $owner_key 出现了 $key_lines 次，只能有一行（SHELL_AUTH=$shell_auth）"
 elif [ "$owner_lines" = 1 ]; then
-  pass "检查 4 deploy/.env 里 SHELL_OWNER_USER_ID 已设置（不显示值）"
-elif [ "$owner_lines" = 0 ]; then
-  fail "检查 4 deploy/.env 里 SHELL_OWNER_USER_ID 没有设置或为空（所有者的 LobeHub 用户 id，#252 起 Shell 只认它，留空则所有者也被 403；请主会话在服务器上补上）"
+  pass "检查 4 SHELL_AUTH=$shell_auth，deploy/.env 里 $owner_key 已设置（不显示值）"
+elif [ "$shell_auth" = core-session ]; then
+  fail "检查 4 SHELL_AUTH=core-session，deploy/.env 里 SHELL_OWNER_EMAIL 没有设置、为空或不像邮箱（所有者的 Core 账号邮箱，留空则所有者也被 403；请主会话在服务器上补上）"
 else
-  fail "检查 4 deploy/.env 里 SHELL_OWNER_USER_ID 出现了 $owner_lines 次，只能有一行"
+  fail "检查 4 SHELL_AUTH=lobe-session，deploy/.env 里 SHELL_OWNER_USER_ID 没有设置或为空（所有者的 LobeHub 用户 id，#252 起旧登录只认它，留空则所有者也被 403；请主会话在服务器上补上）"
 fi
 
 # ---------------------------------------------------------------------------

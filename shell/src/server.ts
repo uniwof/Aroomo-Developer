@@ -6,7 +6,7 @@
  *   /console/*         控制台（要求已登录；API 走 /aroomo/api）
  *   /aroomo/login、/aroomo/accept、/aroomo/auth/*  core-session 的登录页、设密码页和它们的接口（不需要先登录）
  *   /aroomo、/aroomo/* Aroomo 页面（成员、Key 与接入、收件箱、收藏、设置）
- *   其余               → 官方 LobeHub，原样转发（含流式输出与 WebSocket）。
+ *   其余               → 官方 LobeHub，原样转发（含流式输出与 WebSocket）；core-session 下先删掉 aroomo_session，所有者的 Core 会话不给 LobeHub。
  *
  * D190：不再改 LobeHub——不注入 CSS / JS、不替换品牌和图标、不按路径隐藏或拦截页面与接口。
  * LobeHub 功能取舍只用官方 FEATURE_FLAGS（deploy/docker-compose.yml）。
@@ -17,8 +17,9 @@ import { createReadStream } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { Duplex } from 'node:stream';
+import { BlockList, isIP } from 'node:net';
 import type { ShellConfig } from './config.js';
-import { allowAll, coreSessionCookie, CoreSessionChecker, LobeSessionChecker, type SessionChecker } from './session.js';
+import { allowAll, CORE_SESSION_COOKIE, coreSessionCookie, CoreSessionChecker, LobeSessionChecker, type SessionChecker } from './session.js';
 import { handleCoreLogout, handleLogout } from './logout.js';
 import { AUTOLOGIN_MARK, LobeLocalAutoLogin, safeCallback, type AutoLogin } from './autologin.js';
 
@@ -54,6 +55,9 @@ export const PREPARING_HTML = `<!doctype html><html lang="zh-CN"><head><meta cha
 <h1>Aroomo 正在准备</h1><p>后台正在启动，好了会自动打开。第一次可能需要几分钟。</p>
 <div class="bar" aria-hidden="true"><span></span></div></main></body></html>`;
 
+/** core-session 下不转给 LobeHub 的 Cookie */
+const LOBE_DROP_COOKIES = [CORE_SESSION_COOKIE] as const;
+
 export interface ShellDeps {
   session?: SessionChecker;
   autoLogin?: AutoLogin;
@@ -86,6 +90,32 @@ function forwardHeaders(req: IncomingMessage, extra: Record<string, string | und
   return h;
 }
 
+/** 直连方是本机或私有网段（Shell 前面的 cloudflared / nginx 都在这里）时，才信它给的来源 IP 头 */
+const TRUSTED_PEERS = new BlockList();
+TRUSTED_PEERS.addSubnet('127.0.0.0', 8, 'ipv4');
+TRUSTED_PEERS.addSubnet('10.0.0.0', 8, 'ipv4');
+TRUSTED_PEERS.addSubnet('172.16.0.0', 12, 'ipv4');
+TRUSTED_PEERS.addSubnet('192.168.0.0', 16, 'ipv4');
+TRUSTED_PEERS.addAddress('::1', 'ipv6');
+TRUSTED_PEERS.addSubnet('fc00::', 7, 'ipv6');
+
+function trustedPeer(addr: string): boolean {
+  const v4 = addr.startsWith('::ffff:') ? addr.slice(7) : addr;
+  const t = isIP(v4);
+  return t !== 0 && TRUSTED_PEERS.check(v4, t === 4 ? 'ipv4' : 'ipv6');
+}
+
+/** 浏览器的真实 IP：只在直连方可信、且头的值是一个合法 IP 时取头，否则用直连地址（不信公网客户端自己填的头） */
+export function clientIp(req: IncomingMessage, header: string | undefined): string {
+  const peer = req.socket.remoteAddress ?? '';
+  if (header && trustedPeer(peer)) {
+    const raw = req.headers[header];
+    const v = (Array.isArray(raw) ? raw[0] : raw)?.trim() ?? '';
+    if (isIP(v)) return v;
+  }
+  return peer;
+}
+
 function responseHeaders(up: IncomingMessage, drop: string[] = []) {
   const h: Record<string, string | string[]> = {};
   for (const [k, v] of Object.entries(up.headers)) {
@@ -97,6 +127,16 @@ function responseHeaders(up: IncomingMessage, drop: string[] = []) {
 
 function hasCookie(cookieHeader: string | undefined, name: string): boolean {
   return (cookieHeader ?? '').split(';').some((c) => c.trim().startsWith(`${name}=`));
+}
+
+/** 从 Cookie 头里删掉某个 Cookie（core-session 下转给 LobeHub 前删 aroomo_session；#259 负责人必改 1）；删完为空返回 undefined */
+export function dropCookie(header: string | undefined, names: readonly string[]): string | undefined {
+  if (!header) return undefined;
+  const kept = header
+    .split(';')
+    .map((c) => c.trim())
+    .filter((c) => c && !names.includes(c.slice(0, c.indexOf('=') < 0 ? c.length : c.indexOf('=')).trim()));
+  return kept.length ? kept.join('; ') : undefined;
 }
 
 function wantsHtml(req: IncomingMessage): boolean {
@@ -287,6 +327,7 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
         ? { email: str(b.email), password: str(b.password), cookie: true }
         : { token: str(b.token), password: str(b.password), ...(typeof b.displayName === 'string' ? { displayName: b.displayName } : {}), cookie: true };
     const proto = String(req.headers['x-forwarded-proto'] ?? 'http').split(',')[0]!.trim();
+    const ip = clientIp(req, cfg.clientIpHeader);
     let r: Response;
     try {
       r = await fetch(new URL(`/auth/${kind}`, cfg.coreUpstream), {
@@ -295,7 +336,9 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
           'content-type': 'application/json',
           accept: 'application/json',
           'x-forwarded-proto': proto,
-          'x-forwarded-for': req.socket.remoteAddress ?? '',
+          // 真实来源 IP（Core 登录按「邮箱 + IP」限速；都填 nginx/cloudflared 的地址会让别人把所有者锁在外面）
+          'x-forwarded-for': ip,
+          'x-real-ip': ip,
         },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(15_000),
@@ -350,7 +393,7 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
     }
     headers.host = target.host;
     headers['x-forwarded-proto'] = (req.headers['x-forwarded-proto'] as string | undefined) ?? 'http';
-    headers['x-forwarded-for'] = req.socket.remoteAddress ?? '';
+    headers['x-forwarded-for'] = clientIp(req, cfg.clientIpHeader);
     const up = clientFor(target).request(target, { method: req.method, headers }, (upRes) => {
       res.writeHead(upRes.statusCode ?? 502, { ...responseHeaders(upRes, ['set-cookie']), 'cache-control': 'no-store' });
       upRes.pipe(res);
@@ -363,12 +406,15 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
     req.pipe(up);
   }
 
+  /** 转给 LobeHub 的 Cookie：core-session 下不带所有者的 Core 会话 */
+  const lobeCookie = (header: string | undefined) => (coreAuth ? dropCookie(header, LOBE_DROP_COOKIES) : header);
+
   function proxyLobe(req: IncomingMessage, res: ServerResponse, url: URL) {
     const html = wantsHtml(req);
-    const cookie = req.headers.cookie;
+    const cookie = lobeCookie(req.headers.cookie);
     // 新访客默认简体中文：只设 LobeHub 官方的语言 Cookie，不改页面内容
     const setLocale = !hasCookie(cookie, 'LOBE_LOCALE');
-    const extra: Record<string, string | undefined> = {};
+    const extra: Record<string, string | undefined> = { cookie };
     if (setLocale) {
       extra.cookie = [cookie, `LOBE_LOCALE=${cfg.defaultLocale}`].filter(Boolean).join('; ');
       extra['accept-language'] = `${cfg.defaultLocale},zh;q=0.9`;
@@ -490,6 +536,9 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
     const target = new URL(url.pathname + url.search, cfg.lobeUpstream);
     const headers: Record<string, string | string[]> = {};
     for (const [k, v] of Object.entries(req.headers)) if (v !== undefined) headers[k] = v;
+    const cookie = lobeCookie(req.headers.cookie);
+    if (cookie === undefined) delete headers.cookie;
+    else headers.cookie = cookie;
     const up = clientFor(target).request(target, { method: req.method, headers });
     up.on('upgrade', (upRes, upSocket, upHead) => {
       const lines = [`HTTP/1.1 ${upRes.statusCode} ${upRes.statusMessage}`];
