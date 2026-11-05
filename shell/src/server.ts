@@ -19,7 +19,7 @@ import path from 'node:path';
 import type { Duplex } from 'node:stream';
 import { BlockList, isIP } from 'node:net';
 import type { ShellConfig } from './config.js';
-import { allowAll, CORE_SESSION_COOKIE, coreSessionCookie, CoreSessionChecker, LobeSessionChecker, type SessionChecker } from './session.js';
+import { allowAll, CORE_SESSION_COOKIES, coreSessionCookie, CoreSessionChecker, LobeSessionChecker, type SessionChecker } from './session.js';
 import { handleCoreLogout, handleLogout } from './logout.js';
 import { AUTOLOGIN_MARK, LobeLocalAutoLogin, safeCallback, type AutoLogin } from './autologin.js';
 
@@ -56,7 +56,7 @@ export const PREPARING_HTML = `<!doctype html><html lang="zh-CN"><head><meta cha
 <div class="bar" aria-hidden="true"><span></span></div></main></body></html>`;
 
 /** core-session 下不转给 LobeHub 的 Cookie */
-const LOBE_DROP_COOKIES = [CORE_SESSION_COOKIE] as const;
+const LOBE_DROP_COOKIES = CORE_SESSION_COOKIES;
 
 export interface ShellDeps {
   session?: SessionChecker;
@@ -353,7 +353,7 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
         error: { code: typeof err.code === 'string' ? err.code : 'HTTP_' + r.status, message: typeof err.message === 'string' ? err.message : '没有成功，请稍后再试' },
       });
     }
-    const setCookie = r.headers.getSetCookie().filter((c) => c.startsWith('aroomo_session='));
+    const setCookie = r.headers.getSetCookie().filter((c) => CORE_SESSION_COOKIES.some((n) => c.startsWith(`${n}=`)));
     return sendJson(res, 200, { ok: true }, setCookie.length ? ({ 'set-cookie': setCookie } as unknown as Record<string, string>) : {});
   }
 

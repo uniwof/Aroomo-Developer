@@ -39,7 +39,7 @@ const listen = (s: Server) =>
   new Promise<string>((r) => s.listen(0, '127.0.0.1', () => r(`http://127.0.0.1:${(s.address() as AddressInfo).port}`)));
 
 function sessOf(cookie: string | undefined): string | undefined {
-  const m = /(?:^|;\s*)aroomo_session=([^;]+)/.exec(cookie ?? '');
+  const m = /(?:^|;\s*)(?:__Host-)?aroomo_session=([^;]+)/.exec(cookie ?? '');
   return m && !revoked.has(m[1]!) ? m[1] : undefined;
 }
 
@@ -313,6 +313,31 @@ describe('core-session：会话缓存', () => {
     cachePut(m, 'k2', 9, 3); // 刷新的条目挪到最新
     cachePut(m, 'k5', 5, 3);
     expect([...m.keys()]).toEqual(['k4', 'k2', 'k5']);
+  });
+});
+
+describe('core-session：__Host- Cookie 名（#264 必改 1）', () => {
+  it('先认 __Host-aroomo_session，没有再认旧名（过渡）；只把认出来的那一个发给 Core', async () => {
+    expect(coreSessionCookie('aroomo_session=planted_000; __Host-aroomo_session=owner_sess_1')).toBe('__Host-aroomo_session=owner_sess_1');
+    expect(coreSessionCookie('aroomo_session=owner_sess_1')).toBe('aroomo_session=owner_sess_1');
+    expect(coreSessionCookie('__Host-aroomo_session=bad value; aroomo_session=owner_sess_1')).toBeUndefined();
+    seen.length = 0;
+    const c = await get('/console/', '__Host-aroomo_session=owner_sess_1; other=1');
+    expect(c.status).toBe(200);
+    const me = seen.find((x) => x.url === '/api/auth/me');
+    if (me) expect(me.cookie).toBe('__Host-aroomo_session=owner_sess_1');
+  });
+
+  it('两个名字都不转给 LobeHub；退出时 __Host- 和旧名一起清', async () => {
+    expect(dropCookie('__Host-aroomo_session=a; aroomo_session=b; x=1', ['__Host-aroomo_session', 'aroomo_session'])).toBe('x=1');
+    lobeSeen.length = 0;
+    await fetch(base + '/chat/y', { headers: { cookie: '__Host-aroomo_session=owner_sess_1; x=1' } });
+    expect(lobeSeen.find((x) => x.kind === 'http')!.cookie).not.toContain('aroomo_session');
+    const r = await fetch(base + '/aroomo/logout', { method: 'POST', headers: { cookie: '__Host-aroomo_session=owner_sess_1', 'x-aroomo-request': '1' } });
+    const sc = r.headers.getSetCookie();
+    expect(sc.some((x) => x.startsWith('__Host-aroomo_session=; Path=/; Max-Age=0') && x.includes('Secure'))).toBe(true);
+    expect(sc.some((x) => x.startsWith('aroomo_session=; Path=/; Max-Age=0'))).toBe(true);
+    revoked.delete('owner_sess_1');
   });
 });
 
