@@ -135,6 +135,9 @@ export const FAILURE_TEXT: Record<ChatFailureCode, string> = {
 export const FAILURE_PART = 'data-aroomo-failure';
 /** X-19：这次发话前刚压缩过（transient）：{ keep: 留着原文的条数, text: 灰字 }，前端在留下的原文前插那行灰字 */
 export const COMPACTED_PART = 'data-aroomo-compacted';
+/** 该压缩却没压成、只带了最近的原文（transient，不存库）：{ text }，前端在这条回复上面放这行灰字（负责人阶段 3 必改 3） */
+export const TRUNCATED_PART = 'data-aroomo-truncated';
+export const TRUNCATED_TEXT = '这段对话太长，这次只带了最近的内容';
 const failureEvents = (code: ChatFailureCode) => [sse({ type: FAILURE_PART, data: { code }, transient: true }), sse({ type: 'error', errorText: FAILURE_TEXT[code] })];
 
 /**
@@ -154,6 +157,8 @@ export function toUiMessageStream(
     wasAborted?: () => boolean;
     /** X-19：开头先发一个「刚压缩过」部件 */
     compacted?: { keep: number; text: string } | null;
+    /** 压缩没跑成、只带了最近的原文：开头发一行灰字部件 */
+    truncated?: boolean;
   } = {},
 ): ReadableStream<Uint8Array> {
   const messageId = opts.messageId ?? `msg_${randomUUID()}`;
@@ -216,6 +221,7 @@ export function toUiMessageStream(
         started = true;
         c.enqueue(sse({ type: 'start', messageId }));
         if (opts.compacted) c.enqueue(sse({ type: COMPACTED_PART, data: opts.compacted, transient: true }));
+        if (opts.truncated) c.enqueue(sse({ type: TRUNCATED_PART, data: { text: TRUNCATED_TEXT }, transient: true }));
         c.enqueue(sse({ type: 'start-step' }));
         c.enqueue(sse({ type: 'text-start', id: textId }));
         if (!reader) return await finish(c);
@@ -384,9 +390,11 @@ export function registerChatStreamRoute(app: FastifyInstance, chat: ChatService,
           // X-19：会话太长时先压缩（免费模型、原文不删）；发给模型的是「摘要 + 摘要之后的原文」。出错就照旧用浏览器发来的
           let send: Turn[] = messages;
           let compacted: { keep: number; text: string } | null = null;
+          let truncated = false;
           if (convs && convId && opts.compactor) {
             const p = await opts.compactor.prepare(scope, convId, messages, req.body.retry === true, ctrl.signal).catch(() => null);
             if (p) ({ messages: send, compacted } = p);
+            truncated = p?.truncated === true;
             if (ctrl.signal.aborted) throw new Error('client gone');
           }
           const out = await chat.complete({ model, stream: true, messages: send }, ctrl.signal, scope === 'owner' ? undefined : opts.ctxFor(scope));
@@ -395,11 +403,11 @@ export function registerChatStreamRoute(app: FastifyInstance, chat: ChatService,
             await out.stream?.cancel().catch(() => undefined);
             body = errorStream(out.failure.code);
             release();
-          } else if (out.stream) body = toUiMessageStream(out.stream, { onDone: release, onFinish: (t) => save('assistant', t), onCancel: (t) => void save('assistant', t), wasAborted: () => ctrl.signal.aborted, compacted });
+          } else if (out.stream) body = toUiMessageStream(out.stream, { onDone: release, onFinish: (t) => save('assistant', t), onCancel: (t) => void save('assistant', t), wasAborted: () => ctrl.signal.aborted, compacted, truncated });
           else {
             // 理论上 stream:true 总是返回流；万一是 JSON，就把文字一次性发出去
             const text = (out.json as { choices?: Array<{ message?: { content?: unknown } }> } | undefined)?.choices?.[0]?.message?.content;
-            body = toUiMessageStream(oneShot(typeof text === 'string' ? text : ''), { onDone: release, onFinish: (t) => save('assistant', t), compacted });
+            body = toUiMessageStream(oneShot(typeof text === 'string' ? text : ''), { onDone: release, onFinish: (t) => save('assistant', t), compacted, truncated });
           }
         } catch {
           body = errorStream('upstream_error');

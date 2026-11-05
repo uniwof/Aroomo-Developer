@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ChatPage } from '@/chat/ChatPage';
-import { capTurns, parseEvent, SEND_MAX_TURNS, streamChat, type ChatTurn } from '@/chat/store';
+import { capTurns, parseEvent, SEND_MAX_TURNS, streamChat, TRUNCATED_TEXT, type ChatTurn } from '@/chat/store';
 
 const enc = new TextEncoder();
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -161,5 +161,38 @@ describe('X-19 长会话压缩', () => {
     expect(got).toEqual([{ keep: 2, text: NOTE }]);
     expect(out.at(-1)).toBe('好');
     expect(sent!.messages).toHaveLength(SEND_MAX_TURNS);
+  });
+  it('压缩没跑成（data-aroomo-truncated）：这条回复上面一行静态灰字「这段对话太长，这次只带了最近的内容」；只在流里，不存库', async () => {
+    expect(TRUNCATED_TEXT).toBe('这段对话太长，这次只带了最近的内容');
+    expect(parseEvent(`data: ${JSON.stringify({ type: 'data-aroomo-truncated', data: { text: TRUNCATED_TEXT }, transient: true })}`)).toEqual({ type: 'truncated', text: TRUNCATED_TEXT });
+    const calls = stubCore(() => json({ results: [], nextBeforeSeq: null }));
+    const f = (async () =>
+      new Response(
+        new ReadableStream({
+          start(c) {
+            for (const o of [{ type: 'start' }, { type: 'data-aroomo-truncated', data: { text: TRUNCATED_TEXT }, transient: true }, { type: 'text-delta', id: 't', delta: '只看了最近的' }, { type: 'finish' }]) c.enqueue(enc.encode(`data: ${JSON.stringify(o)}\n\n`));
+            c.enqueue(enc.encode('data: [DONE]\n\n'));
+            c.close();
+          },
+        }),
+        { status: 200 },
+      )) as unknown as typeof fetch;
+    render(
+      <MemoryRouter>
+        <ChatPage fetchImpl={f} />
+      </MemoryRouter>,
+    );
+    const list = await screen.findByRole('list', { name: '会话列表' });
+    fireEvent.click(await within(list).findByRole('button', { name: /^周末去哪/ }, W));
+    const log = within(await screen.findByRole('log', { name: '对话内容' }, W));
+    expect(await log.findByText('留下的第一条', {}, W)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '接着说' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    const reply = (await log.findByText('只看了最近的', {}, W)).closest('.msg')!;
+    await waitFor(() => expect(within(reply as HTMLElement).getByRole('note')).toHaveTextContent(TRUNCATED_TEXT));
+    expect(screen.getAllByText(TRUNCATED_TEXT)).toHaveLength(1);
+    expect(Object.values(localStorage).join('\n')).not.toContain(TRUNCATED_TEXT); // 不存本机
+    // 灰字不写进 Core（没有任何请求带着这句）
+    expect(calls.some((c) => c.includes('POST') && c.includes('/messages'))).toBe(false);
   });
 });

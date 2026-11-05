@@ -73,10 +73,15 @@ export interface PersistOpts {
   onAccepted?: () => void;
   /** X-19：Core 发话前刚压缩过：keep = 留着原文的条数（含这句），text = 灰字 */
   onCompacted?: (c: { keep: number; text: string }) => void;
+  /** Core 该压缩却没压成，这次只带了最近的内容：text = 灰字（只在流里，不存库） */
+  onTruncated?: (text: string) => void;
 }
 
 /** X-19：Core 发来的「刚压缩过」部件 */
 export const COMPACTED_PART = 'data-aroomo-compacted';
+/** 该压缩却没压成、只带了最近的原文（负责人阶段 3 必改 3）：这条回复上面一行灰字，只在流里、不存库 */
+export const TRUNCATED_PART = 'data-aroomo-truncated';
+export const TRUNCATED_TEXT = '这段对话太长，这次只带了最近的内容';
 
 /**
  * 发给 Core 的历史只取最近 ≤ 100 条、≤ 120,000 字（至少最后一句）：以前超过 200 条直接 400。
@@ -121,6 +126,7 @@ export type StreamEvent =
   | { type: 'failure'; code: FailureCode }
   | { type: 'draft'; draft: ChatDraft }
   | { type: 'compacted'; keep: number; text: string }
+  | { type: 'truncated'; text: string }
   | { type: 'finish' }
   | { type: 'done' };
 
@@ -141,6 +147,7 @@ export function parseEvent(event: string): StreamEvent | null {
       return d ? { type: 'draft', draft: d } : null;
     }
     if (j.type === COMPACTED_PART && typeof j.data?.keep === 'number' && typeof j.data.text === 'string') return { type: 'compacted', keep: j.data.keep, text: j.data.text };
+    if (j.type === TRUNCATED_PART) return { type: 'truncated', text: typeof j.data?.text === 'string' ? j.data.text : TRUNCATED_TEXT };
     if (j.type === FAILURE_PART && typeof j.data?.code === 'string' && FAILURE_CODES.includes(j.data.code)) return { type: 'failure', code: j.data.code as FailureCode };
     if (j.type === 'error') return { type: 'error', text: typeof j.errorText === 'string' ? j.errorText : '对话出错了，请稍后再试。' };
     if (j.type === 'finish') return { type: 'finish' };
@@ -225,6 +232,7 @@ export async function* streamChat(
           yield text;
         } else if (ev.type === 'draft') onDraft?.(ev.draft);
         else if (ev.type === 'compacted') persist.onCompacted?.({ keep: ev.keep, text: ev.text });
+        else if (ev.type === 'truncated') persist.onTruncated?.(ev.text);
         else if (ev.type === 'failure') code = ev.code;
         else if (ev.type === 'error') throw new ChatStreamError(ev.text, code);
         else if (ev.type === 'done') return;

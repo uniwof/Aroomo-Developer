@@ -4,6 +4,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Compactor, freeSummarizer, SUMMARY_PREFIX, type Summarize, type Turn } from '../src/conversations/compact.js';
+import { toUiMessageStream, TRUNCATED_PART, TRUNCATED_TEXT } from '../src/chat/stream.js';
 import { MemoryConversationStore } from '../src/conversations/memory.js';
 import { PgConversationStore } from '../src/conversations/pg.js';
 import type { ChatConversation, ConversationStore } from '../src/conversations/types.js';
@@ -65,9 +66,10 @@ describe.each(stores)('Compactor [$name]', (target) => {
     const p = await c.prepare(U, CID, [{ role: 'user', content: '现在呢' }], false, sig());
     // 留 ≤ 40 字：最后一句（3 字）+ 第 5 条（23 字）；再加第 4 条就超
     expect(p.compacted).toMatchObject({ keep: 2 });
+    expect(p.truncated).toBeUndefined();
     expect(p.compacted!.text).toMatch(/^已把 11-05 14:\d\d 之前的内容整理成摘要，原文还在，可以往上翻$/);
     expect(p.messages).toEqual([
-      { role: 'system', content: `${SUMMARY_PREFIX}摘要一：说了 0 到 4 条` },
+      { role: 'user', content: `${SUMMARY_PREFIX}摘要一：说了 0 到 4 条` }, // 背景资料式的普通消息，不用 system 角色（负责人建议）
       { role: 'assistant', content: `第5条-${'甲'.repeat(20)}` },
       { role: 'user', content: '现在呢' },
     ]);
@@ -120,7 +122,8 @@ describe.each(stores)('Compactor [$name]', (target) => {
     const before = (await all(cid)).length;
     const p = await make(async () => null).prepare(U, cid, [{ role: 'user', content: '最后' }], false, sig());
     expect(p.compacted).toBeNull();
-    expect(p.messages.every((m) => m.role !== 'system')).toBe(true);
+    expect(p.truncated).toBe(true); // 流里给一行灰字（不存库）
+    expect(p.messages.every((m) => !m.content.startsWith(SUMMARY_PREFIX))).toBe(true);
     expect(p.messages.reduce((x, m) => x + m.content.length, 0)).toBeLessThanOrEqual(100);
     expect(p.messages.at(-1)!.content).toBe('最后');
     expect(await all(cid)).toHaveLength(before);
@@ -130,9 +133,13 @@ describe.each(stores)('Compactor [$name]', (target) => {
     const q = await make(async () => (calls++, '摘要'), { perDay: 1 }).prepare(U, cid, [{ role: 'user', content: '最后' }], false, sig());
     expect(calls).toBe(0);
     expect(q.compacted).toBeNull();
+    expect(q.truncated).toBe(true);
     // 摘要函数抛错也不打断对话
     const r = await make(async () => { throw new Error('boom'); }).prepare(U, cid, [{ role: 'user', content: '最后' }], false, sig());
     expect(r.compacted).toBeNull();
+    expect(r.truncated).toBe(true);
+    // 摘要失败不写库：会话里没有多出灰字那行
+    expect(await all(cid)).toHaveLength(before);
   });
 
   it('同一个会话两条流同时要压：只压一次（另一条先发最近的原文），只写一行摘要', async () => {
@@ -159,6 +166,18 @@ describe.each(stores)('Compactor [$name]', (target) => {
     const p = await new Compactor({ store, summarize: async () => '摘要', now, timezone: 'Asia/Shanghai', limits: { at: 1 } }).prepare('u-other', CID, browser, false, sig());
     expect(p).toEqual({ messages: browser, compacted: null });
     expect(await store.latestSummary('u-other', CID)).toBeNull();
+  });
+});
+
+describe('压缩没跑成时的灰字（负责人阶段 3 必改 3）', () => {
+  it('流开头发一个 transient 部件：「这段对话太长，这次只带了最近的内容」；不传就不发', async () => {
+    const enc = new TextEncoder();
+    const up = () => new ReadableStream<Uint8Array>({ start(c) { c.enqueue(enc.encode('data: {"choices":[{"delta":{"content":"好"}}]}\n\ndata: [DONE]\n\n')); c.close(); } });
+    const parts = async (truncated: boolean) =>
+      (await new Response(toUiMessageStream(up(), { truncated })).text()).split('\n\n').map((x) => x.trim()).filter((x) => x.includes(TRUNCATED_PART)).map((x) => JSON.parse(x.slice(5)) as Json);
+    expect(TRUNCATED_TEXT).toBe('这段对话太长，这次只带了最近的内容');
+    expect(await parts(true)).toEqual([{ type: TRUNCATED_PART, data: { text: TRUNCATED_TEXT }, transient: true }]);
+    expect(await parts(false)).toEqual([]);
   });
 });
 

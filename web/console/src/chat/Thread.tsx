@@ -35,6 +35,8 @@ const ChatDraftCard = lazy(() => import('./pages/assistants/ChatDraftCard'));
 const draftOfMessage = (m: { metadata?: { custom?: unknown } }): ChatDraft | undefined => (m.metadata?.custom as { draft?: ChatDraft } | undefined)?.draft;
 /** X-19：这条上面那行「已整理成摘要」的灰字 */
 const noteOfMessage = (m: { metadata?: { custom?: unknown } }): string | undefined => (m.metadata?.custom as { note?: string } | undefined)?.note;
+/** 「这段对话太长，这次只带了最近的内容」：只在这次的流里显示，不进存档（noteOfMessage 不读它） */
+const streamNoteOfMessage = (m: { metadata?: { custom?: unknown } }): string | undefined => (m.metadata?.custom as { streamNote?: string } | undefined)?.streamNote;
 
 const textOfMessage = (m: ThreadMessage): string =>
   m.content
@@ -72,6 +74,8 @@ export interface UiMessage {
   draft?: ChatDraft;
   /** X-19：这条上面那行灰字 */
   note?: string;
+  /** 压缩没跑成时这条回复上面的灰字：只在界面上，不存库、不存本机 */
+  streamNote?: string;
 }
 
 let seq = 0;
@@ -84,7 +88,7 @@ export function toThreadMessage(m: UiMessage): ThreadMessageLike {
     role: m.role,
     content: [{ type: 'text' as const, text: m.text }],
     ...(m.at ? { createdAt: new Date(m.at) } : {}),
-    ...(m.draft || m.note ? { metadata: { custom: { ...(m.draft ? { draft: m.draft } : {}), ...(m.note ? { note: m.note } : {}) } } } : {}),
+    ...(m.draft || m.note || m.streamNote ? { metadata: { custom: { ...(m.draft ? { draft: m.draft } : {}), ...(m.note ? { note: m.note } : {}), ...(m.streamNote ? { streamNote: m.streamNote } : {}) } } } : {}),
   };
   if (m.role === 'user') return base;
   if (m.state === 'running') return { ...base, status: { type: 'running' } };
@@ -93,7 +97,7 @@ export function toThreadMessage(m: UiMessage): ThreadMessageLike {
     return {
       ...base,
       status: { type: 'incomplete', reason: 'error', error: m.error ?? '对话出错了，请稍后再试。' },
-      ...(m.errorCode ? { metadata: { custom: { errorCode: m.errorCode, ...(m.note ? { note: m.note } : {}) } } } : {}),
+      ...(m.errorCode ? { metadata: { custom: { errorCode: m.errorCode, ...(m.note ? { note: m.note } : {}), ...(m.streamNote ? { streamNote: m.streamNote } : {}) } } } : {}),
     };
   return { ...base, status: { type: 'complete', reason: 'stop' } };
 }
@@ -137,7 +141,7 @@ const DaySep: FC = () => {
 
 /** X-19：长会话压缩过的那行静态灰字，放在留下的第一条原文上面（不动、不闪；读屏当作提示读出来） */
 const CompactNote: FC = () => {
-  const note = useAuiState((s) => noteOfMessage(s.message));
+  const note = useAuiState((s) => noteOfMessage(s.message) ?? streamNoteOfMessage(s.message));
   return note ? (
     <p className="msg-compact" role="note">
       {note}
@@ -456,7 +460,9 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
           const first = kept[Math.max(0, kept.length - keep)];
           if (first) setMessages((l) => l.map((m) => (m.id === first.id ? { ...m, note: text } : m)));
         };
-        const opts = conversationId ? { conversationId, retry: savedUser.current.has(lastUser.id), onAccepted: () => savedUser.current.add(lastUser.id), onCompacted } : {};
+        // 该压缩却没压成：这条回复上面一行灰字（只在界面上，不存库、不存本机）
+        const onTruncated = (text: string) => update({ streamNote: text });
+        const opts = conversationId ? { conversationId, retry: savedUser.current.has(lastUser.id), onAccepted: () => savedUser.current.add(lastUser.id), onCompacted, onTruncated } : {};
         for await (const text of streamChat(turns, convRef.current.model, ac.signal, fetchImpl, (draft) => update({ draft }), opts)) update({ text });
         update({ state: 'done' });
       } catch (e) {
