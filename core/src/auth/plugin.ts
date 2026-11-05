@@ -46,6 +46,8 @@ export interface AuthOptions {
   ownerConfigured: boolean;
   /** 每个凭据（没有凭据按 IP）每分钟最多请求数；默认 1200。防暴力猜令牌 / 刷接口（CodeQL js/missing-rate-limiting） */
   rateLimitPerMin?: number;
+  /** 必改 1 方案 A：所有者自己的账号 id（CORE_OWNER_ACCOUNT_ID）；未设置 = 不映射 */
+  ownerAccountId?: string | undefined;
 }
 
 /** 限速按凭据分桶：Shell 代理后所有请求同一个 IP，不能只按 IP；令牌只取摘要，不留原文 */
@@ -95,8 +97,12 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
     // 没有 Bearer 头时，认控制台会话 Cookie（只对账号会话有效）
     const cookieToken = m ? null : readSessionCookie(req.headers.cookie);
     const raw = m ? (m[1] as string) : cookieToken;
-    const principal = raw ? await opts.verify(raw) : null;
+    let principal = raw ? await opts.verify(raw) : null;
     if (!principal || (cookieToken && principal.type !== 'user')) throw new HttpError(401, 'UNAUTHORIZED', '请先登录');
+    // 必改 1 方案 A：只认服务端配置的账号 id，且必须是管理员账号（配错成家人的 id 也不会让家人看到所有者数据）
+    if (principal.type === 'user' && opts.ownerAccountId && principal.userId === opts.ownerAccountId && principal.role === 'admin') {
+      principal = { ...principal, ownerAccount: true };
+    }
     req.principal = principal;
     req.audit = bindAudit(opts.auditLog, actorOf(principal));
     if (cookieToken && UNSAFE_METHODS.has(req.method) && !req.headers[CSRF_HEADER]) {
@@ -142,12 +148,16 @@ export function guard(cap: Capability, opts?: { user?: boolean }) {
   };
 }
 
-/** 数据归属：所有者令牌（及操作员，代表所有者）= 'owner'；账号 = 它自己的 id。所有业务查询都必须带它。 */
+/**
+ * 数据归属：所有者令牌（及操作员，代表所有者）= 'owner'；账号 = 它自己的 id；
+ * 所有者自己的账号（CORE_OWNER_ACCOUNT_ID，必改 1 方案 A）= 'owner'。所有业务查询都必须带它。
+ */
 export function scopeOf(req: FastifyRequest): string {
   const p = req.principal;
   if (!p) throw new HttpError(401, 'UNAUTHORIZED', '请先登录');
   if (p.type === 'client') return p.userId;
-  return p.type === 'user' ? p.userId : 'owner';
+  if (p.type === 'user') return p.ownerAccount ? 'owner' : p.userId;
+  return 'owner';
 }
 
 /** 路由级权限：白名单式，默认拒绝；拒绝也写审计（result=denied）。 */

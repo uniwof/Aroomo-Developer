@@ -150,6 +150,7 @@ export function buildServer(
       (await clients.verify(token)),
     auditLog: deps.auditLog,
     ownerConfigured: Boolean(cfg.ownerToken),
+    ownerAccountId: cfg.ownerAccountId,
   });
   if (deps.db) {
     const db = deps.db;
