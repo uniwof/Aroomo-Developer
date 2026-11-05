@@ -7,25 +7,36 @@
  * - 只调用 Core 的标准接口（/api/*）；会话先存在本机浏览器（localStorage）。
  * 边界：store.ts 管数据和请求，Thread.tsx 管对话区，Sidebar.tsx 管会话列表栏，panels.tsx 管面板，这里管拼装。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ArrowRight, BookOpen, ChevronDown, ChevronRight, CircleAlert, Download, Ellipsis, KeyRound, Menu, MessagesSquare, Pencil, Plus, Settings, SquarePen, Trash2, Users, Wrench, X } from 'lucide-react';
 import { api, currentUser, isFamily, viaShell, type Member } from '@/lib/api';
 import { useSearchParams } from 'react-router-dom';
-import { Audit } from '@/pages/Audit';
-import { Executors } from '@/pages/Executors';
 import { useUsage } from '@/lib/usage';
 import { MeFace, Rail, meLabel, quotaState, type RailTarget } from './Rail';
 import { HeaderCard } from './HeaderCard';
-import { AddMemberDialog, ApiView, LibraryView, ToolsView } from './views';
-import { Inbox } from '@/pages/Inbox';
 import { useInboxCount } from '@/lib/inbox';
 import { Thread } from './Thread';
 import { Sidebar } from './Sidebar';
-import { BackButton, CapabilityPanel, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type GoTarget, type SettingsSection } from './panels';
+import { BackButton, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type GoTarget, type SettingsSection } from './panels';
 import { applyDisplay } from '@/lib/display';
 import { listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, stripSignature, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
 import { useAsk } from '@/components/Dialog';
 import './chat.css';
+
+// 不常开的面板点开才下载（#250：对话页包 ≤150 KB gz）。设置、成员随对话页一起加载，打开不用等。
+const LibraryView = lazy(() => import('./views').then((m) => ({ default: m.LibraryView })));
+const ToolsView = lazy(() => import('./views').then((m) => ({ default: m.ToolsView })));
+const ApiView = lazy(() => import('./views').then((m) => ({ default: m.ApiView })));
+const AddMemberDialog = lazy(() => import('./views').then((m) => ({ default: m.AddMemberDialog })));
+const Inbox = lazy(() => import('@/pages/Inbox').then((m) => ({ default: m.Inbox })));
+const Audit = lazy(() => import('@/pages/Audit').then((m) => ({ default: m.Audit })));
+const Executors = lazy(() => import('@/pages/Executors').then((m) => ({ default: m.Executors })));
+const CapabilityPanel = lazy(() => import('./capability-panel').then((m) => ({ default: m.CapabilityPanel })));
+
+/** 懒加载面板下载时：一句静态文字（不转圈，无动画） */
+function Later({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<p role="status" className="note panel-loading">正在加载…</p>}>{children}</Suspense>;
+}
 
 /** 主区域显示什么：对话，或某个面板（带返回的上一层） */
 type View =
@@ -554,6 +565,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
       <>
         <PanelHeader title={title} lead={phone ? null : menuButton} {...(parent ? { onBack: () => ('go' in parent ? parent.go() : parent.view.kind === 'settings' ? goto(parent.view) : setView(parent.view)), backLabel: parent.label, ...('aria' in parent && parent.aria ? { backAria: parent.aria } : {}) } : {})} />
         <div className="panel-scroll">
+          <Later>
           {view.kind === 'members' && (
             <>
               <MembersPanel members={members} onOpen={(m) => setView({ kind: 'member', id: m.id })} />
@@ -632,6 +644,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
               <Executors />
             </div>
           )}
+          </Later>
         </div>
       </>
     );
@@ -679,13 +692,17 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
       )}
       {ask.node}
       <SettingsDialog open={settingsOpen && !phone} onClose={() => setSettingsOpen(false)} prefs={prefs} setPrefs={setPrefs} members={members} onGo={(k: GoTarget) => { setSettingsOpen(false); setView({ kind: k }); }} />
+      {addMember && (
+        <Suspense fallback={null}>
       <AddMemberDialog
-        open={!!addMember}
+        open
         {...(addMember?.preset ? { preset: addMember.preset } : {})}
         onClose={() => setAddMember(null)}
         onAdded={() => reloadMembers()}
         {...(view.kind === 'library' ? {} : { onExplore: () => { setAddMember(null); goto({ kind: 'library' }); } })}
       />
+        </Suspense>
+      )}
       {!wide && !phone && (
         <dialog ref={dialog} className="drawer" aria-label="会话列表" onClose={() => setOpen(false)} onCancel={() => setOpen(false)}>
           {open && sidebar}

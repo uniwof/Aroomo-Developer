@@ -8,9 +8,8 @@ import { Bell, ArrowLeft, ChevronRight, Home, Keyboard, Monitor, Moon, Plug, Scr
 import { isFamily, type Member } from '@/lib/api';
 import { useUsage } from '@/lib/usage';
 import { UsageLine } from '@/pages/Members';
-import { CapabilityMap } from '@/components/CapabilityMap';
 import { BudgetSection, Field, Group, LeadSection, McpSection, SecuritySection } from '@/pages/Settings';
-import { FamilySection, GeneralSection, PasswordRow, ProfileSection, SignOutGroup } from './views';
+import { FamilySection, GeneralSection, PasswordRow, ProfileSection, SignOutGroup } from './settings-sections';
 import { ClientTokens } from '@/components/ClientTokens';
 import { Dialog } from '@/components/Dialog';
 import { Avatar } from './Avatar';
@@ -125,14 +124,6 @@ export function MemberDetail({ member, onChat, onMention }: { member: Member; on
           </div>
         </Group>
       )}
-    </div>
-  );
-}
-
-export function CapabilityPanel() {
-  return (
-    <div className="panel">
-      <CapabilityMap />
     </div>
   );
 }
