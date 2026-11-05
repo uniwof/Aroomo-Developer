@@ -66,7 +66,11 @@ export async function assistantEnv(
           gw.calls.push(b.model);
           if (gw.gate) await gw.gate;
           if (gw.slow.has(b.model)) {
-            await new Promise<void>((_r, rej) => init?.signal?.addEventListener('abort', () => rej(new Error('aborted')), { once: true }));
+            // 和真 fetch 一样：信号在调用前就已中止（CI 上 timeoutMs 很短时会先到）→ 立刻失败，不然永远等不到 abort 事件
+            await new Promise<void>((_r, rej) => {
+              if (init?.signal?.aborted) return rej(new Error('aborted'));
+              init?.signal?.addEventListener('abort', () => rej(new Error('aborted')), { once: true });
+            });
           }
           const st = gw.failStatus.get(b.model);
           if (st) return new Response('{}', { status: st });
