@@ -576,7 +576,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
       }}
       onOpen={(k) => goto({ kind: k })}
       usage={usage}
-      {...(remote === true ? { filterable: true, runningId } : {})}
+      {...(remote === true ? { filterable: true, runningId, onOpenMessage: (id: string, msg: string) => void openConversation(id, msg) } : {})}
       {...(assistantsOn
         ? {
             assistants,

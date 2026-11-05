@@ -374,6 +374,10 @@
   outline: 2px solid var(--fg);
   outline-offset: 1px;
 }
+/* 焦点框只画在外框上（以前框里的输入框再画一圈，成了两道） */
+.app .search2 input:focus-visible {
+  outline: none;
+}
 .search2 svg {
   width: calc(0.875 * var(--k));
   height: calc(0.875 * var(--k));
@@ -1036,6 +1040,49 @@
   width: calc(4.5 * var(--k));
   height: 1px;
   background: var(--border);
+}
+
+/* X-19：长会话压缩过的那行灰字：居中、静态，和正文同字号（照 sumus 原字号，随滑杆缩放），次要灰也过 4.5:1 */
+.msg-compact {
+  margin: calc(0.75 * var(--k)) auto calc(0.5 * var(--k));
+  max-width: 40em;
+  text-align: center;
+  color: var(--muted);
+}
+
+/* X-09：搜索框下面「消息」一组：和会话行同一套样式；片段可以换行（不截断），找到的词加粗 */
+.msg-hits {
+  margin-top: calc(0.75 * var(--k));
+}
+.msg-hits .conv {
+  align-items: flex-start;
+}
+.hit-icon {
+  flex: none;
+  width: calc(2.25 * var(--k));
+  height: calc(2.25 * var(--k));
+  display: grid;
+  place-items: center;
+  border-radius: calc(0.5 * var(--k));
+  background: var(--hover);
+  color: var(--muted);
+}
+.hit-icon svg {
+  width: calc(1 * var(--k));
+  height: calc(1 * var(--k));
+}
+.hit-snippet {
+  color: var(--muted);
+  font-size: calc(0.8125 * var(--k));
+  overflow-wrap: anywhere;
+}
+.hit-snippet mark {
+  background: transparent;
+  color: var(--fg);
+  font-weight: 600;
+}
+.msg-hits .conv-empty .pill {
+  margin-left: calc(0.25 * var(--k));
 }
 
 /* 消息：没有气泡；头像 36px + 名字 · 时间 + 正文 15px */

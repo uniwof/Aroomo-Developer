@@ -25,6 +25,8 @@ export interface ChatTurn {
   at?: number;
   /** 只在回复上：助手草稿卡 */
   draft?: ChatDraft;
+  /** X-19：这条上面那行灰字（「已把 … 之前的内容整理成摘要…」）；只来自 Core */
+  note?: string;
 }
 
 export const DRAFT_PART = 'data-aroomo-assistant-draft';
@@ -60,7 +62,7 @@ export interface RemoteInfo {
   /** 消息条数（没取消息时判断列表里显不显示） */
   count: number;
   /** 最后一条的预览（没取消息时列表用） */
-  last?: { role: 'user' | 'assistant'; text: string; at: number | undefined };
+  last?: { role: 'user' | 'assistant' | 'system'; text: string; at: number | undefined };
 }
 
 /** 发一轮时要不要让 Core 存：conversationId = 存到哪个会话；retry = 重试（Core 不再存用户这句） */
@@ -69,6 +71,28 @@ export interface PersistOpts {
   retry?: boolean;
   /** Core 收下了这次请求（HTTP 200）：用户这句已经存了 */
   onAccepted?: () => void;
+  /** X-19：Core 发话前刚压缩过：keep = 留着原文的条数（含这句），text = 灰字 */
+  onCompacted?: (c: { keep: number; text: string }) => void;
+}
+
+/** X-19：Core 发来的「刚压缩过」部件 */
+export const COMPACTED_PART = 'data-aroomo-compacted';
+
+/**
+ * 发给 Core 的历史只取最近 ≤ 100 条、≤ 120,000 字（至少最后一句）：以前超过 200 条直接 400。
+ * 存库的会话由 Core 按库里的原文 + 摘要拼上下文（X-19），本机会话就只带最近这些。
+ */
+export const SEND_MAX_TURNS = 100;
+export const SEND_MAX_CHARS = 120_000;
+export function capTurns(turns: ChatTurn[]): ChatTurn[] {
+  let n = 0;
+  let total = 0;
+  for (let i = turns.length - 1; i >= 0 && n < SEND_MAX_TURNS; i--) {
+    total += turns[i]!.text.length;
+    if (n > 0 && total > SEND_MAX_CHARS) break;
+    n++;
+  }
+  return turns.slice(turns.length - n);
 }
 
 export const STREAM_URL = '/api/chat/stream';
@@ -96,6 +120,7 @@ export type StreamEvent =
   | { type: 'error'; text: string }
   | { type: 'failure'; code: FailureCode }
   | { type: 'draft'; draft: ChatDraft }
+  | { type: 'compacted'; keep: number; text: string }
   | { type: 'finish' }
   | { type: 'done' };
 
@@ -109,12 +134,13 @@ export function parseEvent(event: string): StreamEvent | null {
   if (!data) return null;
   if (data === '[DONE]') return { type: 'done' };
   try {
-    const j = JSON.parse(data) as { type?: string; delta?: unknown; errorText?: unknown; data?: { code?: unknown } };
+    const j = JSON.parse(data) as { type?: string; delta?: unknown; errorText?: unknown; data?: { code?: unknown; keep?: unknown; text?: unknown } };
     if (j.type === 'text-delta' && typeof j.delta === 'string') return { type: 'delta', text: j.delta };
     if (j.type === DRAFT_PART) {
       const d = asDraft(j);
       return d ? { type: 'draft', draft: d } : null;
     }
+    if (j.type === COMPACTED_PART && typeof j.data?.keep === 'number' && typeof j.data.text === 'string') return { type: 'compacted', keep: j.data.keep, text: j.data.text };
     if (j.type === FAILURE_PART && typeof j.data?.code === 'string' && FAILURE_CODES.includes(j.data.code)) return { type: 'failure', code: j.data.code as FailureCode };
     if (j.type === 'error') return { type: 'error', text: typeof j.errorText === 'string' ? j.errorText : '对话出错了，请稍后再试。' };
     if (j.type === 'finish') return { type: 'finish' };
@@ -155,7 +181,7 @@ export async function* streamChat(
       credentials: 'same-origin',
       body: JSON.stringify({
         model,
-        messages: turns.map((t) => ({ role: t.role, content: t.text })),
+        messages: capTurns(turns).map((t) => ({ role: t.role, content: t.text })),
         ...(persist.conversationId ? { conversationId: persist.conversationId, ...(persist.retry ? { retry: true } : {}) } : {}),
       }),
       signal,
@@ -198,6 +224,7 @@ export async function* streamChat(
           text += ev.text;
           yield text;
         } else if (ev.type === 'draft') onDraft?.(ev.draft);
+        else if (ev.type === 'compacted') persist.onCompacted?.({ keep: ev.keep, text: ev.text });
         else if (ev.type === 'failure') code = ev.code;
         else if (ev.type === 'error') throw new ChatStreamError(ev.text, code);
         else if (ev.type === 'done') return;

@@ -33,6 +33,8 @@ const NEW_DRAFT = 'new';
 const ChatDraftCard = lazy(() => import('./pages/assistants/ChatDraftCard'));
 
 const draftOfMessage = (m: { metadata?: { custom?: unknown } }): ChatDraft | undefined => (m.metadata?.custom as { draft?: ChatDraft } | undefined)?.draft;
+/** X-19：这条上面那行「已整理成摘要」的灰字 */
+const noteOfMessage = (m: { metadata?: { custom?: unknown } }): string | undefined => (m.metadata?.custom as { note?: string } | undefined)?.note;
 
 const textOfMessage = (m: ThreadMessage): string =>
   m.content
@@ -48,7 +50,8 @@ function toTurns(messages: readonly ThreadMessage[]): ChatTurn[] {
     .filter((m) => m.role === 'user' || m.role === 'assistant')
     .map((m) => {
       const draft = draftOfMessage(m);
-      return { ...(CORE_ID.test(m.id) ? { id: m.id } : {}), role: m.role as 'user' | 'assistant', text: textOfMessage(m), ...(m.createdAt ? { at: m.createdAt.getTime() } : {}), ...(draft ? { draft } : {}) };
+      const note = noteOfMessage(m);
+      return { ...(CORE_ID.test(m.id) ? { id: m.id } : {}), role: m.role as 'user' | 'assistant', text: textOfMessage(m), ...(m.createdAt ? { at: m.createdAt.getTime() } : {}), ...(draft ? { draft } : {}), ...(note ? { note } : {}) };
     })
     .filter((t) => t.text.trim() !== '');
 }
@@ -67,6 +70,8 @@ export interface UiMessage {
   errorCode?: FailureCode | undefined;
   /** X-15 助手草稿卡（只在回复上） */
   draft?: ChatDraft;
+  /** X-19：这条上面那行灰字 */
+  note?: string;
 }
 
 let seq = 0;
@@ -79,7 +84,7 @@ export function toThreadMessage(m: UiMessage): ThreadMessageLike {
     role: m.role,
     content: [{ type: 'text' as const, text: m.text }],
     ...(m.at ? { createdAt: new Date(m.at) } : {}),
-    ...(m.draft ? { metadata: { custom: { draft: m.draft } } } : {}),
+    ...(m.draft || m.note ? { metadata: { custom: { ...(m.draft ? { draft: m.draft } : {}), ...(m.note ? { note: m.note } : {}) } } } : {}),
   };
   if (m.role === 'user') return base;
   if (m.state === 'running') return { ...base, status: { type: 'running' } };
@@ -88,7 +93,7 @@ export function toThreadMessage(m: UiMessage): ThreadMessageLike {
     return {
       ...base,
       status: { type: 'incomplete', reason: 'error', error: m.error ?? '对话出错了，请稍后再试。' },
-      ...(m.errorCode ? { metadata: { custom: { errorCode: m.errorCode } } } : {}),
+      ...(m.errorCode ? { metadata: { custom: { errorCode: m.errorCode, ...(m.note ? { note: m.note } : {}) } } } : {}),
     };
   return { ...base, status: { type: 'complete', reason: 'stop' } };
 }
@@ -130,6 +135,16 @@ const DaySep: FC = () => {
   );
 };
 
+/** X-19：长会话压缩过的那行静态灰字，放在留下的第一条原文上面（不动、不闪；读屏当作提示读出来） */
+const CompactNote: FC = () => {
+  const note = useAuiState((s) => noteOfMessage(s.message));
+  return note ? (
+    <p className="msg-compact" role="note">
+      {note}
+    </p>
+  ) : null;
+};
+
 const MessageTime: FC = () => {
   const at = useAuiState((s) => s.message.createdAt?.getTime());
   const t = timeLabel(at);
@@ -143,6 +158,7 @@ const useMsgDomId = () => `msg-${useAuiState((s) => s.message.id)}`;
 const UserMessage: FC = () => (
   <MessagePrimitive.Root className="msg msg-user" id={useMsgDomId()}>
     <DaySep />
+    <CompactNote />
     <div className="msg-row">
       <Avatar name="我" kind="user" size="msg" />
       <div className="msg-main">
@@ -323,6 +339,7 @@ const AssistantMessage: FC = () => {
   return (
     <MessagePrimitive.Root className="msg msg-assistant" id={domId}>
       <DaySep />
+      <CompactNote />
       <div className="msg-row">
         <Avatar name={who.name} kind={who.lead ? 'lead' : 'member'} size="msg" />
         <div className="msg-main">
@@ -391,7 +408,7 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
   const convRef = useRef(conversation);
   convRef.current = conversation;
   const [messages, setMessages] = useState<UiMessage[]>(() =>
-    conversation.messages.map((m) => ({ id: m.id ?? newId(), role: m.role, text: m.text, ...(m.at ? { at: m.at } : {}), ...(m.draft ? { draft: m.draft } : {}), state: 'done' as const })),
+    conversation.messages.map((m) => ({ id: m.id ?? newId(), role: m.role, text: m.text, ...(m.at ? { at: m.at } : {}), ...(m.draft ? { draft: m.draft } : {}), ...(m.note ? { note: m.note } : {}), state: 'done' as const })),
   );
   const [isRunning, setIsRunning] = useState(false);
   const persistRef = useRef(persist);
@@ -433,7 +450,13 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
             throw new ChatStreamError('这段对话没能保存到 Aroomo，请稍后点「重试」。');
           }
         }
-        const opts = conversationId ? { conversationId, retry: savedUser.current.has(lastUser.id), onAccepted: () => savedUser.current.add(lastUser.id) } : {};
+        // X-19：Core 刚压缩过 → 在留下的 keep 条原文（含这句）的第一条上面放那行灰字
+        const onCompacted = ({ keep, text }: { keep: number; text: string }) => {
+          const kept = history.filter((m) => m.text.trim() !== '');
+          const first = kept[Math.max(0, kept.length - keep)];
+          if (first) setMessages((l) => l.map((m) => (m.id === first.id ? { ...m, note: text } : m)));
+        };
+        const opts = conversationId ? { conversationId, retry: savedUser.current.has(lastUser.id), onAccepted: () => savedUser.current.add(lastUser.id), onCompacted } : {};
         for await (const text of streamChat(turns, convRef.current.model, ac.signal, fetchImpl, (draft) => update({ draft }), opts)) update({ text });
         update({ state: 'done' });
       } catch (e) {
@@ -479,7 +502,7 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
   const setDraftState = useCallback((messageId: string, state: 'done' | 'dismissed') => {
     const next = latest.current.map((m) => (m.id === messageId && m.draft ? { ...m, draft: { ...m.draft, state } } : m));
     setMessages(next);
-    save.current(next.filter((m) => m.text.trim() !== '').map((m) => ({ role: m.role, text: m.text, ...(m.at ? { at: m.at } : {}), ...(m.draft ? { draft: m.draft } : {}) })));
+    save.current(next.filter((m) => m.text.trim() !== '').map((m) => ({ role: m.role, text: m.text, ...(m.at ? { at: m.at } : {}), ...(m.draft ? { draft: m.draft } : {}), ...(m.note ? { note: m.note } : {}) })));
   }, []);
   const draftCtx = { actions: draftActions, setState: setDraftState };
   const runningCb = useRef(onRunning);

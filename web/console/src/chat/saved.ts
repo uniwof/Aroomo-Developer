@@ -15,15 +15,17 @@ export interface ConvJson {
   unread: boolean;
   running: boolean;
   messageCount: number;
-  last: { role: 'user' | 'assistant'; preview: string; createdAt: string } | null;
+  last: { role: 'user' | 'assistant' | 'system'; preview: string; createdAt: string } | null;
   updatedAt: string;
 }
 interface MsgJson {
   id: string;
   seq: number;
-  role: 'user' | 'assistant';
+  /** system = X-19 摘要行：content 是灰字，summary.toSeq = 被整理的最后一条 */
+  role: 'user' | 'assistant' | 'system';
   content: string;
   draft?: { id: string; data: unknown };
+  summary?: { toSeq: number };
   createdAt: string;
 }
 
@@ -91,15 +93,40 @@ export async function fetchMessages(id: string): Promise<ChatTurn[]> {
     if (!r.hasMore || !r.messages.length || rows.length >= MSG_MAX) break;
     before = r.messages[0]!.seq;
   }
-  return rows.map((m) => {
-    const draft = m.role === 'assistant' && m.draft ? asDraft(m.draft) : null;
-    return { id: m.id, role: m.role, text: m.content, at: Date.parse(m.createdAt) || undefined, ...(draft ? { draft } : {}) } as ChatTurn;
-  });
+  // X-19 摘要行不进对话，变成「留下的第一条原文」上面的那行灰字
+  const notes = new Map<string, string>();
+  for (const m of rows) {
+    if (m.role !== 'system' || !m.summary) continue;
+    const first = rows.find((x) => x.role !== 'system' && x.seq > m.summary!.toSeq);
+    if (first) notes.set(first.id, m.content);
+  }
+  return rows
+    .filter((m) => m.role !== 'system')
+    .map((m) => {
+      const draft = m.role === 'assistant' && m.draft ? asDraft(m.draft) : null;
+      const note = notes.get(m.id);
+      return { id: m.id, role: m.role, text: m.content, at: Date.parse(m.createdAt) || undefined, ...(draft ? { draft } : {}), ...(note ? { note } : {}) } as ChatTurn;
+    });
 }
 
 export async function createConversation(c: Pick<Conversation, 'id' | 'title' | 'model' | 'group'>): Promise<Conversation> {
   const body = { ...(isUuid(c.id) ? { id: c.id } : {}), title: c.title, model: c.model, ...(c.group?.length ? { group: c.group } : {}) };
   return fromJson((await api<{ conversation: ConvJson }>('POST', '/api/conversations', body)).conversation);
+}
+
+/** X-09 搜消息正文的一条结果 */
+export interface SearchResult {
+  conversationId: string;
+  title: string;
+  messageId: string;
+  role: 'user' | 'assistant';
+  snippet: string;
+  createdAt: string;
+}
+
+/** X-09：搜本账号的消息正文（最近的 20 条） */
+export async function searchMessages(q: string): Promise<SearchResult[]> {
+  return (await api<{ results: SearchResult[] }>('GET', `/api/search?q=${encodeURIComponent(q.slice(0, 100))}&limit=20`)).results;
 }
 
 export const renameConversation = (id: string, title: string) => api('PATCH', `/api/conversations/${id}`, { title });
