@@ -5,7 +5,9 @@
  */
 import { useState, type ReactNode } from 'react';
 import { Bell, ArrowLeft, ChevronRight, Home, Keyboard, Monitor, Moon, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Sun, UserRound, Users, X } from 'lucide-react';
-import { isFamily, type Member } from '@/lib/api';
+import { api, isFamily, type Member } from '@/lib/api';
+import { useAsk } from '@/components/Dialog';
+import { errText } from './ui';
 import { useUsage } from '@/lib/usage';
 import { UsageLine } from '@/pages/Members';
 import { BudgetSection, Field, Group, LeadSection, McpSection, SecuritySection } from '@/pages/Settings';
@@ -129,11 +131,39 @@ export function MembersPanel({ members, onOpen, onAdd }: { members: Member[]; on
   );
 }
 
-export function MemberDetail({ member, onChat, onMention }: { member: Member; onChat: () => void; onMention: () => void }) {
+/**
+ * 成员详情（切片 8）：启用 / 停用走 PATCH /api/members/:id {enabled}，入职走 POST /api/members/:id/onboard（只给所有者）。
+ * 停用先确认；处理中锁住这几个按钮；结果只在 Core 回成功后播报，失败说清楚、按钮还能再点。
+ */
+export function MemberDetail({ member, onChat, onMention, onChanged }: { member: Member; onChat: () => void; onMention: () => void; onChanged?: (m: Member) => void }) {
   const { rows, reload } = useUsage(120_000);
   const row = rows?.find((r) => r.memberId === member.id);
+  const ask = useAsk();
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState('');
+  const [err, setErr] = useState('');
+  async function change(kind: 'enable' | 'disable' | 'onboard') {
+    if (busy) return;
+    if (kind === 'disable' && !(await ask.confirm({ title: `停用 ${member.name}？`, desc: '停用后 TA 不再回答，对话里也 @ 不到；随时可以再启用。', ok: '停用', danger: true }))) return;
+    setBusy(true);
+    setDone('');
+    setErr('');
+    try {
+      const r =
+        kind === 'onboard'
+          ? await api<{ member: Member }>('POST', `/api/members/${encodeURIComponent(member.id)}/onboard`)
+          : await api<{ member: Member }>('PATCH', `/api/members/${encodeURIComponent(member.id)}`, { enabled: kind === 'enable' });
+      onChanged?.(r.member);
+      setDone(kind === 'onboard' ? `${member.name} 已入职` : kind === 'enable' ? `已启用 ${member.name}` : `已停用 ${member.name}`);
+    } catch (e) {
+      setErr(errText(e, '没改成，请稍后再试'));
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
     <div className="panel">
+      {ask.node}
       <div className="profile">
         <Avatar name={member.name} size="lg" />
         <div>
@@ -148,7 +178,29 @@ export function MemberDetail({ member, onChat, onMention }: { member: Member; on
         <button type="button" className="btn btn-outline" onClick={onMention} aria-label={`在当前对话里点名 ${member.name}`}>
           在当前对话里点名
         </button>
+        {member.enabled && member.status === 'candidate' && !isFamily() && (
+          <button type="button" className="btn btn-outline" disabled={busy} onClick={() => void change('onboard')} aria-label={`让 ${member.name} 入职`}>
+            入职
+          </button>
+        )}
+        {member.enabled ? (
+          <button type="button" className="btn btn-outline" disabled={busy} onClick={() => void change('disable')} aria-label={`停用 ${member.name}`}>
+            停用
+          </button>
+        ) : (
+          <button type="button" className="btn btn-outline" disabled={busy} onClick={() => void change('enable')} aria-label={`启用 ${member.name}`}>
+            启用
+          </button>
+        )}
       </div>
+      <p role="status" className="note">
+        {done}
+      </p>
+      {err && (
+        <p role="alert" className="note note-error">
+          {err}
+        </p>
+      )}
       <Group title="能力">
         <Field label="能力标签">
           <span>{member.capabilityTags.length ? member.capabilityTags.join('、') : '—'}</span>

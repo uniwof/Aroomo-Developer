@@ -80,20 +80,31 @@ const SIDE_MIN = 280;
 const SIDE_MAX = 420;
 const clampSide = (w: number) => Math.min(SIDE_MAX / 16, Math.max(SIDE_MIN / 16, w));
 
-/** 全部成员（成员页要列候选、停用的；对话、@ 只用在职的） */
-function useMembers(): [Member[], () => void] {
+/**
+ * 全部成员（成员页要列候选、停用的；对话、@ 只用在职的）。
+ * upsert：Core 回了新成员 / 改过的成员就立刻放进列表（添加后资源库卡片马上变「打开成员」，停用后详情马上变，审计清单 17）。
+ * failed：列表没拿到（成员页给「重试」，不再假装「还没有成员」）。
+ */
+function useMembers() {
   const [members, setMembers] = useState<Member[]>([]);
+  const [failed, setFailed] = useState(false);
   const [seq, setSeq] = useState(0);
   useEffect(() => {
     let alive = true;
     api<{ members: Member[] }>('GET', '/api/members')
-      .then((r) => alive && setMembers(r.members))
-      .catch(() => undefined);
+      .then((r) => {
+        if (!alive) return;
+        setMembers(r.members);
+        setFailed(false);
+      })
+      .catch(() => alive && setFailed(true));
     return () => {
       alive = false;
     };
   }, [seq]);
-  return [members, useCallback(() => setSeq((n) => n + 1), [])];
+  const reload = useCallback(() => setSeq((n) => n + 1), []);
+  const upsert = useCallback((m: Member) => setMembers((l) => (l.some((x) => x.id === m.id) ? l.map((x) => (x.id === m.id ? { ...x, ...m } : x)) : [...l, m])), []);
+  return { members, failed, reload, upsert };
 }
 
 /**
@@ -163,7 +174,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   }, [sideW]);
   const [insert, setInsert] = useState<{ text: string; seq: number } | null>(null);
   const [sideUi, setSideUi] = useState<SideUi>(SIDE_UI);
-  const [allMembers, reloadMembers] = useMembers();
+  const { members: allMembers, reload: reloadMembers, upsert: upsertMember } = useMembers();
   const members = useMemo(() => allMembers.filter((m) => m.enabled && m.status === 'active'), [allMembers]);
   const [dismissed, setDismissed] = useState<string[]>(() => {
     try {
@@ -624,6 +635,10 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
                 setInsert((p) => ({ text: `@${member.name} `, seq: (p?.seq ?? 0) + 1 }));
                 setView({ kind: 'chat' });
               }}
+              onChanged={(m) => {
+                upsertMember(m);
+                reloadMembers();
+              }}
             />
           )}
           {view.kind === 'capmap' && <CapabilityPanel />}
@@ -744,7 +759,10 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         open
         {...(addMember?.preset ? { preset: addMember.preset } : {})}
         onClose={() => setAddMember(null)}
-        onAdded={() => reloadMembers()}
+        onAdded={(m) => {
+          upsertMember(m);
+          reloadMembers();
+        }}
         {...(view.kind === 'library' ? {} : { onExplore: () => { setAddMember(null); goto({ kind: 'library' }); } })}
       />
         </Suspense>
