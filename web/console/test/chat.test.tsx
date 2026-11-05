@@ -211,6 +211,21 @@ describe('原生对话页', () => {
     expect(document.documentElement.style.fontSize).toBe('');
   });
 
+  it('自审 B16：内容滚到顶栏底下时顶栏出现分隔线，滚回顶部就没有', () => {
+    const { container } = renderPage();
+    const main = container.querySelector('main.main') as HTMLElement;
+    const inner = document.createElement('div');
+    main.appendChild(inner);
+    expect(main.hasAttribute('data-scrolled')).toBe(false);
+    inner.scrollTop = 40;
+    fireEvent.scroll(inner);
+    expect(main.hasAttribute('data-scrolled')).toBe(true);
+    inner.scrollTop = 0;
+    fireEvent.scroll(inner);
+    expect(main.hasAttribute('data-scrolled')).toBe(false);
+    inner.remove();
+  });
+
   it('手机（<48em）照 sumus：不用抽屉，整页列表 + 底部栏「对话 / 成员 / 我」，进对话后底部栏藏起来', () => {
     const w0 = window.innerWidth;
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
@@ -218,7 +233,11 @@ describe('原生对话页', () => {
       const { container } = renderPage();
       expect(container.querySelector('dialog')).toBeNull();
       expect(screen.queryByRole('navigation', { name: '主导航' })).toBeNull();
-      fireEvent.click(screen.getByRole('button', { name: '返回对话列表' }));
+      // Poke ③：手机对话页的返回键和面板一样是「← 对话」（看得见文字），不是光秃秃的箭头
+      const back = screen.getByRole('button', { name: '返回对话列表' });
+      expect(back.textContent).toBe('对话');
+      expect(back.classList.contains('back-btn')).toBe(true);
+      fireEvent.click(back);
       const nav = screen.getByRole('navigation', { name: '主导航' });
       expect(nav.querySelectorAll('button')).toHaveLength(3);
       expect(within(nav).getByRole('button', { name: '对话' }).getAttribute('aria-current')).toBe('page');

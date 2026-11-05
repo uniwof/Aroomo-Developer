@@ -19,17 +19,25 @@ import { type ChatPrefs } from './store';
 import { FONT_DEFAULT, FONT_MAX, FONT_MIN, clampFont } from '@/lib/display';
 import type { Theme } from '@/lib/display';
 
-/** 面板顶栏：← 返回 + 标题（自审 C13：桌面、手机、设置都用同一种「← 上一层名字」）（手机上还有「会话列表」按钮，由外层传进来） */
-export function PanelHeader({ title, onBack, backLabel, lead }: { title: string; onBack?: () => void; backLabel?: string; lead?: ReactNode }) {
+/**
+ * 全站唯一一种返回键（Poke ③ / 自审 C13）：「← 上一层名字」，桌面、手机、对话页、面板、设置都用它。
+ * 手机对话页回会话列表也是它（不再是光秃秃的 ← 图标）。ariaLabel 不给时读「返回 + 名字」。
+ */
+export function BackButton({ label, onClick, ariaLabel }: { label: string; onClick: () => void; ariaLabel?: string }) {
+  return (
+    <button type="button" className="btn btn-quiet back-btn" onClick={onClick} aria-label={ariaLabel ?? `返回${label}`}>
+      <ArrowLeft aria-hidden="true" />
+      <span>{label}</span>
+    </button>
+  );
+}
+
+/** 面板顶栏：← 上一层 + 标题（桌面中等宽度前面还有 ≡ 打开会话列表，由外层传进来） */
+export function PanelHeader({ title, onBack, backLabel, backAria, lead }: { title: string; onBack?: () => void; backLabel?: string; backAria?: string; lead?: ReactNode }) {
   return (
     <header className="main-head">
       {lead}
-      {onBack && (
-        <button type="button" className="btn btn-quiet" onClick={onBack} aria-label={`返回${backLabel ?? ''}`}>
-          <ArrowLeft aria-hidden="true" />
-          <span>{backLabel ?? '返回'}</span>
-        </button>
-      )}
+      {onBack && <BackButton label={backLabel ?? '返回'} onClick={onBack} {...(backAria ? { ariaLabel: backAria } : {})} />}
       <h1 className="main-title">{title}</h1>
     </header>
   );

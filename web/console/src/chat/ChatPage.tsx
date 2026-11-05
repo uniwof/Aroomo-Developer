@@ -8,7 +8,7 @@
  * 边界：store.ts 管数据和请求，Thread.tsx 管对话区，Sidebar.tsx 管会话列表栏，panels.tsx 管面板，这里管拼装。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, BookOpen, ChevronDown, ChevronRight, CircleAlert, Download, Ellipsis, KeyRound, Menu, MessagesSquare, Pencil, Plus, Settings, SquarePen, Trash2, Users, Wrench, X } from 'lucide-react';
+import { ArrowRight, BookOpen, ChevronDown, ChevronRight, CircleAlert, Download, Ellipsis, KeyRound, Menu, MessagesSquare, Pencil, Plus, Settings, SquarePen, Trash2, Users, Wrench, X } from 'lucide-react';
 import { api, currentUser, isFamily, viaShell, type Member } from '@/lib/api';
 import { useSearchParams } from 'react-router-dom';
 import { Audit } from '@/pages/Audit';
@@ -21,7 +21,7 @@ import { Inbox } from '@/pages/Inbox';
 import { useInboxCount } from '@/lib/inbox';
 import { Thread } from './Thread';
 import { Sidebar } from './Sidebar';
-import { CapabilityPanel, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type GoTarget, type SettingsSection } from './panels';
+import { BackButton, CapabilityPanel, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type GoTarget, type SettingsSection } from './panels';
 import { applyDisplay } from '@/lib/display';
 import { listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, stripSignature, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
 import { useAsk } from '@/components/Dialog';
@@ -136,6 +136,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [view, setView] = useState<View>({ kind: 'chat' });
+  // 自审 B16：下面的内容滚到顶栏底下时，顶栏加一条细分隔线（大字号时不再像半行字被切掉）；换页面 / 换会话自动归零
+  const [scrolledKey, setScrolledKey] = useState('');
   const [prefs, setPrefs] = useState<ChatPrefs>(() => loadPrefs());
   const [menu, setMenu] = useState<'none' | 'topic' | 'more'>('none');
   const [sideW, setSideW] = useState<number>(() => {
@@ -359,27 +361,29 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     />
   );
 
-  /** 手机上「←」回到哪一层：成员、我是底部栏的顶层页，没有返回；我 里的四项回到 我；收件箱回到对话列表 */
-  const phoneParent = (v: View): { go: () => void; label: string } | null => {
+  /** 手机上「←」回到哪一层：成员、我是底部栏的顶层页，没有返回；我 里的四项回到 我；收件箱、挑选成员回到会话列表（名字和底部栏一样叫「对话」） */
+  const phoneParent = (v: View): { go: () => void; label: string; aria?: string } | null => {
     if (v.kind === 'members' || v.kind === 'me') return null;
     if (v.kind === 'settings' && v.section) return { go: () => setView({ kind: 'settings' }), label: '设置' };
     if (v.kind === 'settings' || v.kind === 'library' || v.kind === 'tools' || v.kind === 'keys') return { go: () => setView({ kind: 'me' }), label: '我' };
-    if (v.kind === 'inbox' || v.kind === 'group-new') return { go: () => { setView({ kind: 'chat' }); setOpen(true); }, label: '对话列表' };
+    if (v.kind === 'inbox' || v.kind === 'group-new') return { go: () => { setView({ kind: 'chat' }); setOpen(true); }, label: '对话', aria: '返回对话列表' };
     const p = parentOf(v);
     return p ? { go: () => setView(p.view), label: p.label } : null;
   };
 
-  const menuButton = !wide || collapsed ? (
+  // 桌面收起列表 / 中等宽度：≡ 打开会话列表。手机对话页：和面板一样的「← 对话」（Poke ③ 返回键全站一种）
+  const menuButton = phone ? (
+    <BackButton label="对话" ariaLabel="返回对话列表" onClick={() => setOpen(true)} />
+  ) : !wide || collapsed ? (
     <button
       type="button"
       className="icon-btn hit"
-      aria-label={phone ? '返回对话列表' : '打开菜单：会话列表、成员、设置'}
-      aria-haspopup={wide || phone ? undefined : 'dialog'}
-      aria-expanded={phone ? undefined : wide ? !collapsed : open}
+      aria-label="打开菜单：会话列表、成员、设置"
+      aria-haspopup={wide ? undefined : 'dialog'}
+      aria-expanded={wide ? !collapsed : open}
       onClick={() => (wide ? setCollapsed(false) : setOpen(true))}
     >
-      {/* 手机照 sumus 用「←」回到会话列表；桌面收起列表后用 ≡ */}
-      {wide ? <Menu aria-hidden="true" /> : <ArrowLeft aria-hidden="true" />}
+      <Menu aria-hidden="true" />
     </button>
   ) : null;
 
@@ -548,7 +552,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     const title = view.kind === 'member' ? (member?.name ?? '成员') : view.kind === 'settings' && view.section ? SETTINGS_SECTIONS.find((x) => x.id === view.section)!.label : TITLES[view.kind];
     main = (
       <>
-        <PanelHeader title={title} lead={phone ? null : menuButton} {...(parent ? { onBack: () => ('go' in parent ? parent.go() : parent.view.kind === 'settings' ? goto(parent.view) : setView(parent.view)), backLabel: parent.label } : {})} />
+        <PanelHeader title={title} lead={phone ? null : menuButton} {...(parent ? { onBack: () => ('go' in parent ? parent.go() : parent.view.kind === 'settings' ? goto(parent.view) : setView(parent.view)), backLabel: parent.label, ...('aria' in parent && parent.aria ? { backAria: parent.aria } : {}) } : {})} />
         <div className="panel-scroll">
           {view.kind === 'members' && (
             <>
@@ -696,7 +700,17 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           {sidebar}
         </main>
       ) : (
-        <main className="main" aria-labelledby={view.kind === 'chat' ? 'chat-title' : undefined} aria-label={view.kind === 'chat' ? undefined : '面板'}>
+        <main
+          className="main"
+          aria-labelledby={view.kind === 'chat' ? 'chat-title' : undefined}
+          aria-label={view.kind === 'chat' ? undefined : '面板'}
+          data-scrolled={scrolledKey === `${view.kind}:${currentId}` ? '' : undefined}
+          onScrollCapture={(e) => {
+            const k = `${view.kind}:${currentId}`;
+            const on = (e.target as HTMLElement).scrollTop > 0;
+            if (on !== (scrolledKey === k)) setScrolledKey(on ? k : '');
+          }}
+        >
           {main}
         </main>
       )}

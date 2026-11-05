@@ -740,6 +740,13 @@
   box-sizing: border-box;
   container-type: inline-size;
 }
+/* 自审 B16：内容滚到顶栏底下才出现的细线（静态，不做阴影动画） */
+.main[data-scrolled] > .main-head {
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+.back-btn {
+  flex: none;
+}
 .main-title {
   margin: 0;
   min-width: 0;
@@ -948,6 +955,7 @@
   align-items: center;
   justify-content: space-between;
   width: 100%;
+  min-height: 44px; /* 自审 B11：点击区 ≥44 */
   padding: calc(0.75 * var(--k)) calc(1.25 * var(--k));
   border: 0;
   border-top: 1px solid var(--border);
@@ -1875,7 +1883,7 @@ kbd.row-value {
 }
 .toolbar-search {
   flex: 1 1 14em;
-  min-height: 2.75rem;
+  min-height: max(2.75rem, 44px);
 }
 .panel > .note:empty {
   display: none;
