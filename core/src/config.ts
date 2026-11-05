@@ -35,6 +35,8 @@ export interface CoreConfig {
   chatToken: string | undefined;
   /** 进程内定时任务（默认开；CORE_JOBS=off 关闭） */
   jobs: boolean;
+  /** 助手定时执行器总开关（ASSISTANT_SCHEDULER_ENABLED=true 才开；默认关，关着时「立即运行」照样能用） */
+  assistantSchedulerEnabled: boolean;
   /** 操作员令牌 HMAC 用的服务端密钥；未设置时操作员令牌不可用 */
   tokenSecret: string | undefined;
   /** 保险箱信封加密的主密钥（32 字节 base64）；未设置时保险箱接口 503。只在服务器 .env */
@@ -158,6 +160,7 @@ export function loadConfig(env: Env = process.env): CoreConfig {
     ownerAccountId,
     chatToken,
     jobs: (str(env, 'CORE_JOBS') ?? 'on') !== 'off',
+    assistantSchedulerEnabled: (str(env, 'ASSISTANT_SCHEDULER_ENABLED') ?? '').toLowerCase() === 'true',
     tokenSecret,
     vaultKey,
     cfAccessTeamDomain,
@@ -187,6 +190,7 @@ export function toSafeJSON(cfg: CoreConfig): Record<string, unknown> {
     cfAccessTeamDomain: cfg.cfAccessTeamDomain ?? '(unset)',
     cfAccessAud: cfg.cfAccessAud ? '(set)' : '(unset)',
     accessReauth: cfg.accessReauth,
+    assistantSchedulerEnabled: cfg.assistantSchedulerEnabled,
     accessReauthMaxAgeS: cfg.accessReauthMaxAgeS,
   };
 }

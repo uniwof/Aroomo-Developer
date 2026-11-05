@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 const SRC = fileURLToPath(new URL('../src/', import.meta.url));
 // 文件 → 允许的调用次数
 const ALLOW: Record<string, number> = {
+  'assistants/pg.ts': 2, // systemActiveRuns（重启恢复）/ systemDueAssistants（定时执行器第一步）：只读找行，改写切回 userScoped
   'members/pg.ts': 1, // userIds：系统定时任务列出有成员的用户
   'vault/pg.ts': 2, // countAll / countLive：只给启动检查（vaultStartupCheck）用，只读计数，不对用户接口开放
 };

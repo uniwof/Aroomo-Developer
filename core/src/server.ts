@@ -67,6 +67,10 @@ import { UsersService } from "./users/service.js";
 import { registerUserRoutes } from "./users/routes.js";
 import { registerConsole } from "./console/static.js";
 import type { RoutableMember } from "./router/types.js";
+import { AssistantService } from "./assistants/service.js";
+import { AssistantRunner } from "./assistants/runner.js";
+import { registerAssistantRoutes } from "./assistants/routes.js";
+import { assistantSchedulerJob } from "./scheduler/assistant-scheduler.js";
 
 export const VERSION = "0.0.1";
 
@@ -74,6 +78,7 @@ declare module "fastify" {
   interface FastifyInstance {
     inbox: InboxService;
     jobs: Scheduler;
+    assistants: { service: AssistantService; runner: AssistantRunner };
   }
 }
 
@@ -363,6 +368,36 @@ export function buildServer(
   registerChatRoutes(app, chatService, cfg.chatToken, chatRouting);
   // 控制台原生对话（#250 spike）：控制台会话 Cookie + CSRF 头 → 同一个 ChatService 和 ctxFor（D31 路由 / 署名不变）
   registerChatStreamRoute(app, chatService, { ctxFor: chatRouting.ctxFor, ...(deps.chatStreamLimits ? { limits: deps.chatStreamLimits } : {}) });
+  // 助手（指南 v1.1 附录 C）：第一版只给所有者；运行走同一个 ChatService（账号走自己的 ctxFor），整次运行在建它的账号的数据范围里
+  const membersOf = (u: string) => (u === "owner" ? deps.members : deps.members.forUser(u));
+  const assistantSvc = new AssistantService({ store: deps.assistants, membersFor: membersOf, confirm, now: deps.now, timezone: cfg.timezone });
+  const assistantRunner = new AssistantRunner({
+    store: deps.assistants,
+    service: assistantSvc,
+    membersFor: membersOf,
+    chatFor: (u) => (req, signal) => chatService.complete(req, signal, u === "owner" ? undefined : chatRouting.ctxFor(u)),
+    inbox,
+    audit: bindAudit(deps.auditLog, { type: "system", id: "assistants" }),
+    now: deps.now,
+    timezone: cfg.timezone,
+    ...(deps.assistantTimeoutMs ? { timeoutMs: deps.assistantTimeoutMs } : {}),
+    ...(deps.assistantIsFree ? { isFree: deps.assistantIsFree } : {}),
+  });
+  assistantSvc.setLauncher(assistantRunner);
+  // 付费调用确认卡（kind=payment，重要确认）：同意 → 同一条运行继续；拒绝 → 取消
+  inbox.registerHandler("assistant.run.confirm", async (item, actionId, audit) => {
+    if (item.related?.type !== "assistant_run") return;
+    await assistantRunner.resolveConfirmation(item.userId ?? "owner", item.related.id, actionId === "approve", audit);
+  });
+  registerAssistantRoutes(app, assistantSvc);
+  app.decorate("assistants", { service: assistantSvc, runner: assistantRunner });
+  // X-21：上次进程留下的 queued / running → failed/server_restart
+  app.addHook("onReady", async () => {
+    await assistantRunner.recoverAfterRestart().catch((err: Error) => app.log.error({ errName: err.name }, "assistant recovery failed"));
+  });
+  // 关闭时不等运行跑完：停掉进程内的运行，状态留给下次启动的恢复处理
+  app.addHook("onClose", async () => assistantRunner.shutdown());
+
   // 账号的 Key 才跳过所有者的成员联动；所有者的行在 PG 上可能是 user_id='owner'（0024 回填），显式排除（#244 必改 2）
   const isAccountKey = (rec: { userId?: string }): boolean =>
     rec.userId !== undefined && rec.userId !== "" && rec.userId !== "owner";
@@ -412,6 +447,10 @@ export function buildServer(
   jobs.add(quietTakeoverExpiryJob(inbox, executorSvc, deps.now));
   // 快跑阶段只有所有者：试用到期提醒只看所有者的设置（加固阶段再按用户遍历）
   jobs.add(trialExpiryJob(new TrialService(deps.settings, deps.now), inbox));
+  // 助手定时执行器：默认关（ASSISTANT_SCHEDULER_ENABLED=true 才注册；阶段 3 才开）
+  if (cfg.assistantSchedulerEnabled) {
+    jobs.add(assistantSchedulerJob({ store: deps.assistants, start: (u, r) => assistantRunner.start(u, r), now: deps.now }));
+  }
   jobs.add(inboxTidyJob(inbox, deps.now, async () => (await deps.users.listUsers()).map((u) => u.id)));
   app.decorate("jobs", jobs);
   if (opts.startJobs ?? cfg.jobs) {
