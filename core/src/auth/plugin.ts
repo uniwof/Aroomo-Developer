@@ -46,8 +46,11 @@ export interface AuthOptions {
   ownerConfigured: boolean;
   /** 每个凭据（没有凭据按 IP）每分钟最多请求数；默认 1200。防暴力猜令牌 / 刷接口（CodeQL js/missing-rate-limiting） */
   rateLimitPerMin?: number;
-  /** 必改 1 方案 A：所有者自己的账号 id（CORE_OWNER_ACCOUNT_ID）；未设置 = 不映射 */
-  ownerAccountId?: string | undefined;
+  /**
+   * 必改 1 方案 A：所有者自己的账号 id（CORE_OWNER_ACCOUNT_ID）。是个函数：启动检查（server.ts onReady）通过后才返回 id；
+   * 未设置 / 启动检查没过 = undefined = 不映射
+   */
+  ownerAccountId?: () => string | undefined;
 }
 
 /** 限速按凭据分桶：Shell 代理后所有请求同一个 IP，不能只按 IP；令牌只取摘要，不留原文 */
@@ -99,12 +102,17 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
     const raw = m ? (m[1] as string) : cookieToken;
     let principal = raw ? await opts.verify(raw) : null;
     if (!principal || (cookieToken && principal.type !== 'user')) throw new HttpError(401, 'UNAUTHORIZED', '请先登录');
-    // 必改 1 方案 A：只认服务端配置的账号 id，且必须是管理员账号（配错成家人的 id 也不会让家人看到所有者数据）
-    if (principal.type === 'user' && opts.ownerAccountId && principal.userId === opts.ownerAccountId && principal.role === 'admin') {
+    // 必改 1 方案 A：只认服务端配置（且启动检查通过）的账号 id，且这次请求时仍是管理员（verifySession 每次读库，停用即失效）；
+    // 负责人必改 1：只对 Cookie 会话映射——同一个会话令牌放进 Bearer 头不映射（脚本 / 客户端拿到令牌也拿不到所有者范围）
+    const ownerAccountId = opts.ownerAccountId?.();
+    if (cookieToken && principal.type === 'user' && ownerAccountId && principal.userId === ownerAccountId && principal.role === 'admin') {
       principal = { ...principal, ownerAccount: true };
     }
     req.principal = principal;
-    req.audit = bindAudit(opts.auditLog, actorOf(principal));
+    // 负责人必改 2：映射后的审计写明 scope=owner(mapped) 和账号 id（操作者仍记为这个账号）
+    req.audit = principal.type === 'user' && principal.ownerAccount
+      ? bindAudit(opts.auditLog, actorOf(principal), `scope=owner(mapped) account=${principal.userId}`)
+      : bindAudit(opts.auditLog, actorOf(principal));
     if (cookieToken && UNSAFE_METHODS.has(req.method) && !req.headers[CSRF_HEADER]) {
       await req.audit('auth.denied', { type: 'csrf', id: req.routeOptions.url ?? req.url.split('?')[0] ?? '' }, 'denied', `${req.method} Cookie 会话缺少 ${CSRF_HEADER} 头`);
       throw new HttpError(403, 'CSRF', `用 Cookie 登录时，改动类请求要带 ${CSRF_HEADER} 头`);
