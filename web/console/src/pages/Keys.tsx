@@ -13,7 +13,7 @@ interface KeyItem {
   updatedAt: string;
 }
 
-const field = 'min-h-12 w-full rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3';
+const field = 'w-full';
 
 export function Keys() {
   const [keys, setKeys] = useState<KeyItem[] | null>(null);
@@ -67,13 +67,13 @@ export function Keys() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-xl font-semibold">Key 与接入</h1>
+      <h1 className="page-title">Key 与接入</h1>
       {msg && <p role="status">{msg}</p>}
       <ul className="flex flex-col gap-2">
         {keys === null && <li className="text-[var(--muted)]">正在加载…</li>}
         {keys?.length === 0 && <li className="text-[var(--muted)]">还没有 Key</li>}
         {keys?.map((k) => (
-          <li key={k.id} className="rounded-xl border border-[var(--border)] p-3">
+          <li key={k.id} className="card">
             <div className="font-medium">{k.name}</div>
             <div className="text-[var(--muted)]">
               ••••{k.last4} · {k.status}
@@ -96,7 +96,7 @@ export function Keys() {
         <input name="apiKey" required type="password" autoComplete="off" placeholder="Key" aria-label="Key" className={field} />
         <input name="model" required placeholder="模型，如 openai/gpt-4o" aria-label="模型" className={field} />
         <input name="apiBase" type="url" placeholder="接口地址（可选）" aria-label="接口地址" className={field} />
-        <Button type="submit" disabled={busy} className="min-h-12">
+        <Button type="submit" disabled={busy}>
           保存
         </Button>
       </form>

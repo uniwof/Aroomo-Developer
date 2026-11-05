@@ -87,20 +87,20 @@ export function Executors() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-xl font-semibold">本机执行员</h1>
+      <h1 className="page-title">本机执行员</h1>
       {msg && <p role="status">{msg}</p>}
 
       {confirm && (
-        <div role="alertdialog" aria-labelledby="exec-confirm-title" className="rounded-xl border-2 border-[var(--border)] p-4">
-          <h2 id="exec-confirm-title" className="text-[1rem] font-semibold">
+        <div role="alertdialog" aria-labelledby="exec-confirm-title" className="card card-strong">
+          <h2 id="exec-confirm-title" className="group-title">
             {confirm.kind === 'revoke' ? `吊销「${confirm.label}」？` : '取消这个任务？'}
           </h2>
           <p className="mt-1 text-[var(--muted)]">{confirm.kind === 'revoke' ? '吊销后这台电脑马上不能再领任务，想恢复要重新配对。' : '正在进行的步骤会在下一个检查点停下。'}</p>
           <div className="mt-3 flex gap-2">
-            <Button type="button" className="min-h-12" onClick={() => void doConfirm()}>
+            <Button type="button" onClick={() => void doConfirm()}>
               {confirm.kind === 'revoke' ? '确认吊销' : '确认取消任务'}
             </Button>
-            <Button type="button" variant="outline" className="min-h-12" onClick={() => setConfirm(null)}>
+            <Button type="button" variant="outline" onClick={() => setConfirm(null)}>
               先不了
             </Button>
           </div>
@@ -108,14 +108,14 @@ export function Executors() {
       )}
 
       <section aria-labelledby="exec-devices" className="flex flex-col gap-2">
-        <h2 id="exec-devices" className="text-[1rem] font-semibold">
+        <h2 id="exec-devices" className="group-title">
           电脑
         </h2>
         {devices === null && <p className="text-[var(--muted)]">正在加载…</p>}
         {devices?.length === 0 && <p className="text-[var(--muted)]">还没有电脑连上来。装好本机执行员并配对后会出现在这里。</p>}
         <ul className="flex flex-col gap-2">
           {devices?.map((d) => (
-            <li key={d.id} className="rounded-xl border border-[var(--border)] p-3">
+            <li key={d.id} className="card">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-medium">{d.deviceName}</span>
                 <span className="rounded-full border border-[var(--border)] px-2 py-0.5">{d.online ? '● 在线' : '○ 离线'}</span>
@@ -124,7 +124,7 @@ export function Executors() {
                 {d.platform} · 版本 {d.version} · 最近一次联系 {ago(d.lastSeenAt)}
               </div>
               {d.clientId && (
-                <Button type="button" variant="outline" className="mt-2 min-h-12" onClick={() => setConfirm({ kind: 'revoke', id: d.clientId as string, label: d.deviceName })} aria-label={`吊销 ${d.deviceName}`}>
+                <Button type="button" variant="outline" className="mt-2" onClick={() => setConfirm({ kind: 'revoke', id: d.clientId as string, label: d.deviceName })} aria-label={`吊销 ${d.deviceName}`}>
                   吊销这台电脑
                 </Button>
               )}
@@ -136,14 +136,14 @@ export function Executors() {
       <Allowlist />
 
       <section aria-labelledby="exec-tasks" className="flex flex-col gap-2">
-        <h2 id="exec-tasks" className="text-[1rem] font-semibold">
+        <h2 id="exec-tasks" className="group-title">
           任务
         </h2>
         {tasks === null && <p className="text-[var(--muted)]">正在加载…</p>}
         {tasks?.length === 0 && <p className="text-[var(--muted)]">还没有任务。</p>}
         <ul className="flex flex-col gap-2">
           {tasks?.slice(0, 30).map((t) => (
-            <li key={t.id} className="rounded-xl border border-[var(--border)] p-3">
+            <li key={t.id} className="card">
               <div className="font-medium break-all">
                 {KIND_LABEL[t.kind] ?? t.kind} · {t.site}
               </div>
@@ -155,7 +155,7 @@ export function Executors() {
               {t.resultError && <p className="break-words">{t.resultError}</p>}
               <div className="text-[var(--muted)]">{ago(t.createdAt)}创建</div>
               {(t.status === 'queued' || t.status === 'running') && (
-                <Button type="button" variant="outline" className="mt-2 min-h-12" onClick={() => setConfirm({ kind: 'cancel', id: t.id, label: t.site })} aria-label={`取消任务 ${t.site}`}>
+                <Button type="button" variant="outline" className="mt-2" onClick={() => setConfirm({ kind: 'cancel', id: t.id, label: t.site })} aria-label={`取消任务 ${t.site}`}>
                   取消任务
                 </Button>
               )}

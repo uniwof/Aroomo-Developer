@@ -50,7 +50,7 @@ export function Login({ onLoggedIn }: { onLoggedIn?: () => void }) {
           />
         </label>
         {error && (
-          <p role="alert" className="text-[#d70015]">
+          <p role="alert" className="note note-error">
             {error}
           </p>
         )}

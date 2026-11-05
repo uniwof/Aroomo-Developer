@@ -105,19 +105,19 @@ export function Audit() {
       </h1>
       <p className="text-[var(--muted)]">谁在什么时候做了什么，只能看，不能改。新的在前。</p>
 
-      <div className="flex flex-wrap gap-4 rounded-2xl bg-[var(--card)] p-4">
+      <div className="card card-muted flex flex-wrap gap-4">
         <label className="flex flex-col gap-1">
           <span>动作开头</span>
           <input
             value={prefix}
             onChange={(e) => setPrefix(e.target.value)}
             placeholder="如 gateway. 或 mcp."
-            className="min-h-12 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3"
+            
           />
         </label>
         <label className="flex flex-col gap-1">
           <span>结果</span>
-          <select value={result} onChange={(e) => setResult(e.target.value)} className="min-h-12 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3">
+          <select value={result} onChange={(e) => setResult(e.target.value)} >
             <option value="">全部</option>
             <option value="ok">成功</option>
             <option value="denied">被拒绝</option>
@@ -132,7 +132,7 @@ export function Audit() {
 
       <ul className="flex flex-col gap-2" aria-label="审计记录">
         {shown.map((r) => (
-          <li key={r.id} className="rounded-xl border border-[var(--border)] p-3">
+          <li key={r.id} className="card">
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-medium break-all">{r.action}</span>
               <span className={`rounded-full border px-2 py-0.5 ${RESULT_CLASS[r.result] ?? ''}`}>{RESULT_LABEL[r.result] ?? r.result}</span>
@@ -149,7 +149,7 @@ export function Audit() {
       </ul>
 
       {cursor && (
-        <Button variant="outline" className="min-h-12" disabled={busy} onClick={() => void loadPage(cursor)}>
+        <Button variant="outline" disabled={busy} onClick={() => void loadPage(cursor)}>
           {busy ? '正在加载…' : '加载更多'}
         </Button>
       )}

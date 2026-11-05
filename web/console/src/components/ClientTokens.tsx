@@ -128,7 +128,7 @@ export function ClientTokens() {
   }
 
   const active = (clients ?? []).filter((c) => !c.revokedAt);
-  const inputCls = 'min-h-12 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3';
+  const inputCls = '';
 
   return (
     <div className="space-y-4 py-3">
@@ -183,10 +183,10 @@ export function ClientTokens() {
       </p>
 
       {created && (
-        <div role="region" aria-label="新令牌（只显示一次）" className="space-y-2 rounded-xl border-2 border-[var(--border)] p-4">
+        <div role="region" aria-label="新令牌（只显示一次）" className="card card-strong space-y-2">
           <div className="font-semibold">「{created.name}」的令牌</div>
           <p>关掉就再也看不到了，请现在复制，粘贴到外部客户端里。</p>
-          <code aria-label="令牌" className="block rounded-xl bg-[var(--bg)] p-3 break-all select-all">
+          <code aria-label="令牌" className="row-pre block break-all">
             {created.token}
           </code>
           <div className="flex flex-wrap gap-4">
@@ -208,8 +208,8 @@ export function ClientTokens() {
       )}
 
       {confirm && (
-        <div role="alertdialog" aria-labelledby={`${uid}-confirm`} className="rounded-xl border-2 border-[var(--border)] p-4">
-          <h3 id={`${uid}-confirm`} className="text-[1rem] font-semibold">
+        <div role="alertdialog" aria-labelledby={`${uid}-confirm`} className="card card-strong">
+          <h3 id={`${uid}-confirm`} className="group-title">
             吊销「{confirm.name}」？
           </h3>
           <p className="mt-1 text-[var(--muted)]">吊销后这个客户端马上不能再连 Aroomo，不能恢复；想再用要重新新建令牌。</p>
@@ -229,7 +229,7 @@ export function ClientTokens() {
         {clients !== null && active.length === 0 && <p className="text-[var(--muted)]">还没有可用的客户端令牌。</p>}
         <ul className="flex flex-col gap-2" aria-label="客户端令牌列表">
           {active.map((c) => (
-            <li key={c.id} className="rounded-xl border border-[var(--border)] p-3">
+            <li key={c.id} className="card">
               <div className="font-medium break-all">
                 {c.name}
                 {c.expiresAt && new Date(c.expiresAt).getTime() <= Date.now() ? '（已过期）' : ''}

@@ -24,7 +24,7 @@ export interface LibraryEntry {
   createdAt: string;
 }
 
-const field = 'min-h-12 w-full rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3';
+const field = 'w-full';
 
 export function Library() {
   const [items, setItems] = useState<LibraryEntry[] | null>(null);
@@ -91,12 +91,12 @@ export function Library() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-xl font-semibold">资源库</h1>
+      <h1 className="page-title">资源库</h1>
       <form onSubmit={(e) => void add(e)} className="flex flex-col gap-3" aria-label="收进资源库">
         <textarea name="text" required rows={2} maxLength={20000} placeholder="粘贴链接，或写一个点子" aria-label="链接或点子" className={field + ' py-2'} />
         <input name="title" maxLength={200} placeholder="标题（可不填）" aria-label="标题" className={field} />
         <input name="tags" placeholder="标签，用空格或逗号分开（可不填）" aria-label="标签" className={field} />
-        <Button type="submit" disabled={busy} className="min-h-12">
+        <Button type="submit" disabled={busy}>
           收进来
         </Button>
       </form>
@@ -116,7 +116,7 @@ export function Library() {
         {items === null && <li className="text-[var(--muted)]">正在加载…</li>}
         {items?.length === 0 && <li className="text-[var(--muted)]">{q || kind ? '没有找到' : '还没有内容'}</li>}
         {items?.map((it) => (
-          <li key={it.id} className="rounded-xl border border-[var(--border)] p-3">
+          <li key={it.id} className="card">
             <div className="font-medium">
               {it.url ? (
                 <a href={it.url} target="_blank" rel="noreferrer" className="underline">
@@ -131,7 +131,7 @@ export function Library() {
               {it.tags.length > 0 && ` · ${it.tags.join(' ')}`}
             </div>
             {it.body && <p className="mt-1 break-words">{it.body}</p>}
-            <Button type="button" variant="outline" className="mt-2 min-h-12" onClick={() => void remove(it.id)} aria-label={confirmId === it.id ? `确认删除 ${it.title}` : `删除 ${it.title}`}>
+            <Button type="button" variant="outline" className="mt-2" onClick={() => void remove(it.id)} aria-label={confirmId === it.id ? `确认删除 ${it.title}` : `删除 ${it.title}`}>
               {confirmId === it.id ? '再点一次确认删除' : '删除'}
             </Button>
           </li>

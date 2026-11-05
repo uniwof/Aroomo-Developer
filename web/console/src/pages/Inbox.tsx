@@ -92,7 +92,7 @@ export function Inbox() {
             <div className="group-head">
               <h2 className="group-title">{g.title}</h2>
               {g.key === 'brief' && (data[g.key] ?? []).length > 1 && (
-                <Button variant="outline" className="min-h-12" onClick={() => dismiss((data[g.key] ?? []).map((i) => i.id))}>
+                <Button variant="outline" onClick={() => dismiss((data[g.key] ?? []).map((i) => i.id))}>
                   全部知道了
                 </Button>
               )}
@@ -109,12 +109,12 @@ export function Inbox() {
                   <p className="row-hint">{formatTime(i.createdAt)}</p>
                   <div className="row-actions">
                     {(i.actions ?? []).map((a) => (
-                      <Button key={a.id} className="min-h-12" variant={a.confirm && a.confirm.kind !== 'normal' ? 'outline' : 'default'} onClick={() => void act(i, a)}>
+                      <Button key={a.id} variant={a.confirm && a.confirm.kind !== 'normal' ? 'outline' : 'default'} onClick={() => void act(i, a)}>
                         {a.label}
                       </Button>
                     ))}
                     {canDismiss(i) && (
-                      <Button variant="outline" className="min-h-12" aria-label={`知道了：${i.title}`} onClick={() => dismiss([i.id])}>
+                      <Button variant="outline" aria-label={`知道了：${i.title}`} onClick={() => dismiss([i.id])}>
                         知道了
                       </Button>
                     )}

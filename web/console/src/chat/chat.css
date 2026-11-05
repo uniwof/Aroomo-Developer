@@ -11,25 +11,6 @@
 .app {
   /* 1 个「sumus 像素 / 16」：默认根字号 16 时就是 sumus 原尺寸（所有者 23:07）；设置里的滑杆 12–32 改根字号，全站按比例缩放 */
   --k: 1rem;
-  --bg: #ffffff;
-  --fg: #1a1a1a;
-  --muted: #6b6b6b;
-  --faint: #6d6d6d; /* sumus 用约 #8c8c8c；为在选中行 #f0f0f0 上也过 WCAG AA 4.5:1 加深到 #6d6d6d */
-  --card: #f5f5f5;
-  --border: #ececec;
-  --hover: #f5f5f5;
-  --selected: #f0f0f0;
-  --field: #c2c2c2;
-  --side: #fafafa;
-  --rail: #f7f7f7;
-  --seg: #f3f3f3;
-  --shadow: 0 1px 2px rgb(0 0 0 / 0.08), 0 0 0 0.5px rgb(0 0 0 / 0.04);
-  --warn-bg: #fdefdc;
-  --warn-line: #ecd5b4;
-  --warn-bar: #ff7f50;
-  --warn-fg: #8a520f;
-  /* sumus 的品牌橙 → Aroomo 珊瑚色（负责人落地文档 0.2）：标志、未读圆点、提示条左边线和图标；珊瑚上只放深色 */
-  --brand: #ff7f50;
   display: flex;
   height: 100dvh;
   background: var(--bg);
@@ -39,79 +20,15 @@
   line-height: 1.43;
   overflow: hidden;
 }
-:root.dark .app {
-  --bg: #161616;
-  --fg: #ededed;
-  --muted: #a3a3a3;
-  --faint: #8f8f8f;
-  --card: #222;
-  --border: #2a2a2a;
-  --hover: #1f1f1f;
-  --selected: #262626;
-  --field: #4a4a4a;
-  --side: #1b1b1b;
-  --rail: #1d1d1d;
-  --seg: #242424;
-  --shadow: 0 1px 2px rgb(0 0 0 / 0.5);
-  --warn-bg: #3a2b16;
-  --warn-line: #5a4220;
-  --warn-bar: #ff7f50;
-  --warn-fg: #f0c27f;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not(.light) .app {
-    --bg: #161616;
-    --fg: #ededed;
-    --muted: #a3a3a3;
-    --faint: #8f8f8f;
-    --card: #222;
-    --border: #2a2a2a;
-    --hover: #1f1f1f;
-    --selected: #262626;
-    --field: #4a4a4a;
-    --side: #1b1b1b;
-    --rail: #1d1d1d;
-    --seg: #242424;
-    --shadow: 0 1px 2px rgb(0 0 0 / 0.5);
-    --warn-bg: #3a2b16;
-    --warn-line: #5a4220;
-    --warn-bar: #ff7f50;
-    --warn-fg: #f0c27f;
-  }
-}
 /* 焦点框：深灰（不再是珊瑚色） */
 .app :focus-visible {
   outline: 2px solid var(--fg);
   outline-offset: 2px;
 }
-/* 面板里的主按钮、开关、勾选：黑白 */
-.app .btn-primary {
-  background: var(--fg);
-  color: var(--bg);
-}
-@media (hover: hover) {
-  .app .btn-primary:hover:not(:disabled) {
-    background: var(--fg);
-    opacity: 0.86;
-  }
-}
-.app .btn-primary:active:not(:disabled) {
-  background: var(--fg);
-  opacity: 0.78;
-}
-.app .switch[aria-checked='true'] {
-  background: var(--fg);
-}
-.app .check {
-  accent-color: var(--fg);
-}
-.app .seg-item[aria-checked='true'] {
-  outline: 0;
-  box-shadow: var(--shadow);
-}
 .app .panel {
-  font-size: 1rem;
-  line-height: 1.5;
+  /* 照 sumus 原字号（所有者 11-05 10:46「字号不用调大」） */
+  font-size: 0.875rem;
+  line-height: 1.43;
 }
 
 /* 透明扩展点击区：外观不变，可点范围 ≥ 44×44 */
@@ -928,7 +845,7 @@
   border: 1px solid var(--border);
   border-radius: calc(0.75 * var(--k));
   background: var(--bg);
-  box-shadow: 0 10px 30px rgb(0 0 0 / 0.1), 0 1px 3px rgb(0 0 0 / 0.06);
+  box-shadow: var(--shadow-pop);
 }
 .pop-right {
   left: auto;
@@ -965,11 +882,7 @@
 }
 .pop-danger,
 .pop-danger svg {
-  color: #c4001a;
-}
-:root.dark .pop-danger,
-:root.dark .pop-danger svg {
-  color: #ff6961;
+  color: var(--danger);
 }
 /* 悬浮卡（照 sumus：320px、14px 圆角、柔和大阴影、底部灰底一行「查看」） */
 .hc-card {
@@ -1587,6 +1500,7 @@ kbd.row-value {
 /* ---------- 高对比 ---------- */
 .chat-hc {
   --border: var(--fg);
+  --input: var(--fg);
   --muted: var(--fg);
   --faint: var(--fg);
   --field: var(--fg);

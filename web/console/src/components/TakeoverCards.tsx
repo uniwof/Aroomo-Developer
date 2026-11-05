@@ -63,7 +63,7 @@ export function TakeoverCards() {
   if (cards.length === 0 && !msg) return null;
   return (
     <div className="space-y-2" aria-labelledby="takeover-title" role="region">
-      <h2 id="takeover-title" className="text-[1rem] font-semibold">
+      <h2 id="takeover-title" className="group-title">
         需要你亲自处理
       </h2>
       <p role="status" className="text-[var(--muted)]">
@@ -71,17 +71,17 @@ export function TakeoverCards() {
       </p>
       <ul className="space-y-2">
         {cards.map((c) => (
-          <li key={c.id} className="space-y-2 rounded-xl border border-[var(--border)] p-3">
+          <li key={c.id} className="card space-y-2">
             <p className="font-medium">
               {reasons[c.reason] ?? '需要你处理'}
               {c.site ? `（${c.site}）` : ''}
             </p>
             <p className="whitespace-pre-wrap text-[var(--muted)]">{c.message}</p>
             <div className="flex flex-wrap gap-2">
-              <Button className="min-h-12" onClick={() => resolve(c, false)}>
+              <Button onClick={() => resolve(c, false)}>
                 我已处理，继续
               </Button>
-              <Button className="min-h-12" onClick={() => resolve(c, true)}>
+              <Button onClick={() => resolve(c, true)}>
                 放弃
               </Button>
             </div>

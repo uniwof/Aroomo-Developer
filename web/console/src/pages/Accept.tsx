@@ -55,7 +55,7 @@ export function Accept({ fetchImpl = fetch }: { fetchImpl?: typeof fetch }) {
               <Input type="password" name="confirm" autoComplete="new-password" required value={confirm} onChange={(e) => setConfirm(e.target.value)} />
             </label>
             {error && (
-              <p role="alert" className="text-[#d70015]">
+              <p role="alert" className="note note-error">
                 {error}
               </p>
             )}

@@ -29,7 +29,7 @@ export function Allowlist() {
 
   return (
     <section aria-labelledby="exec-allow" className="flex flex-col gap-2">
-      <h2 id="exec-allow" className="text-[1rem] font-semibold">
+      <h2 id="exec-allow" className="group-title">
         允许的站点
       </h2>
       <p className="text-[var(--muted)]">每行一个域名。留空 = 不限制；填了以后，派任务给不在名单里的站点会被拒绝。</p>
@@ -39,10 +39,10 @@ export function Allowlist() {
         disabled={!loaded}
         onChange={(e) => setText(e.target.value)}
         rows={4}
-        className="min-h-12 w-full rounded-xl border border-[var(--border)] bg-transparent p-3 text-[1rem]"
+        className="w-full"
       />
       <div>
-        <Button type="button" className="min-h-12" onClick={() => void save()} disabled={!loaded}>
+        <Button type="button" onClick={() => void save()} disabled={!loaded}>
           保存站点
         </Button>
       </div>

@@ -13,41 +13,83 @@
 }
 
 :root {
+  /* 唯一一套设计变量（#250 统一风格，照 sumus 黑白灰）：控制台页面、对话页、弹窗、菜单、设置都只用这些 */
+
   --bg: #ffffff;
-  --fg: #1d1d1f;
-  --muted: #6e6e73;
-  --card: #f5f5f7;
-  --border: #e5e5ea;
-  --hover: #f2f2f4;
-  --selected: #ebebee;
-  --field: #8e8e93;
+  --fg: #1a1a1a;
+  --muted: #6b6b6b;
+  --faint: #6d6d6d; /* sumus 用约 #8c8c8c；为在选中行 #f0f0f0 上也过 WCAG AA 4.5:1 加深到 #6d6d6d */
+  --card: #f5f5f5;
+  --border: #ececec;
+  --hover: #f5f5f5;
+  --selected: #f0f0f0;
+  --field: #c2c2c2;
+  --side: #fafafa;
+  --rail: #f7f7f7;
+  --seg: #f3f3f3;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.08), 0 0 0 0.5px rgb(0 0 0 / 0.04);
+  --warn-bg: #fdefdc;
+  --warn-line: #ecd5b4;
+  --warn-bar: #ff7f50;
+  --warn-fg: #8a520f;
+  /* sumus 的品牌橙 → Aroomo 珊瑚色（负责人落地文档 0.2）：标志、未读圆点、提示条左边线和图标；珊瑚上只放深色 */
+  --brand: #ff7f50;
+  --input: #8f8f8f; /* 输入框、选择框、开关的边框：≥3:1（所有者硬规则，比 sumus 的 #e5e5e5 深） */
+  --danger: #c4001a;
+  --shadow-pop: 0 10px 30px rgb(0 0 0 / 0.1), 0 1px 3px rgb(0 0 0 / 0.06);
+  /* 圆角：小控件 8px（sumus rounded-lg）、卡片 / 菜单 12px、弹窗 14px */
+  --r-sm: 0.5rem;
+  --r-md: 0.75rem;
+  --r-lg: 0.875rem;
   color-scheme: light;
 }
-
+:root.dark {
+  --bg: #161616;
+  --fg: #ededed;
+  --muted: #a3a3a3;
+  --faint: #8f8f8f;
+  --card: #222;
+  --border: #2a2a2a;
+  --hover: #1f1f1f;
+  --selected: #262626;
+  --field: #4a4a4a;
+  --side: #1b1b1b;
+  --rail: #1d1d1d;
+  --seg: #242424;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.5);
+  --warn-bg: #3a2b16;
+  --warn-line: #5a4220;
+  --warn-bar: #ff7f50;
+  --warn-fg: #f0c27f;
+  --input: #7a7a7a;
+  --danger: #ff6961;
+  --shadow-pop: 0 10px 30px rgb(0 0 0 / 0.5), 0 0 0 1px rgb(255 255 255 / 0.06);
+  color-scheme: dark;
+}
 @media (prefers-color-scheme: dark) {
   :root:not(.light) {
-    --bg: #000000;
-    --fg: #f5f5f7;
-    --muted: #a1a1a6;
-    --card: #1c1c1e;
-    --border: #2c2c2e;
-    --hover: #161618;
-    --selected: #232326;
-    --field: #8e8e93;
+    --bg: #161616;
+    --fg: #ededed;
+    --muted: #a3a3a3;
+    --faint: #8f8f8f;
+    --card: #222;
+    --border: #2a2a2a;
+    --hover: #1f1f1f;
+    --selected: #262626;
+    --field: #4a4a4a;
+    --side: #1b1b1b;
+    --rail: #1d1d1d;
+    --seg: #242424;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.5);
+    --warn-bg: #3a2b16;
+    --warn-line: #5a4220;
+    --warn-bar: #ff7f50;
+    --warn-fg: #f0c27f;
+    --input: #7a7a7a;
+    --danger: #ff6961;
+    --shadow-pop: 0 10px 30px rgb(0 0 0 / 0.5), 0 0 0 1px rgb(255 255 255 / 0.06);
     color-scheme: dark;
   }
-}
-
-:root.dark {
-  --bg: #000000;
-  --fg: #f5f5f7;
-  --muted: #a1a1a6;
-  --card: #1c1c1e;
-  --border: #2c2c2e;
-  --hover: #161618;
-  --selected: #232326;
-  --field: #8e8e93;
-  color-scheme: dark;
 }
 
 /* 正文 16px 起（所有者视力要求 + 去 AI 味：不用「小灰字」）；浏览器缩放不破版 */
@@ -65,17 +107,16 @@ body {
 }
 
 :focus-visible {
-  outline: 2px solid var(--color-brand);
+  outline: 2px solid var(--fg);
   outline-offset: 2px;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
-  }
+/* 所有者「无动画」：全局关掉过渡和动画（含弹层自带的淡入、缩放） */
+*,
+*::before,
+*::after {
+  animation: none !important;
+  transition: none !important;
 }
 
 /*
@@ -86,34 +127,49 @@ body {
   background-color: var(--bg);
 }
 
-/* ---------- 共用控件（对话页的面板和控制台页面一套语法，照 sumus 的黑白灰） ----------
- * 按钮：只有一种强调色（珊瑚，主按钮 / 发送 / 选中）；按下时颜色加深一档、缩 2%，瞬时变化不做过渡（所有者「无动画」）。
- * 一切尺寸用 rem / em，跟整页字号走；点击区 ≥ 44px。
+/* ---------- 共用控件：唯一一套（#250 统一风格，照 sumus） ----------
+ * 字号照 sumus 原尺寸（所有者 11-05 10:46「字号不用调大」）：正文 14、按钮 / 标签 13、说明 12、标题 20、弹窗标题 15。
+ * 一切尺寸用 rem，跟设置里的字号滑杆一起缩放；按钮看上去 32px，点击区用透明外扩补到 ≥44px；不做过渡、不缩放。
+ * 只有一种主按钮（黑底白字）、一种次按钮（白底细边）、一种安静按钮（无边）、一种危险按钮（红字）。
  */
 .muted {
   color: var(--muted);
 }
 .btn {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.4em;
-  min-height: 44px;
-  min-width: 44px;
-  padding: 0 0.9em;
-  border-radius: 0.75em;
+  gap: 0.375rem;
+  min-height: 2rem;
+  min-width: 2rem;
+  padding: 0.25rem 0.75rem;
+  box-sizing: border-box;
+  border-radius: var(--r-sm);
   border: 1px solid transparent;
   background: transparent;
-  color: inherit;
+  color: var(--fg);
   font: inherit;
+  font-size: 0.8125rem;
+  line-height: 1.35;
   font-weight: 500;
   cursor: pointer;
   text-decoration: none;
-  white-space: nowrap;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.btn::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(100%, 44px);
+  height: max(100%, 44px);
+  transform: translate(-50%, -50%);
 }
 .btn svg {
-  width: 1.2em;
-  height: 1.2em;
+  width: 1rem;
+  height: 1rem;
   flex: none;
 }
 @media (hover: hover) {
@@ -123,59 +179,125 @@ body {
 }
 .btn:active:not(:disabled) {
   background: var(--selected);
-  transform: scale(0.98);
 }
 .btn:disabled {
   cursor: not-allowed;
-  color: var(--muted);
-  background: var(--card);
-  border-color: var(--border);
-}
-.btn-icon {
-  padding: 0;
-}
-.btn-quiet {
-  color: var(--fg);
+  opacity: 0.5;
 }
 .btn-outline {
   border-color: var(--border);
+  background: var(--bg);
+  box-shadow: var(--shadow);
 }
+.btn-quiet,
+.btn-icon {
+  background: transparent;
+}
+.btn-icon,
 .btn-square {
   padding: 0;
-  font-size: 1.25em;
 }
 .btn-primary {
-  background: var(--color-brand);
-  color: var(--color-brand-ink);
-  font-weight: 600;
+  background: var(--fg);
+  color: var(--bg);
 }
 @media (hover: hover) {
   .btn-primary:hover:not(:disabled) {
-    background: #f2723f;
+    background: var(--fg);
+    opacity: 0.86;
   }
 }
 .btn-primary:active:not(:disabled) {
-  background: #e5652f;
+  background: var(--fg);
+  opacity: 0.78;
+}
+.btn-danger {
+  color: var(--danger);
 }
 .btn-wide {
   width: 100%;
+  min-height: 2.25rem;
 }
 [aria-current='page'].btn {
   background: var(--selected);
-  font-weight: 600;
 }
 
-/* 页面 / 面板：标题 + 一组一组的分组列表（iOS / sumus 式），组内紧、组间松 */
+/* 输入框 / 选择框 / 多行（全站同一种，包括控制台页面里写了旧 Tailwind 类的：这几条不在 layer 里，优先级高于工具类） */
+input:not([type='checkbox'], [type='radio'], [type='range'], [type='file'], [type='hidden']),
+select,
+textarea,
+.field-select {
+  min-height: 2.25rem;
+  max-width: 100%;
+  padding: 0.375rem 0.625rem;
+  box-sizing: border-box;
+  border: 1px solid var(--input);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.875rem;
+  line-height: 1.43;
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+input:disabled,
+select:disabled,
+textarea:disabled {
+  background: var(--card);
+  cursor: not-allowed;
+}
+input[aria-invalid='true'],
+textarea[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+.stepper-value {
+  display: inline-block;
+  min-width: 2em;
+  text-align: center;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 页面 / 设置分区：图标 + 标题 + 灰色说明，下面一条分隔线（照 sumus 设置每个分区的头） */
 .page {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+  font-size: 0.875rem;
 }
 .page-title {
   margin: 0;
-  font-size: 1.375rem;
+  font-size: 1.25rem;
+  line-height: 1.4;
   font-weight: 600;
 }
+.page-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.page-head .page-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.page-head .page-title svg {
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+}
+.page-sub {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+/* 分组：小标题（13px 中粗）+ 一张细边圆角卡片，卡片里一行一项、行间细线（照 sumus 已登录设备那张卡） */
 .group-block {
   border: 0;
   margin: 0;
@@ -191,17 +313,17 @@ body {
 }
 .group-title {
   margin: 0 0 0.5rem;
-  padding: 0 0.25rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--muted);
+  padding: 0;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--fg);
 }
 .group {
   list-style: none;
   margin: 0;
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: 0.875rem;
+  border-radius: var(--r-md);
   background: var(--bg);
   overflow: hidden;
 }
@@ -209,26 +331,28 @@ body {
 .group > li + li {
   border-top: 1px solid var(--border);
 }
-.group-footer,
-.group-empty {
+.group-footer {
   margin: 0.5rem 0 0;
-  padding: 0 0.25rem;
   color: var(--muted);
+  font-size: 0.75rem;
 }
 .group-empty {
   margin: 0;
   padding: 1rem;
-  border: 1px dashed var(--border);
-  border-radius: 0.875rem;
+  border: 1px dashed var(--field);
+  border-radius: var(--r-md);
+  color: var(--muted);
+  font-size: 0.8125rem;
 }
 .row {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  min-height: 3.25rem;
-  padding: 0.625rem 1rem;
+  min-height: 3rem;
+  padding: 0.625rem 0.875rem;
   box-sizing: border-box;
   width: 100%;
+  font-size: 0.8125rem;
 }
 .row-field {
   flex-wrap: wrap;
@@ -243,6 +367,7 @@ body {
   background: transparent;
   color: inherit;
   font: inherit;
+  font-size: 0.8125rem;
   text-align: left;
   cursor: pointer;
 }
@@ -259,13 +384,16 @@ body {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  gap: 0.125rem;
   overflow-wrap: anywhere;
 }
 .row-label {
   font-weight: 500;
+  font-size: 0.8125rem;
 }
 .row-hint {
   color: var(--muted);
+  font-size: 0.75rem;
 }
 .row-value {
   color: var(--muted);
@@ -279,123 +407,136 @@ body {
 }
 .row-icon svg,
 .row-chevron {
-  width: 1.2em;
-  height: 1.2em;
+  width: 1rem;
+  height: 1rem;
   color: var(--muted);
   flex: none;
 }
 .row-status {
   margin: 0;
-  padding: 0 1rem 0.75rem;
+  padding: 0 0.875rem 0.75rem;
   color: var(--muted);
+  font-size: 0.75rem;
 }
 .row-status:empty {
   display: none;
 }
 .row-pre {
   margin: 0;
-  padding: 0.75rem 1rem;
+  padding: 0.75rem 0.875rem;
   overflow-x: auto;
   background: var(--card);
-  font-size: 1rem;
+  font-size: 0.75rem;
   user-select: all;
 }
-.row-actions {
+.row-actions,
+.btn-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
-}
-.field-select {
-  min-height: 44px;
-  max-width: 100%;
-  padding: 0 0.75em;
-  border: 1px solid var(--field);
-  border-radius: 0.625em;
-  background: var(--bg);
-  color: var(--fg);
-  font: inherit;
-}
-.stepper-value {
-  display: inline-block;
-  min-width: 2em;
-  text-align: center;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
+  gap: 0.75rem; /* 32px 按钮 + 12px 间距：两边透明点击区刚好不重叠 */
 }
 
-/* 分段选择（单选值：字号、颜色、语速、会话筛选）；选中项用珊瑚色 */
+/* 分段选择（外观 浅色/深色/跟随系统、语速）：照 sumus「Appearance」——细边连在一起的几个按钮，选中的浅灰底 */
 .seg {
-  display: flex;
+  display: inline-flex;
   flex-wrap: wrap;
-  gap: 0.25rem;
-  padding: 0.25rem;
-  border-radius: 0.75rem;
-  background: var(--card);
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  overflow: hidden;
 }
 .seg-item {
   flex: 1 0 auto;
-  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  min-height: 2.75rem; /* 连在一起没有空隙，点击区直接做足 44px */
   min-width: 44px;
-  padding: 0 0.75em;
+  padding: 0 0.75rem;
   border: 0;
-  border-radius: 0.5rem;
+  border-left: 1px solid var(--border);
   background: transparent;
   color: var(--fg);
   font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
   cursor: pointer;
 }
+.seg-item:first-child {
+  border-left: 0;
+}
+.seg-item svg {
+  width: 1rem;
+  height: 1rem;
+}
+@media (hover: hover) {
+  .seg-item:hover {
+    background: var(--hover);
+  }
+}
 .seg-item[aria-checked='true'] {
-  background: var(--bg);
-  font-weight: 600;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
-  outline: 2px solid var(--color-brand);
-  outline-offset: -2px;
+  background: var(--selected);
 }
 
-/* 开关（就地生效，iOS 式） */
+/* 开关：照 sumus 的小号胶囊（36×20），关时浅灰底 + 可见边，开时黑底；点击区外扩到 44px */
 .switch {
   position: relative;
   display: inline-block;
-  width: 3.25rem;
-  height: 2rem;
+  width: 2.25rem;
+  height: 1.25rem;
   flex: none;
-  border: 0;
+  padding: 0;
+  border: 1px solid var(--input);
   border-radius: 999px;
-  background: var(--field);
+  background: var(--seg);
   cursor: pointer;
   vertical-align: middle;
+  box-sizing: border-box;
 }
 .switch::before {
-  /* 点击区扩到 44px 以上，外观不变 */
   content: '';
   position: absolute;
-  inset: -0.5rem;
+  left: 50%;
+  top: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
 }
 .switch[aria-checked='true'] {
-  background: var(--color-brand);
+  background: var(--fg);
+  border-color: var(--fg);
 }
 .switch-knob {
   position: absolute;
-  top: 0.1875rem;
-  left: 0.1875rem;
-  width: 1.625rem;
-  height: 1.625rem;
+  top: 0.0625rem;
+  left: 0.0625rem;
+  width: 1rem;
+  height: 1rem;
   border-radius: 999px;
-  background: #fff;
+  background: var(--bg);
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+}
+.switch[aria-checked='false'] .switch-knob {
+  background: #fff;
 }
 .switch[aria-checked='true'] .switch-knob {
   left: auto;
-  right: 0.1875rem;
+  right: 0.0625rem;
+}
+.switch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .check {
-  width: 1.4em;
-  height: 1.4em;
-  accent-color: var(--color-brand);
+  width: 1.125rem;
+  height: 1.125rem;
+  accent-color: var(--fg);
   flex: none;
 }
 
-/* 表单（登录、设密码） */
+/* 表单（登录、设密码、添加 Key、弹窗里的字段）：标签在上，13px 中粗 */
 .form-field {
   display: flex;
   flex-direction: column;
@@ -403,4 +544,91 @@ body {
 }
 .form-label {
   font-weight: 500;
+  font-size: 0.8125rem;
+}
+
+/* 提示（状态 / 出错）：小号文字，出错红字；读屏用 role=status / role=alert */
+.note {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+.note-error,
+[role='alert'].note {
+  color: var(--danger);
+}
+
+/* 弹窗（原生 <dialog>，showModal：背后页面 inert、Esc 关、焦点进来）：白底、14px 圆角、柔和大阴影（照 sumus New agent） */
+.dlg {
+  width: min(28rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: var(--shadow-pop);
+  font-size: 0.875rem;
+  line-height: 1.43;
+  overflow: auto;
+  box-sizing: border-box;
+}
+.dlg::backdrop {
+  background: rgb(0 0 0 / 0.28);
+}
+.dlg-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+}
+.dlg-title {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+.dlg-desc {
+  margin: -0.5rem 0 0;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+.dlg-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding-top: 0.25rem;
+}
+
+/* 卡片（列表里一项一张：Key、资源、令牌、设备、审计记录）：细边 12px 圆角（照 sumus 设备卡） */
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 0.75rem 0.875rem;
+  background: var(--bg);
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+.card-strong {
+  border-color: var(--input);
+  box-shadow: var(--shadow-pop);
+}
+.card-muted {
+  background: var(--card);
+}
+.card-brand {
+  border-left: 3px solid var(--brand);
+  font-weight: 500;
+}
+
+/* 小提示卡（图标旁的说明）：和菜单同一种白底、细边、柔和阴影 */
+.tip {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  box-shadow: var(--shadow-pop);
+  padding: 0.625rem 0.75rem;
+  font-size: 0.8125rem;
 }

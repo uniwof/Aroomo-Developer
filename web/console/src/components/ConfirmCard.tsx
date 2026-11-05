@@ -72,8 +72,8 @@ export function ConfirmCard({
   }
 
   return (
-    <div role="alertdialog" aria-labelledby={`cc-${c.id}`} className="space-y-3 rounded-xl border-2 border-[var(--border)] p-4">
-      <h3 id={`cc-${c.id}`} className="text-[1rem] font-semibold">
+    <div role="alertdialog" aria-labelledby={`cc-${c.id}`} className="card card-strong space-y-3">
+      <h3 id={`cc-${c.id}`} className="group-title">
         {c.title}
       </h3>
       <ul className="list-disc space-y-1 pl-5">
