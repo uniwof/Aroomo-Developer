@@ -230,8 +230,18 @@ export function toUiMessageStream(upstream: ReadableStream<Uint8Array> | undefin
   });
 }
 
+/** X-15：聊天里认出「每周一 9 点帮我…」时，负责人回一张助手草稿卡（只有所有者；规则判断，不调模型）。返回 null = 照常对话 */
+export interface DraftReply {
+  /** 负责人的名字（署名用） */
+  lead: string;
+  part: { type: string; data: unknown };
+}
+export const DRAFT_TEXT = '我拟了一个助手，你看看对不对。点「建好」才会真的建；想调整点「改一改」，不要就点「不用了」。';
+
 export interface ChatStreamOptions {
   ctxFor: (userId: string) => ChatUserCtx;
+  /** 只对所有者（scope = 'owner'）、交给负责人（model = aroomo）的最后一句话调用 */
+  draftFor?: (text: string) => Promise<DraftReply | null>;
   limits?: { perMinute?: number; concurrent?: number };
   now?: () => number;
 }
@@ -283,22 +293,29 @@ export function registerChatStreamRoute(app: FastifyInstance, chat: ChatService,
         release();
       });
       let body: ReadableStream<Uint8Array>;
-      try {
-        const out = await chat.complete({ model, stream: true, messages }, ctrl.signal, scope === 'owner' ? undefined : opts.ctxFor(scope));
-        if (out.failure) {
-          // 整条回复都失败：不发那段提示文字，改发 error（只有固定的一句话 + 失败码）。/v1 不走这里，行为不变
-          await out.stream?.cancel().catch(() => undefined);
-          body = errorStream(out.failure.code);
-          release();
-        } else if (out.stream) body = toUiMessageStream(out.stream, { onDone: release });
-        else {
-          // 理论上 stream:true 总是返回流；万一是 JSON，就把文字一次性发出去
-          const text = (out.json as { choices?: Array<{ message?: { content?: unknown } }> } | undefined)?.choices?.[0]?.message?.content;
-          body = toUiMessageStream(oneShot(typeof text === 'string' ? text : ''), { onDone: release });
-        }
-      } catch {
-        body = errorStream('upstream_error');
+      // X-15：所有者在负责人对话里说「每周一 9 点帮我…」→ 不调模型，直接回草稿卡（家人账号、单独和成员的对话都不走这里）
+      const draft = scope === 'owner' && model === CHAT_MODEL && opts.draftFor ? await opts.draftFor(messages[messages.length - 1]!.content).catch(() => null) : null;
+      if (draft) {
+        body = draftStream(draft);
         release();
+      } else {
+        try {
+          const out = await chat.complete({ model, stream: true, messages }, ctrl.signal, scope === 'owner' ? undefined : opts.ctxFor(scope));
+          if (out.failure) {
+            // 整条回复都失败：不发那段提示文字，改发 error（只有固定的一句话 + 失败码）。/v1 不走这里，行为不变
+            await out.stream?.cancel().catch(() => undefined);
+            body = errorStream(out.failure.code);
+            release();
+          } else if (out.stream) body = toUiMessageStream(out.stream, { onDone: release });
+          else {
+            // 理论上 stream:true 总是返回流；万一是 JSON，就把文字一次性发出去
+            const text = (out.json as { choices?: Array<{ message?: { content?: unknown } }> } | undefined)?.choices?.[0]?.message?.content;
+            body = toUiMessageStream(oneShot(typeof text === 'string' ? text : ''), { onDone: release });
+          }
+        } catch {
+          body = errorStream('upstream_error');
+          release();
+        }
       }
       reply
         .code(200)
@@ -315,6 +332,25 @@ function oneShot(text: string): ReadableStream<Uint8Array> {
   return new ReadableStream({
     start(c) {
       if (text) c.enqueue(sse({ choices: [{ index: 0, delta: { content: text } }] }));
+      c.enqueue(enc.encode('data: [DONE]\n\n'));
+      c.close();
+    },
+  });
+}
+
+function draftStream(d: DraftReply): ReadableStream<Uint8Array> {
+  const textId = `txt_${randomUUID()}`;
+  return new ReadableStream({
+    start(c) {
+      c.enqueue(sse({ type: 'start', messageId: `msg_${randomUUID()}` }));
+      c.enqueue(sse({ type: 'start-step' }));
+      c.enqueue(sse({ type: 'text-start', id: textId }));
+      c.enqueue(sse({ type: 'text-delta', id: textId, delta: `${DRAFT_TEXT}\n\n— ${d.lead}（负责人）` }));
+      c.enqueue(sse({ type: 'text-end', id: textId }));
+      // 不是 transient：草稿卡跟着这条回复留在会话里；id 给「建好」当幂等键
+      c.enqueue(sse({ type: d.part.type, id: `draft_${randomUUID()}`, data: d.part.data }));
+      c.enqueue(sse({ type: 'finish-step' }));
+      c.enqueue(sse({ type: 'finish' }));
       c.enqueue(enc.encode('data: [DONE]\n\n'));
       c.close();
     },

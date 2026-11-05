@@ -68,6 +68,7 @@ import { registerUserRoutes } from "./users/routes.js";
 import { registerConsole } from "./console/static.js";
 import type { RoutableMember } from "./router/types.js";
 import { AssistantService } from "./assistants/service.js";
+import { detectAssistantIntent } from "./assistants/intent.js";
 import { AssistantRunner } from "./assistants/runner.js";
 import { registerAssistantRoutes } from "./assistants/routes.js";
 import { assistantSchedulerJob } from "./scheduler/assistant-scheduler.js";
@@ -366,8 +367,6 @@ export function buildServer(
     }),
   };
   registerChatRoutes(app, chatService, cfg.chatToken, chatRouting);
-  // 控制台原生对话（#250 spike）：控制台会话 Cookie + CSRF 头 → 同一个 ChatService 和 ctxFor（D31 路由 / 署名不变）
-  registerChatStreamRoute(app, chatService, { ctxFor: chatRouting.ctxFor, ...(deps.chatStreamLimits ? { limits: deps.chatStreamLimits } : {}) });
   // 助手（指南 v1.1 附录 C）：第一版只给所有者；运行走同一个 ChatService（账号走自己的 ctxFor），整次运行在建它的账号的数据范围里
   const membersOf = (u: string) => (u === "owner" ? deps.members : deps.members.forUser(u));
   const assistantSvc = new AssistantService({ store: deps.assistants, membersFor: membersOf, confirm, now: deps.now, timezone: cfg.timezone });
@@ -384,6 +383,18 @@ export function buildServer(
     ...(deps.assistantIsFree ? { isFree: deps.assistantIsFree } : {}),
   });
   assistantSvc.setLauncher(assistantRunner);
+  // 控制台原生对话（#250 spike）：控制台会话 Cookie + CSRF 头 → 同一个 ChatService 和 ctxFor（D31 路由 / 署名不变）
+  // X-15：所有者说「每周一 9 点帮我…」→ 负责人回助手草稿卡（规则判断、不调模型；没有负责人或校验不过就照常对话）
+  const draftFor = async (text: string) => {
+    const intent = detectAssistantIntent(text);
+    if (!intent) return null;
+    const leadId = (await lead.get()).effectiveLeadId;
+    const leadMember = leadId ? await deps.members.get(leadId) : null;
+    if (!leadId || !leadMember) return null;
+    const r = await assistantSvc.preview("owner", { ...intent, members: [leadId], leadMemberId: leadId, budgetLevel: "low" });
+    return { lead: leadMember.name, part: r.part };
+  };
+  registerChatStreamRoute(app, chatService, { ctxFor: chatRouting.ctxFor, draftFor, ...(deps.chatStreamLimits ? { limits: deps.chatStreamLimits } : {}) });
   // 付费调用确认卡（kind=payment，重要确认）：同意 → 同一条运行继续；拒绝 → 取消
   inbox.registerHandler("assistant.run.confirm", async (item, actionId, audit) => {
     if (item.related?.type !== "assistant_run") return;
