@@ -20,7 +20,8 @@ import {
   type ThreadMessageLike,
 } from '@assistant-ui/react';
 import { ArrowDown, Copy, KeyRound, RotateCcw, Send, Square, Volume2, VolumeX } from 'lucide-react';
-import { ChatStreamError, type ChatDraft, type FailureCode, dayLabel, loadDraft, saveDraft, signatureOf, streamChat, stripSignature, timeLabel, type ChatTurn, type Conversation } from './store';
+import { ChatStreamError, type ChatDraft, type ChatTool, type FailureCode, dayLabel, loadDraft, saveDraft, signatureOf, streamChat, stripSignature, timeLabel, upsertTool, type ChatTurn, type Conversation } from './store';
+import { ToolCalls } from './thread/cards/ToolCalls';
 import { Avatar } from './Avatar';
 import { AnnounceContext, useAnnounce } from './announce';
 import { DEFAULT_RATE, pickVoice, speaker, speechSupported } from './speech';
@@ -33,6 +34,7 @@ const NEW_DRAFT = 'new';
 const ChatDraftCard = lazy(() => import('./pages/assistants/ChatDraftCard'));
 
 const draftOfMessage = (m: { metadata?: { custom?: unknown } }): ChatDraft | undefined => (m.metadata?.custom as { draft?: ChatDraft } | undefined)?.draft;
+const toolsOfMessage = (m: { metadata?: { custom?: unknown } }): ChatTool[] | undefined => (m.metadata?.custom as { tools?: ChatTool[] } | undefined)?.tools;
 
 const textOfMessage = (m: ThreadMessage): string =>
   m.content
@@ -48,7 +50,15 @@ function toTurns(messages: readonly ThreadMessage[]): ChatTurn[] {
     .filter((m) => m.role === 'user' || m.role === 'assistant')
     .map((m) => {
       const draft = draftOfMessage(m);
-      return { ...(CORE_ID.test(m.id) ? { id: m.id } : {}), role: m.role as 'user' | 'assistant', text: textOfMessage(m), ...(m.createdAt ? { at: m.createdAt.getTime() } : {}), ...(draft ? { draft } : {}) };
+      const tools = toolsOfMessage(m);
+      return {
+        ...(CORE_ID.test(m.id) ? { id: m.id } : {}),
+        role: m.role as 'user' | 'assistant',
+        text: textOfMessage(m),
+        ...(m.createdAt ? { at: m.createdAt.getTime() } : {}),
+        ...(draft ? { draft } : {}),
+        ...(tools?.length ? { tools } : {}),
+      };
     })
     .filter((t) => t.text.trim() !== '');
 }
@@ -67,6 +77,8 @@ export interface UiMessage {
   errorCode?: FailureCode | undefined;
   /** X-15 助手草稿卡（只在回复上） */
   draft?: ChatDraft;
+  /** X-05 工具调用（只在回复上） */
+  tools?: ChatTool[];
 }
 
 let seq = 0;
@@ -79,7 +91,7 @@ export function toThreadMessage(m: UiMessage): ThreadMessageLike {
     role: m.role,
     content: [{ type: 'text' as const, text: m.text }],
     ...(m.at ? { createdAt: new Date(m.at) } : {}),
-    ...(m.draft ? { metadata: { custom: { draft: m.draft } } } : {}),
+    ...(m.draft || m.tools?.length ? { metadata: { custom: { ...(m.draft ? { draft: m.draft } : {}), ...(m.tools?.length ? { tools: m.tools } : {}) } } } : {}),
   };
   if (m.role === 'user') return base;
   if (m.state === 'running') return { ...base, status: { type: 'running' } };
@@ -88,7 +100,7 @@ export function toThreadMessage(m: UiMessage): ThreadMessageLike {
     return {
       ...base,
       status: { type: 'incomplete', reason: 'error', error: m.error ?? '对话出错了，请稍后再试。' },
-      ...(m.errorCode ? { metadata: { custom: { errorCode: m.errorCode } } } : {}),
+      ...(m.errorCode ? { metadata: { custom: { ...(m.tools?.length ? { tools: m.tools } : {}), errorCode: m.errorCode } } } : {}),
     };
   return { ...base, status: { type: 'complete', reason: 'stop' } };
 }
@@ -317,6 +329,12 @@ const DraftSlot: FC = () => {
   );
 };
 
+/** X-05：回复正文上方一行灰字，点开看做了哪些工具调用 */
+const ToolSlot: FC = () => {
+  const tools = useAuiState((s) => toolsOfMessage(s.message));
+  return tools?.length ? <ToolCalls tools={tools} /> : null;
+};
+
 const AssistantMessage: FC = () => {
   const who = useSpeaker();
   const domId = useMsgDomId();
@@ -333,6 +351,7 @@ const AssistantMessage: FC = () => {
             <MessageTime />
           </div>
           <div className="msg-body">
+            <ToolSlot />
             <Working name={who.name} />
             <MessagePrimitive.Parts components={{ Text: MarkdownText }} />
             <DraftSlot />
@@ -391,7 +410,15 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
   const convRef = useRef(conversation);
   convRef.current = conversation;
   const [messages, setMessages] = useState<UiMessage[]>(() =>
-    conversation.messages.map((m) => ({ id: m.id ?? newId(), role: m.role, text: m.text, ...(m.at ? { at: m.at } : {}), ...(m.draft ? { draft: m.draft } : {}), state: 'done' as const })),
+    conversation.messages.map((m) => ({
+      id: m.id ?? newId(),
+      role: m.role,
+      text: m.text,
+      ...(m.at ? { at: m.at } : {}),
+      ...(m.draft ? { draft: m.draft } : {}),
+      ...(m.tools?.length ? { tools: m.tools } : {}),
+      state: 'done' as const,
+    })),
   );
   const [isRunning, setIsRunning] = useState(false);
   const persistRef = useRef(persist);
@@ -434,7 +461,8 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
           }
         }
         const opts = conversationId ? { conversationId, retry: savedUser.current.has(lastUser.id), onAccepted: () => savedUser.current.add(lastUser.id) } : {};
-        for await (const text of streamChat(turns, convRef.current.model, ac.signal, fetchImpl, (draft) => update({ draft }), opts)) update({ text });
+        const onTool = (t: ChatTool) => setMessages((l) => l.map((m) => (m.id === reply.id ? { ...m, tools: upsertTool(m.tools, t) } : m)));
+        for await (const text of streamChat(turns, convRef.current.model, ac.signal, fetchImpl, (draft) => update({ draft }), opts, onTool)) update({ text });
         update({ state: 'done' });
       } catch (e) {
         // 点了停止：保留已经收到的部分；其他错误就地显示，可以「重试」
@@ -479,7 +507,7 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
   const setDraftState = useCallback((messageId: string, state: 'done' | 'dismissed') => {
     const next = latest.current.map((m) => (m.id === messageId && m.draft ? { ...m, draft: { ...m.draft, state } } : m));
     setMessages(next);
-    save.current(next.filter((m) => m.text.trim() !== '').map((m) => ({ role: m.role, text: m.text, ...(m.at ? { at: m.at } : {}), ...(m.draft ? { draft: m.draft } : {}) })));
+    save.current(next.filter((m) => m.text.trim() !== '').map((m) => ({ role: m.role, text: m.text, ...(m.at ? { at: m.at } : {}), ...(m.draft ? { draft: m.draft } : {}), ...(m.tools?.length ? { tools: m.tools } : {}) })));
   }, []);
   const draftCtx = { actions: draftActions, setState: setDraftState };
   const runningCb = useRef(onRunning);
