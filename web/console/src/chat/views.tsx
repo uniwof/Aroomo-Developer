@@ -16,6 +16,7 @@ import { QuotaRing } from '@/components/brand';
 import { Avatar } from './Avatar';
 import { quotaState } from './Rail';
 import { DialogFoot, Empty, errText } from './ui';
+import { ErrorRetry } from '@/components/ErrorRetry';
 
 export { Empty } from './ui';
 // 测试和旧调用仍从 views 拿设置分组
@@ -243,16 +244,19 @@ export function LibraryView({ onAddMember, members = [], onOpenMember }: { onAdd
   const [status, setStatus] = useState('');
   const ask = useAsk();
 
+  const [capSeq, setCapSeq] = useState(0);
   useEffect(() => {
     let alive = true;
+    setCapErr('');
     api<{ items?: CapItem[] }>('GET', '/api/capabilities')
       .then((r) => alive && setCaps(r.items ?? []))
       .catch(() => alive && setCapErr('加载失败，请稍后再试'));
     return () => {
       alive = false;
     };
-  }, []);
+  }, [capSeq]);
   const loadSaved = useCallback(() => {
+    setSavedErr('');
     api<{ items: LibraryEntry[] }>('GET', '/api/library')
       .then((r) => setSaved(r.items))
       .catch((e) => {
@@ -315,9 +319,7 @@ export function LibraryView({ onAddMember, members = [], onOpenMember }: { onAdd
             可以添加的成员
           </h2>
           {capErr ? (
-            <p role="alert" className="note note-error">
-              {capErr}
-            </p>
+            <ErrorRetry text={capErr} what="可以添加的成员" onRetry={() => setCapSeq((n) => n + 1)} />
           ) : !caps ? (
             <p className="note">正在加载…</p>
           ) : shownCaps.length === 0 ? (
@@ -361,9 +363,14 @@ export function LibraryView({ onAddMember, members = [], onOpenMember }: { onAdd
             收藏
           </h2>
           {savedErr ? (
-            <p role="alert" className="note note-error">
-              {savedErr}
-            </p>
+            // 收藏接口还没上线（404）重试没用，只说一句；其它失败给重试
+            savedErr === '收藏还没上线' ? (
+              <p role="alert" className="note note-error">
+                {savedErr}
+              </p>
+            ) : (
+              <ErrorRetry text={savedErr} what="收藏" onRetry={loadSaved} />
+            )
           ) : !saved ? (
             <p className="note">正在加载…</p>
           ) : saved.length === 0 ? (
@@ -427,8 +434,10 @@ export function ToolsView({ onGo }: { onGo: (k: 'keys') => void }) {
   const [gw, setGw] = useState<GatewayTool[] | null>(null);
   const [err, setErr] = useState('');
   const [f, setF] = useState<'all' | 'on' | 'off'>('all');
+  const [seq, setSeq] = useState(0);
   useEffect(() => {
     let alive = true;
+    setErr('');
     api<{ tools?: ToolItem[] }>('GET', '/api/capabilities')
       .then((r) => alive && setTools(r.tools ?? []))
       .catch(() => alive && setErr('加载失败，请稍后再试'));
@@ -438,7 +447,7 @@ export function ToolsView({ onGo }: { onGo: (k: 'keys') => void }) {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [seq]);
   const shown = (tools ?? []).filter((t) => f === 'all' || (f === 'on') === usable(t.status));
   const shownGw = f === 'off' ? [] : (gw ?? []);
   return (
@@ -453,11 +462,7 @@ export function ToolsView({ onGo }: { onGo: (k: 'keys') => void }) {
         ]}
         onChange={setF}
       />
-      {err && (
-        <p role="alert" className="note note-error">
-          {err}
-        </p>
-      )}
+      {err && <ErrorRetry text={err} what="工具" onRetry={() => setSeq((n) => n + 1)} />}
       {!err && !tools && <p className="note">正在加载…</p>}
       {shownGw.length > 0 && (
         <Group title="成员直接能用">
@@ -612,6 +617,7 @@ export function ApiView({ members, onOpenMember }: { members: Member[]; onOpenMe
   const { rows } = useUsage(120_000);
   const ask = useAsk();
   const load = useCallback(() => {
+    setKeyErr('');
     api<{ keys: KeyItem[] }>('GET', '/api/keys')
       .then((r) => setKeys(r.keys))
       .catch((e) => setKeyErr(e instanceof ApiError && e.status === 403 ? '这个账号不能看 Key' : '加载失败，请稍后再试'));
@@ -653,9 +659,14 @@ export function ApiView({ members, onOpenMember }: { members: Member[]; onOpenMe
           )}
         </div>
         {keyErr ? (
-          <p role="alert" className="note note-error">
-            {keyErr}
-          </p>
+          // 没权限（403）重试没用，只说一句
+          keyErr === '这个账号不能看 Key' ? (
+            <p role="alert" className="note note-error">
+              {keyErr}
+            </p>
+          ) : (
+            <ErrorRetry text={keyErr} what=" Key" onRetry={load} />
+          )
         ) : !keys ? (
           <p className="note">正在加载…</p>
         ) : keys.length === 0 ? (

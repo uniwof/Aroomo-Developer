@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { ApiError, api, type Challenge } from '@/lib/api';
 import { ConfirmCard } from '@/components/ConfirmCard';
 import { TakeoverCards } from '@/components/TakeoverCards';
+import { ErrorRetry } from '@/components/ErrorRetry';
 import { useAsk } from '@/components/Dialog';
 import { inboxChanged } from '@/lib/inbox';
 
@@ -58,11 +59,17 @@ export function Inbox({ onBack }: { onBack?: () => void } = {}) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const ask = useAsk();
 
+  // 读取失败（不是没权限）：给重试（切片 14）
+  const [loadErr, setLoadErr] = useState(false);
   const load = useCallback(() => {
+    setLoadErr(false);
     api<{ groups: Record<string, Item[]> }>('GET', '/api/inbox?status=open')
       // 接管卡已由上面的 TakeoverCards 显示，收件箱里同一张卡不再重复出现
       .then((r) => setData(Object.fromEntries(Object.entries(r.groups).map(([k, v]) => [k, v.filter((i) => i.kind !== 'executor.takeover')]))))
-      .catch((e) => setMsg(e instanceof ApiError && e.status === 403 ? '这个账号还不能查看收件箱' : '加载失败，请稍后再试'));
+      .catch((e) => {
+        if (e instanceof ApiError && e.status === 403) setMsg('这个账号还不能查看收件箱');
+        else setLoadErr(true);
+      });
   }, []);
   useEffect(load, [load]);
 
@@ -131,8 +138,9 @@ export function Inbox({ onBack }: { onBack?: () => void } = {}) {
       <p role="status" className="row-status">
         {msg}
       </p>
+      {loadErr && <ErrorRetry text="收件箱没读到。" what="收件箱" onRetry={load} />}
       <TakeoverCards />
-      {data === null && !msg && <p className="muted">加载中…</p>}
+      {data === null && !msg && !loadErr && <p className="muted">加载中…</p>}
       {/* 自审 B17：都空时只显示一个空状态（一句话 + 一个动作），不再三个框各写「暂时没有」 */}
       {data && shown === 0 && (
         <div className="empty">

@@ -16,6 +16,7 @@ import { ClientTokens } from '@/components/ClientTokens';
 import { Dialog } from '@/components/Dialog';
 import { Avatar } from './Avatar';
 import { Empty } from './ui';
+import { ErrorRetry } from '@/components/ErrorRetry';
 import { SPEECH_RATES, speechSupported } from './speech';
 import { type ChatPrefs } from './store';
 import { FONT_DEFAULT, FONT_MAX, FONT_MIN, clampFont } from '@/lib/display';
@@ -89,13 +90,15 @@ function MemberRows({ list, onOpen }: { list: Member[]; onOpen: (m: Member) => v
  * 成员：列表 → 详情。列全部成员，按 在职 / 候选 / 已停用 分组（切片 5 / 审计 M1：以前只列在职，候选、停用的看不到也管不了）。
  * 空状态 = 一句话 + 直达「添加成员」（审计 M2）。
  */
-export function MembersPanel({ members, onOpen, onAdd }: { members: Member[]; onOpen: (m: Member) => void; onAdd?: () => void }) {
+export function MembersPanel({ members, onOpen, onAdd, failed, onRetry }: { members: Member[]; onOpen: (m: Member) => void; onAdd?: () => void; failed?: boolean; onRetry?: () => void }) {
   const active = members.filter((m) => m.enabled && m.status === 'active');
   const candidates = members.filter((m) => m.enabled && m.status === 'candidate');
   const off = members.filter((m) => !m.enabled);
   return (
     <div className="panel">
-      {members.length === 0 ? (
+      {/* 列表没读到：说清楚 + 重试，不假装「还没有成员」（切片 14） */}
+      {failed && onRetry && <ErrorRetry text="成员列表没读到。" what="成员" onRetry={onRetry} />}
+      {failed && members.length === 0 ? null : members.length === 0 ? (
         <Empty
           text="还没有成员。"
           {...(onAdd

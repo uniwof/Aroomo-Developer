@@ -174,7 +174,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   }, [sideW]);
   const [insert, setInsert] = useState<{ text: string; seq: number } | null>(null);
   const [sideUi, setSideUi] = useState<SideUi>(SIDE_UI);
-  const { members: allMembers, reload: reloadMembers, upsert: upsertMember } = useMembers();
+  const { members: allMembers, failed: membersFailed, reload: reloadMembers, upsert: upsertMember } = useMembers();
   const members = useMemo(() => allMembers.filter((m) => m.enabled && m.status === 'active'), [allMembers]);
   const [dismissed, setDismissed] = useState<string[]>(() => {
     try {
@@ -623,7 +623,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           <Later>
           {view.kind === 'members' && (
             <>
-              <MembersPanel members={allMembers} onOpen={(m) => setView({ kind: 'member', id: m.id })} {...(isFamily() ? {} : { onAdd: () => setAddMember({}) })} />
+              <MembersPanel members={allMembers} failed={membersFailed} onRetry={reloadMembers} onOpen={(m) => setView({ kind: 'member', id: m.id })} {...(isFamily() ? {} : { onAdd: () => setAddMember({}) })} />
               <div className="panel">
                 <div className="group">
                   <button type="button" className="row row-button" onClick={() => setView({ kind: 'capmap' })}>

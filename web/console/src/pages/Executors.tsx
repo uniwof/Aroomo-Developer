@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { ApiError, api } from '@/lib/api';
 import { Allowlist } from '@/components/Allowlist';
 import { useAsk } from '@/components/Dialog';
+import { ErrorRetry } from '@/components/ErrorRetry';
 
 export interface ExecutorInfo {
   id: string;
@@ -48,6 +49,7 @@ export function Executors() {
   const [devices, setDevices] = useState<ExecutorInfo[] | null>(null);
   const [tasks, setTasks] = useState<TaskInfo[] | null>(null);
   const [msg, setMsg] = useState('');
+  const [loadErr, setLoadErr] = useState(false);
   // 停用电脑、取消任务用全站同一种确认弹窗（审计 S3；以前是页面里自己的内联确认）
   const ask = useAsk();
 
@@ -56,10 +58,13 @@ export function Executors() {
       const [d, t] = await Promise.all([api<{ executors: ExecutorInfo[] }>('GET', '/api/executors'), api<{ tasks: TaskInfo[] }>('GET', '/api/tasks')]);
       setDevices(d.executors);
       setTasks(t.tasks);
+      setLoadErr(false);
     } catch (e) {
       setDevices((v) => v ?? []);
       setTasks((v) => v ?? []);
-      setMsg(e instanceof ApiError && e.status === 404 ? '电脑助手功能还没上线，稍后再来' : '加载失败，请稍后再试');
+      // 还没上线（404）只说一句；其它失败给重试（切片 14；页面也每 10 秒自己再读）
+      if (e instanceof ApiError && e.status === 404) setMsg('电脑助手功能还没上线，稍后再来');
+      else setLoadErr(true);
     }
   }, []);
   useEffect(() => {
@@ -94,6 +99,7 @@ export function Executors() {
     <div className="page">
       <h2 className="page-title">电脑助手</h2>
       {msg && <p role="status">{msg}</p>}
+      {loadErr && <ErrorRetry text="电脑和任务没读到。" what="电脑助手" onRetry={() => void load()} />}
 
       {ask.node}
 
