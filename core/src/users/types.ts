@@ -88,4 +88,6 @@ export interface UserPrincipal {
   role: UserRole;
   /** 当前会话令牌的 SHA-256（用于「退出本设备」「改密码后保留本设备」） */
   sessionId: string;
+  /** 必改 1 方案 A：只由认证钩子按 CORE_OWNER_ACCOUNT_ID 设置；为 true 时 scopeOf = 'owner' */
+  ownerAccount?: true;
 }

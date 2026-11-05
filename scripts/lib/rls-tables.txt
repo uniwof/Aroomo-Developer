@@ -8,3 +8,10 @@ library_items
 vault_secrets
 inbox_items
 provider_keys
+# 助手 v1（迁移 0025–0027，docs/api/design-assistants-v1.md）
+conversations
+conversation_messages
+assistants
+assistant_members
+assistant_runs
+run_steps

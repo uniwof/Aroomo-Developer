@@ -26,10 +26,17 @@ export interface CoreConfig {
   dbAppRole: string | undefined;
   /** 主人（P0 单用户）访问令牌；未设置时 /api/* 一律 503 */
   ownerToken: string | undefined;
+  /**
+   * 必改 1 方案 A：所有者自己的 Core 账号 id（users.id）。这个账号用会话登录时，数据范围 = 'owner'（看到并使用所有者名下的成员、用量、设置），
+   * 身份仍是账号（不获得所有者令牌专属的接口和重要确认）。只在服务器 .env 配置，前端传什么都无效；未设置 = 不映射。
+   */
+  ownerAccountId: string | undefined;
   /** 对话入口 /v1/*（LobeHub 的 OpenAI 兼容服务商指向这里）用的令牌；未设置时 /v1 一律 503 */
   chatToken: string | undefined;
   /** 进程内定时任务（默认开；CORE_JOBS=off 关闭） */
   jobs: boolean;
+  /** 助手定时执行器总开关（ASSISTANT_SCHEDULER_ENABLED=true 才开；默认关，关着时「立即运行」照样能用） */
+  assistantSchedulerEnabled: boolean;
   /** 操作员令牌 HMAC 用的服务端密钥；未设置时操作员令牌不可用 */
   tokenSecret: string | undefined;
   /** 保险箱信封加密的主密钥（32 字节 base64）；未设置时保险箱接口 503。只在服务器 .env */
@@ -114,6 +121,10 @@ export function loadConfig(env: Env = process.env): CoreConfig {
   if (tokenSecret !== undefined && tokenSecret.length < 32) throw new ConfigError('CORE_TOKEN_SECRET 至少 32 个字符');
   const vaultKey = str(env, 'VAULT_KEY');
   if (vaultKey !== undefined && !/^[A-Za-z0-9+/_-]{43}=?$/.test(vaultKey)) throw new ConfigError('VAULT_KEY 必须是 32 字节的 base64（43 个字符）');
+  const ownerAccountId = str(env, 'CORE_OWNER_ACCOUNT_ID')?.toLowerCase();
+  if (ownerAccountId !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(ownerAccountId)) {
+    throw new ConfigError('CORE_OWNER_ACCOUNT_ID 必须是 Core 账号的 id（UUID）');
+  }
   const dbAppRole = str(env, 'CORE_DB_APP_ROLE');
   if (dbAppRole !== undefined && !/^[a-z_][a-z0-9_]{0,62}$/.test(dbAppRole)) throw new ConfigError('CORE_DB_APP_ROLE 只允许小写字母、数字、下划线');
 
@@ -146,8 +157,10 @@ export function loadConfig(env: Env = process.env): CoreConfig {
     autoMigrate: autoMigrateRaw === 'true' || autoMigrateRaw === '1',
     dbAppRole,
     ownerToken,
+    ownerAccountId,
     chatToken,
     jobs: (str(env, 'CORE_JOBS') ?? 'on') !== 'off',
+    assistantSchedulerEnabled: (str(env, 'ASSISTANT_SCHEDULER_ENABLED') ?? '').toLowerCase() === 'true',
     tokenSecret,
     vaultKey,
     cfAccessTeamDomain,
@@ -170,12 +183,14 @@ export function toSafeJSON(cfg: CoreConfig): Record<string, unknown> {
     autoMigrate: cfg.autoMigrate,
     dbAppRole: cfg.dbAppRole ?? '(unset)',
     ownerToken: cfg.ownerToken ? '(set)' : '(unset)',
+    ownerAccountId: cfg.ownerAccountId ? '(set)' : '(unset)',
     chatToken: cfg.chatToken ? '(set)' : '(unset)',
     tokenSecret: cfg.tokenSecret ? '(set)' : '(unset)',
     vaultKey: cfg.vaultKey ? '(set)' : '(unset)',
     cfAccessTeamDomain: cfg.cfAccessTeamDomain ?? '(unset)',
     cfAccessAud: cfg.cfAccessAud ? '(set)' : '(unset)',
     accessReauth: cfg.accessReauth,
+    assistantSchedulerEnabled: cfg.assistantSchedulerEnabled,
     accessReauthMaxAgeS: cfg.accessReauthMaxAgeS,
   };
 }
