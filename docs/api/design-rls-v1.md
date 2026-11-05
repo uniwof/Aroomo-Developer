@@ -1,0 +1,44 @@
+# 一页纸设计：多用户隔离（RLS + 应用数据库角色）v1（线 C，2026-11-05）
+
+状态：设计稿，给负责人审，审过才写代码（落地方案 v2 第 3 节例外）。范围：阶段 1 在 staging 修好；阶段 3 生产启用（所有者 11-14 确认）。
+
+## 1. 现状（已核实）
+- 已有 RLS（ENABLE + FORCE，策略 `user_id = NULLIF(current_setting('app.user_id', true), '')`，系统范围只读）：`members`、`public_memory(_versions)`、`library_items`、`vault_secrets`、`inbox_items`、`provider_keys`（迁移 0019–0024）。Core 每个事务开头 `set_config('app.user_id', scope, true)`（`core/src/db/scope.ts`）。
+- **staging 和生产的 core 容器里 `CORE_DB_APP_ROLE` 都是空的**（11-05 只读核对）：业务连接用的是表所有者 `aroomo_core`。FORCE 让所有者也受策略约束，所以平时隔离生效；但所有者能 `ALTER TABLE … NO FORCE` / `DISABLE ROW LEVEL SECURITY`，一旦有 SQL 注入，隔离可以被整个关掉。
+- 没有 RLS、但带 `user_id` 的表：`client_tokens`、`executors`、`exec_tasks`、`exec_takeovers`；`core_settings` 按键名前缀 `u<hex>.` 分用户（用量计数、负责人、规矩都在里面）。
+- 按设计不分用户的表：`users`、`user_sessions`、`user_invites`（登录本身）、`audit_log`（只追加）、`confirm_*`、`core_schema_migrations`。
+- D213 第 13 项：`SET ROLE`/`options=-c role=` 挡不住会话内 `RESET ROLE`，加固前要换成可登录的独立应用角色。
+
+## 2. 要改什么（字段 / 配置）
+1. **独立可登录的应用角色**：`aroomo_core_app`，`LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB`，不拥有任何表，不是 `aroomo_core` 的成员（这样 `RESET ROLE` 回不到所有者）。密码由 Hark 在服务器上生成，直接写进 `.env` 的新变量 `CORE_APP_DATABASE_URL`，不经聊天、不进仓库。`CORE_DATABASE_URL`（所有者）只用来跑迁移和授权。
+2. **启动自检（失败即拒绝启动）**：应用连接 `current_user` ≠ 表所有者、非超级用户、非 BYPASSRLS、拥有表数 = 0、`pg_has_role(current_user,'aroomo_core','MEMBER') = false`；对每张 RLS 表 `relforcerowsecurity = true`。新增 `CORE_DB_REQUIRE_APP_ROLE=true`：设了而应用连接不满足 → 拒绝启动（staging 阶段 1 打开，生产阶段 3 打开）。
+3. **补齐 RLS（同一模板，新迁移 0025 起，一表一文件，可回退）**：`client_tokens`、`executors`、`exec_tasks`、`exec_takeovers`。回填放在 ENABLE/FORCE 之前（docs/ops/RLS.md 规矩）。
+4. **`core_settings`**：新迁移加 `user_id text NOT NULL DEFAULT 'owner'`，按现有键名前缀回填（`u<hex>.` → 账号 id 的标准 UUID 写法，否则 `'owner'`），再上同一策略；`scopedSettings` 改为按 `user_id` 读写（键名保留前缀一个版本，便于回退）。用量计数、负责人、规矩因此也进 RLS。
+5. **方案 A 的关系**：`app.user_id` 一律取 `scopeOf(req)`；所有者自己的账号映射成 `'owner'`，RLS 不需要知道映射，策略不变。
+6. **为后面新表预留（同一模板，user_id NOT NULL + 复合外键防跨账号挂接）**：
+   - `conversations(id, user_id, title, member_ids[], created_at, updated_at, deleted_at)`、`conversation_messages(id, conversation_id, user_id, role, member_id, content, created_at)`，外键 `(conversation_id, user_id)`。
+   - 助手（所有者 11-05 12:38 定：支持定时、多成员小团队、不预置）：
+     - `assistants(id, user_id, name, brief 任务说明, conversation_id 固定会话, enabled 启停, schedule_cron, schedule_tz, next_run_at, created_at, updated_at, deleted_at)`
+     - `assistant_members(assistant_id, user_id, member_id, duty 分工, is_lead, position)`，外键 `(assistant_id,user_id)` 和 `(member_id,user_id)` → 只能挂本人的成员。
+     - `assistant_runs(id, assistant_id, user_id, trigger manual|schedule, scheduled_for, status queued|running|ok|failed|cancelled, started_at, finished_at, summary, error_code)`，唯一键 `(assistant_id, scheduled_for)` = 定时触发的幂等键。
+     - 将来的定时执行器：只用 `systemScoped` 读 `(id, user_id, next_run_at)` 这三列找到期任务（进 systemScoped 白名单），真正执行一律切到 `userScoped(user_id)`；不跨 `u<id>/`。本轮不写执行器，`/api/assistants` 的「立即运行」在执行器做好前不出现。
+
+## 3. 谁能调用 / 返回什么
+- RLS 不新增接口。现有 `userRoute` 接口照旧：账号会话 → 本人数据；所有者令牌、操作员 → `'owner'`；客户端令牌 → 令牌主人。
+- 违规时的表现：读别人的行 = 不存在（404 / 空列表，与「根本没有」一致）；写别人的行 = 改到 0 行 → 404；直接 SQL 插入别人的 `user_id` → 数据库拒绝（42501）→ 500 并写审计，不回显内容。
+
+## 4. 怎么测（全部进 CI；真 PostgreSQL 必须真跑，不允许 skipped）
+1. **数据库层（每张 RLS 表一组，扩展现有 rls-*.test.ts）**：用应用角色连接；A 写一行 → 切到 B：SELECT 0 行、UPDATE/DELETE 0 行、INSERT `user_id=A` 被拒；不设 `app.user_id`：读 0 行、写被拒；`system_scope=on`：只能读不能写。
+2. **角色自检**：应用角色执行 `RESET ROLE`、`SET ROLE aroomo_core`、`ALTER TABLE members NO FORCE ROW LEVEL SECURITY`、`DELETE FROM audit_log` 全部失败；用所有者连接冒充应用连接 + `CORE_DB_REQUIRE_APP_ROLE=true` → 拒绝启动。
+3. **两个账号互相看不到（HTTP 层，复用 two-accounts 基建 + 方案 A 的所有者账号）**：所有者账号和小号各建成员、发一次对话、写一条规矩：互查 `/api/members`、`/api/usage`、`/api/members/:id/card`、`/api/library`、`/api/inbox`、`/api/clients`、执行员任务列表都看不到对方，按对方 id 访问与访问不存在 id 结果相同（`expectSameAsMissing`）；以后的 `/api/conversations`、`/api/assistants`（含 runs）加进同一张表。
+4. **D208**：越权表遍历所有 `userRoute` 路由，新路由没声明数据范围 → CI 失败。
+5. **staging 实测（阶段 1 验收第 4 条）**：备份 → 建角色、写 `.env`、重建 core → 日志里自检通过 → 用所有者账号和小号在浏览器各走一遍，互相看不到成员、用量、会话 → 截图 + 测试日志附进阶段 1 送审包。
+
+## 5. 上线与回退
+- staging：先 `scripts/backup.sh`；迁移可逆（每个文件附回退 SQL：`NO FORCE` + `DISABLE` + 删策略 + 删列）；回退 = 去掉 `CORE_APP_DATABASE_URL`/`CORE_DB_REQUIRE_APP_ROLE` 重建 core，再按需跑回退 SQL。
+- 生产（阶段 3，所有者确认后）：先备份、先查 `user_id=''/NULL` 行数为 0、`core_settings` 回填条数与前缀键数一致，再启用；异常退回上一标签并恢复快照，LobeHub 照常可用。
+
+## 6. 待负责人定
+1. `core_settings` 加 `user_id` 列（本稿）还是把用量 / 负责人 / 规矩拆成独立表？我建议加列，改动最小。
+2. 应用角色密码：同意由 Hark 在服务器生成直写 `.env`（不经所有者）？
+3. 助手的 cron 最短间隔：我建议 ≥ 1 小时，免费额度扛不住更密。
