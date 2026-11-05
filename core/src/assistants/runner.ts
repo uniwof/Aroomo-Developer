@@ -24,11 +24,14 @@ import {
   type AssistantRun,
   type AssistantStore,
   type BudgetLevel,
+  CONFIRM_EXPIRED_TEXT,
+  CONFIRM_TTL_MS,
   RUN_FAILURE_TEXT,
   type RunFailureCode,
   type StepAction,
   type StepStatus,
   type UsageState,
+  WAITING_SKIP_TEXT,
 } from './types.js';
 
 /** 每次 / 每天最多调用几次模型（按账号）。前端不显示数字（附录 C 第 5 条）。待负责人定。 */
@@ -192,6 +195,31 @@ export class AssistantRunner implements RunLauncher {
       n++;
       const a = await this.d.store.getAssistant(r.userId, r.assistantId);
       if (a) await this.#reportFailure(a, done, 'server_restart');
+    }
+    return n;
+  }
+
+  /**
+   * 等确认超过 24 小时的运行作废（裁定 12）：运行记 cancelled（summary 写明过期），步骤记一条，会话里留一行，
+   * 收件箱那张确认卡改成已过期。每分钟由 confirmExpiryJob 调用；返回作废的条数。
+   */
+  async expireStaleConfirmations(limit = 50): Promise<number> {
+    let n = 0;
+    for (const r of await this.d.store.systemStaleWaitingRuns(new Date(this.d.now().getTime() - CONFIRM_TTL_MS), limit)) {
+      const done = await this.d.store.updateRun(r.userId, r.runId, ['waiting_confirmation'], { status: 'cancelled', finishedAt: this.d.now(), summary: CONFIRM_EXPIRED_TEXT });
+      if (!done) continue; // 刚好被同意 / 拒绝 / 取消
+      n++;
+      const steps = await this.d.store.listSteps(r.userId, r.runId);
+      const stepNo = steps.filter((e) => e.action === 'confirm').at(-1)?.stepNo ?? 0;
+      await this.#step(r.userId, r.runId, stepNo, null, 'confirm', 'skipped', CONFIRM_EXPIRED_TEXT);
+      const a = await this.d.store.getAssistant(r.userId, r.assistantId);
+      if (a) {
+        await this.d.service
+          .postAsAssistant(r.userId, a.id, a.conversationId, { role: 'system', memberId: null, runId: r.runId, content: CONFIRM_EXPIRED_TEXT })
+          .catch(() => undefined);
+      }
+      await this.d.inbox.resolveRelated('assistant.run.confirm', { type: 'assistant_run', id: r.runId }, 'expired', this.d.audit, undefined, r.userId === 'owner' ? undefined : r.userId);
+      await this.d.audit('assistant.run', { type: 'assistant_run', id: r.runId }, 'ok', `assistant=${r.assistantId} status=cancelled reason=confirm_expired`);
     }
     return n;
   }
@@ -390,8 +418,15 @@ export class AssistantRunner implements RunLauncher {
     const paid = paidSet.map((p) => p.member);
     const names = paid.map((m) => m.name).join('、');
     const why = changed ? '成员或模型变了，之前的同意作废，需要重新确认。' : '';
+    // 裁定 12：同一助手最多一张等确认（库层唯一索引兜底）。别的运行已经在等 → 这次跳过，不再发卡
+    if (await this.d.store.findWaitingRun(a.userId, a.id)) return this.#skipBecauseWaiting(a, run, stepNo);
     await this.#step(a.userId, run.id, stepNo, null, 'confirm', 'waiting_confirmation', `[set:${paidSetHash(paidSet)}] ${why}要调用付费模型：${names}`);
-    await this.d.store.updateRun(a.userId, run.id, ['running'], { status: 'waiting_confirmation' });
+    const waiting = await this.d.store.updateRun(a.userId, run.id, ['running'], { status: 'waiting_confirmation' });
+    if (!waiting) {
+      // 并发：刚好另一次抢先进了等确认（唯一索引拒绝），或者这次已被取消
+      if (await this.d.store.findWaitingRun(a.userId, a.id)) return this.#skipBecauseWaiting(a, run, stepNo);
+      return;
+    }
     await this.d.service.postAsAssistant(a.userId, a.id, a.conversationId, { role: 'system', memberId: null, runId: run.id, content: `这次运行要调用付费模型（${names}），等你在铃铛里确认。` });
     await this.d.inbox.createInboxItem(
       {
@@ -410,6 +445,13 @@ export class AssistantRunner implements RunLauncher {
       this.d.audit,
     );
     await this.d.audit('assistant.run', { type: 'assistant_run', id: run.id }, 'ok', `assistant=${a.id} status=waiting_confirmation members=${paid.map((m) => m.id).join(',')}`);
+  }
+
+  async #skipBecauseWaiting(a: Assistant, run: AssistantRun, stepNo: number): Promise<void> {
+    const done = await this.d.store.updateRun(a.userId, run.id, ['running'], { status: 'skipped', finishedAt: this.d.now(), summary: WAITING_SKIP_TEXT });
+    if (!done) return;
+    await this.#step(a.userId, run.id, stepNo, null, 'confirm', 'skipped', WAITING_SKIP_TEXT);
+    await this.d.audit('assistant.run', { type: 'assistant_run', id: run.id }, 'ok', `assistant=${a.id} status=skipped reason=waiting_confirmation`);
   }
 
   async #reportFailure(a: Assistant, run: AssistantRun, code: RunFailureCode): Promise<void> {

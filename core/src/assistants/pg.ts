@@ -1,7 +1,7 @@
 /**
  * PostgreSQL 实现。每个方法都在 userScoped 事务里（app.user_id = 账号，D206 RLS），SQL 里也照样带 user_id（双保险）。
- * system* 两个方法用 systemScoped 只读（进 core/test/system-scoped-allowlist.test.ts 白名单）：
- * 重启恢复、定时执行器第一步需要跨账号找行；改写一律切回 userScoped。
+ * system* 三个方法用 systemScoped 只读（进 core/test/system-scoped-allowlist.test.ts 白名单）：
+ * 重启恢复、定时执行器第一步、等确认过期作废需要跨账号找行；改写一律切回 userScoped。
  */
 import type { Db, Queryable } from '../db/db.js';
 import { toDate, toDateOrNull } from '../db/db.js';
@@ -289,7 +289,7 @@ export class PgAssistantStore implements AssistantStore {
       );
       return rows[0] ? toRun(rows[0]) : null;
     } catch (e) {
-      if (isUnique(e)) return null; // 改回 queued 时同一助手已有进行中的运行
+      if (isUnique(e)) return null; // 改回 queued 时同一助手已有进行中的运行；改成等确认时已有一张在等
       throw e;
     }
   }
@@ -352,6 +352,26 @@ export class PgAssistantStore implements AssistantStore {
     return rows.length > 0;
   }
 
+  async findWaitingRun(userId: string, assistantId: string): Promise<AssistantRun | null> {
+    const { rows } = await this.#u(userId).query<RRow>(
+      `SELECT ${R_COLS} FROM assistant_runs WHERE assistant_id = $1 AND user_id = $2 AND status = 'waiting_confirmation'`,
+      [assistantId, userId],
+    );
+    return rows[0] ? toRun(rows[0]) : null;
+  }
+
+  async systemStaleWaitingRuns(before: Date, limit: number): Promise<Array<{ userId: string; runId: string; assistantId: string }>> {
+    const { rows } = await systemScoped(this.db).query<{ user_id: string; id: string; assistant_id: string }>(
+      `SELECT r.user_id, r.id, r.assistant_id FROM assistant_runs r
+        WHERE r.status = 'waiting_confirmation'
+          AND coalesce((SELECT max(s.created_at) FROM run_steps s
+                         WHERE s.run_id = r.id AND s.user_id = r.user_id AND s.action = 'confirm' AND s.status = 'waiting_confirmation'), r.requested_at) < $1
+        ORDER BY r.requested_at LIMIT $2`,
+      [before, limit],
+    );
+    return rows.map((r) => ({ userId: r.user_id, runId: r.id, assistantId: r.assistant_id }));
+  }
+
   async systemActiveRuns(): Promise<Array<{ userId: string; runId: string; assistantId: string }>> {
     const { rows } = await systemScoped(this.db).query<{ user_id: string; id: string; assistant_id: string }>(
       "SELECT user_id, id, assistant_id FROM assistant_runs WHERE status IN ('queued','running')",
@@ -377,6 +397,8 @@ export class PgAssistantStore implements AssistantStore {
       if (!rows[0]) return null;
       return fn(toAssistant(rows[0]), {
         insertRun: (run) => insertRunQ(q, { ...run, userId }),
+        hasWaitingRun: async (aid) =>
+          (await q.query("SELECT 1 FROM assistant_runs WHERE assistant_id = $1 AND user_id = $2 AND status = 'waiting_confirmation'", [aid, userId])).rows.length > 0,
         setNextRunAt: async (aid, next) => {
           await q.query('UPDATE assistants SET next_run_at = $3 WHERE id = $1 AND user_id = $2', [aid, userId, next]);
         },

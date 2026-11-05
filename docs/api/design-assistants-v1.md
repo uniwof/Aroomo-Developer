@@ -45,5 +45,6 @@ RLS 元数据与两账号互不可见（含 4 张新表）；家人/操作员/�
 2. `conversations`/`conversation_messages` 现在由助手先建，会话存库沿用同一张表（还是另设计）？
 3. 方案 A 的所有者账号不能完成重要确认（D62/D63）→ 她在新界面上删不了助手、批不了付费运行。是否给所有者账号开放 confirm:important（或助手删除降为普通确认）？
 4. 新增 failure_code server_restart、no_member；waiting_confirmation 不占「不并发」名额（否则一张没处理的卡会挡住后面所有运行）。
+   同一助手最多一张等确认（负责人裁定 12，库层唯一索引 `assistant_runs_one_waiting`）：上一次还在等 → 定时这次记 skipped（summary 写明），立即运行 409 `RUN_WAITING_CONFIRMATION`，执行中撞上 → 这次 skipped、不发第二张卡；等确认超过 24 小时（从最后一条「等确认」步骤算）由每分钟的 `assistant-confirm-expiry` 任务作废：运行 cancelled（summary「超过 24 小时没人确认…」），确认卡改为 expired，会话里留一行。该任务不受 ASSISTANT_SCHEDULER_ENABLED 影响。
 5. 预算数字（8/40、16/80、32/160 次调用）和「判不出是否免费就当付费」。
 6. X-15 草稿卡：本阶段只提供 `/preview` 返回的数据块；负责人在对话里识别「每周一 9 点…」并发卡，需要改对话路由，单列下一片。
