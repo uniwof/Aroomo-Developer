@@ -38,6 +38,8 @@ const TABLES: Record<string, (userIdSql: string) => string> = {
   run_steps: (u) =>
     `WITH c AS (${CONV(u)}), a AS (${ASSIST('c', u)} RETURNING id, user_id), r AS (${RUN('a')} RETURNING id, user_id)
      INSERT INTO run_steps (run_id, user_id, seq, step_no, action, status, created_at) SELECT r.id, r.user_id, 0, 0, 'plan', 'pending', ${NOW} FROM r`,
+  push_subscriptions: (u) =>
+    `INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth, created_at) VALUES ('${randomUUID()}', ${u}, 'https://fcm.googleapis.com/fcm/send/${randomUUID()}', '${'B'.repeat(87)}', '${'a'.repeat(22)}', ${NOW})`,
   library_items: (u) =>
     `INSERT INTO library_items (id, user_id, kind, title, url, body, tags, source, created_at, updated_at) VALUES ('${randomUUID()}', ${u}, 'idea', 't', NULL, '', '', 'manual', ${NOW}, ${NOW})`,
 };

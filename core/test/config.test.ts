@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ConfigError, loadConfig, toSafeJSON } from '../src/config.js';
+import { generateVapidKeys } from '../src/push/webpush.js';
 
 describe('loadConfig', () => {
   it('空环境使用默认值', () => {
@@ -88,5 +89,19 @@ describe('loadConfig：Cloudflare Access 重新验证（D63）', () => {
     const c = loadConfig({ CF_ACCESS_TEAM_DOMAIN: 'team.cloudflareaccess.com', CF_ACCESS_AUD: aud, CORE_ACCESS_REAUTH: 'OFF' });
     expect(c.accessReauth).toBe('off');
     expect(JSON.stringify(toSafeJSON(c))).not.toContain(aud);
+  });
+
+  it('X-08 推送：默认关；开了必须配一对 VAPID 密钥和联系方式；私钥不进安全视图', () => {
+    expect(loadConfig({}).push).toBeNull();
+    const k = generateVapidKeys();
+    expect(() => loadConfig({ PUSH_ENABLED: 'true' })).toThrow(ConfigError);
+    expect(() => loadConfig({ PUSH_ENABLED: 'yes' })).toThrow(ConfigError);
+    expect(() => loadConfig({ PUSH_ENABLED: 'true', VAPID_PUBLIC_KEY: generateVapidKeys().publicKey, VAPID_PRIVATE_KEY: k.privateKey, VAPID_SUBJECT: 'mailto:a@b.c' })).toThrow(ConfigError);
+    expect(() => loadConfig({ PUSH_ENABLED: 'true', VAPID_PUBLIC_KEY: k.publicKey, VAPID_PRIVATE_KEY: k.privateKey, VAPID_SUBJECT: 'owner' })).toThrow(ConfigError);
+    const c = loadConfig({ PUSH_ENABLED: 'true', VAPID_PUBLIC_KEY: k.publicKey, VAPID_PRIVATE_KEY: k.privateKey, VAPID_SUBJECT: 'mailto:a@b.c' });
+    expect(c.push).toEqual({ publicKey: k.publicKey, privateKey: k.privateKey, subject: 'mailto:a@b.c' });
+    expect(JSON.stringify(toSafeJSON(c))).not.toContain(k.privateKey);
+    // 关着时不校验密钥（staging 还没配也能启动）
+    expect(loadConfig({ PUSH_ENABLED: 'false', VAPID_PRIVATE_KEY: 'junk' }).push).toBeNull();
   });
 });

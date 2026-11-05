@@ -50,6 +50,7 @@ export type InboxActionHandler = (item: InboxItem, actionId: string, audit: Audi
 
 export class InboxService {
   readonly #handlers = new Map<string, InboxActionHandler>();
+  readonly #onCreated: Array<(item: InboxItem) => Promise<void>> = [];
 
   constructor(
     private readonly store: InboxStore,
@@ -60,6 +61,14 @@ export class InboxService {
   /** 注册某类条目的动作处理器（同一 kind 只能注册一个）。 */
   registerHandler(kind: string, handler: InboxActionHandler): void {
     this.#handlers.set(kind, handler);
+  }
+
+  /**
+   * 新条目建好后通知（X-08 推送提醒）。不等它完成、出错也不影响建条目：调用方（例如助手运行）不会被推送服务拖慢。
+   * 去重命中（created=false）不通知。
+   */
+  onCreated(listener: (item: InboxItem) => Promise<void>): void {
+    this.#onCreated.push(listener);
   }
 
   /**
@@ -121,6 +130,7 @@ export class InboxService {
     };
     const out = await this.store.insertDedup(item);
     await audit(out.created ? 'inbox.create' : 'inbox.create_deduped', { type: 'inbox', id: out.item.id }, 'ok', kind);
+    if (out.created) for (const l of this.#onCreated) void l(out.item).catch(() => undefined);
     return out;
   }
 
