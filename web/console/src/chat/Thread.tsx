@@ -323,9 +323,13 @@ export interface ThreadProps {
   intro?: string;
   /** 输入卡上方的提示条（例如额度用完了） */
   notice?: ReactNode;
+  /** 一轮对话结束：成功给 null，接口回了错误状态给 HTTP 状态（别的失败给 undefined） */
+  onResult?: (status: number | null | undefined) => void;
 }
 
-export function Thread({ conversation, onMessages, insert, onInserted, hidden = false, routes = [], members = [], fetchImpl, speechRate = DEFAULT_RATE, speechOnline = false, onAllowOnlineSpeech, memberName, onRunning, intro, notice }: ThreadProps) {
+export function Thread({ conversation, onMessages, insert, onInserted, hidden = false, routes = [], members = [], fetchImpl, speechRate = DEFAULT_RATE, speechOnline = false, onAllowOnlineSpeech, memberName, onRunning, intro, notice, onResult }: ThreadProps) {
+  const resultCb = useRef(onResult);
+  resultCb.current = onResult;
   const convRef = useRef(conversation);
   convRef.current = conversation;
   const save = useRef(onMessages);
@@ -368,7 +372,9 @@ export function Thread({ conversation, onMessages, insert, onInserted, hidden = 
       try {
         for await (const text of streamChat(turns, convRef.current.model, ac.signal, fetchImpl)) update({ text });
         update({ state: 'done' });
+        resultCb.current?.(null);
       } catch (e) {
+        if (!ac.signal.aborted) resultCb.current?.(e instanceof ChatStreamError ? e.status : undefined);
         // 点了停止：保留已经收到的部分；其他错误就地显示，可以「重试」
         if (ac.signal.aborted) update({ state: 'cancelled' });
         else

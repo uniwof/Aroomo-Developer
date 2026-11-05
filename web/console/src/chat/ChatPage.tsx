@@ -474,6 +474,12 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     ) : null;
 
   const inChat = view.kind === 'chat';
+  /** 从 Shell 打开：对话请求回 401/403/404 才说「要直接打开 Aroomo 网页」（#264 后 Shell 能直通对话，平时不该吓人；审计 C12）；之后成功一次就收起 */
+  const [shellBlocked, setShellBlocked] = useState(false);
+  const onChatResult = useCallback((status: number | null | undefined) => {
+    if (status === null) setShellBlocked(false);
+    else if (status === 401 || status === 403 || status === 404) setShellBlocked(true);
+  }, []);
   // 对话区一直挂着（切片 1 / 审计 C1）：打开面板时只藏起来，回复不断、输入不丢
   const chatMain = (
       <>
@@ -576,7 +582,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
             }
           />
         </header>
-        {viaShell && inChat && (
+        {viaShell && inChat && shellBlocked && (
           <p role="alert" className="chat-error main-note">
             对话要直接打开 Aroomo 网页才能用，请从书签或首页进入。
           </p>
@@ -596,6 +602,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           onAllowOnlineSpeech={allowOnlineSpeech}
           {...(singleName ? { memberName: singleName } : {})}
           intro={intro}
+          {...(viaShell ? { onResult: onChatResult } : {})}
           {...(notice ? { notice } : {})}
           {...(fetchImpl ? { fetchImpl } : {})}
         />
