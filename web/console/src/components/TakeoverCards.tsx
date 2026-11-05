@@ -73,9 +73,9 @@ export function TakeoverCards() {
   return (
     <div className="space-y-2" aria-labelledby="takeover-title" role="region">
       {ask.node}
-      <h2 id="takeover-title" className="group-title">
+      <h3 id="takeover-title" className="group-title">
         需要你亲自处理
-      </h2>
+      </h3>
       <p role="status" className="text-[var(--muted)]">
         {msg}
       </p>

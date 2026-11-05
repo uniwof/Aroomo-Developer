@@ -87,7 +87,7 @@ export function Executors() {
 
   return (
     <div className="page">
-      <h1 className="page-title">电脑助手</h1>
+      <h2 className="page-title">电脑助手</h2>
       {msg && <p role="status">{msg}</p>}
 
       {confirm && (
@@ -108,9 +108,9 @@ export function Executors() {
       )}
 
       <section aria-labelledby="exec-devices" className="flex flex-col gap-2">
-        <h2 id="exec-devices" className="group-title">
+        <h3 id="exec-devices" className="group-title">
           电脑
-        </h2>
+        </h3>
         {devices === null && <p className="text-[var(--muted)]">正在加载…</p>}
         {devices?.length === 0 && <p className="text-[var(--muted)]">还没有电脑连上来。装好电脑助手并配对后会出现在这里。</p>}
         <ul className="flex flex-col gap-2">
@@ -136,9 +136,9 @@ export function Executors() {
       <Allowlist />
 
       <section aria-labelledby="exec-tasks" className="flex flex-col gap-2">
-        <h2 id="exec-tasks" className="group-title">
+        <h3 id="exec-tasks" className="group-title">
           任务
-        </h2>
+        </h3>
         {tasks === null && <p className="text-[var(--muted)]">正在加载…</p>}
         {tasks?.length === 0 && <p className="text-[var(--muted)]">还没有任务。</p>}
         <ul className="flex flex-col gap-2">

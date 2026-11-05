@@ -111,9 +111,10 @@ export function Inbox({ onBack }: { onBack?: () => void } = {}) {
   return (
     <section aria-labelledby="inbox-title" className="page">
       {ask.node}
-      <h1 id="inbox-title" className="page-title">
+      {/* 只嵌在面板里，面板顶栏已有 h1：这里是 h2（审计 S4，class 不变外观不变） */}
+      <h2 id="inbox-title" className="page-title">
         收件箱
-      </h1>
+      </h2>
       {/* 照 sumus 全站唯一那种分段筛选（是筛选，不是标签页） */}
       <div className="seg inbox-filter" role="radiogroup" aria-label="收件箱筛选">
         {(
@@ -157,7 +158,7 @@ export function Inbox({ onBack }: { onBack?: () => void } = {}) {
           .map((g) => (
           <div key={g.key} className="group-block">
             <div className="group-head">
-              <h2 className="group-title">{g.title}</h2>
+              <h3 className="group-title">{g.title}</h3>
               {g.key === 'brief' && (view[g.key] ?? []).length > 1 && (
                 <Button variant="outline" onClick={() => dismiss((view[g.key] ?? []).map((i) => i.id))}>
                   全部知道了
