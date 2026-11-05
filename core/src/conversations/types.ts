@@ -24,6 +24,8 @@ export interface ChatMessageMeta {
   imported?: true;
   /** X-19 摘要行（role = 'system'）：text 给模型看；toSeq = 被整理的最后一条原文；keep = 当时留着没整理的条数 */
   summary?: SummaryMeta;
+  /** 回复是哪几位成员答的：成员 id + 名字快照（裁定 16/17；Core 选的人，不收浏览器传来的） */
+  answeredBy?: Array<{ memberId: string; name: string }>;
 }
 
 export interface SummaryMeta {

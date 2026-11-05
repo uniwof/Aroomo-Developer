@@ -59,7 +59,11 @@ export async function handleLogout(
 }
 
 /** core-session 的兜底：把 Core 的会话 Cookie 设为过期（属性与 Core 下发时一致：Path=/、HttpOnly、SameSite=Strict） */
-const CORE_EXPIRE = ['aroomo_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict', 'aroomo_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict; Secure'];
+const CORE_EXPIRE = [
+  '__Host-aroomo_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict; Secure',
+  'aroomo_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict',
+  'aroomo_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict; Secure',
+];
 
 /**
  * core-session 退出：带 aroomo_session 调 Core `POST /api/auth/logout`（作废服务器上的会话），

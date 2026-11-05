@@ -1,11 +1,11 @@
 /**
- * 控制台只调用 Core（同源）：POST /auth/login（cookie:true）→ HttpOnly 会话 Cookie；旧 Core 仍返回令牌时退回 Bearer。
+ * 控制台只调用 Core（同源）：POST /auth/login（cookie:true）→ HttpOnly 会话 Cookie；只认 Cookie，响应里出现令牌当出错处理（#264 必改 2）。
  * 令牌只放 sessionStorage（关掉标签页即失效）；Core 支持 HttpOnly Cookie 后改用 Cookie（已登记在 PROGRESS「控制台需要的 API」）。
  * 改动类请求一律带 X-Aroomo-Request: 1（与 Shell 的同源校验一致）。
  */
 const TOKEN_KEY = 'aroomo.console.session';
 /**
- * Cookie 会话的占位标记（#250 spike）：登录时请 Core 把会话放进 HttpOnly Cookie（aroomo_session），
+ * Cookie 会话的占位标记（#250 spike）：登录时请 Core 把会话放进 HttpOnly Cookie（https 上 __Host-aroomo_session），
  * 页面脚本拿不到真令牌，sessionStorage 里只记「已用 Cookie 登录」。这时请求不带 Authorization，靠 Cookie + X-Aroomo-Request。
  */
 export const COOKIE_SESSION = 'cookie-session';
@@ -132,8 +132,13 @@ export function isFamily(): boolean {
 
 export async function login(email: string, password: string, fetchImpl: typeof fetch = fetch): Promise<User> {
   // cookie:true：Core 把会话放进 HttpOnly Cookie，不在响应里给令牌（原生对话 /api/chat/stream 只认 Cookie）
-  const r = await api<{ token?: string; user: User }>('POST', '/auth/login', { email, password, cookie: true }, fetchImpl);
-  session.set(r.token ?? COOKIE_SESSION);
+  const r = await api<{ token?: unknown; user: User }>('POST', '/auth/login', { email, password, cookie: true }, fetchImpl);
+  // 只认 Cookie：响应里带了令牌说明 Core 没按 cookie:true 走（旧版或配置错），不收下、不放进页面能读到的地方
+  if (r.token !== undefined) {
+    session.set(null);
+    throw new ApiError(502, 'LOGIN_TOKEN_IN_BODY', '登录没有成功：后台版本不对，请联系管理员');
+  }
+  session.set(COOKIE_SESSION);
   try {
     // 只记显示用的名字和邮箱（侧栏底部的账号行），不记令牌
     sessionStorage.setItem(USER_KEY, JSON.stringify({ email: r.user.email, displayName: r.user.displayName ?? '', role: r.user.role }));

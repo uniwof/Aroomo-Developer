@@ -352,13 +352,18 @@ export class AssistantService {
 
   /**
    * 立即运行（7.12）：不影响下一次定时。幂等键重复 → 返回同一条运行（created=false）；
-   * 没带键而已有进行中的运行 → 409 RUN_IN_PROGRESS。暂停 / 停用时也能手动运行（指南 7.11「关着时只能手动运行」）。
+   * 没带键而已有进行中的运行 → 409 RUN_IN_PROGRESS；上一次还在等确认 → 409 RUN_WAITING_CONFIRMATION（裁定 12）。暂停 / 停用时也能手动运行（指南 7.11「关着时只能手动运行」）。
    */
   async runNow(userId: string, id: string, idempotencyKey: string | undefined, audit: AuditFn): Promise<{ run: AssistantRun; created: boolean }> {
     await this.#mustGet(userId, id);
     if (idempotencyKey) {
       const prev = await this.d.store.findRunByKey(userId, id, idempotencyKey);
       if (prev) return { run: prev, created: false };
+    }
+    // 裁定 12：上一次还在等确认 → 不开新的一次（不会再多一张付费确认卡）
+    if (await this.d.store.findWaitingRun(userId, id)) {
+      await audit('assistant.run.request', { type: 'assistant', id }, 'failed', 'RUN_WAITING_CONFIRMATION');
+      throw conflict('上一次运行还在等你确认，先在铃铛里同意或拒绝', 'RUN_WAITING_CONFIRMATION');
     }
     const run: AssistantRun = {
       id: randomUUID(),

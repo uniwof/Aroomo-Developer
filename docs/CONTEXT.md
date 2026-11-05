@@ -23,5 +23,5 @@ M2 验收（staging，Hark 先两账号跑）：①LobeHub 重新授权，勾 to
 6 不改 LobeHub，只原样用
 
 ## 边界
-后台 core/src 业务 | 隔离 migrations RLS、core/src/db、seed | 控制台 web/console、shell、deploy | 执行员 executor、.github、scripts/ci | 流程工具只修不加 | 独立版冻结。只改工单写明的文件。C 界面：14px、点击区 ≥44px、aria。
+后台 core/src 业务 | 隔离 migrations RLS、core/src/db、seed | 控制台 web/console、shell、deploy | 执行员 executor、.github、scripts/ci | 流程工具只修不加 | 独立版冻结。只改工单写明的文件。C 界面：默认字号跟 sumus（11–16px）、设置滑块 12–32、点击区 ≥44px、aria。
 一单一会话。PR 说明三行（改了什么/怎么测/风险）+「工单 #N」。细节 grep docs/DECISIONS.md 编号。

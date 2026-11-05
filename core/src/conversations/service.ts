@@ -73,6 +73,7 @@ export function messageJson(m: ChatMessage) {
     ...(m.meta?.imported ? { imported: true } : {}),
     // X-19 摘要行：只给位置（放在 seq = toSeq 那条之后），摘要正文不出 Core
     ...(m.meta?.summary ? { summary: { toSeq: m.meta.summary.toSeq } } : {}),
+    ...(m.meta?.answeredBy?.length ? { answeredBy: m.meta.answeredBy } : {}),
     createdAt: m.createdAt.toISOString(),
   };
 }

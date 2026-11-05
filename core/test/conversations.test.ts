@@ -6,7 +6,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { hashPassword } from '../src/users/password.js';
 import { MemoryConversationStore } from '../src/conversations/memory.js';
 import { ConversationService } from '../src/conversations/service.js';
-import { assistantEnv, type AssistantEnv, LEAD } from './helpers/assistants.js';
+import { assistantEnv, type AssistantEnv, LEAD, WORKER } from './helpers/assistants.js';
+import type { CoreDeps } from '../src/deps.js';
 import { XIAOHAO_TEST_EMAIL, XIAOHAO_TEST_PASSWORD, expectSameAsMissing, fakePw, twoAccountEnvs } from './helpers/two-accounts.js';
 
 const CSRF = { 'x-aroomo-request': '1' };
@@ -24,9 +25,12 @@ describe.each(twoAccountEnvs)('会话存库 /api/conversations [$name]', (env) =
   let ownerCookie = '';
   let familyCookie = '';
   beforeAll(async () => {
-    e = await assistantEnv(env, { extraEnv: { CORE_OWNER_ACCOUNT_ID: OWNER_ACCOUNT_ID, CORE_CHAT_TOKEN: 'placeholder-chat-token-0123456789abcdefgh' } });
-    const at = e.clock.now();
-    await e.deps.users.insertUser({ id: OWNER_ACCOUNT_ID, email: OWNER_EMAIL, displayName: '宝宝', role: 'admin', status: 'active', passwordHash: await hashPassword(OWNER_PW), createdAt: at, updatedAt: at });
+    // 所有者账号要在服务启动前就在库里：#268 的启动检查（onReady）认过它，Cookie 会话才映射到所有者数据
+    const seed = async (deps: CoreDeps, now: () => Date) => {
+      const at = now();
+      await deps.users.insertUser({ id: OWNER_ACCOUNT_ID, email: OWNER_EMAIL, displayName: '宝宝', role: 'admin', status: 'active', passwordHash: await hashPassword(OWNER_PW), createdAt: at, updatedAt: at });
+    };
+    e = await assistantEnv(env, { seed, extraEnv: { CORE_OWNER_ACCOUNT_ID: OWNER_ACCOUNT_ID, CORE_CHAT_TOKEN: 'placeholder-chat-token-0123456789abcdefgh' } });
     const cookie = async (email: string, password: string) => {
       const r = await e.app.inject({ method: 'POST', url: '/auth/login', payload: { email, password, cookie: true } });
       expect(r.statusCode, r.body).toBe(200);
@@ -68,6 +72,9 @@ describe.each(twoAccountEnvs)('会话存库 /api/conversations [$name]', (env) =
     // 存的就是浏览器收到的整段回复（含署名）
     expect(m.messages[1].content).toBe(r.body.split('\n\n').map((x) => x.trim()).filter((x) => x.includes('text-delta')).map((x) => (JSON.parse(x.slice(5)) as Json).delta).join(''));
     expect(m.messages[1].content).toMatch(/（负责人）$/);
+    // 裁定 16：回复记下是哪位成员答的（Core 选的负责人：id + 名字快照）；用户的话没有
+    expect(m.messages[1].answeredBy).toEqual([{ memberId: LEAD.id, name: LEAD.name }]);
+    expect(m.messages[0].answeredBy).toBeUndefined();
     expect(m.messages[1].seq).toBeGreaterThan(m.messages[0].seq);
     expect(m.hasMore).toBe(false);
 
@@ -90,6 +97,15 @@ describe.each(twoAccountEnvs)('会话存库 /api/conversations [$name]', (env) =
     expect((await msgs(ownerCookie, uuid(2))).messages.map((x: Json) => x.role)).toEqual(['user', 'assistant', 'assistant']);
     await say(ownerCookie, { messages: [{ role: 'user', content: '不存' }] });
     expect((await msgs(ownerCookie, uuid(2))).messages).toHaveLength(3);
+  });
+
+  it('裁定 16：@ 点名一位成员时，存下的回复记的是被点名的那位（id + 名字）', async () => {
+    await owner()('POST', '/api/conversations', { id: uuid(91) });
+    const r = await say(ownerCookie, { conversationId: uuid(91), messages: [{ role: 'user', content: `@${WORKER.name} 你好` }] });
+    expect(r.statusCode).toBe(200);
+    const m = await msgs(ownerCookie, uuid(91));
+    expect(m.messages.map((x: Json) => x.role)).toEqual(['user', 'assistant']);
+    expect(m.messages[1].answeredBy).toEqual([{ memberId: WORKER.id, name: WORKER.name }]);
   });
 
   it('X-15 草稿卡也落库：回复带 draft（id = 流里那张卡的 id），刷新后还能渲染', async () => {
