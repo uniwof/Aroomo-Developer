@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ChatPage } from '@/chat/ChatPage';
-import { NETWORK_ERROR, loadDraft, saveDraft, signatureOf, streamChat } from '@/chat/store';
+import { NETWORK_ERROR, loadDraft, previewText, saveDraft, signatureOf, streamChat } from '@/chat/store';
 import { applyDisplay, readDisplayPrefs } from '@/lib/display';
 
 const enc = new TextEncoder();
@@ -22,6 +22,12 @@ const okResponse = (body: string) =>
   );
 
 describe('store 小工具', () => {
+  it('列表预览：带图的回复写「[图片：说明]」，不露网址；链接只留文字；去署名和 Markdown 符号', () => {
+    expect(previewText('看这张：\n![一只猫](https://img.example/cat.png)\n\n— FreeBot')).toBe('看这张： [图片：一只猫]');
+    expect(previewText('![](https://x/a.png)')).toBe('[图片]');
+    expect(previewText('**粗体** 和 [官网](https://example.com/a?b=1)')).toBe('粗体 和 官网');
+    expect(previewText('<img src="https://x/y.png">')).toBe('[图片]');
+  });
   it('署名「— 名字」→ 是谁回答的', () => {
     expect(signatureOf('你好\n\n— FreeBot')).toBe('FreeBot');
     expect(signatureOf('没有署名')).toBeNull();
@@ -125,6 +131,7 @@ describe('对话页：对标改进', () => {
     renderPage();
     fireEvent.click(screen.getByRole('button', { name: '设置' }));
     expect(screen.queryAllByRole('tab')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: '偏好' }));
     fireEvent.change(screen.getByRole('slider', { name: /字号/ }), { target: { value: '28' } });
     expect(document.documentElement.style.fontSize).toBe('200%');
     fireEvent.click(screen.getByRole('radio', { name: '深色' }));
@@ -141,9 +148,9 @@ describe('对话页：对标改进', () => {
       // 手机照 sumus 没有抽屉：会话列表是整页（带底部栏），再按一次回到对话
       expect(document.querySelector('dialog')).toBeNull();
       fireEvent.keyDown(window, { key: 'S', ctrlKey: true, shiftKey: true });
-      await waitFor(() => expect(screen.getByRole('region', { name: '对话列表' })).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByRole('main', { name: '对话列表' })).toBeInTheDocument());
       fireEvent.keyDown(window, { key: 'S', ctrlKey: true, shiftKey: true });
-      await waitFor(() => expect(screen.queryByRole('region', { name: '对话列表' })).toBeNull());
+      await waitFor(() => expect(screen.queryByRole('main', { name: '对话列表' })).toBeNull());
       fireEvent.keyDown(window, { key: 'O', metaKey: true, shiftKey: true });
       expect(document.title).toBe('新对话 · Aroomo');
     } finally {

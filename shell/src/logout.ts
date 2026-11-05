@@ -57,3 +57,34 @@ export async function handleLogout(
   res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'set-cookie': setCookie });
   res.end(body);
 }
+
+/** core-session 的兜底：把 Core 的会话 Cookie 设为过期（属性与 Core 下发时一致：Path=/、HttpOnly、SameSite=Strict） */
+const CORE_EXPIRE = ['aroomo_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict', 'aroomo_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict; Secure'];
+
+/**
+ * core-session 退出：带 aroomo_session 调 Core `POST /api/auth/logout`（作废服务器上的会话），
+ * 不管 Core 是否响应都把浏览器的 Cookie 设为过期。下一步：经 Access → /cdn-cgi/access/logout，否则 → /aroomo/login。
+ */
+export async function handleCoreLogout(
+  req: IncomingMessage,
+  res: ServerResponse,
+  core: URL,
+  sessionCookie: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  if (sessionCookie) {
+    try {
+      const r = await fetchImpl(new URL('/api/auth/logout', core), {
+        method: 'POST',
+        headers: { cookie: sessionCookie, 'x-aroomo-request': '1', accept: 'application/json' },
+        signal: AbortSignal.timeout(5000),
+      });
+      await r.body?.cancel().catch(() => undefined);
+    } catch {
+      /* Core 不在：Cookie 照样清掉，会话到期自然失效 */
+    }
+  }
+  const location = req.headers['cf-access-jwt-assertion'] ? ACCESS_LOGOUT : '/aroomo/login';
+  res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'set-cookie': CORE_EXPIRE });
+  res.end(JSON.stringify({ ok: true, location }));
+}

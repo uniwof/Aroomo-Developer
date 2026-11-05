@@ -49,8 +49,12 @@ export function Accept({ fetchImpl = fetch }: { fetchImpl?: typeof fetch }) {
           <>
             <label className="block space-y-1">
               <span>新密码</span>
-              <Input type="password" id="password" name="password" autoComplete="new-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+              <Input type="password" id="password" name="password" autoComplete="new-password" required aria-describedby="password-rule" value={password} onChange={(e) => setPassword(e.target.value)} />
             </label>
+            {/* 自审 B13：规则事先写在框下面，读屏随输入框一起读 */}
+            <p id="password-rule" className="note">
+              至少 10 位
+            </p>
             <label className="block space-y-1">
               <span>确认密码</span>
               <Input type="password" name="confirm" autoComplete="new-password" required value={confirm} onChange={(e) => setConfirm(e.target.value)} />

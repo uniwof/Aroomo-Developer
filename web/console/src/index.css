@@ -465,7 +465,7 @@ textarea[aria-invalid='true'] {
   align-items: center;
   justify-content: center;
   gap: 0.375rem;
-  min-height: 2.75rem; /* 连在一起没有空隙，点击区直接做足 44px */
+  min-height: max(2.75rem, 44px); /* 连在一起没有空隙，点击区直接做足 44px（默认字号 14 时 2.75rem 只有 38.5px，自审 B11） */
   min-width: 44px;
   padding: 0 0.75rem;
   border: 0;
@@ -705,7 +705,7 @@ textarea[aria-invalid='true'] {
   align-items: center;
   gap: 0.5rem;
   width: 100%;
-  min-height: 2.75rem;
+  min-height: max(2.75rem, 44px);
   padding: 0 0.625rem;
   border: 0;
   border-radius: var(--r-sm);

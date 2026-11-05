@@ -11,6 +11,10 @@ export interface SessionChecker {
   email?(cookie: string | undefined): Promise<string | undefined>;
   /** 当前会话的 LobeHub 用户 id；没登录或取不到返回 undefined（#245：所有者按 id 比对） */
   userId?(cookie: string | undefined): Promise<string | undefined>;
+  /** core-session：当前账号的角色（admin / user）；没登录返回 undefined */
+  role?(cookie: string | undefined): Promise<string | undefined>;
+  /** 退出后立刻丢掉这个 Cookie 的缓存 */
+  forget?(cookie: string | undefined): void;
 }
 
 export class LobeSessionChecker implements SessionChecker {
@@ -67,3 +71,88 @@ export class LobeSessionChecker implements SessionChecker {
 }
 
 export const allowAll: SessionChecker = { check: async () => true };
+
+/** Core 的控制台会话 Cookie 名（core/src/auth/session-cookie.ts SESSION_COOKIE） */
+export const CORE_SESSION_COOKIE = 'aroomo_session';
+
+/** 从浏览器 Cookie 头里只取 aroomo_session；格式同 Core 的校验，其他 Cookie 一律不往 Core 发 */
+export function coreSessionCookie(header: string | undefined): string | undefined {
+  if (!header) return undefined;
+  for (const part of header.split(';')) {
+    const i = part.indexOf('=');
+    if (i < 0 || part.slice(0, i).trim() !== CORE_SESSION_COOKIE) continue;
+    const v = part.slice(i + 1).trim();
+    return /^[A-Za-z0-9_-]{8,200}$/.test(v) ? `${CORE_SESSION_COOKIE}=${v}` : undefined;
+  }
+  return undefined;
+}
+
+interface CoreEntry {
+  ok: boolean;
+  email?: string;
+  userId?: string;
+  role?: string;
+  until: number;
+}
+
+/**
+ * core-session：把 aroomo_session 带给 Core `GET /api/auth/me`（Core 对 Cookie 会话只认账号，停用的账号返回 401）。
+ * 只有 kind=user 且 status=active 才算登录。结果按 Cookie 摘要缓存（成功 cacheMs，失败 2 秒）。
+ * shortcut: 账号被停用后最多 cacheMs 仍可用；要立刻生效再加 Core 推送失效。
+ */
+export class CoreSessionChecker implements SessionChecker {
+  readonly #cache = new Map<string, CoreEntry>();
+
+  constructor(
+    private readonly core: URL,
+    private readonly cacheMs: number,
+    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  async check(cookie: string | undefined): Promise<boolean> {
+    return (await this.#lookup(cookie)).ok;
+  }
+  async email(cookie: string | undefined): Promise<string | undefined> {
+    return (await this.#lookup(cookie)).email;
+  }
+  async userId(cookie: string | undefined): Promise<string | undefined> {
+    return (await this.#lookup(cookie)).userId;
+  }
+  async role(cookie: string | undefined): Promise<string | undefined> {
+    return (await this.#lookup(cookie)).role;
+  }
+  forget(cookie: string | undefined): void {
+    const c = coreSessionCookie(cookie);
+    if (c) this.#cache.delete(createHash('sha256').update(c).digest('hex'));
+  }
+
+  async #lookup(cookie: string | undefined): Promise<Omit<CoreEntry, 'until'>> {
+    const c = coreSessionCookie(cookie);
+    if (!c) return { ok: false };
+    const key = createHash('sha256').update(c).digest('hex');
+    const t = this.now();
+    const hit = this.#cache.get(key);
+    if (hit && hit.until > t) return hit;
+    let entry: Omit<CoreEntry, 'until'> = { ok: false };
+    try {
+      const res = await this.fetchImpl(new URL('/api/auth/me', this.core), {
+        headers: { cookie: c, accept: 'application/json' },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.ok) {
+        const body = (await res.json().catch(() => null)) as { kind?: string; user?: { id?: string; email?: string; role?: string; status?: string } } | null;
+        const u = body?.kind === 'user' ? body.user : undefined;
+        if (u && typeof u.id === 'string' && u.id && u.status === 'active') {
+          entry = { ok: true, userId: u.id, email: u.email?.trim().toLowerCase() || undefined, role: u.role };
+        }
+      } else await res.body?.cancel().catch(() => undefined);
+    } catch {
+      entry = { ok: false };
+    }
+    if (this.#cache.size > 200) this.#cache.clear();
+    const stored = { ...entry, until: t + (entry.ok ? this.cacheMs : 2000) };
+    this.#cache.set(key, stored);
+    return stored;
+  }
+}

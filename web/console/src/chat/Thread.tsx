@@ -20,7 +20,7 @@ import {
   type ThreadMessageLike,
 } from '@assistant-ui/react';
 import { ArrowDown, Copy, KeyRound, RotateCcw, Send, Square, Volume2, VolumeX } from 'lucide-react';
-import { ChatStreamError, type FailureCode, dayLabel, loadDraft, saveDraft, signatureOf, streamChat, stripSignature, timeLabel, withGroupMentions, type ChatTurn, type Conversation } from './store';
+import { ChatStreamError, type FailureCode, dayLabel, loadDraft, saveDraft, signatureOf, streamChat, stripSignature, timeLabel, type ChatTurn, type Conversation } from './store';
 import { Avatar } from './Avatar';
 import { AnnounceContext, useAnnounce } from './announce';
 import { DEFAULT_RATE, pickVoice, speaker, speechSupported } from './speech';
@@ -198,7 +198,8 @@ const ReadAloud: FC = () => {
   return (
     <button type="button" className="msg-act" aria-label={label} aria-pressed={speaking} title={label} onClick={onClick}>
       {speaking ? <VolumeX aria-hidden="true" /> : <Volume2 aria-hidden="true" />}
-      <span>{speaking ? '停止' : needsOnline ? '用在线语音' : '朗读'}</span>
+      {/* 自审 A15：按钮上的字固定「朗读」，要用在线语音的说明放在读屏名字和提示里 */}
+      <span>{speaking ? '停止' : '朗读'}</span>
     </button>
   );
 };
@@ -236,6 +237,24 @@ function useSpeaker(): { name: string; lead: boolean; signed: string | null } {
   return { name: 'Aroomo', lead: true, signed: null };
 }
 
+/** 自审 A15：重试一直显示（复制、朗读、重试）；重新问原来那位，不换人。出错时错误框里已有「重试」，这里不重复 */
+const RetryReply: FC = () => {
+  const failed = useAuiState((s) => s.message.status?.type === 'incomplete' && (s.message.status as { reason?: string }).reason === 'error');
+  if (failed) return null;
+  return (
+    <ActionBarPrimitive.Reload className="msg-act" aria-label="重试，重新回答这条">
+      <RotateCcw aria-hidden="true" />
+      <span>重试</span>
+    </ActionBarPrimitive.Reload>
+  );
+};
+
+/** 自审 A19：点了停止，半截回复下面留一行静态「已停止」 */
+const Stopped: FC = () => {
+  const stopped = useAuiState((s) => s.message.status?.type === 'incomplete' && (s.message.status as { reason?: string }).reason === 'cancelled');
+  return stopped ? <p className="msg-note">已停止</p> : null;
+};
+
 /** 正在回复、还没出字：三个静态圆点 + 文字（sumus 的「Working」；不做动画） */
 const Working: FC<{ name: string }> = ({ name }) => {
   const empty = useAuiState((s) => s.message.status?.type === 'running' && !textOfParts(s.message.content as readonly { type: string; text?: string }[]).trim());
@@ -264,6 +283,7 @@ const AssistantMessage: FC = () => {
           <div className="msg-body">
             <Working name={who.name} />
             <MessagePrimitive.Parts components={{ Text: MarkdownText }} />
+            <Stopped />
             <MessagePrimitive.Error>
               <div role="alert" className="chat-error-box">
                 <p className="chat-error">
@@ -277,6 +297,7 @@ const AssistantMessage: FC = () => {
           <ActionBarPrimitive.Root hideWhenRunning autohide="never" className="msg-actions">
             <CopyReply />
             <ReadAloud />
+            <RetryReply />
           </ActionBarPrimitive.Root>
         </div>
       </div>
@@ -337,8 +358,6 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
       const ac = new AbortController();
       abortRef.current = ac;
       const turns = turnsOf(history);
-      const last = turns[turns.length - 1];
-      if (last?.role === 'user') last.text = withGroupMentions(last.text, convRef.current.group);
       try {
         for await (const text of streamChat(turns, convRef.current.model, ac.signal, fetchImpl)) update({ text });
         update({ state: 'done' });
@@ -464,7 +483,7 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
     document.getElementById('chat-input')?.focus();
   };
   const info: ThreadInfo = { memberName, members, messages };
-  const placeholder = memberName ? `回复，或者交给 ${memberName} 一件新任务…` : conversation.group?.length ? '发消息给群里，@ 一位成员' : '回复，或者交给负责人一件新任务…';
+  const placeholder = memberName ? `回复，或者交给 ${memberName} 一件新任务…` : conversation.group?.length ? '发消息给群里，@ 一位成员' : '发给全员，或 @ 一位成员…';
 
   return (
     <AnnounceContext.Provider value={announce}>
@@ -478,7 +497,7 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
               {/* 空对话（照 sumus）：正中是头像 + 名字 + 一句简介 + 浅灰「说点什么，开始这个话题」 */}
               <div className="chat-empty">
                 <Avatar name={memberName ?? (conversation.group?.length ? conversation.title : '负责人')} kind={memberName ? 'member' : conversation.group?.length ? 'group' : 'lead'} size="lg" />
-                <p className="chat-empty-title">{conversation.group?.length ? conversation.title.replace(/^群聊：/, '') : memberName ?? '负责人'}</p>
+                <p className="chat-empty-title">{conversation.group?.length ? conversation.title.replace(/^群聊：/, '') : memberName ?? '全员'}</p>
                 {intro && <p className="chat-empty-intro">{intro}</p>}
                 <p className="chat-empty-hint">说点什么，开始这个话题</p>
               </div>

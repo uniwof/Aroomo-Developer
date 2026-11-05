@@ -1,5 +1,6 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { guard, scopeOf } from '../auth/plugin.js';
+import { HttpError } from '../http/errors.js';
 import type { LeadService } from './lead.js';
 import type { SecurityService } from './security.js';
 
@@ -49,7 +50,20 @@ export function registerSettingsRoutes(
   );
 
   // 敏感内容保护（D38）：读取用普通设置权限；修改是操作员禁止项（D62），只有主人能改
-  app.get('/api/settings/security', { ...guard('settings:write'), schema: { response: { 200: securityOut } } }, async () => security.get());
+  // 读取：主人令牌、有 settings:write 的操作员，以及管理员账号（core-session 下所有者就是管理员账号登录，#250）；普通账号仍 403
+  const securityRead = guard('settings:write', { user: true });
+  const adminAccountOnly = async (req: FastifyRequest): Promise<void> => {
+    const p = req.principal;
+    if (p?.type === 'user' && p.role !== 'admin') {
+      await req.audit('auth.denied', { type: 'role', id: 'admin' }, 'denied', `${req.method} ${req.routeOptions.url ?? ''}`);
+      throw new HttpError(403, 'FORBIDDEN', '没有权限执行这个操作');
+    }
+  };
+  app.get(
+    '/api/settings/security',
+    { config: securityRead.config, preHandler: [securityRead.preHandler, adminAccountOnly], schema: { response: { 200: securityOut } } },
+    async () => security.get(),
+  );
   app.put<{ Body: { sensitiveProtect: boolean } }>(
     '/api/settings/security',
     {

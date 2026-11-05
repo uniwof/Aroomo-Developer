@@ -85,11 +85,11 @@ describe.each(envs)('账号与登录 B1（$name）', (env) => {
     expect(ghost.json().error.code).toBe('BAD_CREDENTIALS');
   });
 
-  it('账号默认不能访问未做隔离的业务接口（Key / 审计 / 收件箱 / 设置），拒绝会写审计', async () => {
+  it('账号默认不能访问未做隔离的业务接口（审计 / 安全设置），拒绝会写审计', async () => {
     const { owner, as, register } = await setup();
     const u = await register('erin@example.com');
     const call = as(u.token);
-    for (const url of ['/api/inbox', '/api/audit', '/api/settings/security']) {
+    for (const url of ['/api/audit', '/api/settings/security']) {
       const r = await call('GET', url);
       expect(r.statusCode, url).toBe(403);
     }
@@ -98,6 +98,36 @@ describe.each(envs)('账号与登录 B1（$name）', (env) => {
     // 管理接口也不行
     expect((await call('GET', '/api/users')).statusCode).toBe(403);
     expect((await call('POST', '/api/users/invites', { email: 'x@example.com' })).statusCode).toBe(403);
+  });
+
+  it('收件箱读取对账号开放且只看本人的；安全设置管理员账号能读、普通账号不能；改动仍只给主人（#250 角标 auth.denied）', async () => {
+    const { deps, owner, as, register } = await setup();
+    const admin = await register('owner-admin@example.com', 'admin');
+    const u = await register('hank@example.com');
+    const mk = (id: string, title: string, userId?: string) => ({
+      id, group: 'decision' as const, kind: 'test.card', urgency: 'normal' as const, title, summary: '',
+      related: { type: 'task', id: 'same' }, actions: [], status: 'open' as const, createdAt: new Date(),
+      ...(userId ? { userId } : {}),
+    });
+    await deps.inbox.insertDedup(mk('00000000-0000-4000-8000-000000000001', 'Owner Card'));
+    await deps.inbox.insertDedup(mk('00000000-0000-4000-8000-000000000002', 'Admin Card', admin.id));
+    for (const [who, mine, n] of [[admin, 'Admin Card', 1], [u, null, 0]] as const) {
+      const call = as(who.token);
+      const c = await call('GET', '/api/inbox/unread-count');
+      expect(c.statusCode).toBe(200);
+      expect(c.json().total).toBe(n);
+      const list = await call('GET', '/api/inbox');
+      expect(list.statusCode).toBe(200);
+      const titles = Object.values(list.json().groups as Record<string, Array<{ title: string }>>).flat().map((i) => i.title);
+      expect(titles).toEqual(mine ? [mine] : []);
+      expect(JSON.stringify(list.json())).not.toContain('Owner Card');
+      // 动作 / 忽略仍不对账号开放
+      expect((await call('POST', '/api/inbox/00000000-0000-4000-8000-000000000002/dismiss')).statusCode).toBe(403);
+    }
+    expect((await owner('GET', '/api/inbox/unread-count')).json().total).toBe(1);
+    expect((await as(admin.token)('GET', '/api/settings/security')).statusCode).toBe(200);
+    expect((await as(u.token)('GET', '/api/settings/security')).statusCode).toBe(403);
+    expect((await owner('GET', '/api/settings/security')).statusCode).toBe(200);
   });
 
   it('管理员账号可以邀请和停用别人；停用后会话立刻失效；不能停用自己或最后一个管理员', async () => {

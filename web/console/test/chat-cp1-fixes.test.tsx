@@ -90,6 +90,25 @@ describe('必改 3：Markdown 链接只放行 http / https / mailto', () => {
       expect(container.textContent).toContain('点我');
       expect(container.innerHTML).not.toMatch(/href="(javascript|data|vbscript):/i);
     });
+
+    it('回复里的图片 ![](https://…) 不自动加载：先显示「图片：说明 · 点开查看」，点了才出 <img>（不带来源页）；危险地址只剩文字', async () => {
+      const reply = '看图 ![小猫](https://img.example/cat.png) 还有 ![](javascript:alert(1))';
+      const chatFetch = (async () => okResponse(uiStream([reply]))) as unknown as typeof fetch;
+      const { container } = renderPage(chatFetch);
+      send('发张图');
+      const btn = await screen.findByRole('button', { name: '图片：小猫，点开查看' }, { timeout: 8000 });
+      expect(btn.textContent).toBe('图片：小猫 · 点开查看');
+      expect(container.querySelector('.chat-md img')).toBeNull();
+      // 页面上任何地方都没有指向这张图的 <img>（会话列表预览里只是文字，不会发请求）
+      expect(container.querySelector('img[src*="img.example"]')).toBeNull();
+      expect(container.textContent).toContain('图片：没有说明');
+      fireEvent.click(btn);
+      const img = container.querySelector('.chat-md img') as HTMLImageElement;
+      expect(img.getAttribute('src')).toBe('https://img.example/cat.png');
+      expect(img.getAttribute('referrerpolicy')).toBe('no-referrer');
+      expect(img.getAttribute('alt')).toBe('小猫');
+      expect(container.querySelectorAll('.chat-md img')).toHaveLength(1);
+    });
   });
 });
 
