@@ -23,6 +23,7 @@ import { Sidebar } from './Sidebar';
 import { CapabilityPanel, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SettingsPanel, ShortcutsPanel } from './panels';
 import { applyDisplay } from '@/lib/display';
 import { listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, stripSignature, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
+import { useAsk } from '@/components/Dialog';
 import './chat.css';
 
 /** 主区域显示什么：对话，或某个面板（带返回的上一层） */
@@ -236,9 +237,10 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     setOpen(false);
   };
 
-  const remove = (id: string) => {
+  const ask = useAsk();
+  const remove = async (id: string) => {
     const c = list.find((x) => x.id === id);
-    if (!c || !window.confirm(`删除会话「${c.title}」？只删本机这一份，删了找不回来。`)) return;
+    if (!c || !(await ask.confirm({ title: `删除会话「${c.title}」？`, desc: '只删本机这一份，删了找不回来。', ok: '删除', danger: true }))) return;
     const rest = list.filter((x) => x.id !== id);
     const next = rest.length ? rest : [newConversation()];
     setList(next);
@@ -252,7 +254,12 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   );
   useEffect(() => {
     if (menu === 'none') return;
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setMenu('none');
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      // 关菜单后焦点回到打开它的按钮（键盘、读屏用户不丢位置）
+      document.querySelector<HTMLElement>('.topic [aria-expanded="true"]')?.focus();
+      setMenu('none');
+    };
     const onDown = (e: MouseEvent) => !(e.target as Element).closest?.('.topic') && setMenu('none');
     window.addEventListener('keydown', onKey);
     window.addEventListener('mousedown', onDown);
@@ -263,10 +270,10 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   }, [menu]);
   useEffect(() => setMenu('none'), [currentId, view.kind]);
 
-  const rename = (id: string) => {
+  const rename = async (id: string) => {
     const c = list.find((x) => x.id === id);
     if (!c) return;
-    const t = window.prompt('话题的新名字', c.title)?.trim();
+    const t = (await ask.prompt({ title: '重命名话题', label: '新名字', value: c.title }))?.trim();
     if (t) setList((l) => l.map((x) => (x.id === id ? { ...x, title: t.slice(0, 60) } : x)));
   };
   /** 导出成 Markdown 文件（只在本机生成，不上传） */
@@ -425,7 +432,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
                     {/* 负责人落地文档 4.1：重命名话题、导出（Markdown）、删除话题；「置顶」等置顶功能做好再加 */}
                     {current.messages.length > 0 && (
                       <li>
-                        <button type="button" className="pop-item" onClick={() => { setMenu('none'); rename(current.id); }}>
+                        <button type="button" className="pop-item" onClick={() => { setMenu('none'); void rename(current.id); }}>
                           <Pencil aria-hidden="true" />
                           <span>重命名话题</span>
                         </button>
@@ -447,7 +454,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
                     </li>
                     {current.messages.length > 0 && (
                       <li>
-                        <button type="button" className="pop-item pop-danger" aria-label={`删除会话「${current.title}」`} onClick={() => { setMenu('none'); remove(current.id); }}>
+                        <button type="button" className="pop-item pop-danger" aria-label={`删除会话「${current.title}」`} onClick={() => { setMenu('none'); void remove(current.id); }}>
                           <Trash2 aria-hidden="true" />
                           <span>删除话题</span>
                         </button>
@@ -604,6 +611,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           />
         </aside>
       )}
+      {ask.node}
       {!wide && !phone && (
         <dialog ref={dialog} className="drawer" aria-label="会话列表" onClose={() => setOpen(false)} onCancel={() => setOpen(false)}>
           {open && sidebar}

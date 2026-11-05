@@ -65,7 +65,11 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
   useEffect(() => {
     if (!newOpen) return;
     const onDown = (e: MouseEvent) => !(e.target as Element).closest?.('.side-search .topic') && setNewOpen(false);
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setNewOpen(false);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      document.querySelector<HTMLElement>('.side-tools [aria-expanded="true"]')?.focus();
+      setNewOpen(false);
+    };
     window.addEventListener('mousedown', onDown);
     window.addEventListener('keydown', onKey);
     return () => {

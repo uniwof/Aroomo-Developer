@@ -632,3 +632,19 @@ textarea[aria-invalid='true'] {
   padding: 0.625rem 0.75rem;
   font-size: 0.8125rem;
 }
+
+/* 删除这类不能撤销的确认：红底（浅色白字 / 深色深字，都 ≥4.5:1）；弹窗里默认焦点在「取消」 */
+.btn-danger-fill,
+.btn-primary.btn-danger-fill:hover:not(:disabled) {
+  background: var(--danger);
+  color: var(--bg);
+  opacity: 1;
+}
+:root:not(.dark) .btn-danger-fill {
+  color: #fff;
+}
+.dlg-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
