@@ -4,12 +4,14 @@
  * 面板内容一律是分组列表（iOS / sumus 式），不用标签页。最终位置等负责人的 sumus→Aroomo 逐屏映射方案再定。
  */
 import { useState, type ReactNode } from 'react';
-import { ChevronLeft, ChevronRight, Keyboard } from 'lucide-react';
+import { Bell, ChevronLeft, ChevronRight, Keyboard, Monitor, Moon, Plug, ShieldCheck, SlidersHorizontal, Sun, UserRound, X } from 'lucide-react';
 import type { Member } from '@/lib/api';
 import { useUsage } from '@/lib/usage';
 import { UsageLine } from '@/pages/Members';
 import { CapabilityMap } from '@/components/CapabilityMap';
-import { Field, Group, SettingsGroups } from '@/pages/Settings';
+import { AccountGroup, BudgetSection, Field, Group, LeadSection, McpSection, SecuritySection } from '@/pages/Settings';
+import { ClientTokens } from '@/components/ClientTokens';
+import { Dialog } from '@/components/Dialog';
 import { Avatar } from './Avatar';
 import { SPEECH_RATES, speechSupported } from './speech';
 import { type ChatPrefs } from './store';
@@ -157,10 +159,10 @@ export function GroupNewPanel({ members, onStart }: { members: Member[]; onStart
   );
 }
 
-const THEMES: [Theme, string][] = [
-  ['system', '跟随系统'],
-  ['light', '浅色'],
-  ['dark', '深色'],
+const THEMES: [Theme, string, ReactNode][] = [
+  ['light', '浅色', <Sun key="l" aria-hidden="true" />],
+  ['dark', '深色', <Moon key="d" aria-hidden="true" />],
+  ['system', '跟随系统', <Monitor key="s" aria-hidden="true" />],
 ];
 
 export const SHORTCUTS: [string, string][] = [
@@ -172,12 +174,13 @@ export const SHORTCUTS: [string, string][] = [
   ['Ctrl（Mac 用 ⌘）+ Shift + S', '打开或关上会话列表'],
 ];
 
-/** 单选值（字号、颜色、语速）：一排分段按钮，选中的用珊瑚色 */
-function Segmented<T extends string | number>({ label, value, options, onChange }: { label: string; value: T; options: [T, string][]; onChange: (v: T) => void }) {
+/** 单选值（外观、语速）：照 sumus「Appearance」连在一起的几个按钮，选中的浅灰底 */
+function Segmented<T extends string | number>({ label, value, options, onChange }: { label: string; value: T; options: [T, string, ReactNode?][]; onChange: (v: T) => void }) {
   return (
     <div className="seg" role="radiogroup" aria-label={label}>
-      {options.map(([v, text]) => (
+      {options.map(([v, text, icon]) => (
         <button key={String(v)} type="button" role="radio" aria-checked={value === v} className="seg-item" onClick={() => onChange(v)}>
+          {icon}
           {text}
         </button>
       ))}
@@ -233,51 +236,145 @@ function Switch({ label, on, onChange }: { label: string; on: boolean; onChange:
   );
 }
 
-export function SettingsPanel({ prefs, setPrefs, onOpen }: { prefs: ChatPrefs; setPrefs: (f: (p: ChatPrefs) => ChatPrefs) => void; onOpen: (v: 'shortcuts') => void }) {
+/** 设置的分区（照 sumus 设置弹窗左边的分组；Connectors 挪到窄栏「工具」，计费、本地电脑隐藏） */
+export type SettingsSection = 'prefs' | 'lead' | 'safety' | 'budget' | 'external' | 'shortcuts';
+export const SETTINGS_SECTIONS: { id: SettingsSection; label: string; sub: string; Icon: typeof Keyboard }[] = [
+  { id: 'prefs', label: '偏好', sub: '改动立即生效，不用保存。', Icon: SlidersHorizontal },
+  { id: 'lead', label: '负责人', sub: '对话里没有 @ 成员时，交给负责人回答。', Icon: UserRound },
+  { id: 'safety', label: '安全', sub: '敏感内容保护和这台设备的登录。', Icon: ShieldCheck },
+  { id: 'budget', label: '执行员提醒', sub: '本机执行员每天最多提醒你几次。', Icon: Bell },
+  { id: 'external', label: '外部接入', sub: '让别的 AI 工具通过 MCP 用你的 Aroomo。', Icon: Plug },
+  { id: 'shortcuts', label: '键盘快捷键', sub: '不用鼠标也能用。', Icon: Keyboard },
+];
+
+type PrefsProps = { prefs: ChatPrefs; setPrefs: (f: (p: ChatPrefs) => ChatPrefs) => void };
+
+/** 一个分区的内容：图标 + 标题 + 灰色说明 + 分隔线，下面是分组（照 sumus 设置右侧） */
+export function SettingsSectionBody({ section, prefs, setPrefs, headingLevel = 2 }: PrefsProps & { section: SettingsSection; headingLevel?: 2 | 3 }) {
+  const sec = SETTINGS_SECTIONS.find((x) => x.id === section)!;
+  const H = headingLevel === 2 ? 'h2' : 'h3';
+  return (
+    <section className="page" aria-labelledby={`set-${section}`}>
+      <div className="page-head">
+        <H id={`set-${section}`} className="page-title">
+          <sec.Icon aria-hidden="true" />
+          {sec.label}
+        </H>
+        <p className="page-sub">{sec.sub}</p>
+      </div>
+      {section === 'prefs' && (
+        <>
+          <Group title="外观">
+            <Field label="颜色" hint="只对这台设备生效">
+              <Segmented label="颜色" value={prefs.theme} options={THEMES} onChange={(t) => setPrefs((p) => ({ ...p, theme: t }))} />
+            </Field>
+            <FontSlider value={prefs.fontSize} onChange={(v) => setPrefs((p) => ({ ...p, fontSize: v }))} />
+            <Field label="高对比度" hint="纯黑白、加粗边框">
+              <Switch label="高对比度" on={prefs.highContrast} onChange={(v) => setPrefs((p) => ({ ...p, highContrast: v }))} />
+            </Field>
+          </Group>
+          {speechSupported() && (
+            <Group title="朗读">
+              <Field label="语速">
+                <Segmented label="朗读语速" value={prefs.speechRate} options={SPEECH_RATES.map((r) => [r, r.toFixed(1)])} onChange={(r) => setPrefs((p) => ({ ...p, speechRate: r }))} />
+              </Field>
+              <Field label="用在线语音" hint="本机没有中文语音时用；文字会发到 Google 或微软合成">
+                <Switch label="本机没有中文语音时，用在线语音" on={prefs.speechOnline} onChange={(v) => setPrefs((p) => ({ ...p, speechOnline: v }))} />
+              </Field>
+            </Group>
+          )}
+        </>
+      )}
+      {section === 'lead' && (
+        <div className="group">
+          <LeadSection />
+        </div>
+      )}
+      {section === 'safety' && (
+        <>
+          <div className="group">
+            <SecuritySection />
+          </div>
+          <AccountGroup />
+        </>
+      )}
+      {section === 'budget' && (
+        <div className="group">
+          <BudgetSection />
+        </div>
+      )}
+      {section === 'external' && (
+        <div className="group">
+          <McpSection />
+          <ClientTokens />
+        </div>
+      )}
+      {section === 'shortcuts' && <ShortcutList />}
+    </section>
+  );
+}
+
+/** 桌面 / 中等宽度：居中弹窗，左边分组、右边内容（照 sumus 05–12 号截图），右上角 × 关闭 */
+export function SettingsDialog({ open, onClose, prefs, setPrefs }: PrefsProps & { open: boolean; onClose: () => void }) {
+  const [section, setSection] = useState<SettingsSection>('prefs');
+  return (
+    <Dialog
+      open={open}
+      title="设置"
+      onClose={onClose}
+      className="dlg-settings"
+      nav={
+        <ul className="set-nav" aria-label="设置分组">
+          {SETTINGS_SECTIONS.map(({ id, label, Icon }) => (
+            <li key={id}>
+              <button type="button" className="set-nav-item" aria-current={section === id ? 'page' : undefined} onClick={() => setSection(id)}>
+                <Icon aria-hidden="true" />
+                <span>{label}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      }
+    >
+      <button type="button" className="btn btn-quiet btn-icon set-close" aria-label="关闭设置" onClick={onClose}>
+        <X aria-hidden="true" />
+      </button>
+      <SettingsSectionBody section={section} prefs={prefs} setPrefs={setPrefs} headingLevel={3} />
+    </Dialog>
+  );
+}
+
+/** 手机 / 大字号：整页——先看分组列表，点进去看详情（不用横向一排标签） */
+export function SettingsPanel({ prefs, setPrefs, section, onOpen }: PrefsProps & { section?: SettingsSection; onOpen: (s: SettingsSection) => void }) {
+  if (section) {
+    return (
+      <div className="panel">
+        <SettingsSectionBody section={section} prefs={prefs} setPrefs={setPrefs} />
+      </div>
+    );
+  }
   return (
     <div className="panel">
-      <Group title="外观">
-        <FontSlider value={prefs.fontSize} onChange={(v) => setPrefs((p) => ({ ...p, fontSize: v }))} />
-        <div className="row row-stack">
-          <span className="row-label">颜色</span>
-          <Segmented label="颜色" value={prefs.theme} options={THEMES} onChange={(t) => setPrefs((p) => ({ ...p, theme: t }))} />
-        </div>
-        <Field label="高对比度" hint="纯黑白、加粗边框">
-          <Switch label="高对比度" on={prefs.highContrast} onChange={(v) => setPrefs((p) => ({ ...p, highContrast: v }))} />
-        </Field>
-      </Group>
-      {speechSupported() && (
-        <Group title="朗读">
-          <div className="row row-stack">
-            <span className="row-label">语速</span>
-            <Segmented label="朗读语速" value={prefs.speechRate} options={SPEECH_RATES.map((r) => [r, r.toFixed(1)])} onChange={(r) => setPrefs((p) => ({ ...p, speechRate: r }))} />
-          </div>
-          <Field label="用在线语音" hint="本机没有中文语音时用；文字会发到 Google 或微软合成">
-            <Switch label="本机没有中文语音时，用在线语音" on={prefs.speechOnline} onChange={(v) => setPrefs((p) => ({ ...p, speechOnline: v }))} />
-          </Field>
-        </Group>
-      )}
-      <Group title="更多">
-        <NavRow icon={<Keyboard aria-hidden="true" />} label="键盘快捷键" onClick={() => onOpen('shortcuts')} />
-      </Group>
-      <SettingsGroups />
+      <div className="group">
+        {SETTINGS_SECTIONS.map(({ id, label, Icon }) => (
+          <NavRow key={id} icon={<Icon aria-hidden="true" />} label={label} onClick={() => onOpen(id)} />
+        ))}
+      </div>
     </div>
   );
 }
 
-export function ShortcutsPanel() {
+function ShortcutList() {
   return (
-    <div className="panel">
-      <Group title="键盘快捷键">
-        {SHORTCUTS.map(([k, what]) => (
-          <div key={k} className="row">
-            <span className="row-text">
-              <span className="row-label">{what}</span>
-            </span>
-            <kbd className="row-value">{k}</kbd>
-          </div>
-        ))}
-      </Group>
+    <div className="group">
+      {SHORTCUTS.map(([k, what]) => (
+        <div key={k} className="row">
+          <span className="row-text">
+            <span className="row-label">{what}</span>
+          </span>
+          <kbd className="row-value">{k}</kbd>
+        </div>
+      ))}
     </div>
   );
 }

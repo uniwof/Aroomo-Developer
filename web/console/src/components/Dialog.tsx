@@ -6,12 +6,12 @@
  */
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 
-export function Dialog(props: { open: boolean; title: string; desc?: string; children?: ReactNode; onClose: () => void; className?: string }) {
+export function Dialog(props: { open: boolean; title: string; desc?: string; children?: ReactNode; onClose: () => void; className?: string; nav?: ReactNode }) {
   // 只在打开时挂载：关上就整个移除（读屏和测试都不会读到一个藏着的空弹窗）
   return props.open ? <OpenDialog {...props} /> : null;
 }
 
-function OpenDialog({ title, desc, children, onClose, className }: { title: string; desc?: string; children?: ReactNode; onClose: () => void; className?: string }) {
+function OpenDialog({ title, desc, children, onClose, className, nav }: { title: string; desc?: string; children?: ReactNode; onClose: () => void; className?: string; nav?: ReactNode }) {
   const ref = useRef<HTMLDialogElement>(null);
   const id = useId();
   useEffect(() => {
@@ -37,6 +37,18 @@ function OpenDialog({ title, desc, children, onClose, className }: { title: stri
       }}
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
+      {nav ? (
+        // 左右两栏（设置）：左边标题 + 分组导航，右边内容
+        <div className="dlg-split">
+          <div className="dlg-nav">
+            <h2 id={`${id}-t`} className="dlg-title">
+              {title}
+            </h2>
+            {nav}
+          </div>
+          <div className="dlg-main">{children}</div>
+        </div>
+      ) : (
       <div className="dlg-body">
         <h2 id={`${id}-t`} className="dlg-title">
           {title}
@@ -48,6 +60,7 @@ function OpenDialog({ title, desc, children, onClose, className }: { title: stri
         )}
         {children}
       </div>
+      )}
     </dialog>
   );
 }

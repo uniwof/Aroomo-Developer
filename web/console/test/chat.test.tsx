@@ -106,7 +106,7 @@ describe('原生对话页', () => {
     expect(c.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
   }, 20000);
 
-  it('中等宽度（48–64em）：窄栏 + 对话，会话列表是一层抽屉，没有标签页；设置、成员都在主区域原地打开；字号可调大并记住', async () => {
+  it('中等宽度（48–64em）：窄栏 + 对话，会话列表是一层抽屉，没有标签页；设置照 sumus 是居中弹窗（左边分组），成员在主区域原地打开；字号可调大并记住', async () => {
     Object.defineProperty(window, 'innerWidth', { value: 900, configurable: true });
     try {
       renderPage();
@@ -122,6 +122,10 @@ describe('原生对话页', () => {
       // 调到 15：900 宽仍在 48–64em 之间（再大就自动切成手机排法，见下一条测试）
       fireEvent.change(screen.getByRole('slider', { name: /字号/ }), { target: { value: '15' } });
       expect(loadPrefs().fontSize).toBe(15);
+      const set = screen.getByRole('dialog', { name: '设置' });
+      expect(within(set).getByRole('list', { name: '设置分组' })).toBeInTheDocument();
+      fireEvent.click(within(set).getByRole('button', { name: '关闭设置' }));
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: '设置' })).toBeNull());
       fireEvent.click(screen.getByRole('button', { name: /打开菜单/ }));
       fireEvent.click(within(document.querySelector('dialog')!).getByRole('button', { name: '成员' }));
       fireEvent.click(await screen.findByRole('button', { name: /^Kimi/ }));
@@ -176,6 +180,12 @@ describe('原生对话页', () => {
       fireEvent.click(within(nav).getByRole('button', { name: /^我：/ }));
       fireEvent.click(within(screen.getByRole('list', { name: '我' })).getByRole('button', { name: '设置' }));
       expect(screen.queryByRole('navigation', { name: '主导航' })).toBeNull();
+      // 手机设置是整页：先分组列表，点进去看详情，← 回到分组列表（不用横向标签）
+      expect(screen.queryByRole('dialog')).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: '偏好' }));
+      expect(screen.getByText('改动立即生效，不用保存。')).toBeInTheDocument();
+      expect(screen.getByRole('slider', { name: /字号/ })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: '返回设置' }));
       fireEvent.click(screen.getByRole('button', { name: '返回我' }));
       expect(screen.getByRole('navigation', { name: '主导航' })).toBeInTheDocument();
     } finally {

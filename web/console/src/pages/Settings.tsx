@@ -42,7 +42,7 @@ function errText(e: unknown) {
   return e instanceof Error ? e.message : '出错了，请稍后再试';
 }
 
-function LeadSection() {
+export function LeadSection() {
   const [members, setMembers] = useState<Member[] | null>(null);
   const [lead, setLead] = useState<LeadSetting | null>(null);
   const [msg, setMsg] = useState('');
@@ -109,7 +109,7 @@ function LeadSection() {
   );
 }
 
-function SecuritySection() {
+export function SecuritySection() {
   const [on, setOn] = useState<boolean | null>(null);
   const [msg, setMsg] = useState('');
   useEffect(() => {
@@ -165,7 +165,7 @@ interface Budget {
 }
 
 /** 打扰预算（D100）：每天最多让本机执行员「喊你」几次；超出的接管卡静默躺在收件箱，30 分钟没人处理就自动取消 */
-function BudgetSection() {
+export function BudgetSection() {
   const [b, setB] = useState<Budget | null>(null);
   const [msg, setMsg] = useState('');
   useEffect(() => {
@@ -230,7 +230,7 @@ interface McpConfig {
 }
 
 /** MCP 连接配置一键复制（D195）：只含地址和令牌占位符，令牌本身不在这里出现 */
-function McpSection() {
+export function McpSection() {
   const [cfg, setCfg] = useState<McpConfig | null>(null);
   const [msg, setMsg] = useState('');
   useEffect(() => {

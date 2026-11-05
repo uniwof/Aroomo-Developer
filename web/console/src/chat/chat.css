@@ -1820,3 +1820,8 @@ kbd.row-value {
     flex-basis: 100%;
   }
 }
+
+/* 手机整页设置：顶栏已有分区名，内容里不再重复标题，只留灰色说明 */
+.panel > .page > .page-head .page-title {
+  display: none;
+}

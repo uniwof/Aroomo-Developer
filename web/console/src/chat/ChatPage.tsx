@@ -20,7 +20,7 @@ import { Inbox } from '@/pages/Inbox';
 import { useInboxCount } from '@/components/Layout';
 import { Thread } from './Thread';
 import { Sidebar } from './Sidebar';
-import { CapabilityPanel, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SettingsPanel, ShortcutsPanel } from './panels';
+import { CapabilityPanel, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type SettingsSection } from './panels';
 import { applyDisplay } from '@/lib/display';
 import { listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, stripSignature, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
 import { useAsk } from '@/components/Dialog';
@@ -33,10 +33,9 @@ type View =
   | { kind: 'member'; id: string }
   | { kind: 'capmap' }
   | { kind: 'group-new' }
-  | { kind: 'settings' }
+  | { kind: 'settings'; section?: SettingsSection }
   | { kind: 'tools' }
   | { kind: 'inbox' }
-  | { kind: 'shortcuts' }
   | { kind: 'library' }
   | { kind: 'keys' }
   /** 手机底部栏「我」：设置、资源库、工具、API（负责人落地文档第 12 章） */
@@ -50,7 +49,6 @@ const TITLES: Record<Exclude<View['kind'], 'chat' | 'member'>, string> = {
   settings: '设置',
   tools: '工具',
   inbox: '收件箱',
-  shortcuts: '键盘快捷键',
   library: '资源库',
   keys: 'API（Key 与接入）',
 };
@@ -61,8 +59,6 @@ function parentOf(v: View): { view: View; label: string } | null {
     case 'member':
     case 'capmap':
       return { view: { kind: 'members' }, label: '成员' };
-    case 'shortcuts':
-      return { view: { kind: 'settings' }, label: '设置' };
     case 'chat':
     case 'me':
       return null;
@@ -232,9 +228,15 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     else start({ title: `和 ${m.name}`, model: `aroomo/${m.id}` });
   };
 
+  // 设置：桌面和中等宽度照 sumus 是居中弹窗；手机（或字号大到切成手机排法）是整页
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const goto = (v: View) => {
-    setView(v);
     setOpen(false);
+    if (v.kind === 'settings' && !phone) {
+      setSettingsOpen(true);
+      return;
+    }
+    setView(v);
   };
 
   const ask = useAsk();
@@ -313,6 +315,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   /** 手机上「←」回到哪一层：成员、我是底部栏的顶层页，没有返回；我 里的四项回到 我；收件箱回到对话列表 */
   const phoneParent = (v: View): { go: () => void; label: string } | null => {
     if (v.kind === 'members' || v.kind === 'me') return null;
+    if (v.kind === 'settings' && v.section) return { go: () => setView({ kind: 'settings' }), label: '设置' };
     if (v.kind === 'settings' || v.kind === 'library' || v.kind === 'tools' || v.kind === 'keys') return { go: () => setView({ kind: 'me' }), label: '我' };
     if (v.kind === 'inbox' || v.kind === 'group-new') return { go: () => { setView({ kind: 'chat' }); setOpen(true); }, label: '对话列表' };
     const p = parentOf(v);
@@ -490,7 +493,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   } else {
     const parent = phone ? phoneParent(view) : parentOf(view);
     const member = view.kind === 'member' ? members.find((m) => m.id === view.id) : undefined;
-    const title = view.kind === 'member' ? (member?.name ?? '成员') : TITLES[view.kind];
+    const title = view.kind === 'member' ? (member?.name ?? '成员') : view.kind === 'settings' && view.section ? SETTINGS_SECTIONS.find((x) => x.id === view.section)!.label : TITLES[view.kind];
     main = (
       <>
         <PanelHeader title={title} lead={phone ? null : menuButton} {...(parent ? { onBack: () => ('go' in parent ? parent.go() : setView(parent.view)), backLabel: parent.label } : {})} />
@@ -522,7 +525,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           )}
           {view.kind === 'capmap' && <CapabilityPanel />}
           {view.kind === 'group-new' && <GroupNewPanel members={members} onStart={(names) => start({ title: `群聊：${names.join('、')}`, group: names })} />}
-          {view.kind === 'settings' && <SettingsPanel prefs={prefs} setPrefs={setPrefs} onOpen={(k) => setView({ kind: k })} />}
+          {view.kind === 'settings' && <SettingsPanel prefs={prefs} setPrefs={setPrefs} {...(view.section ? { section: view.section } : {})} onOpen={(k) => setView({ kind: 'settings', section: k })} />}
           {view.kind === 'tools' && (
             <div className="panel panel-embed">
               <Tools />
@@ -533,7 +536,6 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
               <Inbox />
             </div>
           )}
-          {view.kind === 'shortcuts' && <ShortcutsPanel />}
           {view.kind === 'me' && (
             <div className="panel">
               <ul className="me-list" aria-label="我">
@@ -576,7 +578,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
 
   return (
     <div className={`app${prefs.highContrast ? ' chat-hc' : ''}${wide ? ' app-wide' : ''}${layout.rail ? ' app-rail' : ''}${phone ? ' app-phone' : ''}${wide && collapsed ? ' app-collapsed' : ''}`}>
-      {layout.rail && <Rail active={view.kind} onOpen={(t: RailTarget) => goto({ kind: t })} usage={usage} />}
+      {layout.rail && <Rail active={settingsOpen && !phone ? 'settings' : view.kind} onOpen={(t: RailTarget) => goto({ kind: t })} usage={usage} />}
       {wide && !collapsed && (
         <aside className="side" aria-label="会话列表" style={{ width: `calc(${sideW} * var(--k))` }}>
           {sidebar}
@@ -612,6 +614,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         </aside>
       )}
       {ask.node}
+      <SettingsDialog open={settingsOpen && !phone} onClose={() => setSettingsOpen(false)} prefs={prefs} setPrefs={setPrefs} />
       {!wide && !phone && (
         <dialog ref={dialog} className="drawer" aria-label="会话列表" onClose={() => setOpen(false)} onCancel={() => setOpen(false)}>
           {open && sidebar}
