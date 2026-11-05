@@ -77,6 +77,8 @@ export interface CoreDeps {
   assistantTimeoutMs?: (sec: number) => number;
   /** 按真实模型串（Key 的 model）判断免费；不传 = 能力种子清单 */
   assistantIsFree?: (model: string) => boolean;
+  /** 测试用：换掉 X-19 长会话压缩的字数上限 / 每天次数 */
+  compactLimits?: Partial<import('./conversations/compact.js').CompactLimits>;
   /** 测试用：每次 / 每天调用上限 */
   assistantBudgets?: Record<BudgetLevel, { perRun: number; perDay: number }>;
   /** 有数据库时才有；关闭服务时一并关闭 */

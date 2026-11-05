@@ -5,7 +5,7 @@
 import type { Db } from '../db/db.js';
 import { toDate, toDateOrNull } from '../db/db.js';
 import { userScoped } from '../db/scope.js';
-import type { ChatConversation, ChatMessage, ChatMessageMeta, ConversationStore, ConversationSummary, CreateResult, ListQuery } from './types.js';
+import type { ChatConversation, ChatMessage, ChatMessageMeta, ConversationStore, ConversationSummary, CreateResult, ListQuery, SearchHit } from './types.js';
 
 type Ts = Date | string;
 interface CRow {
@@ -73,7 +73,7 @@ export class PgConversationStore implements ConversationStore {
       `SELECT * FROM (
          SELECT ${C_COLS}, l.role AS last_role, l.content AS last_content, l.created_at AS last_at,
            (SELECT count(*)::int FROM conversation_messages m WHERE m.conversation_id = c.id AND m.user_id = c.user_id) AS n,
-           EXISTS (SELECT 1 FROM conversation_messages m WHERE m.conversation_id = c.id AND m.user_id = c.user_id AND m.role <> 'user'
+           EXISTS (SELECT 1 FROM conversation_messages m WHERE m.conversation_id = c.id AND m.user_id = c.user_id AND m.role = 'assistant'
                     AND (c.read_at IS NULL OR m.created_at > c.read_at)) AS unread
          FROM conversations c
          LEFT JOIN LATERAL (SELECT role, left(content, 300) AS content, created_at FROM conversation_messages m
@@ -157,5 +157,37 @@ export class PgConversationStore implements ConversationStore {
       [conversationId, userId, q.beforeSeq ?? null, q.limit],
     );
     return rows.map(toMsg);
+  }
+
+  async search(userId: string, q: { text: string; limit: number; beforeSeq?: number }): Promise<SearchHit[]> {
+    // shortcut: 顺序扫描本账号的消息（家庭规模够快）；单账号几十万条时加 pg_trgm GIN 索引（要装扩展、定 locale，见 design-search-compaction-v1 §1）
+    const like = `%${q.text.replace(/[\\%_]/g, '\\$&')}%`;
+    const { rows } = await this.#u(userId).query<MRow & { title: string }>(
+      `SELECT m.id, m.seq, m.conversation_id, m.user_id, m.role, m.content, m.meta, m.created_at, c.title
+       FROM conversation_messages m
+       JOIN conversations c ON c.id = m.conversation_id AND c.user_id = m.user_id
+       WHERE m.user_id = $1 AND c.kind = 'chat' AND c.deleted_at IS NULL AND c.archived_at IS NULL
+         AND m.role IN ('user', 'assistant') AND m.content ILIKE $2 ESCAPE '\\'
+         AND ($3::bigint IS NULL OR m.seq < $3)
+       ORDER BY m.seq DESC LIMIT $4`,
+      [userId, like, q.beforeSeq ?? null, q.limit],
+    );
+    return rows.map((r) => ({ message: toMsg(r), title: r.title }));
+  }
+
+  async latestSummary(userId: string, conversationId: string): Promise<ChatMessage | null> {
+    const { rows } = await this.#u(userId).query<MRow>(
+      `SELECT ${M_COLS} FROM conversation_messages WHERE conversation_id = $1 AND user_id = $2 AND role = 'system' AND meta ? 'summary' ORDER BY seq DESC LIMIT 1`,
+      [conversationId, userId],
+    );
+    return rows[0] ? toMsg(rows[0]) : null;
+  }
+
+  async countSummariesSince(userId: string, since: Date): Promise<number> {
+    const { rows } = await this.#u(userId).query<{ n: number | string }>(
+      `SELECT count(*)::int AS n FROM conversation_messages WHERE user_id = $1 AND role = 'system' AND meta ? 'summary' AND created_at >= $2`,
+      [userId, since],
+    );
+    return Number(rows[0]?.n ?? 0);
   }
 }

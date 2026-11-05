@@ -73,6 +73,7 @@ import { AssistantRunner } from "./assistants/runner.js";
 import { registerAssistantRoutes } from "./assistants/routes.js";
 import { ConversationService } from "./conversations/service.js";
 import { registerConversationRoutes } from "./conversations/routes.js";
+import { Compactor, freeSummarizer } from "./conversations/compact.js";
 import { assistantSchedulerJob } from "./scheduler/assistant-scheduler.js";
 
 export const VERSION = "0.0.1";
@@ -401,7 +402,21 @@ export function buildServer(
   };
   const conversationSvc = new ConversationService({ store: deps.conversations, now: deps.now });
   registerConversationRoutes(app, conversationSvc);
-  registerChatStreamRoute(app, chatService, { ctxFor: chatRouting.ctxFor, draftFor, conversations: conversationSvc, ...(deps.chatStreamLimits ? { limits: deps.chatStreamLimits } : {}) });
+  // X-19：长会话自动压缩，只用本账号的免费成员（同助手的免费判断），每天次数按低额度档
+  const compactor = new Compactor({
+    store: deps.conversations,
+    summarize: freeSummarizer({
+      membersFor: membersOf,
+      deploymentsFor: async (u) => (await deps.keys.list(u === "owner" ? undefined : u)).map((k) => ({ modelName: k.modelName, model: k.model })),
+      chatFor: (u) => (req, signal) => chatService.complete(req, signal, u === "owner" ? undefined : chatRouting.ctxFor(u)),
+      ...(deps.assistantIsFree ? { isFree: deps.assistantIsFree } : {}),
+    }),
+    now: deps.now,
+    timezone: cfg.timezone,
+    ...(deps.compactLimits ? { limits: deps.compactLimits } : {}),
+    warn: (event) => app.log.warn(event),
+  });
+  registerChatStreamRoute(app, chatService, { ctxFor: chatRouting.ctxFor, draftFor, conversations: conversationSvc, compactor, ...(deps.chatStreamLimits ? { limits: deps.chatStreamLimits } : {}) });
   // 付费调用确认卡（kind=payment，重要确认）：同意 → 同一条运行继续；拒绝 → 取消
   inbox.registerHandler("assistant.run.confirm", async (item, actionId, audit) => {
     if (item.related?.type !== "assistant_run") return;

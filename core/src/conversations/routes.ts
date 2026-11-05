@@ -2,6 +2,7 @@
  * 会话存库接口（前缀 /api/conversations）。能力 chat:use（和 /api/chat/stream 同一个：不进操作员白名单，也不是客户端令牌范围）。
  * 所有者和家人账号都能用，数据只按 scopeOf(req) 取（D111）：别人的会话和不存在的一样（404）。
  * 没有删除接口：只归档（删除要所有者定）。消息只能由 /api/chat/stream 和一次性导入写（只追加）。
+ * GET /api/search（X-09）：搜本账号的消息正文，见 docs/api/design-search-compaction-v1.md。
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { guard, scopeOf } from '../auth/plugin.js';
@@ -107,6 +108,23 @@ export function registerConversationRoutes(app: FastifyInstance, svc: Conversati
       },
     },
     async (req) => svc.importLocal(scopeOf(req), req.body.conversations),
+  );
+
+  // X-09 搜索消息正文（N6 的 /api/search；目前只有对话一组）
+  app.get<{ Querystring: { q: string; limit?: number; beforeSeq?: number } }>(
+    '/api/search',
+    {
+      ...g,
+      schema: {
+        querystring: {
+          type: 'object',
+          required: ['q'],
+          additionalProperties: false,
+          properties: { q: { type: 'string', minLength: 1, maxLength: 100 }, limit: { type: 'integer', minimum: 1, maximum: 50 }, beforeSeq: { type: 'integer', minimum: 1 } },
+        },
+      },
+    },
+    async (req) => svc.search(scopeOf(req), { q: req.query.q, limit: req.query.limit ?? 20, ...(req.query.beforeSeq !== undefined ? { beforeSeq: req.query.beforeSeq } : {}) }),
   );
 
   app.get<{ Params: { id: string } }>('/api/conversations/:id', { ...g, schema: { params: idParams } }, async (req) => ({ conversation: await svc.getJson(scopeOf(req), req.params.id) }));
