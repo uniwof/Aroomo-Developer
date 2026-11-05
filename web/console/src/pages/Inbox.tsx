@@ -35,7 +35,8 @@ function formatTime(iso: string): string {
   return `${d.getMonth() + 1}月${d.getDate()}日 ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-export function Inbox() {
+/** onBack：空状态的那一个动作（回到对话）；对话页里传入 */
+export function Inbox({ onBack }: { onBack?: () => void } = {}) {
   const [data, setData] = useState<Record<string, Item[]> | null>(null);
   const [msg, setMsg] = useState('');
   // 正在两步确认的动作：重要动作第一次点会拿到 428 + 确认卡
@@ -86,7 +87,19 @@ export function Inbox() {
       </p>
       <TakeoverCards />
       {data === null && !msg && <p className="muted">加载中…</p>}
+      {/* 自审 B17：三组都空时只显示一个空状态（一句话 + 一个动作），不再三个框各写「暂时没有」 */}
+      {data && groups.every((g) => (data[g.key] ?? []).length === 0) && (
+        <div className="empty">
+          <p className="empty-text">收件箱是空的。有要你决定的事，会出现在这里。</p>
+          {onBack && (
+            <button type="button" className="btn btn-outline" onClick={onBack}>
+              回到对话
+            </button>
+          )}
+        </div>
+      )}
       {data &&
+        !groups.every((g) => (data[g.key] ?? []).length === 0) &&
         groups.map((g) => (
           <div key={g.key} className="group-block">
             <div className="group-head">

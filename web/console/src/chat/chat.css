@@ -312,7 +312,7 @@
   gap: calc(0.5 * var(--k));
   padding: calc(0.75 * var(--k)) calc(0.75 * var(--k)) 0;
 }
-/* 分段控件「对话 / 专职成员」：浅灰槽，选中白底浅阴影 */
+/* 分段控件「对话 / 助手」：浅灰槽，选中白底浅阴影 */
 .seg2 {
   display: flex;
   gap: calc(0.125 * var(--k));
@@ -818,9 +818,10 @@
   cursor: pointer;
 }
 .topic-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* 自审 B8：长标题换行，不用省略号（落地文档 0.3「按钮不截断」） */
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: left;
 }
 .topic-chip svg {
   flex: none;
@@ -1150,7 +1151,7 @@
 /* 输入卡上方的提示条（暖黄底 + 左边琥珀竖条） */
 .notice {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto 1fr auto auto;
   gap: calc(0.125 * var(--k)) calc(0.75 * var(--k));
   align-items: center;
   margin-bottom: calc(0.5 * var(--k));
@@ -1197,6 +1198,10 @@
   font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
+}
+.notice-close {
+  grid-column: 4;
+  grid-row: 1 / span 2;
 }
 .notice-btn svg {
   width: calc(0.875 * var(--k));
@@ -1435,10 +1440,10 @@
   overflow-y: auto;
 }
 .panel {
+  /* Poke 12:19 转所有者意见 ①：不再挤在中间一条窄带，照 sumus 撑满主区，左右 24px */
   width: 100%;
-  max-width: 44em;
-  margin: 0 auto;
-  padding: 1.25em 1.25em 2em;
+  margin: 0;
+  padding: 1.25rem 1.5rem 2rem;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -1793,7 +1798,21 @@ kbd.row-value {
   padding: 0 calc(0.5 * var(--k));
 }
 .app-phone .panel {
-  padding: 0.75em 0.5em 2em;
+  /* 自审 B7：手机面板左右统一 16px，不再贴边 */
+  padding: 0.75em 1rem 2em;
+}
+/* 自审 B3：手机话题菜单以整条顶栏为准、左右各留 12px，不再从胶囊往右伸出屏幕 */
+.app-phone .main-head {
+  position: relative;
+}
+.app-phone .main-head .topic {
+  position: static;
+}
+.app-phone .pop-topics {
+  left: 0.75rem;
+  right: 0.75rem;
+  width: auto;
+  max-width: none;
 }
 .phone-list .foot-row:has(> [aria-label='打开成员页']) {
   display: none;
@@ -1844,4 +1863,150 @@ kbd.row-value {
 /* 手机整页设置：顶栏已有分区名，内容里不再重复标题，只留灰色说明 */
 .panel > .page > .page-head .page-title {
   display: none;
+}
+
+/* ---------- 资源库 / 工具 / API / 设置补充（自审 A5 A7 A8 A9，照 sumus Marketplace、Connectors、设备卡） ---------- */
+/* 顶部一排：搜索 + 主动作（放不下就换行） */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+.toolbar-search {
+  flex: 1 1 14em;
+  min-height: 2.75rem;
+}
+.panel > .note:empty {
+  display: none;
+}
+/* 空状态：一句话 + 一个动作 */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px dashed var(--field);
+  border-radius: var(--r-md);
+}
+.empty-text {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+.group-block > .seg {
+  margin-bottom: 0.75rem;
+}
+.group-block > .group-head {
+  margin-bottom: 0.5rem;
+}
+.group-block > .group-head .group-title {
+  margin: 0;
+}
+/* 资源库卡片网格：列数跟着字号自动变（最少 1 列），卡片里的字不截断 */
+.lib-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 13em), 1fr));
+  gap: 0.75rem;
+}
+.lib-grid > li {
+  display: flex;
+}
+.lib-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.5rem;
+  min-height: 44px;
+  padding: 0.875rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .lib-card:hover {
+    background: var(--hover);
+  }
+}
+.lib-card-top {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.lib-card-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+.lib-card-desc {
+  color: var(--muted);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+/* 小标（sumus Featured 的位置）：珊瑚底配深色字（白字在珊瑚上只有 2.5:1） */
+.badge {
+  flex: none;
+  padding: 0.0625rem 0.4375rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.5;
+}
+.badge-brand {
+  background: var(--brand);
+  color: #1d1d1f;
+}
+.row-body {
+  overflow-wrap: anywhere;
+}
+.row-break {
+  overflow-wrap: anywhere;
+}
+.link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+/* 弹窗里的勾选组（擅长）：两列，放不下一列 */
+.form-fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.form-fieldset > legend {
+  padding: 0;
+  margin-bottom: 0.375rem;
+}
+.check-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 7em), 1fr));
+  gap: 0 0.75rem;
+}
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  cursor: pointer;
+}
+.btn-link {
+  align-self: flex-start;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.picker-bar {
+  margin-bottom: 0.5rem;
 }

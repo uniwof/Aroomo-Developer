@@ -4,12 +4,13 @@
  * 面板内容一律是分组列表（iOS / sumus 式），不用标签页。最终位置等负责人的 sumus→Aroomo 逐屏映射方案再定。
  */
 import { useState, type ReactNode } from 'react';
-import { Bell, ArrowLeft, ChevronRight, Keyboard, Monitor, Moon, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Sun, UserRound, X } from 'lucide-react';
+import { Bell, ArrowLeft, ChevronRight, Home, Keyboard, Monitor, Moon, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Sun, UserRound, Users, X } from 'lucide-react';
 import { isFamily, type Member } from '@/lib/api';
 import { useUsage } from '@/lib/usage';
 import { UsageLine } from '@/pages/Members';
 import { CapabilityMap } from '@/components/CapabilityMap';
-import { AccountGroup, BudgetSection, Field, Group, LeadSection, McpSection, SecuritySection } from '@/pages/Settings';
+import { BudgetSection, Field, Group, LeadSection, McpSection, SecuritySection } from '@/pages/Settings';
+import { FamilySection, GeneralSection, PasswordRow, ProfileSection, SignOutGroup } from './views';
 import { ClientTokens } from '@/components/ClientTokens';
 import { Dialog } from '@/components/Dialog';
 import { Avatar } from './Avatar';
@@ -128,13 +129,23 @@ export function CapabilityPanel() {
   );
 }
 
-/** 新建群聊：勾选成员（sumus 底部 Invite 的位置） */
+/**
+ * 挑选成员新建（所有者 11-05 12:15）：默认的新对话是全员；这里自己挑。
+ * 挑一位 = 和 TA 单聊；挑几位 = 这几位一起回答，对话里 @ 只列这几位。
+ */
 export function GroupNewPanel({ members, onStart }: { members: Member[]; onStart: (names: string[]) => void }) {
   const [pick, setPick] = useState<string[]>([]);
+  const all = members.length > 0 && pick.length === members.length;
+  if (members.length === 0) return <div className="panel"><p className="group-empty">还没有成员。先在资源库里添加一位。</p></div>;
   return (
     <div className="panel">
       <fieldset className="group-block">
-        <legend className="group-title">选几位成员，一起回答</legend>
+        <legend className="group-title">挑选这次对话的成员</legend>
+        <div className="btn-row picker-bar">
+          <button type="button" className="btn btn-outline" onClick={() => setPick(all ? [] : members.map((m) => m.name))}>
+            {all ? '全不选' : '全选'}
+          </button>
+        </div>
         <div className="group">
           {members.map((m) => (
             <label key={m.id} className="row row-button">
@@ -152,8 +163,8 @@ export function GroupNewPanel({ members, onStart }: { members: Member[]; onStart
           ))}
         </div>
       </fieldset>
-      <button type="button" className="btn btn-primary btn-wide" disabled={pick.length < 2} onClick={() => onStart(pick)}>
-        开始群聊{pick.length < 2 ? '（至少选 2 位）' : `（${pick.length} 位）`}
+      <button type="button" className="btn btn-primary btn-wide" disabled={pick.length < 1} onClick={() => onStart(pick)}>
+        {pick.length === 0 ? '开始对话（至少选 1 位）' : pick.length === 1 ? `和 ${pick[0]} 单独聊` : `开始对话（${pick.length} 位）`}
       </button>
     </div>
   );
@@ -237,11 +248,14 @@ function Switch({ label, on, onChange }: { label: string; on: boolean; onChange:
 }
 
 /** 设置的分区（照 sumus 设置弹窗左边的分组；Connectors 挪到窄栏「工具」，计费、本地电脑隐藏） */
-export type SettingsSection = 'prefs' | 'lead' | 'safety' | 'budget' | 'external' | 'shortcuts';
+export type SettingsSection = 'profile' | 'prefs' | 'safety' | 'general' | 'family' | 'lead' | 'budget' | 'external' | 'shortcuts';
 export const SETTINGS_SECTIONS: { id: SettingsSection; label: string; sub: string; Icon: typeof Keyboard }[] = [
+  { id: 'profile', label: '个人资料', sub: '你在 Aroomo 里的名字和登录账号。', Icon: UserRound },
   { id: 'prefs', label: '偏好', sub: '改动立即生效，不用保存。', Icon: SlidersHorizontal },
+  { id: 'safety', label: '安全', sub: '密码、登录和敏感内容保护。', Icon: ShieldCheck },
+  { id: 'general', label: '通用', sub: '这个 Aroomo 的概况和总额度。', Icon: Home },
+  { id: 'family', label: '家人与邀请', sub: '家里谁在用 Aroomo。', Icon: Users },
   { id: 'lead', label: '负责人', sub: '对话里没有 @ 成员时，交给负责人回答。', Icon: UserRound },
-  { id: 'safety', label: '安全', sub: '敏感内容保护和这台设备的登录。', Icon: ShieldCheck },
   { id: 'budget', label: '电脑助手提醒', sub: '电脑助手每天最多提醒你几次。', Icon: Bell },
   { id: 'external', label: '外部接入', sub: '在别的 AI 软件里也能用你的 Aroomo。', Icon: Plug },
   { id: 'shortcuts', label: '键盘快捷键', sub: '不用鼠标也能用。', Icon: Keyboard },
@@ -249,15 +263,17 @@ export const SETTINGS_SECTIONS: { id: SettingsSection; label: string; sub: strin
 
 type PrefsProps = { prefs: ChatPrefs; setPrefs: (f: (p: ChatPrefs) => ChatPrefs) => void };
 /** 设置里跳到整页的下一层（所有者：审计记录、本机执行员） */
-type GoProps = { onGo: (k: 'audit' | 'executors') => void };
-const FAMILY_SECTIONS: SettingsSection[] = ['prefs', 'safety', 'shortcuts'];
+export type GoTarget = 'audit' | 'executors' | 'keys';
+type GoProps = { onGo: (k: GoTarget) => void; members?: Member[] };
+/** 家人：个人资料 / 偏好 / 安全（+ 键盘快捷键，只是说明）；落地文档 0.5、11 章 */
+const FAMILY_SECTIONS: SettingsSection[] = ['profile', 'prefs', 'safety', 'shortcuts'];
 /** 这个账号能看到的分组：家人只有 偏好 / 安全 / 键盘快捷键（落地文档 0.5、11 章） */
 export function visibleSections() {
   return SETTINGS_SECTIONS.filter((x) => !isFamily() || FAMILY_SECTIONS.includes(x.id));
 }
 
 /** 一个分区的内容：图标 + 标题 + 灰色说明 + 分隔线，下面是分组（照 sumus 设置右侧） */
-export function SettingsSectionBody({ section, prefs, setPrefs, onGo, headingLevel = 2 }: PrefsProps & GoProps & { section: SettingsSection; headingLevel?: 2 | 3 }) {
+export function SettingsSectionBody({ section, prefs, setPrefs, onGo, members = [], headingLevel = 2 }: PrefsProps & GoProps & { section: SettingsSection; headingLevel?: 2 | 3 }) {
   const sec = SETTINGS_SECTIONS.find((x) => x.id === section)!;
   const H = headingLevel === 2 ? 'h2' : 'h3';
   return (
@@ -272,11 +288,11 @@ export function SettingsSectionBody({ section, prefs, setPrefs, onGo, headingLev
       {section === 'prefs' && (
         <>
           <Group title="外观">
-            <Field label="颜色" hint="只对这台设备生效">
+            <Field label="颜色">
               <Segmented label="颜色" value={prefs.theme} options={THEMES} onChange={(t) => setPrefs((p) => ({ ...p, theme: t }))} />
             </Field>
             <FontSlider value={prefs.fontSize} onChange={(v) => setPrefs((p) => ({ ...p, fontSize: v }))} />
-            <Field label="高对比度" hint="纯黑白、加粗边框">
+            <Field label="高对比度">
               <Switch label="高对比度" on={prefs.highContrast} onChange={(v) => setPrefs((p) => ({ ...p, highContrast: v }))} />
             </Field>
           </Group>
@@ -285,7 +301,7 @@ export function SettingsSectionBody({ section, prefs, setPrefs, onGo, headingLev
               <Field label="语速">
                 <Segmented label="朗读语速" value={prefs.speechRate} options={SPEECH_RATES.map((r) => [r, r.toFixed(1)])} onChange={(r) => setPrefs((p) => ({ ...p, speechRate: r }))} />
               </Field>
-              <Field label="用在线语音" hint="本机没有中文语音时用；文字会发到 Google 或微软合成">
+              <Field label="用在线语音" hint="文字会发到 Google 或微软">
                 <Switch label="本机没有中文语音时，用在线语音" on={prefs.speechOnline} onChange={(v) => setPrefs((p) => ({ ...p, speechOnline: v }))} />
               </Field>
             </Group>
@@ -297,17 +313,23 @@ export function SettingsSectionBody({ section, prefs, setPrefs, onGo, headingLev
           <LeadSection />
         </div>
       )}
+      {section === 'profile' && <ProfileSection />}
       {section === 'safety' && (
         <>
-          {!isFamily() && (
-            <div className="group">
-              <SecuritySection />
-              <NavRow icon={<ScrollText aria-hidden="true" />} label="审计记录" value="最近的操作" onClick={() => onGo('audit')} />
-            </div>
-          )}
-          <AccountGroup />
+          <div className="group">
+            <PasswordRow />
+            {!isFamily() && (
+              <>
+                <SecuritySection />
+                <NavRow icon={<ScrollText aria-hidden="true" />} label="审计记录" value="最近的操作" onClick={() => onGo('audit')} />
+              </>
+            )}
+          </div>
+          <SignOutGroup />
         </>
       )}
+      {section === 'general' && <GeneralSection members={members} onUsage={() => onGo('keys')} />}
+      {section === 'family' && <FamilySection />}
       {section === 'budget' && (
         <div className="group">
           <BudgetSection />
@@ -328,8 +350,8 @@ export function SettingsSectionBody({ section, prefs, setPrefs, onGo, headingLev
 }
 
 /** 桌面 / 中等宽度：居中弹窗，左边分组、右边内容（照 sumus 05–12 号截图），右上角 × 关闭 */
-export function SettingsDialog({ open, onClose, prefs, setPrefs, onGo }: PrefsProps & GoProps & { open: boolean; onClose: () => void }) {
-  const [section, setSection] = useState<SettingsSection>('prefs');
+export function SettingsDialog({ open, onClose, prefs, setPrefs, onGo, members }: PrefsProps & GoProps & { open: boolean; onClose: () => void }) {
+  const [section, setSection] = useState<SettingsSection>('profile');
   return (
     <Dialog
       open={open}
@@ -352,17 +374,17 @@ export function SettingsDialog({ open, onClose, prefs, setPrefs, onGo }: PrefsPr
       <button type="button" className="btn btn-quiet btn-icon set-close" aria-label="关闭设置" onClick={onClose}>
         <X aria-hidden="true" />
       </button>
-      <SettingsSectionBody section={section} prefs={prefs} setPrefs={setPrefs} onGo={onGo} headingLevel={3} />
+      <SettingsSectionBody section={section} prefs={prefs} setPrefs={setPrefs} onGo={onGo} {...(members ? { members } : {})} headingLevel={3} />
     </Dialog>
   );
 }
 
 /** 手机 / 大字号：整页——先看分组列表，点进去看详情（不用横向一排标签） */
-export function SettingsPanel({ prefs, setPrefs, section, onOpen, onGo }: PrefsProps & GoProps & { section?: SettingsSection; onOpen: (s: SettingsSection) => void }) {
+export function SettingsPanel({ prefs, setPrefs, section, onOpen, onGo, members }: PrefsProps & GoProps & { section?: SettingsSection; onOpen: (s: SettingsSection) => void }) {
   if (section) {
     return (
       <div className="panel">
-        <SettingsSectionBody section={section} prefs={prefs} setPrefs={setPrefs} onGo={onGo} />
+        <SettingsSectionBody section={section} prefs={prefs} setPrefs={setPrefs} onGo={onGo} {...(members ? { members } : {})} />
       </div>
     );
   }

@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { ChatPage } from '@/chat/ChatPage';
 import { App } from '@/App';
 import { COOKIE_SESSION, session } from '@/lib/api';
-import { loadConversations, loadPrefs, parseEvent, splitSse, streamChat, withGroupMentions, type Conversation } from '@/chat/store';
+import { loadConversations, loadPrefs, parseEvent, splitSse, streamChat, type Conversation } from '@/chat/store';
 
 const enc = new TextEncoder();
 const sse = (objs: unknown[]) => objs.map((o) => (o === 'DONE' ? 'data: [DONE]\n\n' : `data: ${JSON.stringify(o)}\n\n`)).join('');
@@ -56,11 +56,6 @@ describe('对话流解析（AI SDK UI Message Stream）', () => {
     await expect(streamChat([{ role: 'user', text: 'x' }], 'aroomo', new AbortController().signal, fErr).next()).rejects.toThrow('对话出错了');
   });
 
-  it('群聊：没写 @ 时自动 @ 群里的成员；写了 @ 就按用户的', () => {
-    expect(withGroupMentions('大家好', ['A', 'B'])).toBe('@A @B 大家好');
-    expect(withGroupMentions('@A 你说', ['A', 'B'])).toBe('@A 你说');
-    expect(withGroupMentions('hi', undefined)).toBe('hi');
-  });
 });
 
 describe('原生对话页', () => {
@@ -121,6 +116,8 @@ describe('原生对话页', () => {
       await waitFor(() => expect(d.hasAttribute('open')).toBe(false));
       fireEvent.click(within(screen.getByRole('navigation', { name: '分类' })).getByRole('button', { name: '设置' }));
       expect(screen.getByRole('heading', { name: '设置' })).toBeInTheDocument();
+      // 照 sumus 先打开「个人资料」，字号在「偏好」里
+      fireEvent.click(within(screen.getByRole('list', { name: '设置分组' })).getByRole('button', { name: '偏好' }));
       // 调到 15：900 宽仍在 48–64em 之间（再大就自动切成手机排法，见下一条测试）
       fireEvent.change(screen.getByRole('slider', { name: /字号/ }), { target: { value: '15' } });
       expect(loadPrefs().fontSize).toBe(15);
@@ -138,13 +135,18 @@ describe('原生对话页', () => {
     }
   });
 
-  it('桌面：分类窄栏 + 会话列表 + 对话常显；专职成员列表里点成员就单聊；铃铛打开收件箱', async () => {
+  it('桌面：分类窄栏 + 会话列表 + 对话常显；助手没有预置、只有一句空状态；新建菜单：默认全员 / 挑选成员 / 和某位单聊；铃铛打开收件箱', async () => {
     document.documentElement.style.fontSize = '';
     renderPage();
     expect(document.querySelectorAll('dialog')).toHaveLength(0);
     expect(screen.getByRole('navigation', { name: '分类' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('radio', { name: '专职成员' }));
-    fireEvent.click(await screen.findByRole('button', { name: /^Kimi/ }));
+    fireEvent.click(screen.getByRole('radio', { name: '助手' }));
+    expect(screen.getByText(/^还没有助手。/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /新建助手/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '新建对话' }));
+    expect(screen.getByRole('button', { name: '新对话（全员）' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '挑选成员新建' })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: '和 Kimi 开新对话' }));
     expect(screen.getByRole('heading', { name: 'Kimi' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /^通知和收件箱/ }));
     expect((await screen.findAllByRole('heading', { name: /收件箱/ })).length).toBeGreaterThan(0);
@@ -172,7 +174,7 @@ describe('原生对话页', () => {
     await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
   });
 
-  it('家人账号（自审 A3）：窄栏、会话栏底部不显示 资源库/工具/API；设置只有 偏好·安全·键盘快捷键；旧链接 ?view=keys 不打开', async () => {
+  it('家人账号（自审 A3）：窄栏、会话栏底部不显示 资源库/工具/API；设置只有 个人资料·偏好·安全·键盘快捷键；旧链接 ?view=keys 不打开', async () => {
     sessionStorage.setItem('aroomo.console.user', JSON.stringify({ email: 'kid@example.test', displayName: '小明', role: 'user' }));
     try {
       render(
@@ -186,7 +188,7 @@ describe('原生对话页', () => {
       expect(screen.queryByRole('heading', { name: 'API' })).toBeNull();
       fireEvent.click(within(rail).getByRole('button', { name: '设置' }));
       const nav = within(screen.getByRole('dialog', { name: '设置' })).getByRole('list', { name: '设置分组' });
-      expect(within(nav).getAllByRole('button').map((b) => b.textContent)).toEqual(['偏好', '安全', '键盘快捷键']);
+      expect(within(nav).getAllByRole('button').map((b) => b.textContent)).toEqual(['个人资料', '偏好', '安全', '键盘快捷键']);
     } finally {
       sessionStorage.removeItem('aroomo.console.user');
     }

@@ -75,7 +75,7 @@ export function LeadSection() {
 
   return (
     <>
-      <Field label="负责人" hint="对话里没有 @ 成员时，交给负责人回答。负责人要能文字对话、上下文 ≥32k、支持工具调用。">
+      <Field label="负责人">
         {eligible.length === 0 ? (
           <span className="muted">还没有合格的成员</span>
         ) : (
@@ -134,7 +134,7 @@ export function SecuritySection() {
 
   return (
     <>
-      <Field label="敏感内容保护" hint="开着时，含密码、银行卡号、Key 等敏感信息的消息不发给外部成员（默认开）">
+      <Field label="敏感内容保护" hint="含密码、卡号、Key 的消息不发给外部成员">
         {on == null ? (
           <span className="muted">—</span>
         ) : (
@@ -193,11 +193,7 @@ export function BudgetSection() {
     <>
       <Field
         label="每天最多打扰我几次"
-        hint={
-          b?.today
-            ? `今天已来 ${b.today.total} 张接管卡（提醒了 ${b.today.loud}，静默 ${b.today.quiet}）。付款类每次都会提醒。`
-            : '电脑助手遇到验证码、登录等要你出手的事，每天最多提醒这么多次；超出的静默放进收件箱。付款类每次都会提醒。'
-        }
+        hint={b?.today ? `今天提醒了 ${b.today.loud} 次，静默 ${b.today.quiet} 次。付款每次都提醒。` : '付款每次都提醒。'}
       >
         {b ? (
           <div className="flex items-center gap-2">
@@ -252,7 +248,7 @@ export function McpSection() {
 
   return (
     <>
-      <Field label="连接设置" hint="在 Claude、Cursor 这类软件里用 Aroomo 时，把这段复制过去。里面不含密码。">
+      <Field label="连接设置" hint="在 Claude、Cursor 里用 Aroomo">
         <Button variant="outline" disabled={!cfg} onClick={() => void copy()}>
           复制配置
         </Button>

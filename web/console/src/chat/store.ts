@@ -18,7 +18,7 @@ export interface Conversation {
   title: string;
   /** 'aroomo' = 交给负责人（可 @ 点名）；'aroomo/<成员 id>' = 单独和这位成员对话 */
   model: string;
-  /** 群聊：这些成员一起回答（没写 @ 时自动 @ 他们） */
+  /** 挑选的成员（落地方案 v2：默认只有负责人回答，@ 谁谁答；@ 列表只列这几位） */
   group?: string[];
   messages: ChatTurn[];
   updatedAt: number;
@@ -143,11 +143,6 @@ export async function* streamChat(turns: ChatTurn[], model: string, signal: Abor
   }
 }
 
-/** 群聊里没写 @ 时，自动 @ 群里的成员（只改发出去的文字，界面上显示原话） */
-export function withGroupMentions(text: string, group: string[] | undefined): string {
-  if (!group?.length || /(^|\s)[@＠]\S/.test(text)) return text;
-  return `${group.map((n) => `@${n}`).join(' ')} ${text}`;
-}
 
 // ---- 本机存储 ----
 

@@ -45,7 +45,7 @@ const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
   };
   return (
     <div className="chat-code-header">
-      <span>{language || '代码'}</span>
+      <span>{language && !/^(text|plain|plaintext|txt)$/i.test(language) ? language : '代码'}</span>
       <button type="button" className="msg-act" onClick={copy} aria-label={done ? '已复制代码' : '复制代码'}>
         {done ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
         <span>{done ? '已复制' : '复制'}</span>

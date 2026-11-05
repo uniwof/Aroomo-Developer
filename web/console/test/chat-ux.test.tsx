@@ -125,6 +125,7 @@ describe('对话页：对标改进', () => {
     renderPage();
     fireEvent.click(screen.getByRole('button', { name: '设置' }));
     expect(screen.queryAllByRole('tab')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: '偏好' }));
     fireEvent.change(screen.getByRole('slider', { name: /字号/ }), { target: { value: '28' } });
     expect(document.documentElement.style.fontSize).toBe('200%');
     fireEvent.click(screen.getByRole('radio', { name: '深色' }));
@@ -141,9 +142,9 @@ describe('对话页：对标改进', () => {
       // 手机照 sumus 没有抽屉：会话列表是整页（带底部栏），再按一次回到对话
       expect(document.querySelector('dialog')).toBeNull();
       fireEvent.keyDown(window, { key: 'S', ctrlKey: true, shiftKey: true });
-      await waitFor(() => expect(screen.getByRole('region', { name: '对话列表' })).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByRole('main', { name: '对话列表' })).toBeInTheDocument());
       fireEvent.keyDown(window, { key: 'S', ctrlKey: true, shiftKey: true });
-      await waitFor(() => expect(screen.queryByRole('region', { name: '对话列表' })).toBeNull());
+      await waitFor(() => expect(screen.queryByRole('main', { name: '对话列表' })).toBeNull());
       fireEvent.keyDown(window, { key: 'O', metaKey: true, shiftKey: true });
       expect(document.title).toBe('新对话 · Aroomo');
     } finally {
