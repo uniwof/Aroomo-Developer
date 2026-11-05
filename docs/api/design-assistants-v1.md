@@ -6,7 +6,7 @@
 | 表 | 关键字段 | 约束 |
 |---|---|---|
 | `conversations`（会话存库的底座，本阶段只有助手写） | id、user_id、kind chat/assistant、title、member_ids[]、read_at、created/updated/deleted_at | UNIQUE(id,user_id) 供复合外键 |
-| `conversation_messages` | id、conversation_id、user_id、role user/member/system、member_id、run_id、content、created_at | FK (conversation_id,user_id)；**只追加**：触发器拒绝 UPDATE（X-21） |
+| `conversation_messages` | id、seq（自增，会话内顺序与分页游标）、conversation_id、user_id、role user/member/system、member_id、run_id、content、created_at | FK (conversation_id,user_id)；**只追加**：触发器拒绝 UPDATE（X-21） |
 | `assistants` | 附录 C 全部字段：name、instructions、lead_member_id、enabled、schedule_kind manual/daily/weekly/interval、schedule_spec JSON、timezone、catch_up skip/latest、max_runtime_sec 60–1800（默认 600）、budget_level low/mid/high、notify、conversation_id、next_run_at、paused_at；另加 idempotency_key/hash | FK (conversation_id,user_id)；FK (user_id,lead_member_id)→members ON DELETE SET NULL(lead_member_id)；每账号 ≤20 个（服务层） |
 | `assistant_members` | assistant_id、user_id、member_id、role lead/worker、position | PK(assistant_id,member_id)；FK→assistants、FK (user_id,member_id)→members，均 CASCADE；每个助手只有一个 lead（部分唯一索引） |
 | `assistant_runs` | trigger manual/schedule、scheduled_for、idempotency_key、requested/started/finished_at、status（附录 C 7 种）、failure_code、summary、usage_state ample/tight/exhausted、calls、message_ids[] | UNIQUE(assistant_id,scheduled_for)=定时幂等键；UNIQUE(assistant_id,idempotency_key)；**部分唯一索引：同一助手只能有一条 queued/running**（不并发，库层兜底） |
@@ -14,11 +14,11 @@
 - RLS 键三张表都叫 `user_id`（含 members/runs/steps 冗余一列），**待负责人定**（附录 C 写 owner_account_id，见 design-rls-v1 问题 3）。复合外键让跨账号挂接在库层失败。
 - failure_code：对话的 4 种 + timeout、budget（附录 C）；**我另加** server_restart（X-21）、no_member（组长/成员都被删或停用）。
 
-## 2. 接口（全部只给所有者：所有者令牌或方案 A 的所有者账号；家人账号 403，操作员/客户端令牌 403；能力名 assistants:read / assistants:write，不进操作员白名单）
+## 2. 接口（全部只给所有者：所有者令牌或方案 A 的所有者账号；家人账号 403，操作员/客户端令牌 403；能力名 assistants:read / assistants:write，不进操作员白名单；权限在 preValidation 判，先 403 再校验请求体）
 - `GET /api/assistants`（排序：等确认/失败在上，其余按 next_run_at）、`POST /api/assistants`、`GET/PATCH/DELETE /api/assistants/:id`
 - `POST /api/assistants/preview`：只校验+算「下次运行」和人话计划，不落库；7.11 实时那一行和 X-15 草稿卡共用，返回 `data-aroomo-assistant-draft` 数据块。
 - `POST /api/assistants/:id/runs`（立即运行，202）、`GET /api/assistants/:id/runs?limit=20&before=`、`GET /api/assistants/:id/runs/:run`（含折叠后的步骤）、`POST /api/assistants/:id/runs/:run/cancel`
-- `POST /api/assistants/:id/pause`、`/resume`；`GET /api/assistants/:id/messages?after=`（固定会话，分页）、`POST /api/assistants/:id/read`（清未读）
+- `POST /api/assistants/:id/pause`、`/resume`；`GET /api/assistants/:id/messages?afterSeq=`（固定会话，按 seq 分页）、`POST /api/assistants/:id/read`（清未读）
 - 错误统一 `{error:{code,message}}`；别人的/不存在的 id 一律 404 且看不出存在；DELETE 是不可逆操作，走统一确认（428 → 两步 → 令牌）。
 
 ## 3. 幂等
