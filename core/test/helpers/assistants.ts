@@ -29,6 +29,12 @@ export interface FakeGateway {
   failStatus: Map<string, number>;
   /** 设了就先等它再回（测试用来让几次运行同时卡在调用上） */
   gate: Promise<void> | null;
+  /** 流式回复时，在正文前面插这些 delta（X-05：executed_tools / tool_calls） */
+  toolDeltas: Array<Record<string, unknown>>;
+  /** 流式回复：收到请求后、发第一个字之前先等它（X-06：让成员停在「已收到」） */
+  firstTokenGate: Map<string, Promise<void>>;
+  /** 每次流式回复里请求体的 stream_options（X-06：要用量） */
+  streamOptions: unknown[];
 }
 
 export interface AssistantEnv extends TwoAccounts {
@@ -52,7 +58,7 @@ export async function assistantEnv(
   opts: { timeoutMs?: number; extraEnv?: Record<string, string>; budgets?: CoreDeps['assistantBudgets'] } = {},
 ): Promise<AssistantEnv> {
   const mock = await startMockLiteLLM();
-  const gw: FakeGateway = { calls: [], slow: new Set(), failStatus: new Map(), gate: null };
+  const gw: FakeGateway = { calls: [], slow: new Set(), failStatus: new Map(), gate: null, toolDeltas: [], firstTokenGate: new Map(), streamOptions: [] };
   const t = await twoAccounts(
     {
       name: env.name,
@@ -62,7 +68,7 @@ export async function assistantEnv(
         if (opts.timeoutMs !== undefined) deps.assistantTimeoutMs = () => opts.timeoutMs!;
         if (opts.budgets) deps.assistantBudgets = opts.budgets;
         deps.chatFetch = (async (_u: unknown, init?: { body?: string; signal?: AbortSignal }) => {
-          const b = JSON.parse(String(init?.body)) as { model: string; messages: Array<{ role: string; content: string }> };
+          const b = JSON.parse(String(init?.body)) as { model: string; stream?: boolean; stream_options?: unknown; messages: Array<{ role: string; content: string }> };
           gw.calls.push(b.model);
           if (gw.gate) await gw.gate;
           if (gw.slow.has(b.model)) {
@@ -80,7 +86,25 @@ export async function assistantEnv(
             : prompt.includes('成员的结果如下')
               ? '汇总完成：找到 3 条'
               : `结果-${b.model}\n<tool_call>{"x":1}</tool_call>`;
-          return Response.json({ choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }] });
+          if (!b.stream) return Response.json({ choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }] });
+          gw.streamOptions.push(b.stream_options ?? null);
+          // 流式：和真 LiteLLM 一样先回 200 头，再一段一段发（工具 delta → 正文两段 → 结束 → 用量 → [DONE]）
+          const wait = gw.firstTokenGate.get(b.model);
+          const ev = (o: unknown) => new TextEncoder().encode(`data: ${JSON.stringify(o)}\n\n`);
+          const body = new ReadableStream<Uint8Array>({
+            async start(c) {
+              for (const d of gw.toolDeltas) c.enqueue(ev({ choices: [{ index: 0, delta: d }] }));
+              if (wait) await wait;
+              const half = Math.ceil(content.length / 2);
+              c.enqueue(ev({ choices: [{ index: 0, delta: { role: 'assistant', content: content.slice(0, half) } }] }));
+              c.enqueue(ev({ choices: [{ index: 0, delta: { content: content.slice(half) } }] }));
+              c.enqueue(ev({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }));
+              c.enqueue(ev({ choices: [], usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 } }));
+              c.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+              c.close();
+            },
+          });
+          return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
         }) as typeof fetch;
         return deps;
       },

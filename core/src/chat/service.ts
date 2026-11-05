@@ -204,6 +204,21 @@ export function isFinishEvent(event: string): boolean {
   return false;
 }
 
+/** SSE 事件里的 usage.total_tokens（没有 = 0） */
+export function usageTokensOf(event: string): number {
+  for (const line of event.split('\n')) {
+    const m = /^data:\s*(\{.*\})\s*$/.exec(line);
+    if (!m) continue;
+    try {
+      const t = (JSON.parse(m[1]!) as { usage?: { total_tokens?: unknown } }).usage?.total_tokens;
+      if (typeof t === 'number' && Number.isFinite(t) && t > 0) return Math.floor(t);
+    } catch {
+      // 不是 JSON：跳过
+    }
+  }
+  return 0;
+}
+
 const sseHeaders = () => ({ 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', 'x-accel-buffering': 'no' });
 
 const hintText = (hints: Hint[]) => hints.map((h) => `> ${h.text}${h.actions.length ? '（去掉 @ 再发一次即可交给负责人）' : ''}`).join('\n');
@@ -351,6 +366,13 @@ export class ChatService {
     }
     const upstream = res.body;
     if (!upstream) return textReply(true, prefix + footer.trim());
+    // 流式也记用量（请求带了 stream_options.include_usage 时上游最后会发一段 usage；助手运行就是这样调的，X-06）
+    const onTokens = !this.d.upstreamModel ? this.d.onTokens : undefined;
+    const countUsage = (event: string) => {
+      if (!onTokens || !event.includes('"usage"')) return;
+      const total = usageTokensOf(event);
+      if (total > 0) onTokens(model, total);
+    };
     const reader = upstream.getReader();
     const dec = new TextDecoder();
     let buf = '';
@@ -374,6 +396,7 @@ export class ChatService {
           if (done) {
             if (buf.trim()) {
               if (isFinishEvent(buf) || /^data:\s*\[DONE\]/m.test(buf)) putFooter(c);
+              countUsage(buf);
               c.enqueue(enc.encode(buf.endsWith('\n\n') ? buf : buf + '\n\n'));
             }
             putFooter(c);
@@ -387,6 +410,7 @@ export class ChatService {
             const event = buf.slice(0, i + 2);
             buf = buf.slice(i + 2);
             if (isFinishEvent(event) || /^data:\s*\[DONE\]/m.test(event)) putFooter(c);
+            countUsage(event);
             c.enqueue(enc.encode(event));
             emitted = true;
           }
