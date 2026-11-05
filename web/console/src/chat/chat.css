@@ -365,7 +365,7 @@
   min-height: calc(2 * var(--k));
   padding: 0 calc(0.625 * var(--k));
   box-sizing: border-box;
-  border: 1px solid var(--border);
+  border: 1px solid var(--input); /* 自审 B2：控件边框 ≥3:1（所有者规则优先于 sumus） */
   border-radius: calc(0.5 * var(--k));
   background: var(--bg);
   color: var(--faint);
@@ -809,7 +809,8 @@
   padding: 0 calc(0.625 * var(--k)) 0 calc(0.75 * var(--k));
   border: 0;
   border-radius: 999px;
-  background: rgb(240 240 240 / 0.6);
+  /* 自审 B1：用变量，深色下自动变深底浅字（不再是浅灰底 + 近白字 2.2:1） */
+  background: var(--seg);
   color: var(--muted);
   font: inherit;
   font-size: calc(0.8125 * var(--k));
@@ -1213,12 +1214,12 @@
   flex-direction: column;
   min-height: calc(5.375 * var(--k));
   box-sizing: border-box;
-  border: 1px solid var(--field);
+  border: 1px solid var(--input); /* 自审 B2：≥3:1 */
   border-radius: calc(0.875 * var(--k));
   background: var(--bg);
 }
 .composer:focus-within {
-  border-color: #9a9a9a;
+  border-color: var(--fg); /* 焦点更深 */
 }
 .composer-input {
   min-height: 1.5em;

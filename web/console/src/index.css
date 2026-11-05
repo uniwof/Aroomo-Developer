@@ -250,6 +250,11 @@ textarea:disabled {
   background: var(--card);
   cursor: not-allowed;
 }
+input:not([type='checkbox'], [type='radio'], [type='range'], [type='file'], [type='hidden']):focus,
+select:focus,
+textarea:focus {
+  border-color: var(--fg); /* 自审 B2：焦点时边框更深 */
+}
 input[aria-invalid='true'],
 textarea[aria-invalid='true'] {
   border-color: var(--danger);
@@ -441,7 +446,7 @@ textarea[aria-invalid='true'] {
   display: inline-flex;
   flex-wrap: wrap;
   max-width: 100%;
-  border: 1px solid var(--border);
+  border: 1px solid var(--input); /* 自审 B2：控件外框 ≥3:1 */
   border-radius: var(--r-sm);
   background: var(--bg);
   overflow: hidden;
