@@ -4,11 +4,11 @@
  *   右边主对话区（顶栏头像 + 名字、居中日期分隔、无气泡消息、大圆角输入卡片）。
  * - 手机（或字号放大后放不下两栏）：会话列表栏就是唯一一层抽屉；点会话、成员、设置后抽屉关上，内容在主区域原地打开，
  *   面板里的下一层用顶栏「← 返回」，不开第二层抽屉，不用标签页。
- * - 只调用 Core 的标准接口（/api/*）；会话先存在本机浏览器（localStorage）。
+ * - 只调用 Core 的标准接口（/api/*）；会话存在 Core（开关 FLAGS.savedChats，saved.ts），Core 拿不到时退回本机浏览器（localStorage）。
  * 边界：store.ts 管数据和请求，Thread.tsx 管对话区，Sidebar.tsx 管会话列表栏，panels.tsx 管面板，这里管拼装。
  */
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ArrowRight, BookOpen, ChevronDown, ChevronRight, CircleAlert, Download, Ellipsis, KeyRound, Menu, MessagesSquare, Pencil, Plus, Settings, SquarePen, Trash2, Users, Wrench, X } from 'lucide-react';
+import { Archive, ArrowRight, BookOpen, ChevronDown, ChevronRight, CircleAlert, Download, Ellipsis, KeyRound, Menu, MessagesSquare, Pencil, Plus, Settings, SquarePen, Trash2, Users, Wrench, X } from 'lucide-react';
 import { api, currentUser, isFamily, viaShell, type Member } from '@/lib/api';
 import { useSearchParams } from 'react-router-dom';
 import { useUsage } from '@/lib/usage';
@@ -23,6 +23,7 @@ import { listTimeLabel, loadConversations, loadPrefs, newConversation, saveConve
 import { useAsk } from '@/components/Dialog';
 import { FLAGS } from '@/lib/flags';
 import { useAssistants, type AssistantInput } from '@/lib/assistants';
+import { archiveConversation, createConversation, fetchConversation, fetchConversations, fetchMessages, importLocalOnce, markRead, mergeRemote, renameConversation } from './saved';
 import './chat.css';
 
 // 不常开的面板点开才下载（#250：对话页包 ≤150 KB gz）。设置、成员随对话页一起加载，打开不用等。
@@ -104,6 +105,10 @@ const NOTICE_KEY = 'aroomo.notice.dismissed';
 const SIDE_MIN = 280;
 const SIDE_MAX = 420;
 const clampSide = (w: number) => Math.min(SIDE_MAX / 16, Math.max(SIDE_MIN / 16, w));
+/** 有消息的会话（存在 Core 里、还没取消息的看条数） */
+const hasMsgs = (c: Conversation) => c.messages.length > 0 || !!c.remote?.count;
+/** 存库的会话列表多久刷新一次（未读、进行中） */
+const LIST_REFRESH_MS = 60_000;
 
 function useMembers(): [Member[], () => void] {
   const [members, setMembers] = useState<Member[]>([]);
@@ -149,11 +154,63 @@ function useLayout(): { side: boolean; rail: boolean } {
 }
 
 export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
+  const saved = FLAGS.savedChats;
   const [list, setList] = useState<Conversation[]>(() => {
-    const l = loadConversations();
+    // 存库模式下家人账号不读本机：同一台浏览器上的本机会话是所有者的
+    const l = saved && isFamily() ? [] : loadConversations();
     return l.length ? l : [newConversation()];
   });
   const [currentId, setCurrentId] = useState(() => list[0]!.id);
+  /** null = 还在问 Core；true = 会话存在 Core；false = 用本机（开关关，或 Core 拿不到） */
+  const [remote, setRemote] = useState<boolean | null>(saved ? null : false);
+  const [msgError, setMsgError] = useState<{ id: string; seq: number } | null>(null);
+  const [focusMsg, setFocusMsg] = useState<string | undefined>();
+  const [runningId, setRunningId] = useState<string | null>(null);
+  const listRef = useRef(list);
+  listRef.current = list;
+  const currentRef = useRef(currentId);
+  currentRef.current = currentId;
+  const remoteRef = useRef(remote);
+  remoteRef.current = remote;
+  /** Core 的列表盖上来：已取过的消息、正打开的本机新会话留着 */
+  const adopt = useCallback((prev: Conversation[], fresh: Conversation[]) => {
+    // 本机会话里只留正打开的空白新会话；有消息的本机会话已经导入过（id 可能换成了算出来的 uuid），以 Core 那份为准
+    const next = mergeRemote(prev.filter((c) => c.remote || (c.id === currentRef.current && c.messages.length === 0)), fresh, currentRef.current);
+    return next.length ? next : [newConversation()];
+  }, []);
+  useEffect(() => {
+    if (!saved) return;
+    let alive = true;
+    void (async () => {
+      try {
+        // 所有者：本机旧会话导入一次（本机那份不删）；导入失败不挡着打开，下次再试
+        if (!isFamily()) await importLocalOnce(loadConversations()).catch(() => 0);
+        const fresh = await fetchConversations();
+        if (!alive) return;
+        setList((prev) => {
+          const next = adopt(prev, fresh);
+          if (!next.some((c) => c.id === currentRef.current)) setCurrentId(next[0]!.id);
+          return next;
+        });
+        setRemote(true);
+      } catch {
+        if (alive) setRemote(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [saved, adopt]);
+  useEffect(() => {
+    if (remote !== true) return;
+    const t = setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
+      fetchConversations()
+        .then((fresh) => setList((prev) => adopt(prev, fresh)))
+        .catch(() => undefined);
+    }, LIST_REFRESH_MS);
+    return () => clearInterval(t);
+  }, [remote, adopt]);
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [view, setView] = useState<View>({ kind: 'chat' });
@@ -217,7 +274,49 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   const currentMember = current.model.startsWith('aroomo/') ? members.find((m) => `aroomo/${m.id}` === current.model) : undefined;
   const singleName = currentMember?.name ?? (current.model.startsWith('aroomo/') ? current.title.replace(/^和\s*/, '') : undefined);
 
-  useEffect(() => saveConversations(list.filter((c) => c.messages.length > 0)), [list]);
+  // 本机模式才写本机；存库模式下本机那份（导入前的）原样留着，不覆盖
+  useEffect(() => {
+    if (remote === false) saveConversations(list.filter((c) => c.messages.length > 0 && !c.remote));
+  }, [list, remote]);
+  // 打开存库的会话：消息还没取就取；有未读就标已读
+  const needLoad = !!current.remote && !current.remote.loaded;
+  useEffect(() => {
+    if (!needLoad) return;
+    const id = current.id;
+    let alive = true;
+    fetchMessages(id)
+      .then((messages) => {
+        if (!alive) return;
+        setMsgError(null);
+        setList((l) => l.map((x) => (x.id === id && x.remote ? { ...x, messages, remote: { ...x.remote, loaded: true } } : x)));
+      })
+      .catch(() => alive && setMsgError((e) => ({ id, seq: e?.seq ?? 0 })));
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current.id, needLoad, msgError?.seq]);
+  const unreadNow = view.kind === 'chat' && !!current.remote?.unread;
+  useEffect(() => {
+    if (!unreadNow) return;
+    const id = current.id;
+    void markRead(id).catch(() => undefined);
+    setList((l) => l.map((x) => (x.id === id && x.remote ? { ...x, remote: { ...x.remote, unread: false } } : x)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current.id, unreadNow]);
+
+  /** 发第一句时在 Core 建会话（id 用本机这个，一般不变）；本机模式返回 null */
+  const persist = useCallback(async (text: string): Promise<string | null> => {
+    if (remoteRef.current !== true) return null;
+    const c = listRef.current.find((x) => x.id === currentRef.current);
+    if (!c) return null;
+    if (c.remote) return c.id;
+    const made = await createConversation({ id: c.id, title: c.title === '新对话' ? titleFrom(text) : c.title, model: c.model, ...(c.group ? { group: c.group } : {}) });
+    setList((l) => l.map((x) => (x.id === c.id ? { ...x, id: made.id, title: made.title, remote: { ...made.remote!, loaded: true } } : x)));
+    // 万一 Core 换了 id（本机 id 撞上了别的会话）：跟着换
+    if (made.id !== c.id) setCurrentId(made.id);
+    return made.id;
+  }, []);
   useEffect(() => {
     savePrefs(prefs);
     // 字号和主题作用到整页：面板里嵌的管理页面也一起变大，不割裂
@@ -237,7 +336,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
 
   const start = useCallback((opts: Parameters<typeof newConversation>[0] = {}) => {
     const c = newConversation(opts);
-    setList((l) => [c, ...l.filter((x) => x.messages.length > 0)]);
+    setList((l) => [c, ...l.filter(hasMsgs)]);
     setCurrentId(c.id);
     setView({ kind: 'chat' });
     setOpen(false);
@@ -272,16 +371,25 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         l
           .map((c) =>
             c.id === currentId
-              ? { ...c, messages: turns, updatedAt: Date.now(), title: c.title === '新对话' ? titleFrom(turns.find((t) => t.role === 'user')?.text ?? '') : c.title }
+              ? {
+                  ...c,
+                  messages: turns,
+                  updatedAt: Date.now(),
+                  title: c.title === '新对话' ? titleFrom(turns.find((t) => t.role === 'user')?.text ?? '') : c.title,
+                  // 正看着这段对话：回复算已读
+                  ...(c.remote ? { remote: { ...c.remote, loaded: true, unread: false, count: turns.length } } : {}),
+                }
               : c,
           )
           .sort((a, b) => b.updatedAt - a.updatedAt),
       );
+      if (listRef.current.find((c) => c.id === currentId)?.remote) void markRead(currentId).catch(() => undefined);
     },
     [currentId],
   );
 
   const pick = (id: string) => {
+    setFocusMsg(undefined);
     setCurrentId(id);
     setView({ kind: 'chat' });
     setOpen(false);
@@ -322,9 +430,33 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   }, [want]);
 
   const ask = useAsk();
+  /** X-04b：收件箱「打开对话」——打开那个会话，滚到那条消息 */
+  const openConversation = async (id: string, messageId?: string) => {
+    if (!listRef.current.some((x) => x.id === id)) {
+      if (remoteRef.current !== true) return;
+      try {
+        const c = await fetchConversation(id);
+        setList((l) => [c, ...l.filter((x) => x.id !== id)]);
+      } catch {
+        return; // 找不到（已归档或不是这个账号的）：留在收件箱
+      }
+    }
+    pick(id);
+    setFocusMsg(messageId);
+  };
+
   const remove = async (id: string) => {
     const c = list.find((x) => x.id === id);
-    if (!c || !(await ask.confirm({ title: `删除会话「${c.title}」？`, desc: '只删本机这一份，删了找不回来。', ok: '删除', danger: true }))) return;
+    if (c?.remote) {
+      // 存库的会话只归档、不删除（删除要所有者定）
+      if (!(await ask.confirm({ title: `归档话题「${c.title}」？`, desc: '归档后不在列表里显示，记录还留在 Aroomo 里。', ok: '归档' }))) return;
+      try {
+        await archiveConversation(id);
+      } catch {
+        await ask.confirm({ title: '没能归档', desc: '连不上 Aroomo，请稍后再试。', ok: '知道了' });
+        return;
+      }
+    } else if (!c || !(await ask.confirm({ title: `删除会话「${c.title}」？`, desc: '只删本机这一份，删了找不回来。', ok: '删除', danger: true }))) return;
     const rest = list.filter((x) => x.id !== id);
     const next = rest.length ? rest : [newConversation()];
     setList(next);
@@ -333,7 +465,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
 
   // 同一个对象（同一位成员 / 同一个群 / 负责人）的其它话题
   const topics = useMemo(
-    () => list.filter((c) => c.messages.length > 0 && c.model === current.model && (c.group ?? []).join('、') === (current.group ?? []).join('、')).slice(0, 8),
+    () => list.filter((c) => hasMsgs(c) && c.model === current.model && (c.group ?? []).join('、') === (current.group ?? []).join('、')).slice(0, 8),
     [list, current.model, current.group],
   );
   useEffect(() => {
@@ -357,8 +489,15 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   const rename = async (id: string) => {
     const c = list.find((x) => x.id === id);
     if (!c) return;
-    const t = (await ask.prompt({ title: '重命名话题', label: '新名字', value: c.title }))?.trim();
-    if (t) setList((l) => l.map((x) => (x.id === id ? { ...x, title: t.slice(0, 60) } : x)));
+    const t = (await ask.prompt({ title: '重命名话题', label: '新名字', value: c.title }))?.trim().slice(0, 60);
+    if (!t) return;
+    setList((l) => l.map((x) => (x.id === id ? { ...x, title: t } : x)));
+    if (c.remote)
+      renameConversation(id, t).catch(() => {
+        // 没存上：改回原来的名字
+        setList((l) => l.map((x) => (x.id === id ? { ...x, title: c.title } : x)));
+        void ask.confirm({ title: '没能改名', desc: '连不上 Aroomo，请稍后再试。', ok: '知道了' });
+      });
   };
   /** 导出成 Markdown 文件（只在本机生成，不上传） */
   const exportMd = (c: Conversation) => {
@@ -384,12 +523,13 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
       onMember={chatWith}
       onNew={() => start()}
       onLead={() => {
-        const c = list.find((x) => x.model === 'aroomo' && !x.group?.length && x.messages.length > 0);
+        const c = list.find((x) => x.model === 'aroomo' && !x.group?.length && hasMsgs(x));
         if (c) pick(c.id);
         else start();
       }}
       onOpen={(k) => goto({ kind: k })}
       usage={usage}
+      {...(remote === true ? { filterable: true, runningId } : {})}
       {...(assistantsOn
         ? {
             assistants,
@@ -569,10 +709,17 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
                     </li>
                     {current.messages.length > 0 && (
                       <li>
-                        <button type="button" className="pop-item pop-danger" aria-label={`删除会话「${current.title}」`} onClick={() => { setMenu('none'); void remove(current.id); }}>
-                          <Trash2 aria-hidden="true" />
-                          <span>删除话题</span>
-                        </button>
+                        {current.remote ? (
+                          <button type="button" className="pop-item" aria-label={`归档会话「${current.title}」`} onClick={() => { setMenu('none'); void remove(current.id); }}>
+                            <Archive aria-hidden="true" />
+                            <span>归档话题</span>
+                          </button>
+                        ) : (
+                          <button type="button" className="pop-item pop-danger" aria-label={`删除会话「${current.title}」`} onClick={() => { setMenu('none'); void remove(current.id); }}>
+                            <Trash2 aria-hidden="true" />
+                            <span>删除话题</span>
+                          </button>
+                        )}
                       </li>
                     )}
                   </ul>
@@ -586,6 +733,20 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
             对话要直接打开 Aroomo 网页才能用，请从书签或首页进入。
           </p>
         )}
+        {needLoad ? (
+          msgError?.id === current.id ? (
+            <div className="main-note" role="alert">
+              <p className="chat-error">没能取到这段对话，请检查网络。</p>
+              <button type="button" className="btn btn-outline hit" onClick={() => setMsgError((e) => ({ id: current.id, seq: (e?.seq ?? 0) + 1 }))}>
+                重试
+              </button>
+            </div>
+          ) : (
+            <p role="status" className="note panel-loading">
+              正在加载…
+            </p>
+          )
+        ) : (
         <Thread
           key={current.id}
           conversation={current}
@@ -600,7 +761,11 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           {...(notice ? { notice } : {})}
           {...(draftActions ? { draftActions } : {})}
           {...(fetchImpl ? { fetchImpl } : {})}
+          {...(remote === true ? { persist } : {})}
+          {...(focusMsg ? { focusMessageId: focusMsg } : {})}
+          onRunning={(r) => setRunningId(r ? current.id : null)}
         />
+        )}
       </>
     );
   } else {
@@ -655,7 +820,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           {view.kind === 'tools' && <ToolsView onGo={(k) => setView({ kind: k })} />}
           {view.kind === 'inbox' && (
             <div className="panel panel-embed">
-              <Inbox onBack={() => setView({ kind: 'chat' })} />
+              <Inbox onBack={() => setView({ kind: 'chat' })} onOpenConversation={(id, msg) => void openConversation(id, msg)} />
             </div>
           )}
           {view.kind === 'me' && (

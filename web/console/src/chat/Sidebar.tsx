@@ -40,7 +40,8 @@ interface Row {
 }
 
 function previewOf(c: Conversation): string {
-  const last = c.messages[c.messages.length - 1];
+  // 存库的会话还没取消息时，用 Core 给的最后一条预览
+  const last = c.messages[c.messages.length - 1] ?? c.remote?.last;
   if (!last) return '还没有消息';
   const text = previewText(last.text);
   return last.role === 'user' ? `我：${text}` : text;
@@ -69,9 +70,13 @@ export interface SidebarProps {
   onAssistant?: (id: string) => void;
   onNewAssistant?: () => void;
   onSchedule?: () => void;
+  /** 会话存在 Core 时才有未读 / 进行中：「对话」也显示「全部 / 未读 / 进行中」筛选 */
+  filterable?: boolean;
+  /** 本页正在生成回复的会话（Core 的进行中要等列表刷新） */
+  runningId?: string | null;
 }
 
-export function Sidebar({ list, currentId, members, inboxCount, active, onPick, onMember, onLead, onNew, onOpen, onClose, usage, assistants, assistantsError, currentAssistant, onAssistant, onNewAssistant, onSchedule }: SidebarProps) {
+export function Sidebar({ list, currentId, members, inboxCount, active, onPick, onMember, onLead, onNew, onOpen, onClose, usage, assistants, assistantsError, currentAssistant, onAssistant, onNewAssistant, onSchedule, filterable = false, runningId = null }: SidebarProps) {
   const [tab, setTab] = useState<Tab>('chats');
   const [filter, setFilter] = useState<ConvFilterValue>('all');
   // 家人账号、开关关着时 assistants 为空：「助手」分段照旧显示空列表，不放新建、筛选、全部计划
@@ -100,27 +105,29 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
     let pinnedLead = false;
     for (const c of list) {
       // 还没发过消息的新话题不进列表（照 sumus：新话题挂在对象下面，不单独占一行）
-      if (c.messages.length === 0) continue;
+      if (c.messages.length === 0 && !c.remote?.count) continue;
       const member = c.model.startsWith('aroomo/') ? members.find((m) => `aroomo/${m.id}` === c.model) : undefined;
       const single = c.model.startsWith('aroomo/');
       const kind: AvatarKind = c.group?.length ? 'group' : single ? 'member' : 'lead';
       // 置顶：最近一次和负责人的对话（sumus 把内置助手置顶；真正的「置顶」之后再做）
-      const pinned = kind === 'lead' && !pinnedLead && c.messages.length > 0;
+      const pinned = kind === 'lead' && !pinnedLead;
       if (pinned) pinnedLead = true;
       out.push({
         key: c.id,
         kind,
         name: c.group?.length ? c.title.replace(/^群聊：/, '') : member ? member.name : single ? c.title.replace(/^和\s*/, '') : c.title,
         preview: previewOf(c),
-        at: c.messages.length ? c.updatedAt : undefined,
+        at: c.updatedAt,
         convId: c.id,
         pinned,
+        ...(c.remote?.unread && c.id !== currentId ? { unread: true } : {}),
+        ...(c.remote?.running || c.id === runningId ? { running: true } : {}),
         ...(member ? { member } : {}),
         ...(c.group?.length ? { size: c.group.length } : {}),
       });
     }
     return out;
-  }, [list, members, currentId]);
+  }, [list, members, currentId, runningId]);
 
   // 助手（所有者 11-05 12:16 / 12:38）：为一个长期、可定时的任务设的成员小队。数据来自 GET /api/assistants（不预置示例）
   const staff = useMemo<Row[]>(
@@ -140,12 +147,13 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
   );
 
   const k = q.trim().toLowerCase();
-  const rows = (tab === 'staff' ? (FLAGS.convFilter ? applyConvFilter(staff, filter) : staff) : chats).filter((r) => !k || r.name.toLowerCase().includes(k) || r.preview.toLowerCase().includes(k));
+  const filterOn = FLAGS.convFilter && (tab === 'staff' ? !!assistants?.length : filterable);
+  const rows = (filterOn ? applyConvFilter(tab === 'staff' ? staff : chats, filter) : tab === 'staff' ? staff : chats).filter((r) => !k || r.name.toLowerCase().includes(k) || r.preview.toLowerCase().includes(k));
   const isCurrent = (r: Row) =>
     tab === 'chats' ? !!r.convId && r.convId === currentId : r.assistantId ? r.assistantId === currentAssistant : r.lead ? current?.model === 'aroomo' && !current.group?.length : !!r.member && current?.model === `aroomo/${r.member.id}`;
   const labelOf = (r: Row) => {
     if (r.assistantId) return `助手 ${r.name}，${r.size ?? 0} 位成员${r.running ? '，进行中' : ''}${r.unread ? '，有新结果' : ''}，${r.preview}${r.at ? `，${listTimeLabel(r.at)}` : ''}`;
-    const head = r.kind === 'group' ? `群聊 ${r.name}，${r.size ?? 0} 人` : r.name;
+    const head = `${r.kind === 'group' ? `群聊 ${r.name}，${r.size ?? 0} 人` : r.name}${r.running ? '，进行中' : ''}${r.unread ? '，有新回复' : ''}`;
     const q2 = r.member && tab === 'staff' ? `，${quotaState(usage?.find((u) => u.memberId === r.member!.id)).label}` : '';
     return `${head}${r.pinned ? '，已置顶' : ''}${q2}，${tab === 'staff' ? '' : '最后一条：'}${r.preview}${r.at ? `，${listTimeLabel(r.at)}` : ''}`;
   };
@@ -237,7 +245,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
           </div>
           )}
         </div>
-        {tab === 'staff' && FLAGS.convFilter && !!assistants?.length && <ConvFilter value={filter} onChange={setFilter} label="筛选助手" />}
+        {filterOn && <ConvFilter value={filter} onChange={setFilter} label={tab === 'staff' ? '筛选助手' : '筛选对话'} />}
       </div>
 
       <div className="conv-scroll">
@@ -294,7 +302,11 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
                   ? '没有找到。换个词试试。'
                   : tab === 'staff'
                     ? assistantsError || (filter === 'all' ? (onNewAssistant ? '还没有助手。点右上角的笔新建一个。' : '还没有助手。') : filter === 'unread' ? '没有新结果。' : '没有进行中的助手。')
-                    : '还没有会话。'}
+                    : filter === 'all' || !filterOn
+                      ? '还没有会话。'
+                      : filter === 'unread'
+                        ? '没有未读的对话。'
+                        : '没有进行中的对话。'}
               </li>
             )}
           </ul>

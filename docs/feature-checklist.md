@@ -46,7 +46,7 @@
 | F-033 | LH | 重命名、删除话题（统一弹窗） | 4 ··· | 新界面已有 | 1 | dialog.test | H |
 | F-034 | LH | 导出话题为 Markdown | 4 ··· | 新界面已有 | 1 | ChatPage exportMd | H |
 | F-035 | LH | 搜索会话（标题和预览） | 3 | 新界面已有 | 1 | Sidebar 搜索 | H |
-| F-036 | LH / 方案 v2 §5 | 会话存进 Core、多设备同步 | 3 | 需 Core | 2 | /api/conversations 未有 | 负 |
+| F-036 | LH / 方案 v2 §5 | 会话存进 Core、多设备同步 | 3 | 需 Core | 2 | integrate/stage2：/api/conversations + 流落库 + 前端读 Core（FLAGS.savedChats）；待负责人 A+ 审（design-conversations-v1） | 负 |
 | F-037 | 方案 v2 §5 | 浏览器里的会话一键导入 Core | 3 | 需 Core | 2 | — | 负 |
 | F-038 | LH / N6 | 全文搜索（含消息正文） | 3 | 需 Core | 3 | /api/search 未有 | 负 |
 | F-039 | 自审 A11 | 用户自己置顶 / 取消置顶 | 3、4 | 以后 | 1 | 现为自动置顶最近负责人会话 | 负 |
@@ -199,7 +199,7 @@
 | X-02 | 功能补充 v1 | 定时列表整页「全部计划」（头像叠放、目标、指令摘要、人话计划、时区、下次、上次结果、启用开关；手机是卡片）+ 4 个预设，不让写 cron | 3.3 助手 › 看全部计划 | 需 Core | 2 | 前端已备（开关 schedulePage）：pages/assistants/schedule.tsx、schedule-text.ts；stage2-cards.test › X-02；等 GET /api/assistants、pause/resume | 负 |
 | X-03 | 功能补充 v1 | 任务卡：步骤进度、确认块（想做什么/为什么/花多少 + 拒绝/同意）、反问块（快速回复或输入框） | 5 组长消息下 | 需 Core | 2 | 前端已备（开关 taskCards）：thread/cards/TaskCard.tsx；stage2-cards.test › X-03；等 run_steps 与流里数据块 | 负 |
 | X-04a | 功能补充 v1 | 收件箱筛选「等你处理 / 全部」，默认等你处理；没有等你处理时一句话 + 看全部 | 13、7.6 | 前端本轮补 | 2 | pages/Inbox.tsx；inbox-filter.test；unify5-inbox-*.png | 负 |
-| X-04b | 功能补充 v1 | 会话行「等你」小标；点了打开会话并滚到那张卡加焦点框 | 3.2、5 | 需 Core | 2 | 任务卡已能接焦点（tabIndex -1、id）；等会话与收件箱条目关联字段 | 负 |
+| X-04b | 功能补充 v1 | 会话行「等你」小标；点了打开会话并滚到那张卡加焦点框 | 3.2、5 | 需 Core | 2 | integrate/stage2：收件箱 related={type:'conversation', id:'会话:消息'} →「打开对话」滚到那条加焦点框；Core 还没有产生方 | 负 |
 | X-05 | 功能补充 v1 | 工具调用过程可见（折叠灰字行，脱敏参数和结果） | 5 | 需 Core | 2–3 | 等 data-aroomo-tool 数据块（A+） | 负 |
 | X-06 | 功能补充 v1 | 分工送达状态（已派出→已收到→在做→已回复） | 5 任务卡 | 需 Core | 2–3 | TaskCard 状态表留了扩展位 | 负 |
 | X-07 | 功能补充 v1 | 用量 30 天趋势与运行日志（只所有者，不显示价格） | 12 | 需 Core | 3 | — | 负 |
@@ -216,13 +216,13 @@
 | X-18 | 功能补充 v1 | 打字、听写、发新消息时停掉朗读 | 6 | 新界面已有（部分） | 2 | 发新消息、换会话已停（Thread.tsx speaker.stop）；开始打字/听写时停未做（线 A） | H |
 | X-19 | 功能补充 v1 | 长会话自动压缩并插一行灰字说明 | 5 | 需 Core | 3 | — | 负 |
 | X-20 | 功能补充 v1 | 把会话分享给家人 | — | 以后 | 以后 | 功能补充 v1 定为以后 | 所 |
-| X-21 | 功能补充 v1 | 会话和事件只追加、重启后运行变「失败：服务重启」 | Core | 需 Core | 2 | 线 C | 负 |
-| X-22 | 功能补充 v1 | 运行中的会话排最前，静态「进行中」小标 | 3.2 | 需 Core | 2 | 前端已备（开关 convFilter）：conv-filter.tsx RunningTag、applyConvFilter；stage2-cards.test › X-27 / X-22；等 Core 给运行中状态 | 负 |
+| X-21 | 功能补充 v1 | 会话和事件只追加、重启后运行变「失败：服务重启」 | Core | 需 Core | 2 | 线 C；聊天会话也只追加（0028，重试 / 停止都是新行） | 负 |
+| X-22 | 功能补充 v1 | 运行中的会话排最前，静态「进行中」小标 | 3.2 | 需 Core | 2 | integrate/stage2：对话也排（进行中 = 正在生成，内存态）；待负责人审 | 负 |
 | X-23 | 功能补充 v1 | 越权测试补两条（跨助手会话 403、作者字段忽略） | Core | 需 Core | 2 | 线 C | 负 |
 | X-24 | 功能补充 v1 | IM 通知桥 | — | 以后 | 以后 | — | 所 |
 | X-25 | 功能补充 v1 | 每个助手一台电脑 | — | 以后 | 不排期 | — | 所 |
 | X-26 | 功能补充 v1 | Alt+J 跳到下一张等你处理的卡 | 5 | 以后 | 3 | 等 X-03 / X-04b 上线 | 负 |
-| X-27 | 功能补充 v1 | 会话列表「全部 / 未读 / 进行中」三个胶囊（筛选，不是标签页） | 3.1 | 需 Core | 2 | 前端已备（开关 convFilter）：conv-filter.tsx ConvFilter；本机会话没有未读/运行中状态，等会话存库 | 负 |
+| X-27 | 功能补充 v1 | 会话列表「全部 / 未读 / 进行中」三个胶囊（筛选，不是标签页） | 3.1 | 需 Core | 2 | integrate/stage2：对话也接上（未读、进行中由 /api/conversations 给）；待负责人审 | 负 |
 | X-28 | 功能补充 v1 | 置顶消息 | 7.10 | 以后 | 4 | — | 负 |
 
 ## 汇总（v0）

@@ -1042,6 +1042,12 @@
 .msg {
   padding: calc(0.625 * var(--k)) 0;
 }
+/* X-04b：从收件箱「打开对话」跳到的那条消息：静态焦点框（不闪、不动画） */
+.msg.msg-focus {
+  outline: 2px solid var(--fg);
+  outline-offset: 2px;
+  border-radius: calc(0.5 * var(--k));
+}
 .msg-row {
   display: flex;
   gap: calc(0.75 * var(--k));

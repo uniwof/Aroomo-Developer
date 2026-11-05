@@ -1,7 +1,7 @@
 /**
  * 原生对话（#250 spike）：调用 Core 的 POST /api/chat/stream，读 AI SDK UI Message Stream（SSE）。
  * - 只靠控制台会话 Cookie（HttpOnly，脚本读不到）+ X-Aroomo-Request 头；从不发 Authorization，从不碰任何 Key。
- * - 会话列表和消息先存在本机浏览器 localStorage（S1 再落库）。
+ * - 会话列表和消息：开关 FLAGS.savedChats 打开且 Core 可用时存在 Core（saved.ts）；否则存在本机浏览器 localStorage。
  */
 
 import { FONT_VERSION, PREFS_KEY, readDisplayPrefs, type Theme } from '@/lib/display';
@@ -17,6 +17,8 @@ export interface ChatDraft {
 }
 
 export interface ChatTurn {
+  /** Core 里的消息 id（存库的会话才有；收件箱跳到某条消息用） */
+  id?: string;
   role: 'user' | 'assistant';
   text: string;
   /** 发出 / 收到的时间（毫秒）；旧会话没有 */
@@ -46,6 +48,27 @@ export interface Conversation {
   group?: string[];
   messages: ChatTurn[];
   updatedAt: number;
+  /** 存在 Core 里的会话才有（saved.ts）：消息点开时再取 */
+  remote?: RemoteInfo;
+}
+
+export interface RemoteInfo {
+  /** 消息已经取过 */
+  loaded: boolean;
+  unread: boolean;
+  running: boolean;
+  /** 消息条数（没取消息时判断列表里显不显示） */
+  count: number;
+  /** 最后一条的预览（没取消息时列表用） */
+  last?: { role: 'user' | 'assistant'; text: string; at: number | undefined };
+}
+
+/** 发一轮时要不要让 Core 存：conversationId = 存到哪个会话；retry = 重试（Core 不再存用户这句） */
+export interface PersistOpts {
+  conversationId?: string;
+  retry?: boolean;
+  /** Core 收下了这次请求（HTTP 200）：用户这句已经存了 */
+  onAccepted?: () => void;
 }
 
 export const STREAM_URL = '/api/chat/stream';
@@ -116,14 +139,25 @@ export const NETWORK_ERROR = '连不上 Aroomo，请检查网络后点「重试�
  * 发一次对话，逐段产出「到目前为止的完整回复」。中断（signal）时安静结束。
  * 服务端返回错误（401/403/429/400）或流里有 error 事件时抛 ChatStreamError（文案给人看）。
  */
-export async function* streamChat(turns: ChatTurn[], model: string, signal: AbortSignal, fetchImpl: typeof fetch = fetch, onDraft?: (d: ChatDraft) => void): AsyncGenerator<string, void> {
+export async function* streamChat(
+  turns: ChatTurn[],
+  model: string,
+  signal: AbortSignal,
+  fetchImpl: typeof fetch = fetch,
+  onDraft?: (d: ChatDraft) => void,
+  persist: PersistOpts = {},
+): AsyncGenerator<string, void> {
   let res: Response;
   try {
     res = await fetchImpl(STREAM_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'text/event-stream', 'x-aroomo-request': '1' },
       credentials: 'same-origin',
-      body: JSON.stringify({ model, messages: turns.map((t) => ({ role: t.role, content: t.text })) }),
+      body: JSON.stringify({
+        model,
+        messages: turns.map((t) => ({ role: t.role, content: t.text })),
+        ...(persist.conversationId ? { conversationId: persist.conversationId, ...(persist.retry ? { retry: true } : {}) } : {}),
+      }),
       signal,
     });
   } catch (e) {
@@ -145,6 +179,7 @@ export async function* streamChat(turns: ChatTurn[], model: string, signal: Abor
     }
     throw new ChatStreamError(msg);
   }
+  persist.onAccepted?.();
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   let buf = '';

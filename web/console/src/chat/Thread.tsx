@@ -40,12 +40,15 @@ const textOfMessage = (m: ThreadMessage): string =>
     .map((p) => p.text)
     .join('\n');
 
+/** Core 给的消息 id 是 uuid；本页新发的消息用 newId()（m 开头），不当作 Core 的 id */
+const CORE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function toTurns(messages: readonly ThreadMessage[]): ChatTurn[] {
   return messages
     .filter((m) => m.role === 'user' || m.role === 'assistant')
     .map((m) => {
       const draft = draftOfMessage(m);
-      return { role: m.role as 'user' | 'assistant', text: textOfMessage(m), ...(m.createdAt ? { at: m.createdAt.getTime() } : {}), ...(draft ? { draft } : {}) };
+      return { ...(CORE_ID.test(m.id) ? { id: m.id } : {}), role: m.role as 'user' | 'assistant', text: textOfMessage(m), ...(m.createdAt ? { at: m.createdAt.getTime() } : {}), ...(draft ? { draft } : {}) };
     })
     .filter((t) => t.text.trim() !== '');
 }
@@ -134,8 +137,11 @@ const MessageTime: FC = () => {
 };
 
 /** 你说的话：「我」头像 + 名字 + 时间 + 正文（不用气泡，照 sumus）。读屏先听到「你说：」 */
+/** 每条消息的 DOM id（X-04b：收件箱点「打开对话」时滚到这条并给焦点） */
+const useMsgDomId = () => `msg-${useAuiState((s) => s.message.id)}`;
+
 const UserMessage: FC = () => (
-  <MessagePrimitive.Root className="msg msg-user">
+  <MessagePrimitive.Root className="msg msg-user" id={useMsgDomId()}>
     <DaySep />
     <div className="msg-row">
       <Avatar name="我" kind="user" size="msg" />
@@ -313,8 +319,9 @@ const DraftSlot: FC = () => {
 
 const AssistantMessage: FC = () => {
   const who = useSpeaker();
+  const domId = useMsgDomId();
   return (
-    <MessagePrimitive.Root className="msg msg-assistant">
+    <MessagePrimitive.Root className="msg msg-assistant" id={domId}>
       <DaySep />
       <div className="msg-row">
         <Avatar name={who.name} kind={who.lead ? 'lead' : 'member'} size="msg" />
@@ -374,15 +381,23 @@ export interface ThreadProps {
   notice?: ReactNode;
   /** X-15 助手草稿卡的动作；不给 = 不显示卡（家人、开关关） */
   draftActions?: DraftActions;
+  /** 会话存库：发之前确保会话已在 Core 建好，返回会话 id（null = 不存，本机模式）；抛错 = 没建成，这次不发 */
+  persist?: (firstUserText: string) => Promise<string | null>;
+  /** X-04b：打开后滚到这条消息并给焦点（收件箱「打开对话」） */
+  focusMessageId?: string;
 }
 
-export function Thread({ conversation, onMessages, insert, members = [], fetchImpl, speechRate = DEFAULT_RATE, speechOnline = false, onAllowOnlineSpeech, memberName, onRunning, intro, notice, draftActions }: ThreadProps) {
+export function Thread({ conversation, onMessages, insert, members = [], fetchImpl, speechRate = DEFAULT_RATE, speechOnline = false, onAllowOnlineSpeech, memberName, onRunning, intro, notice, draftActions, persist, focusMessageId }: ThreadProps) {
   const convRef = useRef(conversation);
   convRef.current = conversation;
   const [messages, setMessages] = useState<UiMessage[]>(() =>
-    conversation.messages.map((m) => ({ id: newId(), role: m.role, text: m.text, ...(m.at ? { at: m.at } : {}), ...(m.draft ? { draft: m.draft } : {}), state: 'done' as const })),
+    conversation.messages.map((m) => ({ id: m.id ?? newId(), role: m.role, text: m.text, ...(m.at ? { at: m.at } : {}), ...(m.draft ? { draft: m.draft } : {}), state: 'done' as const })),
   );
   const [isRunning, setIsRunning] = useState(false);
+  const persistRef = useRef(persist);
+  persistRef.current = persist;
+  /** Core 已经存过的用户消息（重试时不再存一遍）：从 Core 取来的，加上这次发出去、Core 收下了的 */
+  const savedUser = useRef(new Set(conversation.messages.filter((m) => m.role === 'user' && m.id).map((m) => m.id!)));
   const abortRef = useRef<AbortController | null>(null);
   // 换会话或离开页面时，停掉还在进行的回复，也停掉朗读
   useEffect(
@@ -408,8 +423,18 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
       const ac = new AbortController();
       abortRef.current = ac;
       const turns = turnsOf(history);
+      const lastUser = history[history.length - 1]!;
       try {
-        for await (const text of streamChat(turns, convRef.current.model, ac.signal, fetchImpl, (draft) => update({ draft }))) update({ text });
+        let conversationId: string | null = null;
+        if (persistRef.current) {
+          try {
+            conversationId = await persistRef.current(lastUser.text);
+          } catch {
+            throw new ChatStreamError('这段对话没能保存到 Aroomo，请稍后点「重试」。');
+          }
+        }
+        const opts = conversationId ? { conversationId, retry: savedUser.current.has(lastUser.id), onAccepted: () => savedUser.current.add(lastUser.id) } : {};
+        for await (const text of streamChat(turns, convRef.current.model, ac.signal, fetchImpl, (draft) => update({ draft }), opts)) update({ text });
         update({ state: 'done' });
       } catch (e) {
         // 点了停止：保留已经收到的部分；其他错误就地显示，可以「重试」
@@ -508,6 +533,20 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
       saveDraft(k, t);
     });
   }, [runtime, conversation.id]);
+
+  // X-04b：收件箱「打开对话」→ 滚到那条消息，给焦点框（读屏从这条开始读）
+  useEffect(() => {
+    if (!focusMessageId) return;
+    const t = setTimeout(() => {
+      const el = document.getElementById(`msg-${focusMessageId}`);
+      if (!el) return;
+      el.setAttribute('tabindex', '-1');
+      el.classList.add('msg-focus');
+      el.scrollIntoView({ block: 'center' });
+      el.focus({ preventScroll: true });
+    }, 0);
+    return () => clearTimeout(t);
+  }, [focusMessageId]);
 
   // 抽屉里点了成员：把「@名字 」放进输入框
   useEffect(() => {
