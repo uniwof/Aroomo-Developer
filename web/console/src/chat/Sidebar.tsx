@@ -19,6 +19,14 @@ import { listTimeLabel, previewText, type Conversation } from './store';
 
 type Tab = 'staff' | 'chats';
 
+/** 会话栏自己的界面状态（搜索词、分段、折叠）：由对话页保管，抽屉关开、手机换页、桌面收起后不丢（切片 3 / 审计 C6） */
+export interface SideUi {
+  tab: Tab;
+  q: string;
+  folded: boolean;
+}
+export const SIDE_UI: SideUi = { tab: 'chats', q: '', folded: false };
+
 interface Row {
   key: string;
   kind: AvatarKind;
@@ -55,12 +63,18 @@ export interface SidebarProps {
   /** 手机抽屉里才有「关闭」和分类横排 */
   onClose?: () => void;
   usage: UsageRow[] | null;
+  ui?: SideUi;
+  onUi?: (f: (u: SideUi) => SideUi) => void;
 }
 
-export function Sidebar({ list, currentId, members, inboxCount, active, onPick, onMember, onLead, onNew, onOpen, onClose, usage }: SidebarProps) {
-  const [tab, setTab] = useState<Tab>('chats');
-  const [q, setQ] = useState('');
-  const [folded, setFolded] = useState(false);
+export function Sidebar({ list, currentId, members, inboxCount, active, onPick, onMember, onLead, onNew, onOpen, onClose, usage, ui: given, onUi }: SidebarProps) {
+  const [own, setOwn] = useState<SideUi>(SIDE_UI);
+  const ui = given ?? own;
+  const setUi = onUi ?? setOwn;
+  const { tab, q, folded } = ui;
+  const setTab = (t: Tab) => setUi((u) => ({ ...u, tab: t }));
+  const setQ = (v: string) => setUi((u) => ({ ...u, q: v }));
+  const setFolded = (f: (x: boolean) => boolean) => setUi((u) => ({ ...u, folded: f(u.folded) }));
   const [newOpen, setNewOpen] = useState(false);
   useEffect(() => {
     if (!newOpen) return;

@@ -17,7 +17,7 @@ import { MeFace, Rail, meLabel, quotaState, type RailTarget } from './Rail';
 import { HeaderCard } from './HeaderCard';
 import { useInboxCount } from '@/lib/inbox';
 import { Thread } from './Thread';
-import { Sidebar } from './Sidebar';
+import { SIDE_UI, Sidebar, type SideUi } from './Sidebar';
 import { BackButton, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type GoTarget } from './panels';
 import { applyDisplay } from '@/lib/display';
 import { listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
@@ -159,6 +159,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     }
   }, [sideW]);
   const [insert, setInsert] = useState<{ text: string; seq: number } | null>(null);
+  const [sideUi, setSideUi] = useState<SideUi>(SIDE_UI);
   const [members, reloadMembers] = useMembers();
   const [dismissed, setDismissed] = useState<string[]>(() => {
     try {
@@ -370,6 +371,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
       }}
       onOpen={(k) => goto({ kind: k })}
       usage={usage}
+      ui={sideUi}
+      onUi={setSideUi}
       {...(wide || phone ? {} : { onClose: () => setOpen(false) })}
     />
   );
@@ -718,7 +721,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         </Suspense>
       )}
       {!wide && !phone && (
-        <dialog ref={dialog} className="drawer" aria-label="会话列表" onClose={() => setOpen(false)} onCancel={() => setOpen(false)}>
+        <dialog ref={dialog} className="drawer" aria-label="会话列表" onClose={() => setOpen(false)} onCancel={() => setOpen(false)} onClick={(e) => e.target === e.currentTarget && setOpen(false)}>
           {open && sidebar}
         </dialog>
       )}
