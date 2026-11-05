@@ -268,7 +268,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
                   <span className="conv-text">
                     <span className="conv-top">
                       <span className="conv-name">
-                        {r.kind === 'group' && (
+                        {r.kind === 'group' && !r.assistantId && (
                           <span aria-hidden="true" className="hash">
                             #{' '}
                           </span>

@@ -347,3 +347,11 @@
   gap: 0.5rem 0.75rem;
   margin-top: 0.75rem;
 }
+/* 字号放大 / 手机：头像和文字放不下一行时文字换到头像下面，不挤成一列窄条 */
+.assistant-detail .profile {
+  flex-wrap: wrap;
+}
+.assistant-detail .profile > div {
+  flex: 1 1 14em;
+  min-width: 0;
+}

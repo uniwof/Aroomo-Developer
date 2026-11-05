@@ -315,7 +315,11 @@ export function AssistantDetail({ id, members, onChanged, onInbox }: { id: strin
   // 运行从进行中变成结束：通知会话栏刷新（未读、上次结果）
   const wasLive = useRef(false);
   useEffect(() => {
-    if (wasLive.current && !live) onChanged();
+    // 「已开始运行…」这句在运行结束后就过时了，换成结果
+    if (wasLive.current && !live) {
+      onChanged();
+      setNote((n) => (n.startsWith('已开始运行') ? '这次运行结束了，结果在下面' : n));
+    }
     wasLive.current = live;
   }, [live, onChanged]);
 
