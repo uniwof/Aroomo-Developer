@@ -160,7 +160,7 @@ describe('裁决 1：网关失败 → error（失败码 + 固定的话）', () =
     send('在吗');
     expect(await screen.findByText('Key 无效，请到「成员 → Key 与接入」检查。')).toBeInTheDocument();
     const link = await screen.findByRole('link', { name: /去检查 Key/ });
-    expect(link).toHaveAttribute('href', '/chat?view=keys');
+    expect(link).toHaveAttribute('href', '/hub/keys');
     expect(screen.queryByRole('button', { name: '重试这条回复' })).toBeNull();
     await waitFor(() => expect(screen.getByRole('status').textContent).toContain('去检查 Key'));
   });
