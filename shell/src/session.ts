@@ -85,19 +85,24 @@ export class LobeSessionChecker implements SessionChecker {
 
 export const allowAll: SessionChecker = { check: async () => true };
 
-/** Core 的控制台会话 Cookie 名（core/src/auth/session-cookie.ts SESSION_COOKIE） */
-export const CORE_SESSION_COOKIE = 'aroomo_session';
+/** Core 的控制台会话 Cookie 名（core/src/auth/session-cookie.ts）：https 用 __Host- 前缀；http 和过渡期读取用旧名 */
+export const CORE_SESSION_COOKIE = '__Host-aroomo_session';
+export const CORE_LEGACY_SESSION_COOKIE = 'aroomo_session';
+export const CORE_SESSION_COOKIES = [CORE_SESSION_COOKIE, CORE_LEGACY_SESSION_COOKIE] as const;
 
-/** 从浏览器 Cookie 头里只取 aroomo_session；格式同 Core 的校验，其他 Cookie 一律不往 Core 发 */
+/** 从浏览器 Cookie 头里只取 Core 会话 Cookie（先认 __Host- 名，没有再认旧名；与 Core 的读取顺序一致），其他 Cookie 一律不往 Core 发 */
 export function coreSessionCookie(header: string | undefined): string | undefined {
   if (!header) return undefined;
+  const found = new Map<string, string>();
   for (const part of header.split(';')) {
     const i = part.indexOf('=');
-    if (i < 0 || part.slice(0, i).trim() !== CORE_SESSION_COOKIE) continue;
-    const v = part.slice(i + 1).trim();
-    return /^[A-Za-z0-9_-]{8,200}$/.test(v) ? `${CORE_SESSION_COOKIE}=${v}` : undefined;
+    if (i < 0) continue;
+    const name = part.slice(0, i).trim();
+    if ((CORE_SESSION_COOKIES as readonly string[]).includes(name) && !found.has(name)) found.set(name, part.slice(i + 1).trim());
   }
-  return undefined;
+  const name = found.has(CORE_SESSION_COOKIE) ? CORE_SESSION_COOKIE : CORE_LEGACY_SESSION_COOKIE;
+  const v = found.get(name);
+  return v !== undefined && /^[A-Za-z0-9_-]{8,200}$/.test(v) ? `${name}=${v}` : undefined;
 }
 
 interface CoreEntry {

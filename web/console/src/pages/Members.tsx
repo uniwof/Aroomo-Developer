@@ -6,7 +6,7 @@ import { HoverCard } from '@/components/HoverCard';
 import { CapabilityMap } from '@/components/CapabilityMap';
 
 /** 今天几次 + 每天上限（所有者自己填；没填 = 未知）。PUT /api/usage/limits/:memberId */
-function UsageLine({ row, onSaved }: { row: UsageRow; onSaved: () => void }) {
+export function UsageLine({ row, onSaved }: { row: UsageRow; onSaved: () => void }) {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState('');
   const [err, setErr] = useState('');
@@ -22,13 +22,13 @@ function UsageLine({ row, onSaved }: { row: UsageRow; onSaved: () => void }) {
   }
   const limitText = row.quota.limit != null ? `${row.quota.limit}` : '未知';
   return (
-    <div className="flex flex-wrap items-center gap-2 text-[14px] text-[var(--muted)]">
+    <div className="flex flex-wrap items-center gap-2 text-[var(--muted)]">
       <QuotaRing used={row.quota.used} limit={row.quota.limit} size={24} />
       <span>
         今天 {row.today.requests} 次{row.today.limited > 0 && ' · 被限流'} · 每天上限 {limitText}
       </span>
       {!editing && (
-        <button type="button" className="min-h-11 rounded-xl px-3 underline" onClick={() => setEditing(true)} aria-label={`设置 ${row.name} 每天次数上限`}>
+        <button type="button" className="btn btn-quiet" onClick={() => setEditing(true)} aria-label={`设置 ${row.name} 每天次数上限`}>
           设上限
         </button>
       )}
@@ -45,16 +45,16 @@ function UsageLine({ row, onSaved }: { row: UsageRow; onSaved: () => void }) {
           <label className="sr-only" htmlFor={`lim-${row.memberId}`}>
             {row.name} 每天次数上限
           </label>
-          <input id={`lim-${row.memberId}`} inputMode="numeric" className="min-h-11 w-28 rounded-xl border border-[var(--border)] bg-transparent px-3 text-[14px]" value={val} onChange={(e) => setVal(e.target.value)} />
-          <button type="submit" className="min-h-11 rounded-xl px-3 font-semibold">
+          <input id={`lim-${row.memberId}`} inputMode="numeric" className="w-28" value={val} onChange={(e) => setVal(e.target.value)} />
+          <button type="submit" className="btn btn-primary">
             保存
           </button>
           {row.quota.limit != null && (
-            <button type="button" className="min-h-11 rounded-xl px-3" onClick={() => void save(null)}>
+            <button type="button" className="btn btn-outline" onClick={() => void save(null)}>
               清除
             </button>
           )}
-          <button type="button" className="min-h-11 rounded-xl px-3" onClick={() => setEditing(false)}>
+          <button type="button" className="btn btn-outline" onClick={() => setEditing(false)}>
             取消
           </button>
         </form>
@@ -82,16 +82,16 @@ export function Members() {
 
   return (
     <section aria-labelledby="members-title" className="space-y-4">
-      <h1 id="members-title" className="text-[20px] font-semibold">
+      <h1 id="members-title" className="text-[1.25rem] font-semibold">
         能力地图与成员
       </h1>
       <CapabilityMap />
-      <h2 className="text-[18px] font-semibold">成员</h2>
+      <h2 className="text-[1.125rem] font-semibold">成员</h2>
       {error && <p role="alert">{error}</p>}
       {!members && !error && <p className="text-[var(--muted)]">正在加载…</p>}
       {members && members.length === 0 && <p className="text-[var(--muted)]">还没有成员。到「Key 与接入」填一个模型 Key，模型就会成为候选成员。</p>}
       {members && members.length > 0 && (
-        <ul className="divide-y divide-[var(--border)] rounded-2xl bg-[var(--card)]">
+        <ul className="group">
           {members.map((m) => {
             const online = m.online ?? (m.enabled && m.status === 'active');
             return (
@@ -106,8 +106,8 @@ export function Members() {
                   />
                 </HoverCard>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate font-medium">{m.name}</div>
-                  <div className="truncate text-[var(--muted)]">
+                  <div className="font-medium [overflow-wrap:anywhere]">{m.name}</div>
+                  <div className="text-[var(--muted)] [overflow-wrap:anywhere]">
                     {m.status === 'candidate' ? '候选' : online ? '在线' : '离线'}
                     {m.capabilityTags.length > 0 && ` · ${m.capabilityTags.join('、')}`}
                   </div>

@@ -1,23 +1,21 @@
-// shadcn/ui Button（MIT），按 Aroomo 品牌改色；手机点击区 ≥44px（min-h-11）
+// shadcn/ui Button（MIT）；外观用全站 .btn（照 sumus：黑色主按钮、细边次按钮），点击区 ≥44px 由 .btn 透明外扩保证
 import * as React from 'react';
 import { Slot } from '@radix-ui/react-slot';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
 
-const buttonVariants = cva(
-  'inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-xl px-4 text-[14px] font-medium transition-colors disabled:pointer-events-none disabled:opacity-50',
-  {
-    variants: {
-      variant: {
-        // 珊瑚色只作填充，上面用深色字（对比度规则）
-        default: 'bg-brand text-brand-ink hover:brightness-95',
-        outline: 'border border-[var(--border)] bg-transparent hover:bg-[var(--card)]',
-        ghost: 'bg-transparent hover:bg-[var(--card)]',
-      },
+// #250 统一风格：直接用全站唯一一套按钮类（index.css .btn），不再单独一套 Tailwind 样式
+const buttonVariants = cva('btn', {
+  variants: {
+    variant: {
+      default: 'btn-primary',
+      outline: 'btn-outline',
+      ghost: 'btn-quiet',
+      danger: 'btn-outline btn-danger',
     },
-    defaultVariants: { variant: 'default' },
   },
-);
+  defaultVariants: { variant: 'default' },
+});
 
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof buttonVariants> {
   asChild?: boolean;

@@ -1,4 +1,8 @@
-/** 收件箱：待决定 / 候选 / 简报（/api/inbox）。重要动作走两步确认卡。 */
+/**
+ * 收件箱：待决定 / 候选 / 简报（/api/inbox）。重要动作走两步确认卡。
+ * X-04（功能补充 v1）：最上面一个筛选「等你处理 / 全部」，默认「等你处理」= 带动作按钮、要你点一下的条目（确认、入职候选等）；
+ * 「全部」再加上只是告诉你一声的简报。家人只看到自己的（Core 按账号过滤）。
+ */
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ApiError, api, type Challenge } from '@/lib/api';
@@ -21,6 +25,9 @@ interface Item {
   createdAt: string;
 }
 
+/** 要你点一下才算处理完的条目 */
+export const needsYou = (i: Item) => (i.actions ?? []).length > 0;
+
 const groups: { key: Item['group']; title: string }[] = [
   { key: 'decision', title: '等你决定' },
   { key: 'candidate', title: '候选' },
@@ -35,11 +42,13 @@ function formatTime(iso: string): string {
   return `${d.getMonth() + 1}月${d.getDate()}日 ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-export function Inbox() {
+/** onBack：空状态的那一个动作（回到对话）；对话页里传入 */
+export function Inbox({ onBack }: { onBack?: () => void } = {}) {
   const [data, setData] = useState<Record<string, Item[]> | null>(null);
   const [msg, setMsg] = useState('');
   // 正在两步确认的动作：重要动作第一次点会拿到 428 + 确认卡
   const [pending, setPending] = useState<{ item: Item; action: Action; challenge: Challenge } | null>(null);
+  const [show, setShow] = useState<'mine' | 'all'>('mine');
 
   const load = useCallback(() => {
     api<{ groups: Record<string, Item[]> }>('GET', '/api/inbox?status=open')
@@ -76,45 +85,83 @@ export function Inbox() {
   }
   const canDismiss = (i: Item) => i.group !== 'decision' || (i.actions ?? []).length === 0;
 
+  const all = data ?? {};
+  const view: Record<string, Item[]> = Object.fromEntries(groups.map((g) => [g.key, (all[g.key] ?? []).filter((i) => show === 'all' || needsYou(i))]));
+  const total = groups.reduce((n, g) => n + (all[g.key] ?? []).length, 0);
+  const shown = groups.reduce((n, g) => n + (view[g.key] ?? []).length, 0);
+
   return (
-    <section aria-labelledby="inbox-title" className="space-y-6">
-      <h1 id="inbox-title" className="text-[20px] font-semibold">
+    <section aria-labelledby="inbox-title" className="page">
+      <h1 id="inbox-title" className="page-title">
         收件箱
       </h1>
-      <p role="status" className="text-[var(--muted)]">
+      {/* 照 sumus 全站唯一那种分段筛选（是筛选，不是标签页） */}
+      <div className="seg inbox-filter" role="radiogroup" aria-label="收件箱筛选">
+        {(
+          [
+            ['mine', '等你处理'],
+            ['all', '全部'],
+          ] as const
+        ).map(([v, text]) => (
+          <button key={v} type="button" role="radio" aria-checked={show === v} className="seg-item" onClick={() => setShow(v)}>
+            {text}
+          </button>
+        ))}
+      </div>
+      <p role="status" className="row-status">
         {msg}
       </p>
       <TakeoverCards />
-      {data === null && !msg && <p className="text-[var(--muted)]">加载中…</p>}
+      {data === null && !msg && <p className="muted">加载中…</p>}
+      {/* 自审 B17：都空时只显示一个空状态（一句话 + 一个动作），不再三个框各写「暂时没有」 */}
+      {data && shown === 0 && (
+        <div className="empty">
+          <p className="empty-text">{total === 0 ? '收件箱是空的。有要你决定的事，会出现在这里。' : '没有等你处理的事。'}</p>
+          {total > 0 ? (
+            <button type="button" className="btn btn-outline" onClick={() => setShow('all')}>
+              看全部（{total} 条）
+            </button>
+          ) : (
+            onBack && (
+              <button type="button" className="btn btn-outline" onClick={onBack}>
+                回到对话
+              </button>
+            )
+          )}
+        </div>
+      )}
       {data &&
-        groups.map((g) => (
-          <div key={g.key} className="space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-[16px] font-semibold">{g.title}</h2>
-              {g.key === 'brief' && (data[g.key] ?? []).length > 1 && (
-                <Button variant="outline" className="min-h-11" onClick={() => dismiss((data[g.key] ?? []).map((i) => i.id))}>
+        shown > 0 &&
+        groups
+          // 空的组不占地方（「全部」里也一样，不再一个个写「暂时没有」）
+          .filter((g) => (view[g.key] ?? []).length > 0)
+          .map((g) => (
+          <div key={g.key} className="group-block">
+            <div className="group-head">
+              <h2 className="group-title">{g.title}</h2>
+              {g.key === 'brief' && (view[g.key] ?? []).length > 1 && (
+                <Button variant="outline" onClick={() => dismiss((view[g.key] ?? []).map((i) => i.id))}>
                   全部知道了
                 </Button>
               )}
             </div>
-            {(data[g.key] ?? []).length === 0 && <p className="text-[var(--muted)]">暂时没有</p>}
-            <ul className="space-y-2">
-              {(data[g.key] ?? []).map((i) => (
-                <li key={i.id} className="space-y-2 rounded-xl border border-[var(--border)] p-3">
-                  <p className="font-medium">
+            <ul className="group">
+              {(view[g.key] ?? []).map((i) => (
+                <li key={i.id} className="row row-stack">
+                  <p className="row-label">
                     {i.urgency === 'urgent' ? '【紧急】' : ''}
                     {i.title}
                   </p>
-                  {i.summary && <p className="whitespace-pre-wrap text-[var(--muted)]">{i.summary}</p>}
-                  <p className="text-[14px] text-[var(--muted)]">{formatTime(i.createdAt)}</p>
-                  <div className="flex flex-wrap gap-2">
+                  {i.summary && <p className="row-hint whitespace-pre-wrap">{i.summary}</p>}
+                  <p className="row-hint">{formatTime(i.createdAt)}</p>
+                  <div className="row-actions">
                     {(i.actions ?? []).map((a) => (
-                      <Button key={a.id} className="min-h-11" variant={a.confirm && a.confirm.kind !== 'normal' ? 'outline' : 'default'} onClick={() => void act(i, a)}>
+                      <Button key={a.id} variant={a.confirm && a.confirm.kind !== 'normal' ? 'outline' : 'default'} onClick={() => void act(i, a)}>
                         {a.label}
                       </Button>
                     ))}
                     {canDismiss(i) && (
-                      <Button variant="outline" className="min-h-11" aria-label={`知道了：${i.title}`} onClick={() => dismiss([i.id])}>
+                      <Button variant="outline" aria-label={`知道了：${i.title}`} onClick={() => dismiss([i.id])}>
                         知道了
                       </Button>
                     )}

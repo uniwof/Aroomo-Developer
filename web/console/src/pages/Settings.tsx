@@ -1,4 +1,7 @@
-/** 设置（从旧 Shell /aroomo/settings 迁来）：负责人、敏感内容保护、外部接入（MCP 配置复制 + 客户端令牌）、账号。 */
+/**
+ * 设置（从旧 Shell /aroomo/settings 迁来）：负责人、敏感内容保护、执行员提醒、外部接入（MCP 配置复制 + 客户端令牌）、账号。
+ * #250 重设计：不用标签页，改成 iOS / sumus 式分组列表（一组一个小标题，组内一行一项），一页看完。
+ */
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { ApiError, api, logout, type Member } from '@/lib/api';
@@ -10,15 +13,27 @@ interface LeadSetting {
   auto: boolean;
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+/** 分组列表里的一行：左边名称和说明，右边控件（放不下时控件换到下一行） */
+export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
-    <div className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
-      <div>
-        <div className="font-medium">{label}</div>
-        {hint && <div className="text-[var(--muted)]">{hint}</div>}
+    <div className="row row-field">
+      <div className="row-text">
+        <div className="row-label">{label}</div>
+        {hint && <div className="row-hint">{hint}</div>}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="row-control">{children}</div>
     </div>
+  );
+}
+
+/** 一组：小标题 + 圆角分组列表 */
+export function Group({ title, children, footer }: { title?: string; children: ReactNode; footer?: string }) {
+  return (
+    <section className="group-block" aria-label={title}>
+      {title && <h2 className="group-title">{title}</h2>}
+      <div className="group">{children}</div>
+      {footer && <p className="group-footer">{footer}</p>}
+    </section>
   );
 }
 
@@ -27,7 +42,7 @@ function errText(e: unknown) {
   return e instanceof Error ? e.message : '出错了，请稍后再试';
 }
 
-function LeadSection() {
+export function LeadSection() {
   const [members, setMembers] = useState<Member[] | null>(null);
   const [lead, setLead] = useState<LeadSetting | null>(null);
   const [msg, setMsg] = useState('');
@@ -42,7 +57,7 @@ function LeadSection() {
   }, []);
   useEffect(load, [load]);
 
-  if (!members || !lead) return <p className="text-[var(--muted)]">{msg || '正在加载…'}</p>;
+  if (!members || !lead) return <p className="muted">{msg || '正在加载…'}</p>;
   const active = members.filter((m) => m.enabled && m.status !== 'candidate');
   const eligible = active.filter((m) => m.leadEligible);
   const effective = eligible.find((m) => m.id === lead.effectiveLeadId);
@@ -60,13 +75,13 @@ function LeadSection() {
 
   return (
     <>
-      <Field label="负责人" hint="对话里没有 @ 成员时，交给负责人回答。负责人要能文字对话、上下文 ≥32k、支持工具调用。">
+      <Field label="负责人">
         {eligible.length === 0 ? (
-          <span className="text-[var(--muted)]">还没有合格的成员</span>
+          <span className="muted">还没有合格的成员</span>
         ) : (
           <select
             aria-label="负责人"
-            className="min-h-11 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3"
+            className="field-select"
             value={lead.auto ? '' : (lead.leadId ?? '')}
             onChange={(e) => void change(e.target.value)}
           >
@@ -86,7 +101,7 @@ function LeadSection() {
         </span>
       </Field>
       {msg && (
-        <p role="status" className="text-[var(--muted)]">
+        <p role="status" className="row-status">
           {msg}
         </p>
       )}
@@ -94,7 +109,7 @@ function LeadSection() {
   );
 }
 
-function SecuritySection() {
+export function SecuritySection() {
   const [on, setOn] = useState<boolean | null>(null);
   const [msg, setMsg] = useState('');
   useEffect(() => {
@@ -119,9 +134,9 @@ function SecuritySection() {
 
   return (
     <>
-      <Field label="敏感内容保护" hint="开着时，含密码、银行卡号、Key 等敏感信息的消息不发给外部成员（默认开）">
+      <Field label="敏感内容保护" hint="含密码、卡号、Key 的消息不发给外部成员">
         {on == null ? (
-          <span className="text-[var(--muted)]">—</span>
+          <span className="muted">—</span>
         ) : (
           <button
             type="button"
@@ -129,14 +144,14 @@ function SecuritySection() {
             aria-checked={on}
             aria-label="敏感内容保护"
             onClick={() => void toggle()}
-            className={`relative inline-flex h-11 w-16 items-center rounded-full transition-colors ${on ? 'bg-brand' : 'bg-[var(--border)]'}`}
+            className="switch"
           >
-            <span className={`inline-block size-7 rounded-full bg-white shadow transition-transform ${on ? 'translate-x-8' : 'translate-x-1'}`} />
+            <span className="switch-knob" />
           </button>
         )}
       </Field>
       {msg && (
-        <p role="status" className="text-[var(--muted)]">
+        <p role="status" className="row-status">
           {msg}
         </p>
       )}
@@ -150,7 +165,7 @@ interface Budget {
 }
 
 /** 打扰预算（D100）：每天最多让本机执行员「喊你」几次；超出的接管卡静默躺在收件箱，30 分钟没人处理就自动取消 */
-function BudgetSection() {
+export function BudgetSection() {
   const [b, setB] = useState<Budget | null>(null);
   const [msg, setMsg] = useState('');
   useEffect(() => {
@@ -173,23 +188,19 @@ function BudgetSection() {
     }
   }
 
-  const btn = 'min-h-11 min-w-11 rounded-xl border border-[var(--border)] text-[20px] disabled:opacity-40';
+  const btn = 'btn btn-outline btn-square';
   return (
     <>
       <Field
         label="每天最多打扰我几次"
-        hint={
-          b?.today
-            ? `今天已来 ${b.today.total} 张接管卡（提醒了 ${b.today.loud}，静默 ${b.today.quiet}）。付款类每次都会提醒。`
-            : '执行员遇到验证码、登录等要你出手的事，每天最多提醒这么多次；超出的静默放进收件箱。付款类每次都会提醒。'
-        }
+        hint={b?.today ? `今天提醒了 ${b.today.loud} 次，静默 ${b.today.quiet} 次。付款每次都提醒。` : '付款每次都提醒。'}
       >
         {b ? (
           <div className="flex items-center gap-2">
             <button type="button" aria-label="减少一次" className={btn} disabled={b.daily <= 0} onClick={() => void change(-1)}>
               −
             </button>
-            <span aria-label="每天提醒次数" className="min-w-8 text-center text-[18px] font-semibold">
+            <span aria-label="每天提醒次数" className="stepper-value">
               {b.daily}
             </span>
             <button type="button" aria-label="增加一次" className={btn} disabled={b.daily >= 50} onClick={() => void change(1)}>
@@ -197,11 +208,11 @@ function BudgetSection() {
             </button>
           </div>
         ) : (
-          <span className="text-[var(--muted)]">—</span>
+          <span className="muted">—</span>
         )}
       </Field>
       {msg && (
-        <p role="status" className="pb-3 text-[var(--muted)]">
+        <p role="status" className="row-status">
           {msg}
         </p>
       )}
@@ -215,7 +226,7 @@ interface McpConfig {
 }
 
 /** MCP 连接配置一键复制（D195）：只含地址和令牌占位符，令牌本身不在这里出现 */
-function McpSection() {
+export function McpSection() {
   const [cfg, setCfg] = useState<McpConfig | null>(null);
   const [msg, setMsg] = useState('');
   useEffect(() => {
@@ -229,7 +240,7 @@ function McpSection() {
     const text = JSON.stringify(cfg.config, null, 2);
     try {
       await navigator.clipboard.writeText(text);
-      setMsg('已复制。把 <YOUR_ARC_TOKEN> 换成你的令牌后粘贴到外部客户端。');
+      setMsg('已复制。把 <YOUR_ARC_TOKEN> 换成下面新建的连接密码，再粘贴到那个软件里。');
     } catch {
       setMsg('这个浏览器不让自动复制，请长按下面的文字手动复制。');
     }
@@ -237,18 +248,18 @@ function McpSection() {
 
   return (
     <>
-      <Field label="MCP 连接配置" hint="给外部客户端（Claude、Cursor 等）接入 Aroomo 用。令牌不在这里显示。">
+      <Field label="连接设置" hint="在 Claude、Cursor 里用 Aroomo">
         <Button variant="outline" disabled={!cfg} onClick={() => void copy()}>
           复制配置
         </Button>
       </Field>
       {cfg && (
-        <pre aria-label="MCP 配置内容" className="my-2 overflow-x-auto rounded-xl bg-[var(--bg)] p-3 text-[14px] select-all">
+        <pre aria-label="连接设置内容" tabIndex={0} className="row-pre">
           {JSON.stringify(cfg.config, null, 2)}
         </pre>
       )}
       {msg && (
-        <p role="status" className="pb-3 text-[var(--muted)]">
+        <p role="status" className="row-status">
           {msg}
         </p>
       )}
@@ -256,36 +267,60 @@ function McpSection() {
   );
 }
 
+/** 设置的各组（对话页的设置弹窗 / 整页按组取用；控制台 /settings 一页全显示） */
+export function LeadGroup() {
+  return (
+    <Group title="负责人与安全">
+      <LeadSection />
+      <SecuritySection />
+    </Group>
+  );
+}
+export function BudgetGroup() {
+  return (
+    <Group title="电脑助手提醒">
+      <BudgetSection />
+    </Group>
+  );
+}
+export function ExternalGroup() {
+  return (
+    <Group title="外部接入">
+      <McpSection />
+      <ClientTokens />
+    </Group>
+  );
+}
+export function AccountGroup() {
+  return (
+    <Group title="登录">
+      <Field label="退出登录" hint="退出后要重新输入邮箱和密码">
+        <Button variant="outline" onClick={() => void logout()}>
+          退出登录
+        </Button>
+      </Field>
+    </Group>
+  );
+}
+
+export function SettingsGroups() {
+  return (
+    <>
+      <LeadGroup />
+      <BudgetGroup />
+      <ExternalGroup />
+      <AccountGroup />
+    </>
+  );
+}
+
 export function Settings() {
   return (
-    <section aria-labelledby="settings-title" className="space-y-6">
-      <h1 id="settings-title" className="text-[20px] font-semibold">
+    <section aria-labelledby="settings-title" className="page">
+      <h1 id="settings-title" className="page-title">
         设置
       </h1>
-      <div className="divide-y divide-[var(--border)] rounded-2xl bg-[var(--card)] px-4">
-        <LeadSection />
-      </div>
-      <h2 className="text-[16px] font-semibold">安全</h2>
-      <div className="divide-y divide-[var(--border)] rounded-2xl bg-[var(--card)] px-4">
-        <SecuritySection />
-      </div>
-      <h2 className="text-[16px] font-semibold">执行员提醒</h2>
-      <div className="rounded-2xl bg-[var(--card)] px-4">
-        <BudgetSection />
-      </div>
-      <h2 className="text-[16px] font-semibold">外部接入</h2>
-      <div className="divide-y divide-[var(--border)] rounded-2xl bg-[var(--card)] px-4">
-        <McpSection />
-        <ClientTokens />
-      </div>
-      <h2 className="text-[16px] font-semibold">账号</h2>
-      <div className="rounded-2xl bg-[var(--card)] px-4">
-        <Field label="登录" hint="退出后要重新输入邮箱和密码">
-          <Button variant="outline" onClick={() => void logout()}>
-            退出登录
-          </Button>
-        </Field>
-      </div>
+      <SettingsGroups />
     </section>
   );
 }

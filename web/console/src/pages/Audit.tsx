@@ -3,8 +3,8 @@
  * audit:read 只给所有者（设计如此）：账号用户打开时后端回 403，页面只说明一句，不报错。
  * 筛选（动作前缀、结果）在已加载的记录上做：后端 action 参数是精确匹配，前缀筛选不往后端传。
  */
-import { useCallback, useEffect, useState } from 'react';
-import { Button } from '@/components/ui/button';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Search } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
 
 export interface AuditRow {
@@ -20,11 +20,6 @@ export interface AuditRow {
 const PAGE = 50;
 
 export const RESULT_LABEL: Record<string, string> = { ok: '成功', denied: '被拒绝', failed: '失败' };
-const RESULT_CLASS: Record<string, string> = {
-  ok: 'border-green-600 text-green-700 dark:text-green-400',
-  denied: 'border-amber-600 text-amber-700 dark:text-amber-400',
-  failed: 'border-red-600 text-red-700 dark:text-red-400',
-};
 const ACTOR_LABEL: Record<string, string> = {
   owner: '所有者',
   operator: '操作员',
@@ -57,6 +52,7 @@ export function Audit() {
   const [prefix, setPrefix] = useState('');
   const [result, setResult] = useState('');
   const [clientNames, setClientNames] = useState<Record<string, string>>({});
+  const statusRef = useRef<HTMLParagraphElement>(null);
 
   const loadPage = useCallback(async (after: string | null) => {
     setBusy(true);
@@ -67,6 +63,8 @@ export function Audit() {
       const r = await api<{ entries: AuditRow[]; nextCursor: string | null }>('GET', `/api/audit?${qs.toString()}`);
       setRows((prev) => (after && prev ? [...prev, ...r.entries] : r.entries));
       setCursor(r.nextCursor);
+      // 「加载更多」点完没有下一页时按钮会消失：焦点放到状态行，键盘用户不会掉回页首
+      if (after && !r.nextCursor) requestAnimationFrame(() => statusRef.current?.focus());
     } catch (e) {
       if (e instanceof ApiError && e.status === 403) setForbidden(true);
       else setMsg(e instanceof ApiError ? e.message : '加载失败，请稍后再试');
@@ -86,11 +84,13 @@ export function Audit() {
 
   if (forbidden) {
     return (
-      <section aria-labelledby="audit-title" className="space-y-4">
-        <h1 id="audit-title" className="text-[20px] font-semibold">
+      <section aria-labelledby="audit-title" className="page">
+        <h1 id="audit-title" className="page-title">
           审计
         </h1>
-        <p role="status">审计只有所有者能看。</p>
+        <p role="status" className="note">
+          审计只有所有者能看。
+        </p>
       </section>
     );
   }
@@ -98,60 +98,67 @@ export function Audit() {
   const p = prefix.trim();
   const shown = (rows ?? []).filter((r) => (!p || r.action.startsWith(p)) && (!result || r.result === result));
 
+  // 照 sumus 设置页：灰色说明一句 → 一排筛选（搜索框 + 下拉，和全站同一种）→ 细边分组卡，一行一条记录（#250 unify5，不再用灰底卡片）
   return (
-    <section aria-labelledby="audit-title" className="space-y-4">
-      <h1 id="audit-title" className="text-[20px] font-semibold">
-        审计
-      </h1>
-      <p className="text-[var(--muted)]">谁在什么时候做了什么，只能看，不能改。新的在前。</p>
+    <section aria-labelledby="audit-title" className="page">
+      <div className="page-head">
+        <h1 id="audit-title" className="page-title">
+          审计
+        </h1>
+        <p className="page-sub">谁在什么时候做了什么，只能看，不能改。新的在前。</p>
+      </div>
 
-      <div className="flex flex-wrap gap-4 rounded-2xl bg-[var(--card)] p-4">
-        <label className="flex flex-col gap-1">
-          <span>动作开头</span>
-          <input
-            value={prefix}
-            onChange={(e) => setPrefix(e.target.value)}
-            placeholder="如 gateway. 或 mcp."
-            className="min-h-11 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3"
-          />
+      <div className="toolbar">
+        <label className="search2 toolbar-search">
+          <Search aria-hidden="true" />
+          <span className="sr-only">动作开头</span>
+          <input type="search" value={prefix} onChange={(e) => setPrefix(e.target.value)} placeholder="动作开头，如 gateway." />
         </label>
-        <label className="flex flex-col gap-1">
-          <span>结果</span>
-          <select value={result} onChange={(e) => setResult(e.target.value)} className="min-h-11 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3">
+        <div className="toolbar-select">
+          <span id="audit-result-label" className="toolbar-select-label">
+            结果
+          </span>
+          <select className="field-select" aria-labelledby="audit-result-label" value={result} onChange={(e) => setResult(e.target.value)}>
             <option value="">全部</option>
             <option value="ok">成功</option>
             <option value="denied">被拒绝</option>
             <option value="failed">失败</option>
           </select>
-        </label>
+        </div>
       </div>
 
-      <p role="status" aria-live="polite" className="text-[var(--muted)]">
+      <p ref={statusRef} tabIndex={-1} role="status" aria-live="polite" className="note">
         {rows === null ? '正在加载…' : msg || `显示 ${shown.length} 条（已加载 ${rows.length} 条）`}
       </p>
 
-      <ul className="flex flex-col gap-2" aria-label="审计记录">
-        {shown.map((r) => (
-          <li key={r.id} className="rounded-xl border border-[var(--border)] p-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-medium break-all">{r.action}</span>
-              <span className={`rounded-full border px-2 py-0.5 ${RESULT_CLASS[r.result] ?? ''}`}>{RESULT_LABEL[r.result] ?? r.result}</span>
-            </div>
-            <div className="break-all">
-              对象：{r.target.type}/{r.target.id}
-            </div>
-            <div className="text-[var(--muted)] break-all">
-              {fmt(r.ts)} · {actorText(r.actor, clientNames)}
-            </div>
-            {r.note && <div className="break-words text-[var(--muted)]">备注：{r.note}</div>}
-          </li>
-        ))}
-      </ul>
+      {rows !== null && shown.length === 0 && !msg ? (
+        <div className="empty">
+          <p className="empty-text">{rows.length ? '没有符合筛选的记录。' : '还没有记录。'}</p>
+        </div>
+      ) : (
+        <ul className="group" aria-label="审计记录">
+          {shown.map((r) => (
+            <li key={r.id} className="row audit-row">
+              <span className="row-text">
+                <span className="row-label row-break">{r.action}</span>
+                <span className="row-hint row-break">
+                  对象：{r.target.type}/{r.target.id}
+                </span>
+                <span className="row-hint row-break">
+                  {fmt(r.ts)} · {actorText(r.actor, clientNames)}
+                </span>
+                {r.note && <span className="row-hint row-break">备注：{r.note}</span>}
+              </span>
+              <span className={r.result === 'ok' ? 'row-value' : 'row-value audit-bad'}>{RESULT_LABEL[r.result] ?? r.result}</span>
+            </li>
+          ))}
+        </ul>
+      )}
 
       {cursor && (
-        <Button variant="outline" className="min-h-11" disabled={busy} onClick={() => void loadPage(cursor)}>
+        <button type="button" className="btn btn-outline audit-more" disabled={busy} onClick={() => void loadPage(cursor)}>
           {busy ? '正在加载…' : '加载更多'}
-        </Button>
+        </button>
       )}
     </section>
   );

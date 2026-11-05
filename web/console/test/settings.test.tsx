@@ -82,6 +82,15 @@ describe('设置页', () => {
     expect(await screen.findByText(/已复制/)).toBeInTheDocument();
   });
 
+  it('分组列表，不用标签页：一页显示负责人、执行员提醒、外部接入、登录各组', async () => {
+    session.set('placeholder-session');
+    vi.stubGlobal('fetch', vi.fn(async () => json(200, { members: [], leadId: null, effectiveLeadId: null, auto: true, sensitiveProtect: true })));
+    render(<Settings />);
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
+    for (const g of ['负责人与安全', '电脑助手提醒', '外部接入', '登录']) expect(screen.getByRole('heading', { name: g })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '退出登录' })).toBeInTheDocument();
+  });
+
   it('打扰预算：显示今日统计，加减后 PUT', async () => {
     session.set('placeholder-session');
     const puts: Array<{ url: string; body: unknown }> = [];
@@ -98,7 +107,7 @@ describe('设置页', () => {
       }),
     );
     render(<Settings />);
-    expect(await screen.findByText(/今天已来 4 张接管卡/)).toBeInTheDocument();
+    expect(await screen.findByText(/今天提醒了 3 次，静默 1 次/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '增加一次' }));
     await waitFor(() => expect(puts[0]).toEqual({ url: '/api/interrupt-budget', body: { daily: 4 } }));
     expect(screen.getByLabelText('每天提醒次数')).toHaveTextContent('4');

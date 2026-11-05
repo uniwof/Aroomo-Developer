@@ -92,9 +92,24 @@ interface ChatMessage {
   [k: string]: unknown;
 }
 
+/**
+ * 整条回复失败的原因（负责人审查点 1 补充裁决 1）：只分 4 种，按上游的结果判断，不看回复文字。
+ * /v1（LobeHub）不看这个字段，照旧把失败当文字回复发出去；/api/chat/stream 看到它就改发 SSE error。
+ */
+export type ChatFailureCode = 'gateway_unreachable' | 'key_invalid' | 'rate_limited' | 'upstream_error';
+
+/** 上游 HTTP 状态 → 失败码 */
+export function failureCodeOf(status: number): ChatFailureCode {
+  if (status === 401 || status === 403) return 'key_invalid';
+  if (status === 429) return 'rate_limited';
+  return 'upstream_error';
+}
+
 export interface ChatResult {
   status: number;
   headers: Record<string, string>;
+  /** 整条回复都失败时才有（群聊部分失败、「没有成员」等提示都没有） */
+  failure?: { code: ChatFailureCode };
   /** 流式时是一个可读流；否则是 JSON */
   stream?: ReadableStream<Uint8Array>;
   json?: unknown;
@@ -286,19 +301,28 @@ export class ChatService {
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), MEMBER_TIMEOUT_MS);
         signal.addEventListener('abort', () => ctrl.abort(), { once: true });
+        let code: ChatFailureCode = 'gateway_unreachable';
         try {
           const res = await this.#upstream({ ...req, model: name, stream: false, messages: nextMessages }, ctrl.signal);
-          if (!res.ok) throw new Error(`upstream ${res.status}`);
+          if (!res.ok) {
+            code = failureCodeOf(res.status);
+            throw new Error(`upstream ${res.status}`);
+          }
+          code = 'upstream_error';
           const j = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-          return `### ${name}\n\n${j.choices?.[0]?.message?.content ?? ''}`;
+          return { text: `### ${name}\n\n${j.choices?.[0]?.message?.content ?? ''}`, failed: null };
         } catch {
-          return `### ${name}\n\n> ${name} 暂时没有回应（不会自动换人）。`;
+          return { text: `### ${name}\n\n> ${name} 暂时没有回应（不会自动换人）。`, failed: code };
         } finally {
           clearTimeout(timer);
         }
       }),
     );
-    return textReply(stream, prefix + answers.join('\n\n'));
+    const out = textReply(stream, prefix + answers.map((a) => a.text).join('\n\n'));
+    // 只有每位成员都失败才算整条失败；部分失败照旧是文字（其他人的回答要留着）
+    const codes = answers.map((a) => a.failed);
+    if (codes.every((c): c is ChatFailureCode => c !== null)) out.failure = { code: codes.every((c) => c === codes[0]) ? codes[0]! : 'upstream_error' };
+    return out;
   }
 
   /** 转给 LiteLLM；流式时在开头插入提示、在 [DONE] 前插入署名 */
@@ -307,12 +331,15 @@ export class ChatService {
     try {
       res = await this.#upstream({ ...req, model }, signal);
     } catch {
-      return textReply(stream, prefix + `${model} 暂时没有回应：模型网关连不上，请稍后再试。`);
+      return { ...textReply(stream, prefix + `${model} 暂时没有回应：模型网关连不上，请稍后再试。`), failure: { code: 'gateway_unreachable' } };
     }
     if (!res.ok) {
       await res.body?.cancel().catch(() => undefined);
       const why = res.status === 401 || res.status === 403 ? 'Key 无效或没有权限' : res.status === 429 ? '额度用完或请求太频繁' : `模型网关返回 ${res.status}`;
-      return textReply(stream, prefix + `${model} 暂时没有回应（${why}）。${mention ? '不会自动换人；去掉 @ 再发一次即可交给负责人。' : '请到「成员 → Key 与接入」检查 Key。'}`);
+      return {
+        ...textReply(stream, prefix + `${model} 暂时没有回应（${why}）。${mention ? '不会自动换人；去掉 @ 再发一次即可交给负责人。' : '请到「成员 → Key 与接入」检查 Key。'}`),
+        failure: { code: failureCodeOf(res.status) },
+      };
     }
     if (!stream) {
       const j = (await res.json()) as { choices?: Array<{ message?: { content?: unknown } }>; usage?: { total_tokens?: unknown } };

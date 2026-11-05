@@ -25,10 +25,10 @@ describe('本机执行员页', () => {
     await screen.findByText('书房电脑');
     expect(screen.getByText('● 在线')).toBeTruthy();
     expect(screen.getByText(/正在打开页面/)).toBeTruthy();
-    fireEvent.click(screen.getByLabelText('吊销 书房电脑'));
+    fireEvent.click(screen.getByLabelText('停用 书房电脑'));
     expect(calls.some((c) => c.startsWith('DELETE'))).toBe(false);
-    fireEvent.click(await screen.findByText('确认吊销'));
-    await screen.findByText(/已吊销/);
+    fireEvent.click(await screen.findByText('确认停用'));
+    await screen.findByText(/已停用/);
     expect(calls).toContain('DELETE /api/clients/c1');
   });
   it('相对时间', () => {

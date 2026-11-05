@@ -28,7 +28,8 @@ import { LeadService } from "./settings/lead.js";
 import { ChatService } from "./chat/service.js";
 import { UsageService } from "./usage/service.js";
 import { registerUsageRoutes } from "./usage/routes.js";
-import { registerChatRoutes } from "./chat/routes.js";
+import { registerChatRoutes, type ChatUserRouting } from "./chat/routes.js";
+import { registerChatStreamRoute } from "./chat/stream.js";
 import { Scheduler } from "./jobs/scheduler.js";
 import { inboxTidyJob } from "./inbox/tidy.js";
 import {
@@ -332,38 +333,37 @@ export function buildServer(
   const usage = new UsageService(deps.settings, deps.now);
   registerUsageRoutes(app, usage, (u) => (u === "owner" ? deps.members : deps.members.forUser(u)));
   // 对话入口（提议 H5）：LobeHub → Core /v1（D31 点名 / 交给负责人）→ LiteLLM
-  registerChatRoutes(
-    app,
-    new ChatService({
-      litellmBaseUrl: cfg.litellmBaseUrl,
-      litellmKey: cfg.litellmMasterKey,
-      listMembers: () => deps.members.listAll(),
-      lead,
-      security,
-      // 规矩 = 所有者公共记忆的 rules 主题（B6）；没有就不注入
-      rules: async () => (await deps.pubmem.get('owner', 'rules'))?.body ?? null,
-      onCall: (m, o) => usage.record(m, o),
-      onTokens: (m, n) => usage.recordTokens(m, n),
-      ...(deps.chatFetch ? { fetchImpl: deps.chatFetch } : {}),
-    }),
-    cfg.chatToken,
-    // 账号走自己的客户端令牌（models:chat）：成员 / 负责人 / 规矩 / 上游前缀都是它自己的，看不到所有者的任何东西
-    {
-      verify: async (token) => {
-        const p = await clients.verify(token);
-        return p && p.scopes.has("models:chat") ? p.userId : null;
-      },
-      ctxFor: (userId) => ({
-        upstreamModel: upstreamNameFor(userId),
-        listMembers: () => deps.members.forUser(userId).listAll(),
-        lead: leadForUser(userId),
-        rules: async () => (await deps.pubmem.get(userId, "rules"))?.body ?? null,
-        security: undefined,
-        onCall: undefined,
-        onTokens: undefined,
-      }),
+  const chatService = new ChatService({
+    litellmBaseUrl: cfg.litellmBaseUrl,
+    litellmKey: cfg.litellmMasterKey,
+    listMembers: () => deps.members.listAll(),
+    lead,
+    security,
+    // 规矩 = 所有者公共记忆的 rules 主题（B6）；没有就不注入
+    rules: async () => (await deps.pubmem.get('owner', 'rules'))?.body ?? null,
+    onCall: (m, o) => usage.record(m, o),
+    onTokens: (m, n) => usage.recordTokens(m, n),
+    ...(deps.chatFetch ? { fetchImpl: deps.chatFetch } : {}),
+  });
+  // 账号走自己的客户端令牌（models:chat）：成员 / 负责人 / 规矩 / 上游前缀都是它自己的，看不到所有者的任何东西
+  const chatRouting: ChatUserRouting = {
+    verify: async (token) => {
+      const p = await clients.verify(token);
+      return p && p.scopes.has("models:chat") ? p.userId : null;
     },
-  );
+    ctxFor: (userId) => ({
+      upstreamModel: upstreamNameFor(userId),
+      listMembers: () => deps.members.forUser(userId).listAll(),
+      lead: leadForUser(userId),
+      rules: async () => (await deps.pubmem.get(userId, "rules"))?.body ?? null,
+      security: undefined,
+      onCall: undefined,
+      onTokens: undefined,
+    }),
+  };
+  registerChatRoutes(app, chatService, cfg.chatToken, chatRouting);
+  // 控制台原生对话（#250 spike）：控制台会话 Cookie + CSRF 头 → 同一个 ChatService 和 ctxFor（D31 路由 / 署名不变）
+  registerChatStreamRoute(app, chatService, { ctxFor: chatRouting.ctxFor, ...(deps.chatStreamLimits ? { limits: deps.chatStreamLimits } : {}) });
   // 账号的 Key 才跳过所有者的成员联动；所有者的行在 PG 上可能是 user_id='owner'（0024 回填），显式排除（#244 必改 2）
   const isAccountKey = (rec: { userId?: string }): boolean =>
     rec.userId !== undefined && rec.userId !== "" && rec.userId !== "owner";

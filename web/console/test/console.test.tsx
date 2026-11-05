@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { MemberAvatar, QuotaRing, quotaFraction } from '@/components/brand';
-import { api, login, session, ApiError } from '@/lib/api';
+import { api, login, session, ApiError, COOKIE_SESSION } from '@/lib/api';
 import { App } from '@/App';
 
 afterEach(() => {
@@ -43,21 +43,32 @@ describe('品牌（D7）', () => {
 });
 
 describe('调用 Core', () => {
-  it('登录后令牌存 sessionStorage，之后带 Bearer；改动类请求带 X-Aroomo-Request', async () => {
+  it('响应里带令牌：不收下、不存，当出错处理（只认 Cookie，#264 必改 2）；改动类请求带 X-Aroomo-Request', async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const f = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       calls.push({ url: String(url), init: init ?? {} });
-      if (String(url) === '/auth/login') return json(200, { token: 'placeholder-session', user: { id: 'u1', email: 'a@b.c', role: 'owner' } });
+      return json(200, { token: 'placeholder-session', user: { id: 'u1', email: 'a@b.c', role: 'owner' } });
+    }) as unknown as typeof fetch;
+    await expect(login('a@b.c', 'pw', f)).rejects.toMatchObject({ code: 'LOGIN_TOKEN_IN_BODY' });
+    expect(session.token).toBeNull();
+    expect(JSON.stringify(sessionStorage)).not.toContain('placeholder-session');
+    expect((calls[0]!.init.headers as Record<string, string>)['x-aroomo-request']).toBe('1');
+  });
+
+  it('Cookie 登录（Core 不返回令牌）：只记占位标记，之后请求不带 Authorization，靠 Cookie', async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const f = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init: init ?? {} });
+      if (String(url) === '/auth/login') return json(200, { user: { id: 'u1', email: 'a@b.c', role: 'owner' } });
       return json(200, { members: [] });
     }) as unknown as typeof fetch;
-    const u = await login('a@b.c', 'pw', f);
-    expect(u.id).toBe('u1');
-    expect(session.token).toBe('placeholder-session');
-    expect((calls[0]!.init.headers as Record<string, string>)['x-aroomo-request']).toBe('1');
+    await login('a@b.c', 'pw', f);
+    expect(JSON.parse(String(calls[0]!.init.body)).cookie).toBe(true);
+    expect(session.token).toBe(COOKIE_SESSION);
     await api('GET', '/api/members', undefined, f);
     const h = calls[1]!.init.headers as Record<string, string>;
-    expect(h.authorization).toBe('Bearer placeholder-session');
-    expect(h['x-aroomo-request']).toBeUndefined();
+    expect(h.authorization).toBeUndefined();
+    expect(calls[1]!.init.credentials).toBe('same-origin');
   });
 
   it('401 时清掉令牌并抛出 ApiError', async () => {
@@ -69,11 +80,11 @@ describe('调用 Core', () => {
 });
 
 describe('页面', () => {
-  it('未登录显示登录页；登录成功进入成员页并列出成员', async () => {
+  it('未登录显示登录页；登录成功进入对话页里的成员面板并列出成员', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string) => {
-        if (url === '/auth/login') return json(200, { token: 'placeholder-session', user: { id: 'u1', email: 'a@b.c', role: 'owner' } });
+        if (url === '/auth/login') return json(200, { user: { id: 'u1', email: 'a@b.c', role: 'owner' } });
         if (url === '/api/members')
           return json(200, {
             members: [
@@ -85,19 +96,19 @@ describe('页面', () => {
       }),
     );
     render(
-      <MemoryRouter initialEntries={['/']}>
+      <MemoryRouter initialEntries={['/members']}>
         <App />
       </MemoryRouter>,
     );
-    expect(screen.getByRole('heading', { name: '登录 Aroomo 控制台' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '登录 Aroomo' })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'a@b.c' } });
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'pw' } });
     fireEvent.click(screen.getByRole('button', { name: '登录' }));
-    await waitFor(() => expect(screen.getByRole('heading', { name: '能力地图与成员' })).toBeInTheDocument());
+    // 旧控制台已并进对话页（自审 C1）：/members 打开对话页里的成员面板，没有第二套侧栏
+    await waitFor(() => expect(screen.getByRole('heading', { name: '成员', level: 1 })).toBeInTheDocument(), { timeout: 15000 });
     await waitFor(() => expect(screen.getAllByText('gpt-oss-20b').length).toBeGreaterThan(0));
-    expect(screen.getByRole('img', { name: /Kimi，离线/ })).toHaveAttribute('data-online', 'false');
-    expect(screen.getByRole('navigation', { name: '控制台' }).querySelectorAll('a')).toHaveLength(8);
-  });
+    expect(screen.queryByRole('navigation', { name: '控制台' })).toBeNull();
+  }, 20000); // 机器慢时对话页单独打包的那块要加载几秒
 
   it('登录失败给出提示', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json(401, { error: { code: 'BAD_CREDENTIALS', message: 'x' } })));
@@ -120,7 +131,7 @@ describe('能力清单（M1）', () => {
       { id: '1', name: 'a', kind: 'text', provider: 'p', access: 'free', quota: null },
       { id: '2', name: 'b', kind: 'image', provider: 'p', access: 'trial', quota: { used: 3, limit: 10, unit: '次' } },
     ] as const;
-    expect(summaryLine([...items])).toBe('文本 1 · 生图 1 · 视频 0');
+    expect(summaryLine([...items])).toBe('能聊天 1 个 · 能画图 1 个 · 能做视频 0 个');
     expect(quotaText(null)).toBe('额度：未知');
     expect(quotaText({ used: null, limit: 10, unit: '次' })).toBe('额度：未知');
     expect(quotaText(items[1].quota)).toBe('额度：已用 3 / 10 次');
@@ -130,7 +141,7 @@ describe('能力清单（M1）', () => {
     const { CapabilityMap } = await import('@/components/CapabilityMap');
     vi.stubGlobal('fetch', vi.fn(async () => json(404, { error: { code: 'NOT_FOUND', message: 'x' } })));
     render(<CapabilityMap />);
-    await waitFor(() => expect(screen.getByTestId('cap-summary')).toHaveTextContent('文本 5 · 生图 2 · 视频 0'));
+    await waitFor(() => expect(screen.getByTestId('cap-summary')).toHaveTextContent('能聊天 5 个 · 能画图 2 个 · 能做视频 0 个'));
     expect(screen.getByRole('note')).toHaveTextContent('示例数据');
     expect(screen.getAllByText('永久免费').length).toBeGreaterThan(0);
     expect(screen.getAllByText('试用').length).toBeGreaterThan(0);

@@ -52,23 +52,23 @@ describe('客户端令牌', () => {
     session.set('sess-owner');
     render(<ClientTokens />);
 
-    const listBox = await screen.findByRole('checkbox', { name: /tools:list/ });
-    const callBox = screen.getByRole('checkbox', { name: /tools:call/ });
+    const listBox = await screen.findByRole('checkbox', { name: /查看工具列表/ });
+    const callBox = screen.getByRole('checkbox', { name: /调用工具/ });
     for (const b of screen.getAllByRole('checkbox')) expect(b).not.toBeChecked();
     fireEvent.change(screen.getByLabelText('名字'), { target: { value: 'LobeHub' } });
     fireEvent.click(listBox);
     fireEvent.click(callBox);
     fireEvent.change(screen.getByLabelText('有效期'), { target: { value: '30' } });
-    fireEvent.click(screen.getByRole('button', { name: '新建令牌' }));
+    fireEvent.click(screen.getByRole('button', { name: '新建连接密码' }));
 
-    const card = await screen.findByRole('region', { name: '新令牌（只显示一次）' });
+    const card = await screen.findByRole('region', { name: '新连接密码（只显示一次）' });
     expect(core.calls.find((c) => c.method === 'POST')?.body).toEqual({ name: 'LobeHub', scopes: ['tools:list', 'tools:call'], expiresInDays: 30 });
-    expect(within(card).getByLabelText('令牌')).toHaveTextContent('fake-test-token-1');
+    expect(within(card).getByLabelText('连接密码')).toHaveTextContent('fake-test-token-1');
     expect(screen.getByRole('status')).toHaveTextContent('只显示这一次');
-    fireEvent.click(within(card).getByRole('button', { name: '复制令牌' }));
+    fireEvent.click(within(card).getByRole('button', { name: '复制连接密码' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('fake-test-token-1'));
 
-    const list = screen.getByRole('list', { name: '客户端令牌列表' });
+    const list = screen.getByRole('list', { name: '连接密码列表' });
     await waitFor(() => expect(within(list).getAllByRole('listitem')).toHaveLength(1));
     expect(within(list).getByText('范围：tools:list、tools:call')).toBeInTheDocument();
     expect(list).not.toHaveTextContent('fake-test-token-1');
@@ -76,13 +76,13 @@ describe('客户端令牌', () => {
     fireEvent.click(within(card).getByRole('button', { name: '我已复制，关掉' }));
     expect(screen.queryByText('fake-test-token-1')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: '吊销 LobeHub' }));
+    fireEvent.click(screen.getByRole('button', { name: '停用 LobeHub' }));
     const dlg = screen.getByRole('alertdialog');
     expect(core.calls.some((c) => c.method === 'DELETE')).toBe(false);
-    fireEvent.click(within(dlg).getByRole('button', { name: '确认吊销' }));
+    fireEvent.click(within(dlg).getByRole('button', { name: '确认停用' }));
     await waitFor(() => expect(core.calls.some((c) => c.method === 'DELETE' && c.url === '/api/clients/00000000-0000-4000-8000-000000000001')).toBe(true));
     await waitFor(() => expect(within(list).queryAllByRole('listitem')).toHaveLength(0));
-    expect(screen.getByRole('status')).toHaveTextContent('已吊销「LobeHub」');
+    expect(screen.getByRole('status')).toHaveTextContent('已停用「LobeHub」');
   });
 
   it('过期的令牌标「已过期」', async () => {
@@ -105,9 +105,9 @@ describe('客户端令牌', () => {
     vi.stubGlobal('fetch', core.fetchImpl);
     session.set('sess-owner');
     render(<ClientTokens />);
-    await screen.findByRole('checkbox', { name: /tools:list/ });
+    await screen.findByRole('checkbox', { name: /查看工具列表/ });
     fireEvent.change(screen.getByLabelText('名字'), { target: { value: 'X' } });
-    fireEvent.click(screen.getByRole('button', { name: '新建令牌' }));
+    fireEvent.click(screen.getByRole('button', { name: '新建连接密码' }));
     expect(await screen.findByText('至少勾选一个范围')).toBeInTheDocument();
     expect(core.calls.some((c) => c.method === 'POST')).toBe(false);
   });
@@ -118,14 +118,14 @@ describe('客户端令牌', () => {
     session.set('sess-owner');
     const r1 = render(<ClientTokens />);
     fireEvent.change(await screen.findByLabelText('名字'), { target: { value: '所有者的 LobeHub' } });
-    fireEvent.click(await screen.findByRole('checkbox', { name: /tools:list/ }));
-    fireEvent.click(screen.getByRole('button', { name: '新建令牌' }));
-    await screen.findByRole('region', { name: '新令牌（只显示一次）' });
+    fireEvent.click(await screen.findByRole('checkbox', { name: /查看工具列表/ }));
+    fireEvent.click(screen.getByRole('button', { name: '新建连接密码' }));
+    await screen.findByRole('region', { name: '新连接密码（只显示一次）' });
     r1.unmount();
 
     session.set('sess-alt');
     render(<ClientTokens />);
-    expect(await screen.findByText('还没有可用的客户端令牌。')).toBeInTheDocument();
+    expect(await screen.findByText('还没有可用的连接密码。')).toBeInTheDocument();
     expect(screen.queryByText('所有者的 LobeHub')).toBeNull();
     expect(core.byUser['sess-owner']).toHaveLength(1);
     expect(core.byUser['sess-alt']).toHaveLength(0);

@@ -27,7 +27,7 @@ function TrialLine({ item, sample, onSaved }: { item: CapabilityItem; sample: bo
       <div className={cn('flex flex-wrap items-center gap-2', urgent && 'font-semibold')} data-testid={`trial-${item.id}`}>
         <span>{trialText(item)}</span>
         {!sample && !editing && (
-          <button type="button" className="min-h-11 min-w-11 rounded-xl border border-[var(--border)] px-3" onClick={() => setEditing(true)}>
+          <button type="button" className="btn btn-outline" onClick={() => setEditing(true)}>
             {item.trialEndsAt ? '改日期' : '填到期日'}
           </button>
         )}
@@ -43,11 +43,11 @@ function TrialLine({ item, sample, onSaved }: { item: CapabilityItem; sample: bo
           <label className="sr-only" htmlFor={`trial-in-${item.id}`}>
             {item.name} 的试用到期日
           </label>
-          <input id={`trial-in-${item.id}`} type="date" value={val} onChange={(e) => setVal(e.target.value)} className="min-h-11 rounded-xl border border-[var(--border)] bg-transparent px-3" />
-          <button type="submit" className="min-h-11 min-w-11 rounded-xl bg-[var(--color-brand)] px-4 text-white">
+          <input id={`trial-in-${item.id}`} type="date" value={val} onChange={(e) => setVal(e.target.value)} />
+          <button type="submit" className="btn btn-primary">
             保存
           </button>
-          <button type="button" className="min-h-11 min-w-11 rounded-xl border border-[var(--border)] px-3" onClick={() => setEditing(false)}>
+          <button type="button" className="btn btn-outline" onClick={() => setEditing(false)}>
             取消
           </button>
         </form>
@@ -84,11 +84,11 @@ export function CapabilityMap() {
 
   return (
     <section aria-labelledby="cap-title" className="space-y-3">
-      <h2 id="cap-title" className="text-[18px] font-semibold" data-testid="cap-summary">
+      <h2 id="cap-title" className="text-[1.125rem] font-semibold" data-testid="cap-summary">
         {summaryLine(data.items)}
       </h2>
       {soon.length > 0 && (
-        <p role="status" className="rounded-2xl border border-[var(--color-brand)] px-4 py-3 font-medium" data-testid="trial-soon">
+        <p role="status" className="card card-brand" data-testid="trial-soon">
           {soon.map((i) => `${i.name}：${trialText(i)}`).join('；')}
         </p>
       )}
@@ -102,12 +102,12 @@ export function CapabilityMap() {
         return (
           <div key={k} className="space-y-2">
             <h3 className="font-semibold">
-              {KIND_LABEL[k]}（{rows.length}）
+              能{KIND_LABEL[k]}的（{rows.length}）
             </h3>
             {rows.length === 0 ? (
-              <p className="text-[var(--muted)]">暂无{KIND_LABEL[k]}能力。</p>
+              <p className="text-[var(--muted)]">还没有能{KIND_LABEL[k]}的。</p>
             ) : (
-              <ul className="divide-y divide-[var(--border)] rounded-2xl bg-[var(--card)]">
+              <ul className="group">
                 {rows.map((i) => (
                   <li key={i.id} className="flex min-h-14 items-center gap-3 px-4 py-2">
                     <QuotaRing used={i.quota?.used} limit={i.quota?.limit} />
@@ -126,13 +126,8 @@ export function CapabilityMap() {
                         />
                       )}
                     </div>
-                    <span
-                      className={cn(
-                        'shrink-0 rounded-full border px-3 py-1 text-[14px]',
-                        i.access === 'free' ? 'border-[var(--color-brand)] font-medium' : 'border-[var(--border)]',
-                      )}
-                      data-access={i.access}
-                    >
+                    {/* 自审 C11：一屏好几个描边胶囊太抢眼，改成行尾灰色文字（珊瑚只留给标志、未读和提示条） */}
+                    <span className="shrink-0 text-[var(--muted)]" data-access={i.access}>
                       {ACCESS_LABEL[i.access]}
                     </span>
                   </li>
