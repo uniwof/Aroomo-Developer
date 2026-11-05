@@ -47,7 +47,7 @@ describe.each(twoAccountEnvs)('助手 [$name]', (env) => {
     const msgs = (await e.owner('GET', `/api/assistants/${id}/messages`)).json().messages as J[];
     expect(msgs).toHaveLength(1);
     expect(msgs[0]).toMatchObject({ role: 'member', memberId: LEAD.id });
-    expect(msgs[0]!.content).toMatch(/^我是 资源周报，每周一 09:00开始，下次 /);
+    expect(msgs[0]!.content).toMatch(/^我是 资源周报，每周一 09:00 开始，下次 /);
     expect((await e.owner('POST', `/api/assistants/${id}/read`)).statusCode).toBe(204);
     expect((await e.owner('GET', `/api/assistants/${id}`)).json().assistant.unread).toBe(false);
   });
