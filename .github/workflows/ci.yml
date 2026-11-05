@@ -98,6 +98,8 @@ jobs:
           python-version: '3.12'
       - name: 闸门判定逻辑单测
         run: node --test scripts/license-gate/policy.test.mjs
+      - name: 借用代码闸门（Ekko，BSL 1.1；只许 core/src/third_party/ekko，收费前清空）
+        run: node --test scripts/license-gate/borrowed.test.mjs && node scripts/license-gate/check-borrowed.mjs
       - name: npm（所有 package-lock.json，含 devDependencies）
         run: node scripts/license-gate/check-npm.mjs
       - name: Python（所有 requirements*.txt，pip-licenses）

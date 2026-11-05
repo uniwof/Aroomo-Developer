@@ -39,6 +39,9 @@ import type { PubMemStore } from './pubmem/types.js';
 import { MemoryUserStore } from './users/memory.js';
 import { PgUserStore } from './users/pg.js';
 import type { UserStore } from './users/types.js';
+import { MemoryAssistantStore } from './assistants/memory.js';
+import { PgAssistantStore } from './assistants/pg.js';
+import type { AssistantStore, BudgetLevel } from './assistants/types.js';
 import { MemorySettingsStore, PgSettingsStore, type SettingsStore } from './settings/store.js';
 
 export interface CoreDeps {
@@ -58,12 +61,19 @@ export interface CoreDeps {
   executor: ExecutorStore;
   pubmem: PubMemStore;
   library: LibraryStore;
+  assistants: AssistantStore;
   /** 测试时注入：对话入口调用 LiteLLM 用的 fetch */
   chatFetch?: typeof fetch;
   /** 测试时注入：/api/chat/stream 的每账号频率 / 并发限制（默认 20 次/分钟、同时 2 条） */
   chatStreamLimits?: { perMinute?: number; concurrent?: number };
   /** 测试时注入；不传则按配置连接 LiteLLM */
   litellm?: LiteLLMAdmin;
+  /** 测试时注入：助手每次最长运行时间（秒 → 毫秒）的换算，和「是否免费模型」的判定 */
+  assistantTimeoutMs?: (sec: number) => number;
+  /** 按真实模型串（Key 的 model）判断免费；不传 = 能力种子清单 */
+  assistantIsFree?: (model: string) => boolean;
+  /** 测试用：每次 / 每天调用上限 */
+  assistantBudgets?: Record<BudgetLevel, { perRun: number; perDay: number }>;
   /** 有数据库时才有；关闭服务时一并关闭 */
   db?: Db;
 }
@@ -84,6 +94,7 @@ export function memoryDeps(now: () => Date = () => new Date()): CoreDeps {
     executor: new MemoryExecutorStore(),
     pubmem: new MemoryPubMemStore(),
     library: new MemoryLibraryStore(),
+    assistants: new MemoryAssistantStore(),
   };
 }
 
@@ -104,6 +115,7 @@ export function pgDeps(db: Db, now: () => Date = () => new Date()): CoreDeps {
     executor: new PgExecutorStore(db),
     pubmem: new PgPubMemStore(db),
     library: new PgLibraryStore(db),
+    assistants: new PgAssistantStore(db),
     // 操作员令牌的签发 / 持久化属于负责人体系，后续 Issue 再落库
     operatorTokens: new MemoryOperatorTokenStore(),
   };

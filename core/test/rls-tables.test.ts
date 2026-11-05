@@ -6,6 +6,13 @@ import { rlsTargets } from './helpers/rls.js';
 
 const NOW = "'2026-11-02T13:00:00+08:00'";
 
+const CONV = (u: string) =>
+  `INSERT INTO conversations (id, user_id, kind, title, created_at, updated_at) VALUES ('${randomUUID()}', ${u}, 'assistant', 't', ${NOW}, ${NOW}) RETURNING id, user_id`;
+const ASSIST = (c: string, u: string) =>
+  `INSERT INTO assistants (id, user_id, name, instructions, timezone, conversation_id, created_at, updated_at) SELECT '${randomUUID()}', ${u}, 'a', '0123456789', 'Asia/Shanghai', ${c}.id, ${NOW}, ${NOW} FROM ${c}`;
+const RUN = (a: string) =>
+  `INSERT INTO assistant_runs (id, assistant_id, user_id, trigger, requested_at, status) SELECT '${randomUUID()}', ${a}.id, ${a}.user_id, 'manual', ${NOW}, 'queued' FROM ${a}`;
+
 /** 每张表一条「user_id 以外都合法」的插入语句，user_id 由参数填入 */
 const TABLES: Record<string, (userIdSql: string) => string> = {
   members: (u) =>
@@ -20,6 +27,17 @@ const TABLES: Record<string, (userIdSql: string) => string> = {
     `INSERT INTO inbox_items (id, grp, kind, urgency, title, summary, actions, status, created_at, user_id) VALUES ('${randomUUID()}', 'decision', 'k', 'normal', 't', 's', '[]', 'open', now(), ${u})`,
   provider_keys: (u) =>
     `INSERT INTO provider_keys (id, name, source_url, last4, model, model_name, litellm_model_id, status, created_at, updated_at, user_id) VALUES ('${randomUUID()}', 'nm', 'u', '1234', 'm', 'm', 'lm-${randomUUID().slice(0, 8)}', 'active', now(), now(), ${u})`,
+  // 助手 v1（0025–0027）：子表用 CTE 在同一条语句里先建好同一账号的父行
+  conversations: (u) => `INSERT INTO conversations (id, user_id, kind, title, created_at, updated_at) VALUES ('${randomUUID()}', ${u}, 'assistant', 't', ${NOW}, ${NOW})`,
+  conversation_messages: (u) => `WITH c AS (${CONV(u)}) INSERT INTO conversation_messages (id, conversation_id, user_id, role, content, created_at) SELECT '${randomUUID()}', c.id, c.user_id, 'system', 'x', ${NOW} FROM c`,
+  assistants: (u) => `WITH c AS (${CONV(u)}) ${ASSIST('c', u)}`,
+  assistant_members: (u) =>
+    `WITH c AS (${CONV(u)}), m AS (INSERT INTO members (id, user_id, name, created_at, updated_at) VALUES ('m-${randomUUID().slice(0, 8)}', ${u}, 'x', ${NOW}, ${NOW}) RETURNING id, user_id), a AS (${ASSIST('c', u)} RETURNING id, user_id)
+     INSERT INTO assistant_members (assistant_id, user_id, member_id, role) SELECT a.id, a.user_id, m.id, 'lead' FROM a, m`,
+  assistant_runs: (u) => `WITH c AS (${CONV(u)}), a AS (${ASSIST('c', u)} RETURNING id, user_id) ${RUN('a')}`,
+  run_steps: (u) =>
+    `WITH c AS (${CONV(u)}), a AS (${ASSIST('c', u)} RETURNING id, user_id), r AS (${RUN('a')} RETURNING id, user_id)
+     INSERT INTO run_steps (run_id, user_id, seq, step_no, action, status, created_at) SELECT r.id, r.user_id, 0, 0, 'plan', 'pending', ${NOW} FROM r`,
   library_items: (u) =>
     `INSERT INTO library_items (id, user_id, kind, title, url, body, tags, source, created_at, updated_at) VALUES ('${randomUUID()}', ${u}, 'idea', 't', NULL, '', '', 'manual', ${NOW}, ${NOW})`,
 };

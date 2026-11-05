@@ -33,8 +33,8 @@ describe('定时任务', () => {
   const req = (method: 'GET' | 'POST' | 'DELETE', url: string, payload?: unknown) =>
     app.inject({ method, url, headers: ownerAuth, ...(payload !== undefined ? { payload: payload as object } : {}) });
 
-  it('注册了八个任务', () => {
-    expect(app.jobs.names().sort()).toEqual(['confirm-cleanup', 'inbox-tidy', 'key-reconcile', 'model-caps', 'recycle-bin', 'takeover-quiet-expiry', 'task-timeout', 'trial-expiry']);
+  it('注册了九个任务（含等确认过期作废，裁定 12）', () => {
+    expect(app.jobs.names().sort()).toEqual(['assistant-confirm-expiry', 'confirm-cleanup', 'inbox-tidy', 'key-reconcile', 'model-caps', 'recycle-bin', 'takeover-quiet-expiry', 'task-timeout', 'trial-expiry']);
   });
 
   it('回收站：29 天还在，30 天后彻底删除并写审计', async () => {

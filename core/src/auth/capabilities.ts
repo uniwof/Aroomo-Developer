@@ -31,6 +31,9 @@ export const CAPABILITIES = [
   'settings:write',
   /** 控制台原生对话 POST /api/chat/stream（#250，负责人审查点 1 定名）：不进操作员白名单，也不是客户端令牌范围；账号可用（userRoute） */
   'chat:use',
+  /** 助手（指南 v1.1 附录 C）：第一版只给所有者范围（所有者令牌 / 方案 A 的所有者账号），不进操作员白名单 */
+  'assistants:read',
+  'assistants:write',
 
   // —— D62 禁止项（操作员永远不能拥有）——
   /** 读取 Key 明文（Core 本身没有这样的接口；能力名占位，保证将来也不能授予操作员） */
