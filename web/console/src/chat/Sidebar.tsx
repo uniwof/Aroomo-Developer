@@ -11,10 +11,10 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { Activity, Bell, Bot, ChevronDown, MessagesSquare, Pin, Plus, Search, Shapes, SquarePen, Users, X } from 'lucide-react';
-import { type Member } from '@/lib/api';
+import { isFamily, type Member } from '@/lib/api';
 import type { UsageRow } from '@/lib/usage';
 import { Avatar, type AvatarKind } from './Avatar';
-import { RailNav, quotaState, type RailTarget } from './Rail';
+import { quotaState, type RailTarget } from './Rail';
 import { listTimeLabel, stripSignature, type Conversation } from './store';
 
 type Tab = 'staff' | 'chats';
@@ -144,12 +144,6 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
         )}
       </div>
 
-      {onClose && (
-        <nav aria-label="分类" className="side-cats">
-          <RailNav horizontal active={active} onOpen={onOpen} />
-        </nav>
-      )}
-
       <div className="side-tools">
         <div className="seg2" role="radiogroup" aria-label="列表">
           {(
@@ -255,6 +249,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
 
       {/* 底部（负责人落地文档 3.5）：资源库 · + 添加 / 成员。「邀请」「连接应用」和用户行先不放（不放点了没反应的按钮） */}
       <div className="side-foot">
+        {!isFamily() && (
         <div className="foot-row">
           <button type="button" className="foot-link hit" aria-label="打开资源库" aria-current={active === 'library' ? 'page' : undefined} onClick={() => onOpen('library')}>
             <Shapes aria-hidden="true" />
@@ -265,6 +260,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
             <span>添加</span>
           </button>
         </div>
+        )}
         <div className="foot-row">
           <button type="button" className="foot-link hit" aria-label="打开成员页" aria-current={active === 'members' ? 'page' : undefined} onClick={() => onOpen('members')}>
             <Users aria-hidden="true" />

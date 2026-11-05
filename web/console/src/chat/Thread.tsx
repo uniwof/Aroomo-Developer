@@ -5,6 +5,7 @@
  */
 import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type FC, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { isFamily } from '@/lib/api';
 import {
   ActionBarPrimitive,
   AssistantRuntimeProvider,
@@ -206,14 +207,17 @@ const ReadAloud: FC = () => {
 const ErrorAction: FC = () => {
   const code = useAuiState((s) => (s.message.metadata?.custom as { errorCode?: string } | undefined)?.errorCode);
   if (code === 'key_invalid')
-    return (
-      <Link to="/keys" className="btn btn-primary" aria-label="去检查 Key（成员 → Key 与接入）">
+    // 自审 A2/C1/C7：所有者在对话页里打开 API 面板（不跳旧控制台）；家人看不到 Key，只说找谁；按钮和消息操作行同一种样式
+    return isFamily() ? (
+      <span className="msg-note">这位成员暂时用不了，请告诉家里管 Aroomo 的人。</span>
+    ) : (
+      <Link to="/chat?view=keys" className="msg-act hit" aria-label="去检查 Key（打开 API）">
         <KeyRound aria-hidden="true" />
         <span>去检查 Key</span>
       </Link>
     );
   return (
-    <ActionBarPrimitive.Reload className="btn btn-primary" aria-label="重试这条回复">
+    <ActionBarPrimitive.Reload className="msg-act hit" aria-label="重试这条回复">
       <RotateCcw aria-hidden="true" />
       <span>重试</span>
     </ActionBarPrimitive.Reload>

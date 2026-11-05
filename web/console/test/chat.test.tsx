@@ -115,9 +115,11 @@ describe('原生对话页', () => {
       const d = document.querySelector('dialog')!;
       await waitFor(() => expect(d.hasAttribute('open')).toBe(true));
       expect(screen.queryAllByRole('tab')).toHaveLength(0);
-      // 置顶的 Aroomo 系统会话 = 收件箱
-      fireEvent.click(within(d).getByRole('button', { name: '设置' }));
+      // 抽屉里只放会话列表（自审 B15：不再和窄栏重复一排分类）
+      expect(within(d).queryByRole('button', { name: '设置' })).toBeNull();
+      fireEvent.click(within(d).getByRole('button', { name: '关闭菜单' }));
       await waitFor(() => expect(d.hasAttribute('open')).toBe(false));
+      fireEvent.click(within(screen.getByRole('navigation', { name: '分类' })).getByRole('button', { name: '设置' }));
       expect(screen.getByRole('heading', { name: '设置' })).toBeInTheDocument();
       // 调到 15：900 宽仍在 48–64em 之间（再大就自动切成手机排法，见下一条测试）
       fireEvent.change(screen.getByRole('slider', { name: /字号/ }), { target: { value: '15' } });
@@ -126,8 +128,7 @@ describe('原生对话页', () => {
       expect(within(set).getByRole('list', { name: '设置分组' })).toBeInTheDocument();
       fireEvent.click(within(set).getByRole('button', { name: '关闭设置' }));
       await waitFor(() => expect(screen.queryByRole('dialog', { name: '设置' })).toBeNull());
-      fireEvent.click(screen.getByRole('button', { name: /打开菜单/ }));
-      fireEvent.click(within(document.querySelector('dialog')!).getByRole('button', { name: '成员' }));
+      fireEvent.click(within(screen.getByRole('navigation', { name: '分类' })).getByRole('button', { name: '成员' }));
       fireEvent.click(await screen.findByRole('button', { name: /^Kimi/ }));
       fireEvent.click(await screen.findByRole('button', { name: '在当前对话里点名 Kimi' }));
       await waitFor(() => expect((screen.getByLabelText('输入消息') as HTMLTextAreaElement).value).toContain('@Kimi '));
@@ -169,6 +170,26 @@ describe('原生对话页', () => {
     await screen.findByRole('listbox');
     fireEvent.keyDown(box, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
+  });
+
+  it('家人账号（自审 A3）：窄栏、会话栏底部不显示 资源库/工具/API；设置只有 偏好·安全·键盘快捷键；旧链接 ?view=keys 不打开', async () => {
+    sessionStorage.setItem('aroomo.console.user', JSON.stringify({ email: 'kid@example.test', displayName: '小明', role: 'user' }));
+    try {
+      render(
+        <MemoryRouter initialEntries={['/chat?view=keys']}>
+          <ChatPage />
+        </MemoryRouter>,
+      );
+      const rail = screen.getByRole('navigation', { name: '分类' });
+      for (const n of ['资源库', '工具', 'API']) expect(within(rail).queryByRole('button', { name: n })).toBeNull();
+      expect(screen.queryByRole('button', { name: '打开资源库' })).toBeNull();
+      expect(screen.queryByRole('heading', { name: 'API' })).toBeNull();
+      fireEvent.click(within(rail).getByRole('button', { name: '设置' }));
+      const nav = within(screen.getByRole('dialog', { name: '设置' })).getByRole('list', { name: '设置分组' });
+      expect(within(nav).getAllByRole('button').map((b) => b.textContent)).toEqual(['偏好', '安全', '键盘快捷键']);
+    } finally {
+      sessionStorage.removeItem('aroomo.console.user');
+    }
   });
 
   it('打开 Aroomo（/）直接进对话', async () => {

@@ -85,7 +85,7 @@ describe('调用 Core', () => {
 });
 
 describe('页面', () => {
-  it('未登录显示登录页；登录成功进入成员页并列出成员', async () => {
+  it('未登录显示登录页；登录成功进入对话页里的成员面板并列出成员', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string) => {
@@ -109,10 +109,10 @@ describe('页面', () => {
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'a@b.c' } });
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'pw' } });
     fireEvent.click(screen.getByRole('button', { name: '登录' }));
-    await waitFor(() => expect(screen.getByRole('heading', { name: '能力地图与成员' })).toBeInTheDocument());
+    // 旧控制台已并进对话页（自审 C1）：/members 打开对话页里的成员面板，没有第二套侧栏
+    await waitFor(() => expect(screen.getByRole('heading', { name: '成员', level: 1 })).toBeInTheDocument(), { timeout: 4000 });
     await waitFor(() => expect(screen.getAllByText('gpt-oss-20b').length).toBeGreaterThan(0));
-    expect(screen.getByRole('img', { name: /Kimi，离线/ })).toHaveAttribute('data-online', 'false');
-    expect(screen.getByRole('navigation', { name: '控制台' }).querySelectorAll('a')).toHaveLength(9);
+    expect(screen.queryByRole('navigation', { name: '控制台' })).toBeNull();
   });
 
   it('登录失败给出提示', async () => {

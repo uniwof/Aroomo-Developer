@@ -4,8 +4,8 @@
  * 面板内容一律是分组列表（iOS / sumus 式），不用标签页。最终位置等负责人的 sumus→Aroomo 逐屏映射方案再定。
  */
 import { useState, type ReactNode } from 'react';
-import { Bell, ChevronLeft, ChevronRight, Keyboard, Monitor, Moon, Plug, ShieldCheck, SlidersHorizontal, Sun, UserRound, X } from 'lucide-react';
-import type { Member } from '@/lib/api';
+import { Bell, ChevronLeft, ChevronRight, Keyboard, Monitor, Moon, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Sun, UserRound, X } from 'lucide-react';
+import { isFamily, type Member } from '@/lib/api';
 import { useUsage } from '@/lib/usage';
 import { UsageLine } from '@/pages/Members';
 import { CapabilityMap } from '@/components/CapabilityMap';
@@ -248,9 +248,16 @@ export const SETTINGS_SECTIONS: { id: SettingsSection; label: string; sub: strin
 ];
 
 type PrefsProps = { prefs: ChatPrefs; setPrefs: (f: (p: ChatPrefs) => ChatPrefs) => void };
+/** 设置里跳到整页的下一层（所有者：审计记录、本机执行员） */
+type GoProps = { onGo: (k: 'audit' | 'executors') => void };
+const FAMILY_SECTIONS: SettingsSection[] = ['prefs', 'safety', 'shortcuts'];
+/** 这个账号能看到的分组：家人只有 偏好 / 安全 / 键盘快捷键（落地文档 0.5、11 章） */
+export function visibleSections() {
+  return SETTINGS_SECTIONS.filter((x) => !isFamily() || FAMILY_SECTIONS.includes(x.id));
+}
 
 /** 一个分区的内容：图标 + 标题 + 灰色说明 + 分隔线，下面是分组（照 sumus 设置右侧） */
-export function SettingsSectionBody({ section, prefs, setPrefs, headingLevel = 2 }: PrefsProps & { section: SettingsSection; headingLevel?: 2 | 3 }) {
+export function SettingsSectionBody({ section, prefs, setPrefs, onGo, headingLevel = 2 }: PrefsProps & GoProps & { section: SettingsSection; headingLevel?: 2 | 3 }) {
   const sec = SETTINGS_SECTIONS.find((x) => x.id === section)!;
   const H = headingLevel === 2 ? 'h2' : 'h3';
   return (
@@ -292,15 +299,19 @@ export function SettingsSectionBody({ section, prefs, setPrefs, headingLevel = 2
       )}
       {section === 'safety' && (
         <>
-          <div className="group">
-            <SecuritySection />
-          </div>
+          {!isFamily() && (
+            <div className="group">
+              <SecuritySection />
+              <NavRow icon={<ScrollText aria-hidden="true" />} label="审计记录" value="最近的操作" onClick={() => onGo('audit')} />
+            </div>
+          )}
           <AccountGroup />
         </>
       )}
       {section === 'budget' && (
         <div className="group">
           <BudgetSection />
+          <NavRow icon={<Monitor aria-hidden="true" />} label="本机执行员" value="设备和任务" onClick={() => onGo('executors')} />
         </div>
       )}
       {section === 'external' && (
@@ -317,7 +328,7 @@ export function SettingsSectionBody({ section, prefs, setPrefs, headingLevel = 2
 }
 
 /** 桌面 / 中等宽度：居中弹窗，左边分组、右边内容（照 sumus 05–12 号截图），右上角 × 关闭 */
-export function SettingsDialog({ open, onClose, prefs, setPrefs }: PrefsProps & { open: boolean; onClose: () => void }) {
+export function SettingsDialog({ open, onClose, prefs, setPrefs, onGo }: PrefsProps & GoProps & { open: boolean; onClose: () => void }) {
   const [section, setSection] = useState<SettingsSection>('prefs');
   return (
     <Dialog
@@ -327,7 +338,7 @@ export function SettingsDialog({ open, onClose, prefs, setPrefs }: PrefsProps & 
       className="dlg-settings"
       nav={
         <ul className="set-nav" aria-label="设置分组">
-          {SETTINGS_SECTIONS.map(({ id, label, Icon }) => (
+          {visibleSections().map(({ id, label, Icon }) => (
             <li key={id}>
               <button type="button" className="set-nav-item" aria-current={section === id ? 'page' : undefined} onClick={() => setSection(id)}>
                 <Icon aria-hidden="true" />
@@ -341,24 +352,24 @@ export function SettingsDialog({ open, onClose, prefs, setPrefs }: PrefsProps & 
       <button type="button" className="btn btn-quiet btn-icon set-close" aria-label="关闭设置" onClick={onClose}>
         <X aria-hidden="true" />
       </button>
-      <SettingsSectionBody section={section} prefs={prefs} setPrefs={setPrefs} headingLevel={3} />
+      <SettingsSectionBody section={section} prefs={prefs} setPrefs={setPrefs} onGo={onGo} headingLevel={3} />
     </Dialog>
   );
 }
 
 /** 手机 / 大字号：整页——先看分组列表，点进去看详情（不用横向一排标签） */
-export function SettingsPanel({ prefs, setPrefs, section, onOpen }: PrefsProps & { section?: SettingsSection; onOpen: (s: SettingsSection) => void }) {
+export function SettingsPanel({ prefs, setPrefs, section, onOpen, onGo }: PrefsProps & GoProps & { section?: SettingsSection; onOpen: (s: SettingsSection) => void }) {
   if (section) {
     return (
       <div className="panel">
-        <SettingsSectionBody section={section} prefs={prefs} setPrefs={setPrefs} />
+        <SettingsSectionBody section={section} prefs={prefs} setPrefs={setPrefs} onGo={onGo} />
       </div>
     );
   }
   return (
     <div className="panel">
       <div className="group">
-        {SETTINGS_SECTIONS.map(({ id, label, Icon }) => (
+        {visibleSections().map(({ id, label, Icon }) => (
           <NavRow key={id} icon={<Icon aria-hidden="true" />} label={label} onClick={() => onOpen(id)} />
         ))}
       </div>

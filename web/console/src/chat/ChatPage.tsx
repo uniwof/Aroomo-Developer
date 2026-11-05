@@ -9,7 +9,10 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, BookOpen, ChevronDown, ChevronRight, CircleAlert, Download, Ellipsis, KeyRound, Menu, MessagesSquare, Pencil, Plus, Settings, SquarePen, Trash2, Users, Wrench } from 'lucide-react';
-import { api, currentUser, viaShell, type Member } from '@/lib/api';
+import { api, currentUser, isFamily, viaShell, type Member } from '@/lib/api';
+import { useSearchParams } from 'react-router-dom';
+import { Audit } from '@/pages/Audit';
+import { Executors } from '@/pages/Executors';
 import { useUsage } from '@/lib/usage';
 import { MeFace, Rail, meLabel, quotaState, type RailTarget } from './Rail';
 import { HeaderCard } from './HeaderCard';
@@ -17,7 +20,7 @@ import { Library } from '@/pages/Library';
 import { Keys } from '@/pages/Keys';
 import { Tools } from '@/pages/Tools';
 import { Inbox } from '@/pages/Inbox';
-import { useInboxCount } from '@/components/Layout';
+import { useInboxCount } from '@/lib/inbox';
 import { Thread } from './Thread';
 import { Sidebar } from './Sidebar';
 import { CapabilityPanel, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type SettingsSection } from './panels';
@@ -38,6 +41,9 @@ type View =
   | { kind: 'inbox' }
   | { kind: 'library' }
   | { kind: 'keys' }
+  /** 所有者：审计记录（设置·安全里进入）、本机执行员（设置·执行员提醒里进入）——自审 A25，不再走旧控制台 */
+  | { kind: 'audit' }
+  | { kind: 'executors' }
   /** 手机底部栏「我」：设置、资源库、工具、API（负责人落地文档第 12 章） */
   | { kind: 'me' };
 
@@ -50,7 +56,9 @@ const TITLES: Record<Exclude<View['kind'], 'chat' | 'member'>, string> = {
   tools: '工具',
   inbox: '收件箱',
   library: '资源库',
-  keys: 'API（Key 与接入）',
+  keys: 'API',
+  audit: '审计记录',
+  executors: '本机执行员',
 };
 
 /** 上一层是哪里（顶栏「‹ 返回」） */
@@ -59,6 +67,10 @@ function parentOf(v: View): { view: View; label: string } | null {
     case 'member':
     case 'capmap':
       return { view: { kind: 'members' }, label: '成员' };
+    case 'audit':
+      return { view: { kind: 'settings', section: 'safety' }, label: '设置' };
+    case 'executors':
+      return { view: { kind: 'settings', section: 'budget' }, label: '设置' };
     case 'chat':
     case 'me':
       return null;
@@ -238,6 +250,18 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     }
     setView(v);
   };
+
+  // 旧链接 /keys、/members… 和消息里的「去检查 Key」都带 ?view=：在对话页里打开对应面板，然后把参数去掉；家人账号不开只给所有者的页面
+  const [params, setParams] = useSearchParams();
+  const want = params.get('view');
+  useEffect(() => {
+    if (!want) return;
+    const ownerOnly = ['library', 'tools', 'keys', 'audit', 'executors'];
+    const ok = ['members', 'tools', 'library', 'inbox', 'executors', 'keys', 'audit', 'settings'];
+    if (ok.includes(want) && !(isFamily() && ownerOnly.includes(want))) goto({ kind: want } as View);
+    setParams({}, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [want]);
 
   const ask = useAsk();
   const remove = async (id: string) => {
@@ -496,7 +520,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     const title = view.kind === 'member' ? (member?.name ?? '成员') : view.kind === 'settings' && view.section ? SETTINGS_SECTIONS.find((x) => x.id === view.section)!.label : TITLES[view.kind];
     main = (
       <>
-        <PanelHeader title={title} lead={phone ? null : menuButton} {...(parent ? { onBack: () => ('go' in parent ? parent.go() : setView(parent.view)), backLabel: parent.label } : {})} />
+        <PanelHeader title={title} lead={phone ? null : menuButton} {...(parent ? { onBack: () => ('go' in parent ? parent.go() : parent.view.kind === 'settings' ? goto(parent.view) : setView(parent.view)), backLabel: parent.label } : {})} />
         <div className="panel-scroll">
           {view.kind === 'members' && (
             <>
@@ -525,7 +549,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           )}
           {view.kind === 'capmap' && <CapabilityPanel />}
           {view.kind === 'group-new' && <GroupNewPanel members={members} onStart={(names) => start({ title: `群聊：${names.join('、')}`, group: names })} />}
-          {view.kind === 'settings' && <SettingsPanel prefs={prefs} setPrefs={setPrefs} {...(view.section ? { section: view.section } : {})} onOpen={(k) => setView({ kind: 'settings', section: k })} />}
+          {view.kind === 'settings' && <SettingsPanel prefs={prefs} setPrefs={setPrefs} {...(view.section ? { section: view.section } : {})} onOpen={(k) => setView({ kind: 'settings', section: k })} onGo={(k: 'audit' | 'executors') => setView({ kind: k })} />}
           {view.kind === 'tools' && (
             <div className="panel panel-embed">
               <Tools />
@@ -546,7 +570,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
                     ['tools', '工具', Wrench],
                     ['keys', 'API', KeyRound],
                   ] as const
-                ).map(([k, label, Icon]) => (
+                ).filter(([k]) => k === 'settings' || !isFamily()).map(([k, label, Icon]) => (
                   <li key={k}>
                     <button type="button" className="me-row" onClick={() => goto({ kind: k })}>
                       <Icon aria-hidden="true" />
@@ -566,6 +590,16 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           {view.kind === 'keys' && (
             <div className="panel panel-embed">
               <Keys />
+            </div>
+          )}
+          {view.kind === 'audit' && (
+            <div className="panel panel-embed">
+              <Audit />
+            </div>
+          )}
+          {view.kind === 'executors' && (
+            <div className="panel panel-embed">
+              <Executors />
             </div>
           )}
         </div>
@@ -614,7 +648,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         </aside>
       )}
       {ask.node}
-      <SettingsDialog open={settingsOpen && !phone} onClose={() => setSettingsOpen(false)} prefs={prefs} setPrefs={setPrefs} />
+      <SettingsDialog open={settingsOpen && !phone} onClose={() => setSettingsOpen(false)} prefs={prefs} setPrefs={setPrefs} onGo={(k: 'audit' | 'executors') => { setSettingsOpen(false); setView({ kind: k }); }} />
       {!wide && !phone && (
         <dialog ref={dialog} className="drawer" aria-label="会话列表" onClose={() => setOpen(false)} onCancel={() => setOpen(false)}>
           {open && sidebar}

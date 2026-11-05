@@ -1,16 +1,7 @@
 import { lazy, Suspense, useSyncExternalStore } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
-import { Layout } from '@/components/Layout';
 import { Login } from '@/pages/Login';
 import { Accept } from '@/pages/Accept';
-import { Members } from '@/pages/Members';
-import { Keys } from '@/pages/Keys';
-import { Inbox } from '@/pages/Inbox';
-import { Settings } from '@/pages/Settings';
-import { Tools } from '@/pages/Tools';
-import { Library } from '@/pages/Library';
-import { Executors } from '@/pages/Executors';
-import { Audit } from '@/pages/Audit';
 import { session, viaShell } from '@/lib/api';
 
 
@@ -34,17 +25,11 @@ export function App() {
           </Suspense>
         }
       />
-      <Route element={<Layout />}>
-        <Route path="members" element={<Members />} />
-        <Route path="tools" element={<Tools />} />
-        <Route path="library" element={<Library />} />
-        <Route path="inbox" element={<Inbox />} />
-        <Route path="executors" element={<Executors />} />
-        <Route path="keys" element={<Keys />} />
-        <Route path="audit" element={<Audit />} />
-        <Route path="settings" element={<Settings />} />
-        <Route path="*" element={<Navigate to="/chat" replace />} />
-      </Route>
+      {/* 旧控制台页面一律并进对话页（自审 C1：不再有第二套侧栏和样式）；旧链接按页面带到对话页里对应的面板 */}
+      {['members', 'tools', 'library', 'inbox', 'executors', 'keys', 'audit', 'settings'].map((v) => (
+        <Route key={v} path={v} element={<Navigate to={`/chat?view=${v}`} replace />} />
+      ))}
+      <Route path="*" element={<Navigate to="/chat" replace />} />
     </Routes>
   );
 }

@@ -1356,12 +1356,27 @@
 .chat-plain {
   white-space: pre-wrap;
 }
+/* 出错（自审 C7）：正文色 + 红色小图标，不用红色粗体；后面的「重试 / 去检查 Key」和消息操作行同一种样式 */
 .chat-error {
-  color: #c4001a;
-  font-weight: 600;
+  color: var(--fg);
 }
-.dark .chat-error {
-  color: #ff6961;
+.chat-error::before {
+  content: '!';
+  display: inline-grid;
+  place-items: center;
+  width: 1.1em;
+  height: 1.1em;
+  margin-right: 0.4em;
+  border-radius: 999px;
+  background: var(--danger);
+  color: var(--bg);
+  font-size: 0.75em;
+  font-weight: 700;
+  vertical-align: 0.1em;
+}
+.msg-note {
+  color: var(--muted);
+  font-size: 0.8125rem;
 }
 .chat-error-box {
   display: flex;

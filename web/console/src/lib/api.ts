@@ -123,6 +123,11 @@ export function currentUser(): { email: string; displayName: string; role: strin
   }
 }
 
+/** 家人账号（Core 角色 user）：只看对话、成员、收件箱和自己的偏好/安全；资源库、工具、API、负责人、外部接入只给所有者/管理员（落地文档 0.5） */
+export function isFamily(): boolean {
+  return currentUser()?.role === 'user';
+}
+
 export async function login(email: string, password: string, fetchImpl: typeof fetch = fetch): Promise<User> {
   // cookie:true：Core 把会话放进 HttpOnly Cookie，不在响应里给令牌（原生对话 /api/chat/stream 只认 Cookie）
   const r = await api<{ token?: string; user: User }>('POST', '/auth/login', { email, password, cookie: true }, fetchImpl);

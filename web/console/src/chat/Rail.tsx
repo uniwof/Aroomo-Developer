@@ -8,8 +8,8 @@
  * 手机（或字号大到放不下）时这一栏收进抽屉，横排显示。
  */
 import { BookOpen, KeyRound, MessagesSquare, Settings, Users, Wrench } from 'lucide-react';
-import { currentUser } from '@/lib/api';
 import { Logo } from '@/components/brand';
+import { currentUser, isFamily } from '@/lib/api';
 import { quotaFraction } from '@/components/brand';
 import { worstRow, type UsageRow } from '@/lib/usage';
 
@@ -50,7 +50,7 @@ export function RailNav({ active, onOpen, horizontal = false }: { active: string
   return (
     <ul className={horizontal ? 'rail-list rail-list-h' : 'rail-list'}>
       {!horizontal && btn('chat', '对话', MessagesSquare, isChat)}
-      {ITEMS.map((i) => btn(i.id, i.label, i.icon, active === i.id || (i.id === 'members' && (active === 'member' || active === 'capmap'))))}
+      {ITEMS.filter((i) => i.id === 'members' || !isFamily()).map((i) => btn(i.id, i.label, i.icon, active === i.id || (i.id === 'members' && (active === 'member' || active === 'capmap'))))}
       {horizontal && btn('settings', '设置', Settings, active === 'settings')}
     </ul>
   );
