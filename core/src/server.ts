@@ -73,7 +73,7 @@ import { AssistantRunner } from "./assistants/runner.js";
 import { registerAssistantRoutes } from "./assistants/routes.js";
 import { ConversationService } from "./conversations/service.js";
 import { registerConversationRoutes } from "./conversations/routes.js";
-import { assistantSchedulerJob } from "./scheduler/assistant-scheduler.js";
+import { assistantSchedulerJob, confirmExpiryJob } from "./scheduler/assistant-scheduler.js";
 
 export const VERSION = "0.0.1";
 
@@ -469,6 +469,8 @@ export function buildServer(
   if (cfg.assistantSchedulerEnabled) {
     jobs.add(assistantSchedulerJob({ store: deps.assistants, start: (u, r) => assistantRunner.start(u, r), now: deps.now }));
   }
+  // 裁定 12：等确认超过 24 小时自动作废（立即运行也会停在等确认，所以不受执行器总开关影响）
+  jobs.add(confirmExpiryJob(() => assistantRunner.expireStaleConfirmations()));
   jobs.add(inboxTidyJob(inbox, deps.now, async () => (await deps.users.listUsers()).map((u) => u.id)));
   app.decorate("jobs", jobs);
   if (opts.startJobs ?? cfg.jobs) {
