@@ -5,6 +5,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, describe, expect, it } from 'vitest';
 import { PgAssistantStore } from '../src/assistants/pg.js';
+import { startOfDay } from '../src/assistants/runner.js';
 import type { Assistant, AssistantRun, AssistantStore } from '../src/assistants/types.js';
 import { loadConfig } from '../src/config.js';
 import type { Db } from '../src/db/db.js';
@@ -165,5 +166,17 @@ describe.each(rlsTargets)('助手存储在应用角色下按账号隔离（$name
       if (rows[0]!.n > 0) throw new Error('system scope wrote');
     })).resolves.toBeUndefined();
     expect((await store.getAssistant('owner', mine.id))!.name).toBe('A');
+  });
+});
+
+describe('startOfDay（每天额度的 0 点）', () => {
+  it('阶段 2 预审：夏令时切换当天也取对当地 0 点（以前按「现在」的偏移算，差 1 小时）', () => {
+    // 纽约 2026-03-08 02:00 进夏令时：0 点还是 EST（UTC-5）
+    expect(startOfDay(new Date('2026-03-08T15:00:00Z'), 'America/New_York').toISOString()).toBe('2026-03-08T05:00:00.000Z');
+    // 纽约 2026-11-01 02:00 出夏令时：0 点还是 EDT（UTC-4）
+    expect(startOfDay(new Date('2026-11-01T17:00:00Z'), 'America/New_York').toISOString()).toBe('2026-11-01T04:00:00.000Z');
+    // 没有夏令时的时区不变
+    expect(startOfDay(new Date('2026-11-05T10:38:00Z'), 'Asia/Shanghai').toISOString()).toBe('2026-11-04T16:00:00.000Z');
+    expect(startOfDay(new Date('2026-11-05T17:00:00Z'), 'Asia/Shanghai').toISOString()).toBe('2026-11-05T16:00:00.000Z');
   });
 });

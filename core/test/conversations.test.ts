@@ -139,6 +139,8 @@ describe.each(twoAccountEnvs)('会话存库 /api/conversations [$name]', (env) =
     const after = await msgs(ownerCookie, uuid(5), `?limit=2&afterSeq=${older.messages[0].seq}`);
     expect(after.messages.map((x: Json) => x.seq)).toEqual(older.messages.slice(1, 3).map((x: Json) => x.seq));
     expect(after.hasMore).toBe(true);
+    // 阶段 2 预审：两个方向同时给 → 400（以前 beforeSeq 被悄悄忽略）
+    expect((await owner()('GET', `/api/conversations/${uuid(5)}/messages?afterSeq=1&beforeSeq=9`)).statusCode).toBe(400);
   });
 
   it('X-23 跨账号：家人看不到、改不了、写不进所有者的会话（和不存在的一样）；列表各管各的', async () => {

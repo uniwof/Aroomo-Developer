@@ -162,6 +162,8 @@ export class ConversationService {
   }
 
   async messages(userId: string, id: string, q: { limit: number; afterSeq?: number; beforeSeq?: number }) {
+    // 两个方向只能选一个（阶段 2 预审：以前同时给时 beforeSeq 被悄悄忽略）
+    if (q.afterSeq !== undefined && q.beforeSeq !== undefined) throw new HttpError(400, 'BAD_REQUEST', 'afterSeq 和 beforeSeq 只能给一个');
     await this.get(userId, id);
     const rows = await this.d.store.messages(userId, id, { ...q, limit: q.limit + 1 });
     // afterSeq 往后翻：多取的一条在末尾；往前（默认）：多取的一条在开头

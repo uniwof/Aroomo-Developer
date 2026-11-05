@@ -75,16 +75,25 @@ class Paused extends Error {}
 
 const inboxUser = (userId: string) => (userId === 'owner' ? {} : { userId });
 
-/** 这个时区「今天 0 点」对应的时刻 */
-export function startOfDay(now: Date, timezone: string): Date {
+/** 某个时刻在这个时区的年月日时分秒，以及当时与 UTC 的偏移（毫秒） */
+function zoned(t: Date, timezone: string) {
   const p = Object.fromEntries(
     new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })
-      .formatToParts(now)
+      .formatToParts(t)
       .map((x) => [x.type, Number(x.value)]),
   ) as Record<string, number>;
   const asUtc = Date.UTC(p.year!, p.month! - 1, p.day!, p.hour!, p.minute!, p.second!);
-  const offset = asUtc - Math.floor(now.getTime() / 1000) * 1000;
-  return new Date(Date.UTC(p.year!, p.month! - 1, p.day!) - offset);
+  return { p, offset: asUtc - Math.floor(t.getTime() / 1000) * 1000 };
+}
+
+/**
+ * 这个时区「今天 0 点」对应的时刻。
+ * 夏令时切换当天 0 点和现在的偏移不同（阶段 2 预审）：先按现在的偏移估一次，再按估出来那一刻的偏移校正。
+ */
+export function startOfDay(now: Date, timezone: string): Date {
+  const { p, offset } = zoned(now, timezone);
+  const midnight = Date.UTC(p.year!, p.month! - 1, p.day!);
+  return new Date(midnight - zoned(new Date(midnight - offset), timezone).offset);
 }
 
 function contentOf(res: ChatResult): string {
