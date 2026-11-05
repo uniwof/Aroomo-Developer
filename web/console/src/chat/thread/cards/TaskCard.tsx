@@ -10,8 +10,11 @@ import { Avatar } from '../../Avatar';
 import { QuickReplies } from './QuickReplies';
 import './cards.css';
 
-/** 和线 C 设计稿 run_steps 对齐；delivered/received 留给 X-06 送达状态 */
-export type StepStatus = 'waiting' | 'running' | 'done' | 'failed' | 'skipped' | 'confirm';
+/**
+ * 和线 C 的 run_steps 对齐。成员那一步用 X-06 送达状态：已派出 → 已收到 → 在做 → 已回复（docs/api/stream-parts.md §2），
+ * 成员没反应时她能看出卡在哪一步；组长那几步和确认仍是 等待 / 进行中 / 完成。
+ */
+export type StepStatus = 'waiting' | 'running' | 'done' | 'failed' | 'skipped' | 'confirm' | 'sent' | 'received' | 'working' | 'replied';
 export const STEP_LABEL: Record<StepStatus, string> = {
   waiting: '等待',
   running: '进行中',
@@ -19,7 +22,13 @@ export const STEP_LABEL: Record<StepStatus, string> = {
   failed: '失败',
   skipped: '跳过',
   confirm: '等你确认',
+  sent: '已派出',
+  received: '已收到',
+  working: '在做',
+  replied: '已回复',
 };
+/** 算「完成」的状态 */
+const FINISHED: readonly StepStatus[] = ['done', 'replied'];
 
 export interface TaskStep {
   id: string;
@@ -47,7 +56,7 @@ const CONFIRM_DONE: Record<Exclude<TaskConfirm['state'], 'open'>, string> = { ap
 
 /** 一句话进度：「3 步，完成 1 步」，有在等你的就写在最前面 */
 export function progressText(steps: TaskStep[]): string {
-  const done = steps.filter((s) => s.status === 'done').length;
+  const done = steps.filter((s) => FINISHED.includes(s.status)).length;
   const wait = steps.some((s) => s.status === 'confirm');
   return `${wait ? '有一步等你确认 · ' : ''}${steps.length} 步，完成 ${done} 步`;
 }
