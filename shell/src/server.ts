@@ -306,7 +306,8 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
     }
     const file = path.resolve(consoleRoot, '.' + path.posix.normalize('/' + dec));
     if (file !== consoleRoot && !file.startsWith(consoleRoot + path.sep)) return sendJson(res, 404, { error: { code: 'NOT_FOUND', message: '找不到' } });
-    if (path.extname(file)) return serveFile(res, file, 'public, max-age=300', req.method, true);
+    // Vite 产物 assets/ 文件名带内容哈希，可长期缓存（和 Core 一样）；以前一律 5 分钟、又没有 ETag，过 5 分钟每次打开都要重新下载约 280 KB
+    if (path.extname(file)) return serveFile(res, file, file.startsWith(path.join(consoleRoot, 'assets') + path.sep) ? 'public, max-age=31536000, immutable' : 'public, max-age=300', req.method, true);
     try {
       const html = (await readFile(path.join(consoleRoot, 'index.html'), 'utf8')).replace('</head>', '<meta name="aroomo-shell" content="1"></head>');
       res.writeHead(200, { 'content-type': MIME['.html']!, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...SEC_HEADERS });
