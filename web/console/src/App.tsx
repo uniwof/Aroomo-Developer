@@ -17,19 +17,15 @@ export function App() {
     <Routes>
       {/* 打开 Aroomo 直接进对话（#250 方向 A）；对话页自带一层抽屉，不套控制台侧栏 */}
       <Route index element={<Navigate to="/chat" replace />} />
+      {/* 对话页管所有面板的地址（/chat、/team、/hub、/inbox、/settings…，Poke 行为规范 §2）；旧地址由对话页重定向 */}
       <Route
-        path="chat"
+        path="*"
         element={
           <Suspense fallback={<p role="status" className="p-4">正在打开对话…</p>}>
             <ChatPage />
           </Suspense>
         }
       />
-      {/* 旧控制台页面一律并进对话页（自审 C1：不再有第二套侧栏和样式）；旧链接按页面带到对话页里对应的面板 */}
-      {['members', 'tools', 'library', 'inbox', 'executors', 'keys', 'audit', 'settings'].map((v) => (
-        <Route key={v} path={v} element={<Navigate to={`/chat?view=${v}`} replace />} />
-      ))}
-      <Route path="*" element={<Navigate to="/chat" replace />} />
     </Routes>
   );
 }

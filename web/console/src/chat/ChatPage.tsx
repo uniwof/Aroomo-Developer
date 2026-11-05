@@ -10,14 +10,15 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ArrowRight, BookOpen, ChevronDown, ChevronRight, CircleAlert, Download, Ellipsis, KeyRound, Menu, MessagesSquare, Pencil, Plus, Settings, SquarePen, Trash2, Users, Wrench, X } from 'lucide-react';
 import { api, currentUser, isFamily, viaShell, type Member } from '@/lib/api';
-import { useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { OWNER_ONLY, legacyPath, pathOf, viewOf, type View } from './routes';
 import { useUsage } from '@/lib/usage';
 import { MeFace, Rail, meLabel, quotaState, type RailTarget } from './Rail';
 import { HeaderCard } from './HeaderCard';
 import { useInboxCount } from '@/lib/inbox';
 import { Thread } from './Thread';
 import { Sidebar } from './Sidebar';
-import { BackButton, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type GoTarget, type SettingsSection } from './panels';
+import { BackButton, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type GoTarget } from './panels';
 import { applyDisplay } from '@/lib/display';
 import { listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
 import { useAsk } from '@/components/Dialog';
@@ -37,24 +38,6 @@ const CapabilityPanel = lazy(() => import('./capability-panel').then((m) => ({ d
 function Later({ children }: { children: ReactNode }) {
   return <Suspense fallback={<p role="status" className="note panel-loading">正在加载…</p>}>{children}</Suspense>;
 }
-
-/** 主区域显示什么：对话，或某个面板（带返回的上一层） */
-type View =
-  | { kind: 'chat' }
-  | { kind: 'members' }
-  | { kind: 'member'; id: string }
-  | { kind: 'capmap' }
-  | { kind: 'group-new' }
-  | { kind: 'settings'; section?: SettingsSection }
-  | { kind: 'tools' }
-  | { kind: 'inbox' }
-  | { kind: 'library' }
-  | { kind: 'keys' }
-  /** 所有者：审计记录（设置·安全里进入）、本机执行员（设置·执行员提醒里进入）——自审 A25，不再走旧控制台 */
-  | { kind: 'audit' }
-  | { kind: 'executors' }
-  /** 手机底部栏「我」：设置、资源库、工具、API（负责人落地文档第 12 章） */
-  | { kind: 'me' };
 
 const TITLES: Record<Exclude<View['kind'], 'chat' | 'member'>, string> = {
   me: '我',
@@ -146,7 +129,20 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   const [currentId, setCurrentId] = useState(() => list[0]!.id);
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
-  const [view, setView] = useState<View>({ kind: 'chat' });
+  // 面板由地址决定（切片 2 / 审计 C3）：直接打开、刷新、前进后退都对
+  const location = useLocation();
+  const navigate = useNavigate();
+  const navRef = useRef({ navigate, location });
+  navRef.current = { navigate, location };
+  const routed = viewOf(location.pathname, location.search);
+  /** 只给所有者的面板：家人打开这些地址落到对话 */
+  const blocked = isFamily() && OWNER_ONLY.includes(routed.kind);
+  const setView = useCallback((v: View, opts: { replace?: boolean; state?: unknown } = {}) => {
+    const { navigate: nav, location: loc } = navRef.current;
+    const to = pathOf(v);
+    if (to === loc.pathname + loc.search) return;
+    nav(to, { replace: !!opts.replace, ...(opts.state !== undefined ? { state: opts.state } : {}) });
+  }, []);
   // 自审 B16：下面的内容滚到顶栏底下时，顶栏加一条细分隔线（大字号时不再像半行字被切掉）；换页面 / 换会话自动归零
   const [scrolledKey, setScrolledKey] = useState('');
   const [prefs, setPrefs] = useState<ChatPrefs>(() => loadPrefs());
@@ -188,6 +184,15 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   const wide = layout.side;
   /** 手机排法（<48em，或字号调大后放不下）：不用抽屉，每一层整页 + 底部栏（负责人落地文档第 12 章） */
   const phone = !layout.rail;
+  // 桌面的设置是弹窗：主区域显示打开它的那一页（state.bg），弹窗分组跟着地址
+  const settingsOpen = !phone && !blocked && routed.kind === 'settings';
+  const settingsBg = ((location.state as { bg?: unknown } | null)?.bg as string | undefined) ?? '/chat';
+  const bgView = (() => {
+    const [bp, bs = ''] = settingsBg.split('?');
+    const v = viewOf(bp ?? '/chat', bs ? `?${bs}` : '');
+    return v.kind === 'settings' ? ({ kind: 'chat' } as View) : v;
+  })();
+  const view: View = blocked ? { kind: 'chat' } : settingsOpen ? bgView : routed;
   const { rows: usage } = useUsage(120_000);
 
   const dialog = useRef<HTMLDialogElement>(null);
@@ -273,8 +278,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     else start({ title: `和 ${m.name}`, model: `aroomo/${m.id}` });
   };
 
-  // 设置：桌面和中等宽度照 sumus 是居中弹窗；手机（或字号大到切成手机排法）是整页
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  // 设置：桌面和中等宽度照 sumus 是居中弹窗，开在打开它的那一页上面（地址 /settings[/分组]，state.bg = 底下那页）；
+  // 手机（或字号大到切成手机排法）是整页。关弹窗回到底下那页，直接打开时底下是对话。
   const goto = (v: View | { kind: 'add-member' }) => {
     setOpen(false);
     if (v.kind === 'add-member') {
@@ -282,23 +287,19 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
       return;
     }
     if (v.kind === 'settings' && !phone) {
-      setSettingsOpen(true);
+      setView(v, { state: { bg: settingsOpen ? settingsBg : location.pathname + location.search } });
       return;
     }
     setView(v);
   };
+  const closeSettings = () => navigate(settingsBg, { replace: false });
 
-  // 旧链接 /keys、/members… 和消息里的「去检查 Key」都带 ?view=：在对话页里打开对应面板，然后把参数去掉；家人账号不开只给所有者的页面
-  const [params, setParams] = useSearchParams();
-  const want = params.get('view');
+  // 旧链接 /keys、/members… 和 ?view=：换成新地址（替换历史，不多一步后退）；家人打开只给所有者的面板 → 对话
   useEffect(() => {
-    if (!want) return;
-    const ownerOnly = ['library', 'tools', 'keys', 'audit', 'executors'];
-    const ok = ['members', 'tools', 'library', 'inbox', 'executors', 'keys', 'audit', 'settings'];
-    if (ok.includes(want) && !(isFamily() && ownerOnly.includes(want))) goto({ kind: want } as View);
-    setParams({}, { replace: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [want]);
+    const to = legacyPath(location.pathname, location.search);
+    if (to) navigate(to, { replace: true });
+    else if (blocked) navigate('/chat', { replace: true });
+  }, [location.pathname, location.search, blocked, navigate]);
 
   const ask = useAsk();
   const remove = async (id: string) => {
@@ -567,7 +568,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     const title = view.kind === 'member' ? (member?.name ?? '成员') : view.kind === 'settings' && view.section ? SETTINGS_SECTIONS.find((x) => x.id === view.section)!.label : TITLES[view.kind];
     main = (
       <>
-        <PanelHeader title={title} lead={phone ? null : menuButton} {...(parent ? { onBack: () => ('go' in parent ? parent.go() : parent.view.kind === 'settings' ? goto(parent.view) : setView(parent.view)), backLabel: parent.label, ...('aria' in parent && parent.aria ? { backAria: parent.aria } : {}) } : {})} />
+        <PanelHeader title={title} lead={phone ? null : menuButton} {...(parent ? { onBack: () => ('go' in parent ? parent.go() : parent.view.kind === 'settings' && !phone ? setView(parent.view, { state: { bg: '/chat' } }) : setView(parent.view)), backLabel: parent.label, ...('aria' in parent && parent.aria ? { backAria: parent.aria } : {}) } : {})} />
         <div className="panel-scroll">
           <Later>
           {view.kind === 'members' && (
@@ -695,7 +696,16 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         </aside>
       )}
       {ask.node}
-      <SettingsDialog open={settingsOpen && !phone} onClose={() => setSettingsOpen(false)} prefs={prefs} setPrefs={setPrefs} members={members} onGo={(k: GoTarget) => { setSettingsOpen(false); setView({ kind: k }); }} />
+      <SettingsDialog
+        open={settingsOpen}
+        onClose={closeSettings}
+        section={routed.kind === 'settings' ? routed.section : undefined}
+        onSection={(k) => setView({ kind: 'settings', section: k }, { replace: true, state: { bg: settingsBg } })}
+        prefs={prefs}
+        setPrefs={setPrefs}
+        members={members}
+        onGo={(k: GoTarget) => setView({ kind: k })}
+      />
       {addMember && (
         <Suspense fallback={null}>
       <AddMemberDialog

@@ -349,8 +349,14 @@ export function SettingsSectionBody({ section, prefs, setPrefs, onGo, members = 
 }
 
 /** 桌面 / 中等宽度：居中弹窗，左边分组、右边内容（照 sumus 05–12 号截图），右上角 × 关闭 */
-export function SettingsDialog({ open, onClose, prefs, setPrefs, onGo, members }: PrefsProps & GoProps & { open: boolean; onClose: () => void }) {
-  const [section, setSection] = useState<SettingsSection>('profile');
+export function SettingsDialog({ open, onClose, prefs, setPrefs, onGo, members, section: routed, onSection }: PrefsProps & GoProps & { open: boolean; onClose: () => void; section?: SettingsSection | undefined; onSection?: (s: SettingsSection) => void }) {
+  const [own, setOwn] = useState<SettingsSection>('profile');
+  // 分组由地址给（/settings/<分组>，切片 2）；没给就用自己记的
+  const section = routed && visibleSections().some((x) => x.id === routed) ? routed : own;
+  const setSection = (s: SettingsSection) => {
+    setOwn(s);
+    onSection?.(s);
+  };
   return (
     <Dialog
       open={open}

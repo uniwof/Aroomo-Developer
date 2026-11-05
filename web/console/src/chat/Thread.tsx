@@ -202,7 +202,7 @@ const ErrorAction: FC = () => {
     return isFamily() ? (
       <span className="msg-note">这位成员暂时用不了，请告诉家里管 Aroomo 的人。</span>
     ) : (
-      <Link to="/chat?view=keys" className="msg-act hit" aria-label="去检查 Key（打开 API）">
+      <Link to="/hub/keys" className="msg-act hit" aria-label="去检查 Key（打开 API）">
         <KeyRound aria-hidden="true" />
         <span>去检查 Key</span>
       </Link>
