@@ -141,7 +141,31 @@ export async function login(email: string, password: string, fetchImpl: typeof f
   return r.user;
 }
 
+/**
+ * 从 Shell 打开时退出：POST /aroomo/logout（Shell 作废 Core 会话、清 Cookie，返回下一步地址），再整页跳过去。
+ * 只跳同站相对地址（/ 开头、不是 //），防止被带去别的网站；没拿到地址就回 /aroomo/login。失败时抛出给人看的话，不跳。
+ */
+export async function shellLogout(fetchImpl: typeof fetch = fetch, go: (url: string) => void = (u) => window.location.assign(u)): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetchImpl('/aroomo/logout', { method: 'POST', credentials: 'same-origin', headers: { 'x-aroomo-request': '1', accept: 'application/json' } });
+  } catch {
+    throw new ApiError(0, 'NETWORK', '退出失败，请检查网络后再试');
+  }
+  if (!res.ok) throw new ApiError(res.status, 'HTTP_' + res.status, '退出失败，请稍后再试');
+  const j = (await res.json().catch(() => null)) as { location?: unknown } | null;
+  const loc = typeof j?.location === 'string' && /^\/(?!\/)/.test(j.location) ? j.location : '/aroomo/login';
+  session.set(null);
+  try {
+    sessionStorage.removeItem(USER_KEY);
+  } catch {
+    /* 忽略 */
+  }
+  go(loc);
+}
+
 export async function logout(fetchImpl: typeof fetch = fetch): Promise<void> {
+  if (viaShell) return shellLogout(fetchImpl);
   try {
     await api('POST', '/api/auth/logout', undefined, fetchImpl);
   } finally {

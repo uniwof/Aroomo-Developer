@@ -147,7 +147,7 @@ export function SignOutGroup() {
         </Field>
       )}
       <Field label="退出这台设备">
-        <button type="button" className="btn btn-outline" onClick={() => void logout()}>
+        <button type="button" className="btn btn-outline" onClick={() => void logout().catch((e: unknown) => setMsg(errText(e, '退出失败，请稍后再试')))}>
           退出登录
         </button>
       </Field>
