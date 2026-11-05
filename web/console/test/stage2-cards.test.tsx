@@ -16,7 +16,7 @@ afterEach(cleanup);
 
 describe('开关', () => {
   it('integrate/stage2：Core 助手接口、会话存库已并入，除快速回复（Core 还没有反问数据块）外全部打开', () => {
-    expect(FLAGS).toEqual({ taskCards: true, quickReplies: false, convFilter: true, schedulePage: true, assistantDraft: true, assistants: true, savedChats: true });
+    expect(FLAGS).toEqual({ taskCards: true, quickReplies: false, convFilter: true, schedulePage: true, assistantDraft: true, assistants: true, savedChats: true, skeletonShimmer: false });
   });
 });
 
