@@ -17,6 +17,10 @@
   background: var(--bg);
   color: var(--fg);
 }
+/* 聊天回复里的草稿卡：和上面那句话隔开一级（12px） */
+.msg-body > .task-card {
+  margin-top: 0.75rem;
+}
 .task-card:focus-visible {
   outline: 2px solid var(--fg);
   outline-offset: 2px;
