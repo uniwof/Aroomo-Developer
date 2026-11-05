@@ -22,6 +22,8 @@
 # 检查 5  MCP 专用网段（.env 的 MCP_NET_SUBNET，默认 172.29.77.0/29）没有被主机上别的 docker 网络或路由占用
 #         （docker network inspect + ip route，只读）。冲突则失败，提示改 MCP_NET_SUBNET 与 CORE_MCP_IP。
 #         Aroomo 自己的 aroomo_aroomo-mcp 网络（上次部署建的）不算冲突。
+# 检查 6  设了 CORE_OWNER_ACCOUNT_ID（方案 A）时：必须是 UUID、SHELL_AUTH=core-session，且 users 表里这个 id 的邮箱
+#         就是 SHELL_OWNER_EMAIL（不分大小写）、角色 admin、状态 active。没设则通过。不打印邮箱和 id。
 # 备份    调用现有备份流程（scripts/backup.sh，主密钥公钥加密，异地 R2）做一次，核对：状态 ok、已上传异地、
 #         大小 > 0、备份名在 R2 远端的列表里完全相等（backup snapshots --from offsite，不是本地目录，不做子串匹配）。
 #         备份本身带两道远端核对：上传后 backup.sh 比对 R2 上文件大小与本地 size_bytes（不等就失败）；这里还强制
@@ -225,6 +227,30 @@ elif [ "$shell_auth" = core-session ]; then
   fail "检查 4 SHELL_AUTH=core-session，deploy/.env 里 SHELL_OWNER_EMAIL 没有设置、为空或不像邮箱（所有者的 Core 账号邮箱，留空则所有者也被 403；请主会话在服务器上补上）"
 else
   fail "检查 4 SHELL_AUTH=lobe-session，deploy/.env 里 SHELL_OWNER_USER_ID 没有设置或为空（所有者的 LobeHub 用户 id，#252 起旧登录只认它，留空则所有者也被 403；请主会话在服务器上补上）"
+fi
+
+# ---------------------------------------------------------------------------
+# 检查 6（方案 A，负责人必改 4）：设了 CORE_OWNER_ACCOUNT_ID 时，它和 Shell 的 SHELL_OWNER_EMAIL 必须是同一个账号，
+# 且这个账号是启用的管理员（Core 启动检查同样要求）。没设 = Core 不映射，通过。只读一条 count，不打印邮箱和 id。
+core_owner_id=""
+[ ! -f "$env_file" ] || core_owner_id="$(env_val CORE_OWNER_ACCOUNT_ID | tr 'A-F' 'a-f')"
+if [ -z "$core_owner_id" ]; then
+  pass "检查 6 没设 CORE_OWNER_ACCOUNT_ID：Core 不把所有者账号映射到所有者数据，无需比对"
+elif ! [[ "$core_owner_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+  fail "检查 6 deploy/.env 里 CORE_OWNER_ACCOUNT_ID 不是 UUID（Core 会拒绝启动）"
+elif [ "$shell_auth" != core-session ]; then
+  fail "检查 6 设了 CORE_OWNER_ACCOUNT_ID，但 SHELL_AUTH 不是 core-session：没法和 Shell 的所有者账号比对（去掉它，或改回 core-session）"
+else
+  owner_email="$(env_val SHELL_OWNER_EMAIL | tr 'A-Z' 'a-z')"
+  if ! [[ "$owner_email" =~ ^[a-z0-9._%+-]+@[a-z0-9.-]+$ ]]; then
+    fail "检查 6 SHELL_OWNER_EMAIL 含邮箱以外的字符（或为空），不拼进 SQL，无法比对"
+  elif ! n="$(sql "select count(*) from users where id = '$core_owner_id'::uuid and lower(email) = '$owner_email' and role = 'admin' and status = 'active'")"; then
+    fail "检查 6 读 users 表出错，无法确认 SHELL_OWNER_EMAIL 与 CORE_OWNER_ACCOUNT_ID 是同一个账号"
+  elif [ "$n" = 1 ]; then
+    pass "检查 6 SHELL_OWNER_EMAIL 与 CORE_OWNER_ACCOUNT_ID 是同一个账号，且是启用的管理员（不显示值）"
+  else
+    fail "检查 6 SHELL_OWNER_EMAIL 与 CORE_OWNER_ACCOUNT_ID 不是同一个账号，或这个账号不是启用的管理员（不显示值；请主会话在服务器上核对）"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
