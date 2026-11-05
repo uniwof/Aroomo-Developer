@@ -20,7 +20,7 @@ import {
   type ThreadMessageLike,
 } from '@assistant-ui/react';
 import { ArrowDown, Copy, KeyRound, RotateCcw, Send, Square, Volume2, VolumeX } from 'lucide-react';
-import { ChatStreamError, type FailureCode, dayLabel, loadDraft, saveDraft, signatureOf, streamChat, stripSignature, timeLabel, type ChatTurn, type Conversation } from './store';
+import { ChatStreamError, type ChatDraft, type FailureCode, dayLabel, loadDraft, saveDraft, signatureOf, streamChat, stripSignature, timeLabel, type ChatTurn, type Conversation } from './store';
 import { Avatar } from './Avatar';
 import { AnnounceContext, useAnnounce } from './announce';
 import { DEFAULT_RATE, pickVoice, speaker, speechSupported } from './speech';
@@ -28,6 +28,11 @@ import { DEFAULT_RATE, pickVoice, speaker, speechSupported } from './speech';
 // Markdown 引擎单独打包、按需加载（首屏先出对话框和输入框）；没到之前按纯文字显示（同样不渲染 HTML）
 const LazyMarkdown = lazy(() => import('./Markdown'));
 const NEW_DRAFT = 'new';
+
+// X-15 草稿卡点开才下载（对话页包 ≤150 KB gz）
+const ChatDraftCard = lazy(() => import('./pages/assistants/ChatDraftCard'));
+
+const draftOfMessage = (m: { metadata?: { custom?: unknown } }): ChatDraft | undefined => (m.metadata?.custom as { draft?: ChatDraft } | undefined)?.draft;
 
 const textOfMessage = (m: ThreadMessage): string =>
   m.content
@@ -38,7 +43,10 @@ const textOfMessage = (m: ThreadMessage): string =>
 function toTurns(messages: readonly ThreadMessage[]): ChatTurn[] {
   return messages
     .filter((m) => m.role === 'user' || m.role === 'assistant')
-    .map((m) => ({ role: m.role as 'user' | 'assistant', text: textOfMessage(m), ...(m.createdAt ? { at: m.createdAt.getTime() } : {}) }))
+    .map((m) => {
+      const draft = draftOfMessage(m);
+      return { role: m.role as 'user' | 'assistant', text: textOfMessage(m), ...(m.createdAt ? { at: m.createdAt.getTime() } : {}), ...(draft ? { draft } : {}) };
+    })
     .filter((t) => t.text.trim() !== '');
 }
 
@@ -54,6 +62,8 @@ export interface UiMessage {
   error?: string;
   /** Core 给的失败码：key_invalid 时不显示「重试」，改成「去检查 Key」 */
   errorCode?: FailureCode | undefined;
+  /** X-15 助手草稿卡（只在回复上） */
+  draft?: ChatDraft;
 }
 
 let seq = 0;
@@ -61,7 +71,13 @@ const newId = () => `m${Date.now().toString(36)}${(seq++).toString(36)}`;
 
 /** UiMessage → assistant-ui 的消息（状态决定「停止 / 出错 / 重试」怎么显示） */
 export function toThreadMessage(m: UiMessage): ThreadMessageLike {
-  const base = { id: m.id, role: m.role, content: [{ type: 'text' as const, text: m.text }], ...(m.at ? { createdAt: new Date(m.at) } : {}) };
+  const base = {
+    id: m.id,
+    role: m.role,
+    content: [{ type: 'text' as const, text: m.text }],
+    ...(m.at ? { createdAt: new Date(m.at) } : {}),
+    ...(m.draft ? { metadata: { custom: { draft: m.draft } } } : {}),
+  };
   if (m.role === 'user') return base;
   if (m.state === 'running') return { ...base, status: { type: 'running' } };
   if (m.state === 'cancelled') return { ...base, status: { type: 'incomplete', reason: 'cancelled' } };
@@ -266,6 +282,35 @@ const Working: FC<{ name: string }> = ({ name }) => {
   );
 };
 
+/** 草稿卡要的东西（对话页给；家人、开关关时不给 = 不渲染卡） */
+export interface DraftActions {
+  members: import('@/lib/api').Member[];
+  /** 「改一改」：打开新建助手弹窗并预先填好；建好后回调 */
+  onEdit: (input: import('@/lib/assistants').AssistantInput, onCreated: () => void) => void;
+  /** 「建好」成功后（刷新会话栏的助手列表） */
+  onCreated: (a: import('@/lib/assistants').Assistant) => void;
+}
+const DraftContext = createContext<{ actions?: DraftActions | undefined; setState: (messageId: string, state: 'done' | 'dismissed') => void }>({ setState: () => undefined });
+
+/** 回复里带草稿卡时显示卡；只有点「建好」才建 */
+const DraftSlot: FC = () => {
+  const id = useAuiState((s) => s.message.id);
+  const draft = useAuiState((s) => draftOfMessage(s.message));
+  const { actions, setState } = useContext(DraftContext);
+  if (!draft || !actions || isFamily()) return null;
+  return (
+    <Suspense fallback={<p className="msg-note">正在打开助手草稿…</p>}>
+      <ChatDraftCard
+        draft={draft}
+        members={actions.members}
+        onState={(st) => setState(id, st)}
+        onCreated={actions.onCreated}
+        onEdit={(input) => actions.onEdit(input, () => setState(id, 'done'))}
+      />
+    </Suspense>
+  );
+};
+
 const AssistantMessage: FC = () => {
   const who = useSpeaker();
   return (
@@ -283,6 +328,7 @@ const AssistantMessage: FC = () => {
           <div className="msg-body">
             <Working name={who.name} />
             <MessagePrimitive.Parts components={{ Text: MarkdownText }} />
+            <DraftSlot />
             <Stopped />
             <MessagePrimitive.Error>
               <div role="alert" className="chat-error-box">
@@ -326,12 +372,16 @@ export interface ThreadProps {
   intro?: string;
   /** 输入卡上方的提示条（例如额度用完了） */
   notice?: ReactNode;
+  /** X-15 助手草稿卡的动作；不给 = 不显示卡（家人、开关关） */
+  draftActions?: DraftActions;
 }
 
-export function Thread({ conversation, onMessages, insert, members = [], fetchImpl, speechRate = DEFAULT_RATE, speechOnline = false, onAllowOnlineSpeech, memberName, onRunning, intro, notice }: ThreadProps) {
+export function Thread({ conversation, onMessages, insert, members = [], fetchImpl, speechRate = DEFAULT_RATE, speechOnline = false, onAllowOnlineSpeech, memberName, onRunning, intro, notice, draftActions }: ThreadProps) {
   const convRef = useRef(conversation);
   convRef.current = conversation;
-  const [messages, setMessages] = useState<UiMessage[]>(() => conversation.messages.map((m) => ({ id: newId(), role: m.role, text: m.text, ...(m.at ? { at: m.at } : {}), state: 'done' as const })));
+  const [messages, setMessages] = useState<UiMessage[]>(() =>
+    conversation.messages.map((m) => ({ id: newId(), role: m.role, text: m.text, ...(m.at ? { at: m.at } : {}), ...(m.draft ? { draft: m.draft } : {}), state: 'done' as const })),
+  );
   const [isRunning, setIsRunning] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   // 换会话或离开页面时，停掉还在进行的回复，也停掉朗读
@@ -359,7 +409,7 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
       abortRef.current = ac;
       const turns = turnsOf(history);
       try {
-        for await (const text of streamChat(turns, convRef.current.model, ac.signal, fetchImpl)) update({ text });
+        for await (const text of streamChat(turns, convRef.current.model, ac.signal, fetchImpl, (draft) => update({ draft }))) update({ text });
         update({ state: 'done' });
       } catch (e) {
         // 点了停止：保留已经收到的部分；其他错误就地显示，可以「重试」
@@ -398,6 +448,15 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
   const [status, setStatus] = useState('');
   const save = useRef(onMessages);
   save.current = onMessages;
+  // 草稿卡点了「建好」/「不用了」：记在那条回复上并存本机（刷新后卡不再能点）
+  const latest = useRef(messages);
+  latest.current = messages;
+  const setDraftState = useCallback((messageId: string, state: 'done' | 'dismissed') => {
+    const next = latest.current.map((m) => (m.id === messageId && m.draft ? { ...m, draft: { ...m.draft, state } } : m));
+    setMessages(next);
+    save.current(next.filter((m) => m.text.trim() !== '').map((m) => ({ role: m.role, text: m.text, ...(m.at ? { at: m.at } : {}), ...(m.draft ? { draft: m.draft } : {}) })));
+  }, []);
+  const draftCtx = { actions: draftActions, setState: setDraftState };
   const runningCb = useRef(onRunning);
   runningCb.current = onRunning;
   useEffect(() => {
@@ -487,6 +546,7 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
 
   return (
     <AnnounceContext.Provider value={announce}>
+    <DraftContext.Provider value={draftCtx}>
     <SpeechContext.Provider value={speech}>
     <ThreadInfoContext.Provider value={info}>
     <AssistantRuntimeProvider runtime={runtime}>
@@ -594,6 +654,7 @@ export function Thread({ conversation, onMessages, insert, members = [], fetchIm
     </AssistantRuntimeProvider>
     </ThreadInfoContext.Provider>
     </SpeechContext.Provider>
+    </DraftContext.Provider>
     </AnnounceContext.Provider>
   );
 }

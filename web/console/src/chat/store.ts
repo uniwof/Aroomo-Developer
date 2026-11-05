@@ -5,12 +5,36 @@
  */
 
 import { FONT_VERSION, PREFS_KEY, readDisplayPrefs, type Theme } from '@/lib/display';
+import type { DraftPart } from '@/lib/assistants';
+
+/** X-15：负责人在聊天里回的助手草稿卡（Core 的 data-aroomo-assistant-draft 数据块）+ 她点过什么 */
+export interface ChatDraft {
+  /** Core 给的 id（draft_…），「建好」时当幂等键 */
+  id: string;
+  data: DraftPart['data'];
+  /** 点过「建好」= done，「不用了」= dismissed；没点 = 还能操作 */
+  state?: 'done' | 'dismissed';
+}
 
 export interface ChatTurn {
   role: 'user' | 'assistant';
   text: string;
   /** 发出 / 收到的时间（毫秒）；旧会话没有 */
   at?: number;
+  /** 只在回复上：助手草稿卡 */
+  draft?: ChatDraft;
+}
+
+export const DRAFT_PART = 'data-aroomo-assistant-draft';
+
+/** 数据块 / 本机存储里的草稿卡要长这样才认（缺字段的当没有，不渲染半张卡） */
+export function asDraft(v: unknown): ChatDraft | null {
+  if (!v || typeof v !== 'object') return null;
+  const o = v as { id?: unknown; data?: unknown; state?: unknown };
+  const d = o.data as Partial<DraftPart['data']> | undefined;
+  if (typeof o.id !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(o.id) || !d || typeof d !== 'object') return null;
+  if (typeof d.name !== 'string' || typeof d.instructions !== 'string' || !Array.isArray(d.members) || typeof d.leadMemberId !== 'string' || !d.schedule || typeof d.schedule.kind !== 'string') return null;
+  return { id: o.id, data: d as DraftPart['data'], ...(o.state === 'done' || o.state === 'dismissed' ? { state: o.state } : {}) };
 }
 
 export interface Conversation {
@@ -48,6 +72,7 @@ export type StreamEvent =
   | { type: 'delta'; text: string }
   | { type: 'error'; text: string }
   | { type: 'failure'; code: FailureCode }
+  | { type: 'draft'; draft: ChatDraft }
   | { type: 'finish' }
   | { type: 'done' };
 
@@ -63,6 +88,10 @@ export function parseEvent(event: string): StreamEvent | null {
   try {
     const j = JSON.parse(data) as { type?: string; delta?: unknown; errorText?: unknown; data?: { code?: unknown } };
     if (j.type === 'text-delta' && typeof j.delta === 'string') return { type: 'delta', text: j.delta };
+    if (j.type === DRAFT_PART) {
+      const d = asDraft(j);
+      return d ? { type: 'draft', draft: d } : null;
+    }
     if (j.type === FAILURE_PART && typeof j.data?.code === 'string' && FAILURE_CODES.includes(j.data.code)) return { type: 'failure', code: j.data.code as FailureCode };
     if (j.type === 'error') return { type: 'error', text: typeof j.errorText === 'string' ? j.errorText : '对话出错了，请稍后再试。' };
     if (j.type === 'finish') return { type: 'finish' };
@@ -87,7 +116,7 @@ export const NETWORK_ERROR = '连不上 Aroomo，请检查网络后点「重试�
  * 发一次对话，逐段产出「到目前为止的完整回复」。中断（signal）时安静结束。
  * 服务端返回错误（401/403/429/400）或流里有 error 事件时抛 ChatStreamError（文案给人看）。
  */
-export async function* streamChat(turns: ChatTurn[], model: string, signal: AbortSignal, fetchImpl: typeof fetch = fetch): AsyncGenerator<string, void> {
+export async function* streamChat(turns: ChatTurn[], model: string, signal: AbortSignal, fetchImpl: typeof fetch = fetch, onDraft?: (d: ChatDraft) => void): AsyncGenerator<string, void> {
   let res: Response;
   try {
     res = await fetchImpl(STREAM_URL, {
@@ -133,7 +162,8 @@ export async function* streamChat(turns: ChatTurn[], model: string, signal: Abor
         if (ev.type === 'delta') {
           text += ev.text;
           yield text;
-        } else if (ev.type === 'failure') code = ev.code;
+        } else if (ev.type === 'draft') onDraft?.(ev.draft);
+        else if (ev.type === 'failure') code = ev.code;
         else if (ev.type === 'error') throw new ChatStreamError(ev.text, code);
         else if (ev.type === 'done') return;
       }
@@ -161,7 +191,12 @@ export function loadConversations(storage: Storage | undefined = globalThis.loca
         ...c,
         title: String(c.title ?? '新对话'),
         model: typeof c.model === 'string' ? c.model : 'aroomo',
-        messages: c.messages.filter((m) => (m.role === 'user' || m.role === 'assistant') && typeof m.text === 'string'),
+        messages: c.messages
+          .filter((m) => (m.role === 'user' || m.role === 'assistant') && typeof m.text === 'string')
+          .map(({ draft, ...m }) => {
+            const d = m.role === 'assistant' ? asDraft(draft) : null;
+            return d ? { ...m, draft: d } : m;
+          }),
       }))
       .sort((a, b) => b.updatedAt - a.updatedAt);
   } catch {

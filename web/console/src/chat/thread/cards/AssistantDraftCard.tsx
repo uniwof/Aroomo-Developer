@@ -4,7 +4,7 @@
  * 卡上：名字、任务说明、组长和成员、计划（人话 + 时区）、下次运行、额度档；三个按钮「建好」「改一改」「不用了」。
  * 家人第一版不能建助手：调用方不给家人渲染这张卡（Core 也会 403）。
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { scheduleText, whenText, zoneText, type ScheduleKind, type ScheduleSpec } from '../../pages/assistants/schedule-text';
 import './cards.css';
 
@@ -22,9 +22,14 @@ export interface AssistantDraft {
 
 export const BUDGET_LABEL: Record<AssistantDraft['budget'], string> = { low: '低（只用免费模型）', mid: '中', high: '高' };
 
-export function AssistantDraftCard({ draft, onCreate, onEdit, onDismiss }: { draft: AssistantDraft; onCreate: () => Promise<void>; onEdit: () => void; onDismiss: () => void }) {
-  const [state, setState] = useState<'open' | 'busy' | 'done' | 'dismissed'>('open');
+/** initial：聊天里的卡刷新后保留她点过的结果（done / dismissed） */
+export function AssistantDraftCard({ draft, onCreate, onEdit, onDismiss, initial = 'open' }: { draft: AssistantDraft; onCreate: () => Promise<void>; onEdit: () => void; onDismiss: () => void; initial?: 'open' | 'done' | 'dismissed' }) {
+  const [state, setState] = useState<'open' | 'busy' | 'done' | 'dismissed'>(initial);
   const [err, setErr] = useState('');
+  // 在别处建好了（「改一改」的弹窗里）：卡跟着变
+  useEffect(() => {
+    if (initial !== 'open') setState(initial);
+  }, [initial]);
   const others = draft.members.filter((m) => m !== draft.lead);
   async function create() {
     setErr('');

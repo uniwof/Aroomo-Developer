@@ -15,14 +15,14 @@ import { useUsage } from '@/lib/usage';
 import { MeFace, Rail, meLabel, quotaState, type RailTarget } from './Rail';
 import { HeaderCard } from './HeaderCard';
 import { useInboxCount } from '@/lib/inbox';
-import { Thread } from './Thread';
+import { Thread, type DraftActions } from './Thread';
 import { Sidebar } from './Sidebar';
 import { BackButton, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type GoTarget, type SettingsSection } from './panels';
 import { applyDisplay } from '@/lib/display';
 import { listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
 import { useAsk } from '@/components/Dialog';
 import { FLAGS } from '@/lib/flags';
-import { useAssistants } from '@/lib/assistants';
+import { useAssistants, type AssistantInput } from '@/lib/assistants';
 import './chat.css';
 
 // 不常开的面板点开才下载（#250：对话页包 ≤150 KB gz）。设置、成员随对话页一起加载，打开不用等。
@@ -196,7 +196,16 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   const inboxCount = useInboxCount();
   const assistantsOn = FLAGS.assistants && !isFamily();
   const { list: assistants, error: assistantsError, reload: reloadAssistants } = useAssistants(assistantsOn);
-  const [newAssistant, setNewAssistant] = useState(false);
+  /** 新建助手弹窗：initial = 聊天草稿卡「改一改」带来的内容，onDone = 建好后把那张卡标成已建 */
+  const [newAssistant, setNewAssistant] = useState<{ initial?: AssistantInput; onDone?: () => void } | null>(null);
+  // X-15：聊天里的助手草稿卡（只给所有者；开关关时不显示）
+  const draftActions = useMemo<DraftActions | undefined>(
+    () =>
+      assistantsOn && FLAGS.assistantDraft
+        ? { members, onEdit: (initial, onDone) => setNewAssistant({ initial, onDone }), onCreated: () => reloadAssistants() }
+        : undefined,
+    [assistantsOn, members, reloadAssistants],
+  );
   const layout = useLayout();
   const wide = layout.side;
   /** 手机排法（<48em，或字号调大后放不下）：不用抽屉，每一层整页 + 底部栏（负责人落地文档第 12 章） */
@@ -392,7 +401,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
             },
             onNewAssistant: () => {
               setOpen(false);
-              setNewAssistant(true);
+              setNewAssistant({});
             },
             ...(FLAGS.schedulePage
               ? {
@@ -589,6 +598,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           {...(singleName ? { memberName: singleName } : {})}
           intro={intro}
           {...(notice ? { notice } : {})}
+          {...(draftActions ? { draftActions } : {})}
           {...(fetchImpl ? { fetchImpl } : {})}
         />
       </>
@@ -745,9 +755,11 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         <Suspense fallback={null}>
           <NewAssistantDialog
             members={members}
-            onClose={() => setNewAssistant(false)}
+            {...(newAssistant.initial ? { initial: newAssistant.initial } : {})}
+            onClose={() => setNewAssistant(null)}
             onCreated={(a) => {
-              setNewAssistant(false);
+              newAssistant.onDone?.();
+              setNewAssistant(null);
               reloadAssistants();
               setView({ kind: 'assistant', id: a.id });
             }}

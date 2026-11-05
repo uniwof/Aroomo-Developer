@@ -8,7 +8,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import type { Member } from '@/lib/api';
-import { assistantsApi, isActive, type Assistant, type AssistantInput, type AssistantMessage, type AssistantRun, type BudgetLevel, type CoreSchedule, type DraftPart, type RunStep } from '@/lib/assistants';
+import { assistantsApi, isActive, newIdemKey, type Assistant, type AssistantInput, type AssistantMessage, type AssistantRun, type BudgetLevel, type CoreSchedule, type DraftPart, type RunStep } from '@/lib/assistants';
 import { FLAGS } from '@/lib/flags';
 import { Dialog } from '@/components/Dialog';
 import { Avatar } from '../../Avatar';
@@ -39,16 +39,35 @@ interface Form {
   budget: BudgetLevel;
 }
 
-export function toInput(f: Form): AssistantInput {
+export function toInput(f: Form, options = SCHEDULES): AssistantInput {
   const lead = f.members.includes(f.lead) ? f.lead : f.members[0];
   return {
     name: f.name.trim(),
     instructions: f.instructions.trim(),
     members: f.members,
     ...(lead ? { leadMemberId: lead } : {}),
-    schedule: SCHEDULES.find((s) => s.id === f.scheduleId)!.schedule,
+    schedule: (options.find((s) => s.id === f.scheduleId) ?? SCHEDULES[0]!).schedule,
     timezone: localZone(),
     budgetLevel: f.budget,
+  };
+}
+
+const sameSchedule = (a: CoreSchedule, b: CoreSchedule) =>
+  a.kind === b.kind && (a.time ?? '') === (b.time ?? '') && (a.days ?? []).join() === (b.days ?? []).join() && (a.everyHours ?? 0) === (b.everyHours ?? 0);
+
+/**
+ * 「改一改」带过来的草稿 → 表单 + 计划选项。聊天里说的计划不在预设里（如「每周三 15:00」）时，多放一个「聊天里说的」选项并选中，不丢。
+ * 只认她自己的成员：草稿里的成员不在列表里就不带。
+ */
+export function formFromInput(initial: AssistantInput | undefined, members: Member[]): { form: Form; options: typeof SCHEDULES } {
+  const empty: Form = { name: '', instructions: '', members: [], lead: '', scheduleId: 'manual', budget: 'low' };
+  if (!initial) return { form: empty, options: SCHEDULES };
+  const ids = initial.members.filter((id) => members.some((m) => m.id === id));
+  const preset = SCHEDULES.find((s) => sameSchedule(s.schedule, initial.schedule));
+  const options = preset ? SCHEDULES : [...SCHEDULES, { id: 'chat', label: `${scheduleText(initial.schedule.kind, initial.schedule)}（聊天里说的）`, schedule: initial.schedule }];
+  return {
+    form: { name: initial.name, instructions: initial.instructions, members: ids, lead: initial.leadMemberId && ids.includes(initial.leadMemberId) ? initial.leadMemberId : (ids[0] ?? ''), scheduleId: preset?.id ?? 'chat', budget: initial.budgetLevel ?? 'low' },
+    options,
   };
 }
 
@@ -68,11 +87,15 @@ export function draftFromPart(p: DraftPart, members: Member[]): AssistantDraft {
   };
 }
 
-export function NewAssistantDialog({ members, onClose, onCreated }: { members: Member[]; onClose: () => void; onCreated: (a: Assistant) => void }) {
-  const [f, setF] = useState<Form>({ name: '', instructions: '', members: [], lead: '', scheduleId: 'manual', budget: 'low' });
+/** initial = 聊天草稿卡点「改一改」带过来的内容（表单预先填好） */
+export function NewAssistantDialog({ members, onClose, onCreated, initial }: { members: Member[]; onClose: () => void; onCreated: (a: Assistant) => void; initial?: AssistantInput }) {
+  const [start] = useState(() => formFromInput(initial, members));
+  const options = start.options;
+  const [f, setF] = useState<Form>(start.form);
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
-  const [draft, setDraft] = useState<{ input: AssistantInput; card: AssistantDraft } | null>(null);
+  /** key：这张草稿的幂等键（「建好」重试、连点只建一个；改了再预览就是新的一张） */
+  const [draft, setDraft] = useState<{ input: AssistantInput; card: AssistantDraft; key: string } | null>(null);
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setF((x) => ({ ...x, [k]: v }));
 
   async function preview(e: FormEvent<HTMLFormElement>) {
@@ -83,9 +106,9 @@ export function NewAssistantDialog({ members, onClose, onCreated }: { members: M
     setMsg('');
     setBusy(true);
     try {
-      const input = toInput(f);
+      const input = toInput(f, options);
       const r = await assistantsApi.preview(input);
-      setDraft({ input, card: draftFromPart(r.part, members) });
+      setDraft({ input, card: draftFromPart(r.part, members), key: newIdemKey('new') });
     } catch (err) {
       setMsg(errText(err, '没算出来，请稍后再试'));
     } finally {
@@ -100,7 +123,7 @@ export function NewAssistantDialog({ members, onClose, onCreated }: { members: M
           draft={draft.card}
           onCreate={async () => {
             try {
-              onCreated(await assistantsApi.create(draft.input));
+              onCreated(await assistantsApi.create(draft.input, draft.key));
             } catch (err) {
               throw new Error(errText(err, '没建成，请稍后再试'));
             }
@@ -154,7 +177,7 @@ export function NewAssistantDialog({ members, onClose, onCreated }: { members: M
           <fieldset className="form-field form-fieldset">
             <legend className="form-label">什么时候做</legend>
             <div className="check-grid check-grid-wide">
-              {SCHEDULES.map((s) => (
+              {options.map((s) => (
                 <label key={s.id} className="check-row">
                   <input type="radio" className="check" name="schedule" checked={f.scheduleId === s.id} onChange={() => set('scheduleId', s.id)} />
                   <span>{s.label}</span>
@@ -324,6 +347,8 @@ export function AssistantDetail({ id, members, onChanged, onInbox }: { id: strin
     wasLive.current = live;
   }, [live, onChanged]);
 
+  /** 「立即运行」的幂等键：一次点击一个；没成功（网络断了）再点用同一个，成功后换新的 */
+  const runKey = useRef<string | null>(null);
   const act = async (label: string, fn: () => Promise<unknown>, done: string) => {
     setBusy(label);
     setNote('');
@@ -378,7 +403,7 @@ export function AssistantDetail({ id, members, onChanged, onInbox }: { id: strin
         </div>
       </div>
       <div className="panel-actions">
-        <button type="button" className="btn btn-primary" disabled={!!busy || !!active} onClick={() => void act('run', () => assistantsApi.runNow(a.id), '已开始运行，结果会写进下面的对话')}>
+        <button type="button" className="btn btn-primary" disabled={!!busy || !!active} onClick={() => void act('run', () => assistantsApi.runNow(a.id, (runKey.current ??= newIdemKey('run'))).then(() => (runKey.current = null)), '已开始运行，结果会写进下面的对话')}>
           {active && isActive(active.status) ? '正在运行…' : busy === 'run' ? '正在开始…' : '立即运行'}
         </button>
         <button
