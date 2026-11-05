@@ -359,3 +359,80 @@
   flex: 1 1 14em;
   min-width: 0;
 }
+
+/* ---------- X-05 工具调用（回复正文上方一行灰字，点开看详情） ---------- */
+.tool-calls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.375rem;
+  margin-bottom: 0.375rem;
+  max-width: 100%;
+}
+.tool-toggle.btn {
+  min-height: 2rem;
+  max-width: 100%;
+  padding: 0.25rem 0.5rem;
+  margin-left: -0.5rem;
+  justify-content: flex-start;
+  color: var(--muted);
+  font-weight: 400;
+  text-align: left;
+}
+.tool-toggle.btn:focus-visible {
+  outline: 2px solid var(--fg);
+  outline-offset: 2px;
+}
+.tool-line {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tool-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 0.75rem;
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.tool-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8125rem;
+  min-width: 0;
+}
+.tool-item p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.tool-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+}
+.tool-item-label {
+  font-weight: 600;
+}
+.tool-item-state,
+.tool-item-title {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.tool-item-pre {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  max-height: 16rem;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--seg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
