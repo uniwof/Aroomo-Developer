@@ -142,6 +142,8 @@ export function toUiMessageStream(
     onFinish?: (text: string) => Promise<void>;
     /** 浏览器断开（点停止）：拿到已收到的部分 */
     onCancel?: (text: string) => void;
+    /** 上游读失败时问一句：是不是浏览器先断开的（是 = 当作停止） */
+    wasAborted?: () => boolean;
   } = {},
 ): ReadableStream<Uint8Array> {
   const messageId = opts.messageId ?? `msg_${randomUUID()}`;
@@ -153,6 +155,8 @@ export function toUiMessageStream(
   let finished = false;
   let wrote = false;
   let full = '';
+  /** 回复的结局只认一次：正常结束（onFinish）和浏览器断开（onCancel）不能都存（Groq 小审：finish 等落库时断开会存两遍） */
+  let settled = false;
   const done = () => {
     if (finished) return;
     finished = true;
@@ -160,9 +164,11 @@ export function toUiMessageStream(
   };
   const finish = async (c: ReadableStreamDefaultController<Uint8Array>, error?: ChatFailureCode) => {
     if (finished) return;
+    const first = !settled;
+    settled = true;
     if (error) for (const e of failureEvents(error)) c.enqueue(e);
     else {
-      await opts.onFinish?.(full).catch(() => undefined);
+      if (first) await opts.onFinish?.(full).catch(() => undefined);
       c.enqueue(sse({ type: 'text-end', id: textId }));
       c.enqueue(sse({ type: 'finish-step' }));
       c.enqueue(sse({ type: 'finish' }));
@@ -236,12 +242,22 @@ export function toUiMessageStream(
         }
       } catch {
         // 上游断了（或被中断）：给浏览器一句固定的话，不带原文
-        if (!finished) await finish(c, 'gateway_unreachable');
+        if (!finished) {
+          // 浏览器先断开、上游随之被中断：算「点了停止」，存已收到的部分（不论 cancel 和这里谁先到）
+          if (opts.wasAborted?.() && !settled) {
+            settled = true;
+            opts.onCancel?.(full);
+          }
+          await finish(c, 'gateway_unreachable');
+        }
       }
     },
     cancel() {
       void reader?.cancel().catch(() => undefined);
-      if (!finished) opts.onCancel?.(full);
+      if (!settled) {
+        settled = true;
+        opts.onCancel?.(full);
+      }
       done();
     },
   });
@@ -348,7 +364,7 @@ export function registerChatStreamRoute(app: FastifyInstance, chat: ChatService,
             await out.stream?.cancel().catch(() => undefined);
             body = errorStream(out.failure.code);
             release();
-          } else if (out.stream) body = toUiMessageStream(out.stream, { onDone: release, onFinish: (t) => save('assistant', t), onCancel: (t) => void save('assistant', t) });
+          } else if (out.stream) body = toUiMessageStream(out.stream, { onDone: release, onFinish: (t) => save('assistant', t), onCancel: (t) => void save('assistant', t), wasAborted: () => ctrl.signal.aborted });
           else {
             // 理论上 stream:true 总是返回流；万一是 JSON，就把文字一次性发出去
             const text = (out.json as { choices?: Array<{ message?: { content?: unknown } }> } | undefined)?.choices?.[0]?.message?.content;

@@ -374,6 +374,30 @@ describe('/api/chat/stream 频率与并发限制', () => {
 });
 
 describe('toUiMessageStream（OpenAI SSE → AI SDK UI Message Stream）', () => {
+
+  it('会话存库：结局只认一次——正常结束后再断开不重复存；上游因浏览器断开而读失败时按「停止」存已收到的部分', async () => {
+    const chunk = (t: string) => enc.encode(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: t } }] })}\n\n`);
+    const saved: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const up = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(chunk('整段')); c.enqueue(enc.encode('data: [DONE]\n\n')); c.close(); } });
+    const s = toUiMessageStream(up, { onFinish: async (t) => { saved.push(`finish:${t}`); await gate; }, onCancel: (t) => saved.push(`cancel:${t}`) });
+    const r = s.getReader();
+    const pump = (async () => { for (;;) { const x = await r.read(); if (x.done) break; } })().catch(() => undefined);
+    await new Promise((x) => setTimeout(x, 20));
+    await r.cancel(); // 落库还没完时浏览器断开
+    release();
+    await pump;
+    expect(saved).toEqual(['finish:整段']);
+
+    const saved2: string[] = [];
+    let aborted = false;
+    const up2 = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(chunk('半句')); setTimeout(() => { aborted = true; c.error(new Error('aborted')); }, 10); } });
+    const s2 = toUiMessageStream(up2, { onFinish: async (t) => void saved2.push(`finish:${t}`), onCancel: (t) => saved2.push(`cancel:${t}`), wasAborted: () => aborted });
+    const r2 = s2.getReader();
+    for (;;) { const x = await r2.read(); if (x.done) break; }
+    expect(saved2).toEqual(['cancel:半句']);
+  });
   const read = async (s: ReadableStream<Uint8Array>) => new Response(s).text();
   const src = (parts: string[]) =>
     new ReadableStream<Uint8Array>({
