@@ -3,6 +3,7 @@
 #
 #   scripts/release-precheck.sh               三项检查 + 部署前加密备份到 R2 并核对
 #   scripts/release-precheck.sh --no-backup   只做检查（演练用，不备份）
+#   scripts/release-precheck.sh --paid-launch 收费上线前：另外要求检查 6 的借用目录为空
 #
 # 检查 1  只查开了 RLS 的表（清单 scripts/lib/rls-tables.txt：members、public_memory、public_memory_versions、
 #         library_items、vault_secrets、inbox_items、provider_keys）。清单里的表不能有空串 user_id（RLS 迁移会加
@@ -20,6 +21,8 @@
 # 检查 5  MCP 专用网段（.env 的 MCP_NET_SUBNET，默认 172.29.77.0/29）没有被主机上别的 docker 网络或路由占用
 #         （docker network inspect + ip route，只读）。冲突则失败，提示改 MCP_NET_SUBNET 与 CORE_MCP_IP。
 #         Aroomo 自己的 aroomo_aroomo-mcp 网络（上次部署建的）不算冲突。
+# 检查 6  core/src/third_party/ekko 收费上线前必须为空（借自 Ekko Studio，BSL 1.1 只许非商用；所有者 2026-11-05 13:00）。
+#         平时只打一行信息提醒（自用发布可以带着）；加 --paid-launch 时非空即失败。
 # 备份    调用现有备份流程（scripts/backup.sh，主密钥公钥加密，异地 R2）做一次，核对：状态 ok、已上传异地、
 #         大小 > 0、备份名在 R2 远端的列表里完全相等（backup snapshots --from offsite，不是本地目录，不做子串匹配）。
 #         备份本身带两道远端核对：上传后 backup.sh 比对 R2 上文件大小与本地 size_bytes（不等就失败）；这里还强制
@@ -46,10 +49,12 @@ state="$ROOT/.release"
 mkdir -p "$state"
 
 do_backup=1
+paid_launch=0
 for a in "$@"; do
   case "$a" in
     --no-backup) do_backup=0 ;;
-    *) echo "用法：release-precheck.sh [--no-backup]" >&2; exit 64 ;;
+    --paid-launch) paid_launch=1 ;;
+    *) echo "用法：release-precheck.sh [--no-backup] [--paid-launch]" >&2; exit 64 ;;
   esac
 done
 
@@ -264,6 +269,19 @@ else
   else
     pass "检查 5 MCP 网段 $mcp_subnet 没有被别的 docker 网络或路由占用"
   fi
+fi
+
+# ---------------------------------------------------------------------------
+# 检查 6：third_party/ekko must be empty before paid launch
+borrowed_dir="$ROOT/core/src/third_party/ekko"
+borrowed_n=0
+if [ -d "$borrowed_dir" ]; then borrowed_n="$(find "$borrowed_dir" -type f | wc -l | tr -d ' ')"; fi
+if [ "$borrowed_n" = 0 ]; then
+  pass "检查 6 core/src/third_party/ekko 为空，没有借用代码"
+elif [ "$paid_launch" = 1 ]; then
+  fail "检查 6 core/src/third_party/ekko 还有 $borrowed_n 个借用文件（Ekko Studio，BSL 1.1 只许非商用）：收费上线前必须按 BORROWED.md 剥离清空"
+else
+  say "信息  检查 6 core/src/third_party/ekko 有 $borrowed_n 个借用文件（BSL 1.1）：自用发布可以；收费上线前必须清空（--paid-launch 会拦）"
 fi
 
 # ---------------------------------------------------------------------------
