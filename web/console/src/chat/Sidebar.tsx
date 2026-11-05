@@ -9,7 +9,7 @@
  * 不放点了没反应的按钮。
  * 桌面常显；手机上它就是唯一一层抽屉（外层 <dialog>）：最上面多一排分类（资源库 / 工具 / API / 成员）。
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, Bell, Bot, ChevronDown, MessagesSquare, Pin, Plus, Search, Shapes, SquarePen, Users, X } from 'lucide-react';
 import { isFamily, type Member } from '@/lib/api';
 import type { UsageRow } from '@/lib/usage';
@@ -18,6 +18,14 @@ import { quotaState, type RailTarget } from './Rail';
 import { listTimeLabel, previewText, type Conversation } from './store';
 
 type Tab = 'staff' | 'chats';
+
+/** 会话栏自己的界面状态（搜索词、分段、折叠）：由对话页保管，抽屉关开、手机换页、桌面收起后不丢（切片 3 / 审计 C6） */
+export interface SideUi {
+  tab: Tab;
+  q: string;
+  folded: boolean;
+}
+export const SIDE_UI: SideUi = { tab: 'chats', q: '', folded: false };
 
 interface Row {
   key: string;
@@ -55,12 +63,21 @@ export interface SidebarProps {
   /** 手机抽屉里才有「关闭」和分类横排 */
   onClose?: () => void;
   usage: UsageRow[] | null;
+  ui?: SideUi;
+  onUi?: (f: (u: SideUi) => SideUi) => void;
 }
 
-export function Sidebar({ list, currentId, members, inboxCount, active, onPick, onMember, onLead, onNew, onOpen, onClose, usage }: SidebarProps) {
-  const [tab, setTab] = useState<Tab>('chats');
-  const [q, setQ] = useState('');
-  const [folded, setFolded] = useState(false);
+export function Sidebar({ list, currentId, members, inboxCount, active, onPick, onMember, onLead, onNew, onOpen, onClose, usage, ui: given, onUi }: SidebarProps) {
+  const [own, setOwn] = useState<SideUi>(SIDE_UI);
+  const ui = given ?? own;
+  const setUi = onUi ?? setOwn;
+  const { q, folded } = ui;
+  // 家人账号的「助手」是空的（dev 上没接；integrate/stage2 接上后家人仍为空）：不显示这个分段，免得点了只看到空列表（审计 C11）
+  const noStaff = isFamily();
+  const tab: Tab = noStaff ? 'chats' : ui.tab;
+  const setTab = (t: Tab) => setUi((u) => ({ ...u, tab: t }));
+  const setQ = (v: string) => setUi((u) => ({ ...u, q: v }));
+  const setFolded = (f: (x: boolean) => boolean) => setUi((u) => ({ ...u, folded: f(u.folded) }));
   const [newOpen, setNewOpen] = useState(false);
   useEffect(() => {
     if (!newOpen) return;
@@ -119,6 +136,22 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
     return `${head}${r.pinned ? '，已置顶' : ''}${q2}，${tab === 'staff' ? '' : '最后一条：'}${r.preview}${r.at ? `，${listTimeLabel(r.at)}` : ''}`;
   };
   const groupLabel = tab === 'staff' ? '助手' : '对话';
+  const listRef = useRef<HTMLUListElement>(null);
+  const openRow = (r: Row) => (tab === 'chats' && r.convId ? onPick(r.convId) : r.lead ? onLead() : r.member ? onMember(r.member) : r.convId && onPick(r.convId));
+  /** 搜索框键盘（切片 4 / 审计 C7）：回车打开第一条结果，↓ 进入结果列表；没结果时回车不做事（列表里已写「没有找到」） */
+  const onSearchKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && rows[0]) {
+      e.preventDefault();
+      if (folded) setFolded(() => false);
+      openRow(rows[0]);
+    } else if (e.key === 'ArrowDown') {
+      const first = listRef.current?.querySelector<HTMLElement>('button.conv');
+      if (first) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  };
 
   return (
     <div className="side-inner">
@@ -136,6 +169,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
       </div>
 
       <div className="side-tools">
+        {!noStaff && (
         <div className="seg2" role="radiogroup" aria-label="列表">
           {(
             [
@@ -149,12 +183,13 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
             </button>
           ))}
         </div>
+        )}
 
         <div className="side-search">
           <label className="search2">
             <Search aria-hidden="true" />
             <span className="sr-only">搜索对话</span>
-            <input type="search" placeholder="搜索对话" value={q} onChange={(e) => setQ(e.target.value)} />
+            <input type="search" placeholder="搜索对话" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onSearchKey} />
           </label>
           {/* 新建对话菜单（所有者 11-05 12:15）：默认全员（不 @ 由负责人安排，@ 谁谁答）/ 自己挑成员 / 和某一位单聊；所有者另有「添加成员」 */}
           <div className="topic">
@@ -208,7 +243,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
           <ChevronDown aria-hidden="true" className={folded ? 'folded' : undefined} />
         </button>
         {!folded && (
-          <ul className="conv-list" aria-label={tab === 'staff' ? '助手列表' : '会话列表'}>
+          <ul ref={listRef} className="conv-list" aria-label={tab === 'staff' ? '助手列表' : '会话列表'}>
             {rows.map((r) => (
               <li key={r.key}>
                 <button
@@ -216,7 +251,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
                   className="conv"
                   aria-current={isCurrent(r) ? 'true' : undefined}
                   aria-label={labelOf(r)}
-                  onClick={() => (tab === 'chats' && r.convId ? onPick(r.convId) : r.lead ? onLead() : r.member ? onMember(r.member) : r.convId && onPick(r.convId))}
+                  onClick={() => openRow(r)}
                 >
                   <Avatar name={r.name} kind={r.kind} />
                   <span className="conv-text">

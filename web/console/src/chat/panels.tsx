@@ -5,7 +5,9 @@
  */
 import { useState, type ReactNode } from 'react';
 import { Bell, ArrowLeft, ChevronRight, Home, Keyboard, Monitor, Moon, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Sun, UserRound, Users, X } from 'lucide-react';
-import { isFamily, type Member } from '@/lib/api';
+import { api, isFamily, type Member } from '@/lib/api';
+import { useAsk } from '@/components/Dialog';
+import { errText } from './ui';
 import { useUsage } from '@/lib/usage';
 import { UsageLine } from '@/pages/Members';
 import { BudgetSection, Field, Group, LeadSection, McpSection, SecuritySection } from '@/pages/Settings';
@@ -13,6 +15,8 @@ import { FamilySection, GeneralSection, PasswordRow, ProfileSection, SignOutGrou
 import { ClientTokens } from '@/components/ClientTokens';
 import { Dialog } from '@/components/Dialog';
 import { Avatar } from './Avatar';
+import { Empty } from './ui';
+import { ErrorRetry } from '@/components/ErrorRetry';
 import { SPEECH_RATES, speechSupported } from './speech';
 import { type ChatPrefs } from './store';
 import { FONT_DEFAULT, FONT_MAX, FONT_MIN, clampFont } from '@/lib/display';
@@ -62,15 +66,10 @@ function statusText(m: Member): string {
   return (m.online ?? m.status === 'active') ? '在线' : '离线';
 }
 
-/** 成员：列表 → 详情 */
-export function MembersPanel({ members, onOpen }: { members: Member[]; onOpen: (m: Member) => void }) {
+function MemberRows({ list, onOpen }: { list: Member[]; onOpen: (m: Member) => void }) {
   return (
-    <div className="panel">
-      {members.length === 0 ? (
-        <p className="group-empty">还没有在职成员。在「能力地图」里填一个模型 Key，模型就会成为候选成员。</p>
-      ) : (
-        <Group title={`在职（${members.length}）`}>
-          {members.map((m) => (
+    <>
+          {list.map((m) => (
             <button key={m.id} type="button" className="row row-button" onClick={() => onOpen(m)}>
               <Avatar name={m.name} size="sm" />
               <span className="row-text">
@@ -83,17 +82,91 @@ export function MembersPanel({ members, onOpen }: { members: Member[]; onOpen: (
               <ChevronRight aria-hidden="true" className="row-chevron" />
             </button>
           ))}
-        </Group>
+    </>
+  );
+}
+
+/**
+ * 成员：列表 → 详情。列全部成员，按 在职 / 候选 / 已停用 分组（切片 5 / 审计 M1：以前只列在职，候选、停用的看不到也管不了）。
+ * 空状态 = 一句话 + 直达「添加成员」（审计 M2）。
+ */
+export function MembersPanel({ members, onOpen, onAdd, failed, onRetry }: { members: Member[]; onOpen: (m: Member) => void; onAdd?: () => void; failed?: boolean; onRetry?: () => void }) {
+  const active = members.filter((m) => m.enabled && m.status === 'active');
+  const candidates = members.filter((m) => m.enabled && m.status === 'candidate');
+  const off = members.filter((m) => !m.enabled);
+  return (
+    <div className="panel">
+      {/* 列表没读到：说清楚 + 重试，不假装「还没有成员」（切片 14） */}
+      {failed && onRetry && <ErrorRetry text="成员列表没读到。" what="成员" onRetry={onRetry} />}
+      {failed && members.length === 0 ? null : members.length === 0 ? (
+        <Empty
+          text="还没有成员。"
+          {...(onAdd
+            ? {
+                action: (
+                  <button type="button" className="btn btn-outline" onClick={onAdd}>
+                    添加成员
+                  </button>
+                ),
+              }
+            : {})}
+        />
+      ) : (
+        <>
+          {active.length > 0 && (
+            <Group title={`在职（${active.length}）`}>
+              <MemberRows list={active} onOpen={onOpen} />
+            </Group>
+          )}
+          {candidates.length > 0 && (
+            <Group title={`候选（${candidates.length}）`}>
+              <MemberRows list={candidates} onOpen={onOpen} />
+            </Group>
+          )}
+          {off.length > 0 && (
+            <Group title={`已停用（${off.length}）`}>
+              <MemberRows list={off} onOpen={onOpen} />
+            </Group>
+          )}
+        </>
       )}
     </div>
   );
 }
 
-export function MemberDetail({ member, onChat, onMention }: { member: Member; onChat: () => void; onMention: () => void }) {
+/**
+ * 成员详情（切片 8）：启用 / 停用走 PATCH /api/members/:id {enabled}，入职走 POST /api/members/:id/onboard（只给所有者）。
+ * 停用先确认；处理中锁住这几个按钮；结果只在 Core 回成功后播报，失败说清楚、按钮还能再点。
+ */
+export function MemberDetail({ member, onChat, onMention, onChanged }: { member: Member; onChat: () => void; onMention: () => void; onChanged?: (m: Member) => void }) {
   const { rows, reload } = useUsage(120_000);
   const row = rows?.find((r) => r.memberId === member.id);
+  const ask = useAsk();
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState('');
+  const [err, setErr] = useState('');
+  async function change(kind: 'enable' | 'disable' | 'onboard') {
+    if (busy) return;
+    if (kind === 'disable' && !(await ask.confirm({ title: `停用 ${member.name}？`, desc: '停用后 TA 不再回答，对话里也 @ 不到；随时可以再启用。', ok: '停用', danger: true }))) return;
+    setBusy(true);
+    setDone('');
+    setErr('');
+    try {
+      const r =
+        kind === 'onboard'
+          ? await api<{ member: Member }>('POST', `/api/members/${encodeURIComponent(member.id)}/onboard`)
+          : await api<{ member: Member }>('PATCH', `/api/members/${encodeURIComponent(member.id)}`, { enabled: kind === 'enable' });
+      onChanged?.(r.member);
+      setDone(kind === 'onboard' ? `${member.name} 已入职` : kind === 'enable' ? `已启用 ${member.name}` : `已停用 ${member.name}`);
+    } catch (e) {
+      setErr(errText(e, '没改成，请稍后再试'));
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
     <div className="panel">
+      {ask.node}
       <div className="profile">
         <Avatar name={member.name} size="lg" />
         <div>
@@ -108,7 +181,29 @@ export function MemberDetail({ member, onChat, onMention }: { member: Member; on
         <button type="button" className="btn btn-outline" onClick={onMention} aria-label={`在当前对话里点名 ${member.name}`}>
           在当前对话里点名
         </button>
+        {member.enabled && member.status === 'candidate' && !isFamily() && (
+          <button type="button" className="btn btn-outline" disabled={busy} onClick={() => void change('onboard')} aria-label={`让 ${member.name} 入职`}>
+            入职
+          </button>
+        )}
+        {member.enabled ? (
+          <button type="button" className="btn btn-outline" disabled={busy} onClick={() => void change('disable')} aria-label={`停用 ${member.name}`}>
+            停用
+          </button>
+        ) : (
+          <button type="button" className="btn btn-outline" disabled={busy} onClick={() => void change('enable')} aria-label={`启用 ${member.name}`}>
+            启用
+          </button>
+        )}
       </div>
+      <p role="status" className="note">
+        {done}
+      </p>
+      {err && (
+        <p role="alert" className="note note-error">
+          {err}
+        </p>
+      )}
       <Group title="能力">
         <Field label="能力标签">
           <span>{member.capabilityTags.length ? member.capabilityTags.join('、') : '—'}</span>
@@ -132,10 +227,27 @@ export function MemberDetail({ member, onChat, onMention }: { member: Member; on
  * 挑选成员新建（所有者 11-05 12:15）：默认的新对话是全员；这里自己挑。
  * 挑一位 = 和 TA 单聊；挑几位 = 这几位一起回答，对话里 @ 只列这几位。
  */
-export function GroupNewPanel({ members, onStart }: { members: Member[]; onStart: (names: string[]) => void }) {
+export function GroupNewPanel({ members, onStart, onAdd }: { members: Member[]; onStart: (names: string[]) => void; onAdd?: () => void }) {
   const [pick, setPick] = useState<string[]>([]);
   const all = members.length > 0 && pick.length === members.length;
-  if (members.length === 0) return <div className="panel"><p className="group-empty">还没有成员。先在资源库里添加一位。</p></div>;
+  // 空状态直达添加成员（审计 M3）
+  if (members.length === 0)
+    return (
+      <div className="panel">
+        <Empty
+          text="还没有在职成员。"
+          {...(onAdd
+            ? {
+                action: (
+                  <button type="button" className="btn btn-outline" onClick={onAdd}>
+                    添加成员
+                  </button>
+                ),
+              }
+            : {})}
+        />
+      </div>
+    );
   return (
     <div className="panel">
       <fieldset className="group-block">
@@ -349,8 +461,14 @@ export function SettingsSectionBody({ section, prefs, setPrefs, onGo, members = 
 }
 
 /** 桌面 / 中等宽度：居中弹窗，左边分组、右边内容（照 sumus 05–12 号截图），右上角 × 关闭 */
-export function SettingsDialog({ open, onClose, prefs, setPrefs, onGo, members }: PrefsProps & GoProps & { open: boolean; onClose: () => void }) {
-  const [section, setSection] = useState<SettingsSection>('profile');
+export function SettingsDialog({ open, onClose, prefs, setPrefs, onGo, members, section: routed, onSection }: PrefsProps & GoProps & { open: boolean; onClose: () => void; section?: SettingsSection | undefined; onSection?: (s: SettingsSection) => void }) {
+  const [own, setOwn] = useState<SettingsSection>('profile');
+  // 分组由地址给（/settings/<分组>，切片 2）；没给就用自己记的
+  const section = routed && visibleSections().some((x) => x.id === routed) ? routed : own;
+  const setSection = (s: SettingsSection) => {
+    setOwn(s);
+    onSection?.(s);
+  };
   return (
     <Dialog
       open={open}

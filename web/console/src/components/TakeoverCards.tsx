@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ApiError, api } from '@/lib/api';
+import { useAsk } from '@/components/Dialog';
 
 interface Task {
   id: string;
@@ -28,6 +29,8 @@ const reasons: Record<string, string> = {
 export function TakeoverCards() {
   const [cards, setCards] = useState<Array<Takeover & { site?: string }>>([]);
   const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState<string | null>(null);
+  const ask = useAsk();
 
   const load = useCallback(async () => {
     try {
@@ -49,7 +52,11 @@ export function TakeoverCards() {
     void load();
   }, [load]);
 
-  async function resolve(c: Takeover, cancel: boolean) {
+  async function resolve(c: Takeover & { site?: string }, cancel: boolean) {
+    if (busy) return;
+    // 放弃 = 取消整个任务：先确认，说清是哪个任务（审计 I2）；关掉确认不做决定
+    if (cancel && !(await ask.confirm({ title: `放弃${c.site ? `「${c.site}」` : '这个'}任务？`, desc: '任务会被取消，关掉这个窗口不会做任何决定。', ok: '放弃任务', danger: true }))) return;
+    setBusy(c.id);
     setMsg('');
     try {
       await api('POST', `/api/tasks/${c.taskId}/takeovers/${c.id}/resolve`, { cancel });
@@ -57,15 +64,18 @@ export function TakeoverCards() {
       await load();
     } catch (e) {
       setMsg(e instanceof ApiError ? e.message : '操作失败，请稍后再试');
+    } finally {
+      setBusy(null);
     }
   }
 
   if (cards.length === 0 && !msg) return null;
   return (
     <div className="space-y-2" aria-labelledby="takeover-title" role="region">
-      <h2 id="takeover-title" className="group-title">
+      {ask.node}
+      <h3 id="takeover-title" className="group-title">
         需要你亲自处理
-      </h2>
+      </h3>
       <p role="status" className="text-[var(--muted)]">
         {msg}
       </p>
@@ -78,10 +88,10 @@ export function TakeoverCards() {
             </p>
             <p className="whitespace-pre-wrap text-[var(--muted)]">{c.message}</p>
             <div className="flex flex-wrap gap-2">
-              <Button onClick={() => resolve(c, false)}>
+              <Button disabled={busy === c.id} onClick={() => resolve(c, false)}>
                 我已处理，继续
               </Button>
-              <Button onClick={() => resolve(c, true)}>
+              <Button disabled={busy === c.id} onClick={() => resolve(c, true)}>
                 放弃
               </Button>
             </div>
