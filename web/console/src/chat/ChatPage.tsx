@@ -22,6 +22,7 @@ import { BackButton, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SET
 import { applyDisplay } from '@/lib/display';
 import { listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
 import { useAsk } from '@/components/Dialog';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import './chat.css';
 
 // 不常开的面板点开才下载（#250：对话页包 ≤150 KB gz）。设置、成员随对话页一起加载，打开不用等。
@@ -598,6 +599,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
       <>
         <PanelHeader title={title} lead={phone ? null : menuButton} {...(parent ? { onBack: () => ('go' in parent ? parent.go() : parent.view.kind === 'settings' && !phone ? setView(parent.view, { state: { bg: '/chat' } }) : setView(parent.view)), backLabel: parent.label, ...('aria' in parent && parent.aria ? { backAria: parent.aria } : {}) } : {})} />
         <div className="panel-scroll">
+          <ErrorBoundary key={location.pathname + location.search} onReset={() => setView({ kind: 'chat' })}>
           <Later>
           {view.kind === 'members' && (
             <>
@@ -679,6 +681,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
             </div>
           )}
           </Later>
+          </ErrorBoundary>
         </div>
       </>
     );

@@ -23,6 +23,7 @@ import { ChatStreamError, type FailureCode, dayLabel, loadDraft, saveDraft, sign
 import { Avatar } from './Avatar';
 import { AnnounceContext, useAnnounce } from './announce';
 import { DEFAULT_RATE, pickVoice, speaker, speechSupported } from './speech';
+import { useAsk } from '@/components/Dialog';
 
 // Markdown 引擎单独打包、按需加载（首屏先出对话框和输入框）；没到之前按纯文字显示（同样不渲染 HTML）
 const LazyMarkdown = lazy(() => import('./Markdown'));
@@ -386,6 +387,7 @@ export function Thread({ conversation, onMessages, insert, onInserted, hidden = 
     [fetchImpl, setMessages],
   );
 
+  const ask = useAsk();
   const runtime = useExternalStoreRuntime<UiMessage>({
     messages,
     isRunning,
@@ -399,6 +401,9 @@ export function Thread({ conversation, onMessages, insert, onInserted, hidden = 
     onReload: async (parentId: string | null) => {
       const i = parentId ? messages.findIndex((m) => m.id === parentId) : -1;
       if (i < 0) return;
+      // 旧回复上的重试会删掉它后面的对话：先确认（切片 7 / 审计 C10）；关掉确认什么都不变
+      const later = messages.length - (i + 2);
+      if (later > 0 && !(await ask.confirm({ title: '重新回答这一条？', desc: `后面的 ${later} 条消息会被删掉，删了找不回来。`, ok: '重新回答', danger: true }))) return;
       await run(messages.slice(0, i + 1));
     },
     onCancel: async () => abortRef.current?.abort(),
@@ -516,6 +521,7 @@ export function Thread({ conversation, onMessages, insert, onInserted, hidden = 
 
   return (
     <AnnounceContext.Provider value={announce}>
+    {ask.node}
     <SpeechContext.Provider value={speech}>
     <ThreadInfoContext.Provider value={info}>
     <AssistantRuntimeProvider runtime={runtime}>

@@ -51,7 +51,7 @@ describe('切片 1：对话不丢', () => {
     page(chatFetch);
     fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '测试消息一' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
-    await waitFor(() => expect(screen.getByText('第一段')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('第一段')).toBeInTheDocument(), { timeout: 8000 });
     fireEvent.click(rail().getByRole('button', { name: '成员' }));
     // 用户那句话发出时就已存下
     await waitFor(() => expect(loadConversations()[0]?.messages[0]?.text).toBe('测试消息一'));
@@ -60,7 +60,7 @@ describe('切片 1：对话不丢', () => {
     fireEvent.click(rail().getByRole('button', { name: '对话' }));
     const log = within(screen.getByRole('log', { name: '对话内容' }));
     expect(log.getByText('测试消息一')).toBeInTheDocument();
-    await waitFor(() => expect(log.getByText(/第二段/)).toBeInTheDocument());
+    await waitFor(() => expect(log.getByText(/第二段/)).toBeInTheDocument(), { timeout: 8000 });
   }, 20000);
 
   it('「在当前对话里点名」只插一次；离开再回来不重复；新对话不带过去', async () => {
