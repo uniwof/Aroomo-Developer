@@ -15,6 +15,7 @@ const CSRF = { 'x-aroomo-request': '1' };
 const enc = new TextEncoder();
 
 type Mode = 'ok' | 'slow' | 'error';
+type Json = Record<string, unknown>;
 
 /** 解析 UI Message Stream：返回事件对象列表（[DONE] 记为 'DONE'） */
 function events(body: string): Array<Record<string, unknown> | 'DONE'> {
@@ -355,6 +356,48 @@ describe('toUiMessageStream（OpenAI SSE → AI SDK UI Message Stream）', () =>
   it('上游没发 [DONE] 就结束：照样收尾', async () => {
     const body = await read(toUiMessageStream(src([`data: ${JSON.stringify({ choices: [{ delta: { content: 'a' } }] })}\n\n`])));
     expect(events(body).at(-2)).toMatchObject({ type: 'finish' });
+  });
+
+  // 回归（711fc3d，staging 真模型首包后卡住）：真上游按需一段一段给（pull），第一段常是只有 role 的空分片，
+  // 接着可能是 reasoning_content（也不是文字）。转换流读到这种分片时必须继续往下读，不能停在「正在回复」。
+  const lazy = (events: Json[], gapMs = 5) => {
+    const queue = [...events.map((e) => `data: ${JSON.stringify(e)}\n\n`), 'data: [DONE]\n\n'];
+    return new ReadableStream<Uint8Array>({
+      async pull(c) {
+        await new Promise((r) => setTimeout(r, gapMs));
+        const next = queue.shift();
+        if (next === undefined) c.close();
+        else c.enqueue(enc.encode(next));
+      },
+    });
+  };
+  const withTimeout = <T,>(p: Promise<T>, ms = 2000) =>
+    Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`卡住：${ms}ms 内没有收完`)), ms))]);
+  const realFirstChunks: Json[] = [
+    { choices: [{ index: 0, delta: { role: 'assistant', content: '' } }] },
+    { choices: [{ index: 0, delta: { role: 'assistant' } }] },
+    { choices: [{ index: 0, delta: { reasoning_content: '先想一想' } }] },
+    { choices: [] },
+    { choices: [{ index: 0, delta: { content: '你好' } }] },
+    { choices: [{ index: 0, delta: { content: '，在的' } }] },
+    { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { total_tokens: 9 } },
+  ];
+
+  it('回归：上游按需分片、开头几段没有文字（空 role / reasoning_content / 空 choices）也能读完，不卡住', async () => {
+    const body = await withTimeout(read(toUiMessageStream(lazy(realFirstChunks))));
+    expect(textOf(body)).toBe('你好，在的');
+    expect(textOf(body)).not.toContain('先想一想');
+    expect(events(body).at(-1)).toBe('DONE');
+  });
+
+  it('回归：外面再包一层流（像 ChatService 那样转发）也不卡住；整段全是无文字分片照样收尾', async () => {
+    const wrap = (s: ReadableStream<Uint8Array>) => s.pipeThrough(new TransformStream<Uint8Array, Uint8Array>());
+    const body = await withTimeout(read(toUiMessageStream(wrap(lazy(realFirstChunks)))));
+    expect(textOf(body)).toBe('你好，在的');
+    const empty = await withTimeout(read(toUiMessageStream(wrap(lazy(realFirstChunks.slice(0, 4))))));
+    expect(textOf(empty)).toBe('');
+    expect(events(empty).filter((x) => x !== 'DONE' && x.type === 'finish')).toHaveLength(1);
+    expect(events(empty).at(-1)).toBe('DONE');
   });
 
   it('不渲染 HTML 是前端的事，但这里原样当纯文字转发（不解释、不拼进别的字段）', async () => {

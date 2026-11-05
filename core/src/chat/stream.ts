@@ -15,6 +15,7 @@
 import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { scopeOf } from '../auth/plugin.js';
 import { CSRF_HEADER, readSessionCookie } from '../auth/session-cookie.js';
 import { HttpError } from '../http/errors.js';
 import { CHAT_MODEL, MEMBER_MODEL_PREFIX, type ChatFailureCode, type ChatService, type ChatUserCtx } from './service.js';
@@ -235,7 +236,7 @@ export interface ChatStreamOptions {
   now?: () => number;
 }
 
-/** 只认控制台会话：没有 Cookie / 带了 Authorization / 不是账号 / 没有 CSRF 头 → 拒绝；返回会话里的 userId */
+/** 只认控制台会话：没有 Cookie / 带了 Authorization / 不是账号 / 没有 CSRF 头 → 拒绝；返回数据范围（scopeOf：账号 id，所有者自己的账号 = 'owner'） */
 function sessionUser(req: FastifyRequest): string {
   if (req.headers.authorization) throw new HttpError(401, 'SESSION_REQUIRED', '请从控制台登录后再对话');
   if (!readSessionCookie(req.headers.cookie)) throw new HttpError(401, 'UNAUTHORIZED', '请先登录');
@@ -243,7 +244,7 @@ function sessionUser(req: FastifyRequest): string {
   if (!p || p.type !== 'user') throw new HttpError(401, 'UNAUTHORIZED', '请先登录');
   // 认证钩子已经对 Cookie + POST 检查过 CSRF 头；这里再查一次，防止以后钩子改动漏掉
   if (!req.headers[CSRF_HEADER]) throw new HttpError(403, 'CSRF', `用 Cookie 登录时，改动类请求要带 ${CSRF_HEADER} 头`);
-  return p.userId;
+  return scopeOf(req);
 }
 
 export function registerChatStreamRoute(app: FastifyInstance, chat: ChatService, opts: ChatStreamOptions): void {
@@ -266,10 +267,11 @@ export function registerChatStreamRoute(app: FastifyInstance, chat: ChatService,
       },
     },
     async (req, reply) => {
-      const userId = sessionUser(req);
+      // 'owner' = 所有者自己的账号（必改 1 方案 A）：走全局依赖（所有者的成员 / 负责人 / 规矩 / 敏感保护，用量照记）
+      const scope = sessionUser(req);
       const messages = normalizeMessages(req.body.messages);
       const model = normalizeModel(req.body.model);
-      const release = limiter.acquire(userId);
+      const release = limiter.acquire(scope);
       if (!release) {
         await req.audit('auth.denied', { type: 'rate', id: '/api/chat/stream' }, 'denied', '对话请求太频繁');
         throw new HttpError(429, 'RATE_LIMITED', '说得太快了，请稍等一下再发');
@@ -282,7 +284,7 @@ export function registerChatStreamRoute(app: FastifyInstance, chat: ChatService,
       });
       let body: ReadableStream<Uint8Array>;
       try {
-        const out = await chat.complete({ model, stream: true, messages }, ctrl.signal, opts.ctxFor(userId));
+        const out = await chat.complete({ model, stream: true, messages }, ctrl.signal, scope === 'owner' ? undefined : opts.ctxFor(scope));
         if (out.failure) {
           // 整条回复都失败：不发那段提示文字，改发 error（只有固定的一句话 + 失败码）。/v1 不走这里，行为不变
           await out.stream?.cancel().catch(() => undefined);

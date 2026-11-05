@@ -64,8 +64,9 @@ export function freezeEntry(e: AuditEntry): AuditEntry {
 }
 
 /** 便捷函数：把 actor 绑定好，得到各模块约定的 audit(action, target, result, note?) 回调。 */
-export function bindAudit(log: AuditLog, actor: AuditActor): AuditFn {
+export function bindAudit(log: AuditLog, actor: AuditActor, notePrefix?: string): AuditFn {
   return async (action, target, result, note) => {
-    await log.append({ actor, action, target, result, ...(note !== undefined ? { note } : {}) });
+    const n = notePrefix ? (note !== undefined ? `${notePrefix}; ${note}` : notePrefix) : note;
+    await log.append({ actor, action, target, result, ...(n !== undefined ? { note: n } : {}) });
   };
 }
