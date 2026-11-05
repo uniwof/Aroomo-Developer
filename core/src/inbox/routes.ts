@@ -25,6 +25,7 @@ export function inboxJson(i: InboxItem) {
 }
 
 /** 收件箱里所有者条目的 userId 缺省（undefined）；账号用自己的 id。 */
+// 读取接口对账号开放（按 scopeOf 只看本人的，#250）；动作/忽略仍只给主人和操作员：动作处理器按 kind 可能改主人全局数据，开放前要逐个核对
 const inboxUser = (req: FastifyRequest): string | undefined => {
   const s = scopeOf(req);
   return s === 'owner' ? undefined : s;
@@ -89,7 +90,7 @@ export function registerInboxRoutes(app: FastifyInstance, svc: InboxService): vo
   app.get<{ Querystring: { group?: InboxGroup; status?: InboxStatus; type?: InboxType } }>(
     '/api/inbox',
     {
-      ...guard('inbox:read'),
+      ...guard('inbox:read', { user: true }),
       schema: {
         querystring: {
           type: 'object',
@@ -114,7 +115,7 @@ export function registerInboxRoutes(app: FastifyInstance, svc: InboxService): vo
     },
   );
 
-  app.get('/api/inbox/unread-count', { ...guard('inbox:read') }, async (req) => svc.unreadCount(inboxUser(req)));
+  app.get('/api/inbox/unread-count', { ...guard('inbox:read', { user: true }) }, async (req) => svc.unreadCount(inboxUser(req)));
 
   app.post<{ Params: { id: string; actionId: string }; Body: { confirmToken?: string } | undefined }>(
     '/api/inbox/:id/actions/:actionId',
