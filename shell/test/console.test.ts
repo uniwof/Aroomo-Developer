@@ -39,6 +39,7 @@ beforeAll(async () => {
   mkdirSync(path.join(dir, 'assets'));
   writeFileSync(path.join(dir, 'index.html'), '<!doctype html><html><head><title>c</title></head><body></body></html>');
   writeFileSync(path.join(dir, 'assets', 'a.js'), 'console.log(1)');
+  writeFileSync(path.join(dir, 'favicon.svg'), '<svg/>');
   const cfg = loadConfig({ SHELL_CONSOLE_DIR: dir, CORE_UPSTREAM: coreUrl, CORE_OWNER_TOKEN: TOKEN, SHELL_OWNER_USER_ID: 'owner-id' });
   shell = createShellServer(cfg, { session: {
       check: async (c) => Boolean(c?.includes('session=')),
@@ -69,6 +70,12 @@ describe('Shell 提供控制台 /console', () => {
     expect(await page.text()).toContain('<meta name="aroomo-shell" content="1">');
     const js = await fetch(`${base}/console/assets/a.js`, { headers: h });
     expect(await js.text()).toBe('console.log(1)');
+  });
+  it('带哈希的 assets/ 长期缓存（immutable），其他文件仍 5 分钟，页面不缓存', async () => {
+    const h = { cookie: 'session=good' };
+    expect((await fetch(`${base}/console/assets/a.js`, { headers: h })).headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
+    expect((await fetch(`${base}/console/favicon.svg`, { headers: h })).headers.get('cache-control')).toBe('public, max-age=300');
+    expect((await fetch(`${base}/console/chat`, { headers: h })).headers.get('cache-control')).toBe('no-store');
   });
   it('不能用 .. 跳出目录', async () => {
     const r = await fetch(`${base}/console/..%2f..%2fetc%2fpasswd.txt`, { headers: { cookie: 'session=good' } });
