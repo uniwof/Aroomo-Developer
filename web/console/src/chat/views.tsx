@@ -429,7 +429,7 @@ interface GatewayTool {
   risk: 'read' | 'write' | 'spend' | 'danger';
 }
 const RISK_LABEL: Record<GatewayTool['risk'], string> = { read: '只读', write: '会改东西', spend: '花钱前先问你', danger: '做之前先问你' };
-const TOOL_NAME: Record<string, string> = { read_webpage: '读网页' };
+const TOOL_NAME: Record<string, string> = { read_webpage: '读网页', browser_task_create: '派浏览器任务', browser_task_status: '查浏览器任务', browser_task_cancel: '取消浏览器任务' };
 const usable = (s: string) => s === 'ready' || s === 'keyless';
 
 export function ToolsView({ onGo }: { onGo: (k: 'keys') => void }) {

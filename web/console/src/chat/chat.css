@@ -1898,6 +1898,11 @@ kbd.row-value {
 .group-block > .seg {
   margin-bottom: 0.75rem;
 }
+/* 筛选照 sumus 分类标签：靠左、按内容宽，不拉满整行 */
+.panel > .seg,
+.group-block > .seg {
+  align-self: flex-start;
+}
 .group-block > .group-head {
   margin-bottom: 0.5rem;
 }
