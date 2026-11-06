@@ -15,11 +15,13 @@ export const MARKERS = {
   // 没用 /api/work/：那些请求都在 WorkPage 懒加载包里，WORK 打开时对话页包里也没有，查了等于没查（实测 2026-11-07）。
   WORK: [/\/work(?![\w-])/],
   ASSISTANTS: ['助手列表没加载出来'],
+  // #329（负责人 #328 建议）：现在不在对话页包里（出现 0 次照样绿），以后谁把它们直接 import 进对话页又没加开关，当场抓到。
+  // 标志文字是组件独有的界面字：TaskCard 的确认块「花多少：」、反问块输入框「写你的回答」；QuickReplies 的「我自己写…」
+  TASK_CARDS: ['花多少：', '写你的回答'],
+  QUICK_REPLIES: ['我自己写…'],
 };
 // 不查的开关和原因（核对时间 2026-11-07，#327）。代码挪进对话页包了就改成 MARKERS。
 export const NO_MARKER = {
-  TASK_CARDS: '只在 AssistantPages 懒加载包里用（TaskCard 只被 AssistantPages import），对话页包里没有它的代码',
-  QUICK_REPLIES: '还没接到界面：QuickReplies.tsx 没有人 import，不进任何包',
   ASSISTANT_DRAFT: '对话页包里只有 ChatPage 一个三元式（受 ASSISTANTS 一起管）；草稿卡在 AssistantPages / ChatDraftCard 懒加载包',
   SAVED_CHATS: '只决定走 Core 还是本机：saved.ts 被 Sidebar 搜索直接 import，/api/conversations 关着也在包里，没有只属于它的文字',
   SKELETON_SHIMMER: '只换一个 class 名（sk--shimmer），AppSkeleton 在入口包（App.tsx），不在对话页包',
