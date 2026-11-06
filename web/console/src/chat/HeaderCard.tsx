@@ -112,8 +112,8 @@ export function HeaderCard({
                 onView();
               }}
             >
-              {/* 群聊打开的也是全部成员（成员页不按群筛）：字照实说（审计 C15） */}
-              <span>{kind === 'member' ? '查看成员' : '查看所有成员'}</span>
+              {/* 群聊打开成员页时只列这个群里的成员（审计 C15）；交给负责人的对话打开全部 */}
+              <span>{kind === 'member' ? '查看成员' : kind === 'group' ? '查看群成员' : '查看所有成员'}</span>
               <ArrowUpRight aria-hidden="true" />
             </button>
           )}

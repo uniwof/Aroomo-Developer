@@ -11,7 +11,8 @@ import type { SettingsSection } from './panels';
 export type View =
   | { kind: 'chat' }
   | { kind: 'console' }
-  | { kind: 'members' }
+  /** chat：从群聊顶栏卡进来时只列这个群里的成员（审计 C15），/team?chat=<会话 id> */
+  | { kind: 'members'; chat?: string }
   | { kind: 'member'; id: string }
   | { kind: 'capmap' }
   | { kind: 'group-new' }
@@ -40,7 +41,7 @@ export function pathOf(v: View): string {
     case 'console':
       return '/console';
     case 'members':
-      return '/team';
+      return v.chat ? `/team?chat=${encodeURIComponent(v.chat)}` : '/team';
     case 'member':
       return `/team?member=${encodeURIComponent(v.id)}`;
     case 'capmap':
@@ -99,7 +100,9 @@ export function viewOf(pathname: string, search: string): View {
   const q = new URLSearchParams(search);
   if (p === '/team') {
     const id = q.get('member');
-    return id ? { kind: 'member', id } : { kind: 'members' };
+    if (id) return { kind: 'member', id };
+    const chat = q.get('chat');
+    return chat ? { kind: 'members', chat } : { kind: 'members' };
   }
   if (p === '/console') return { kind: 'console' };
   if (p === '/hub/capabilities' || p === '/team/capabilities') return { kind: 'capmap' };

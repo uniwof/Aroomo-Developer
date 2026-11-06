@@ -744,7 +744,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
             intro={intro}
             model={who.model}
             creator={who.kind === 'lead' ? 'Aroomo（内置）' : currentUser()?.displayName || currentUser()?.email || '我'}
-            {...(currentMember ? { onView: () => setView({ kind: 'member', id: currentMember.id }) } : { onView: () => setView({ kind: 'members' }) })}
+            {...(currentMember ? { onView: () => setView({ kind: 'member', id: currentMember.id }) } : { onView: () => setView(isGroup ? { kind: 'members', chat: current.id } : { kind: 'members' }) })}
             extra={
               <div className="topic">
                 <button type="button" className="topic-chip hit" aria-haspopup="true" aria-expanded={menu === 'topic'} aria-label={`话题：${current.messages.length ? current.title : '新话题'}，切换话题`} onClick={() => setMenu((m) => (m === 'topic' ? 'none' : 'topic'))}>
@@ -876,7 +876,9 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   );
   let main: React.ReactNode = null;
   if (!inChat) {
-    const parent = phone ? phoneParent(view) : parentOf(view);
+    // C15：从群聊进来的成员页只列群里的人；找不到这个群就列全部
+    const groupConv = view.kind === 'members' && view.chat ? list.find((c) => c.id === view.chat && c.group?.length) : undefined;
+    const parent = groupConv ? { go: () => void openConversation(groupConv.id), label: '对话', aria: '返回这段群聊' } : phone ? phoneParent(view) : parentOf(view);
     const member = view.kind === 'member' ? allMembers.find((m) => m.id === view.id) : undefined;
     const title = view.kind === 'member' ? (member?.name ?? '成员') : view.kind === 'assistant' ? (assistants?.find((a) => a.id === view.id)?.name ?? '助手') : view.kind === 'settings' && view.section ? SETTINGS_SECTIONS.find((x) => x.id === view.section)!.label : TITLES[view.kind];
     main = (
@@ -887,7 +889,19 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           <Later>
           {view.kind === 'members' && (
             <>
-              <MembersPanel members={allMembers} failed={membersFailed} onRetry={reloadMembers} onOpen={(m) => setView({ kind: 'member', id: m.id })} {...(isFamily() ? {} : { onAdd: () => setAddMember({}) })} />
+              {groupConv && (
+                <div className="panel">
+                  <p className="row-hint">只列「{groupConv.title.replace(/^群聊：/, '')}」这个群里的 {groupConv.group!.length} 位成员。</p>
+                  <div className="group">
+                    <button type="button" className="row row-button" onClick={() => setView({ kind: 'members' })}>
+                      <span className="row-text">
+                        <span className="row-label">查看所有成员</span>
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              )}
+              <MembersPanel members={groupConv ? allMembers.filter((m) => groupConv.group!.includes(m.name)) : allMembers} failed={membersFailed} onRetry={reloadMembers} onOpen={(m) => setView({ kind: 'member', id: m.id })} {...(isFamily() ? {} : { onAdd: () => setAddMember({}) })} />
               <div className="panel">
                 <div className="group">
                   <button type="button" className="row row-button" onClick={() => setView({ kind: 'capmap' })}>
