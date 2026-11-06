@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { ApiError, api, logout, type Member } from '@/lib/api';
-import { ClientTokens } from '@/components/ClientTokens';
+import { ClientTokensLazy } from '@/components/ClientTokensLazy';
 
 interface LeadSetting {
   leadId: string | null;
@@ -287,7 +287,7 @@ export function ExternalGroup() {
   return (
     <Group title="外部接入">
       <McpSection />
-      <ClientTokens />
+      <ClientTokensLazy />
     </Group>
   );
 }
