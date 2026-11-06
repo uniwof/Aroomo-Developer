@@ -1069,7 +1069,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
                   <div className="group">
                     <button type="button" className="row row-button" onClick={() => setView({ kind: 'members' })}>
                       <span className="row-text">
-                        <span className="row-label">查看所有成员</span>
+                        <span className="row-label">看全部成员</span>
                       </span>
                     </button>
                   </div>

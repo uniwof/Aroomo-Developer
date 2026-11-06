@@ -307,7 +307,7 @@ const Working: FC<{ name: string }> = ({ name }) => {
   if (!empty) return null;
   return (
     <p className="msg-working" aria-hidden="true">
-      {name} 收到了，马上回你…
+      {name} 在想…
     </p>
   );
 };
