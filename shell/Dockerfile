@@ -14,6 +14,8 @@ WORKDIR /app
 COPY --from=build /app/package.json ./
 COPY --from=build /app/dist ./dist
 COPY public ./public
+# 运行时不用 npm：删掉镜像自带的 npm/npx，它们的依赖是 Trivy 报的全部 HIGH（#177）
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=15s --timeout=5s --start-period=5s --retries=5 \
