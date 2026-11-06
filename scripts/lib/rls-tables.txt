@@ -1,6 +1,6 @@
 # 开了 RLS（ENABLE + FORCE ROW LEVEL SECURITY）的表，一行一张（迁移 0019–0024）。
 # release-precheck.sh 检查 1 只对这份清单里的表查空串 / NULL user_id；表不存在或查询出错都算失败。
-# 以后新增 RLS 迁移，同一个 PR 里把表名加到这里。
+# 以后新增 RLS 迁移，同一个 PR 里把表名加到这里（core/test/rls-list.test.ts 会对照迁移查漏）。
 members
 public_memory
 public_memory_versions
@@ -15,3 +15,5 @@ assistants
 assistant_members
 assistant_runs
 run_steps
+# Web Push 订阅（迁移 0029）
+push_subscriptions
