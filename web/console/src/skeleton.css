@@ -1,7 +1,7 @@
 /*
  * 骨架屏（src/components/Skeleton.tsx 和 index.html 共用）。跟首屏样式一起到，不等对话页的包。
  * 尺寸照对话页（sumus 量取值 / 16 → rem）：窄栏 48、列表栏 300、顶栏 48、会话行 64、输入卡 800×86、圆角 14。
- * 静态：不做动画。.sk--shimmer（FLAGS.skeletonShimmer，默认关）才有微光；系统设了「减少动态效果」时照样不动。
+ * 静态：不做动画。.sk--shimmer（SKELETON_SHIMMER，默认关）才有微光；系统设了「减少动态效果」时照样不动。
  * 静态 HTML 在 Shell 的 CSP（default-src 'self'）下不能写 style 属性，宽度都用类名。
  */
 .sk {
@@ -207,7 +207,7 @@
   }
 }
 
-/* 微光（默认关，FLAGS.skeletonShimmer）。全站「* { animation: none !important }」要用更具体的 !important 才盖得过 */
+/* 微光（默认关，SKELETON_SHIMMER）。全站「* { animation: none !important }」要用更具体的 !important 才盖得过 */
 @keyframes sk-shimmer {
   from {
     background-position: 100% 0;

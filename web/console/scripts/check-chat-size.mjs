@@ -2,6 +2,7 @@
 // 读 `vite build` 的输出（就是大家在构建日志里看到的那个 gzip 数），超了就失败，免得再悄悄涨回去。
 // 用法：npm run build 2>&1 | tee build.log && node scripts/check-chat-size.mjs build.log
 import { readFileSync } from 'node:fs';
+import { checkFlagsShaken } from './check-flags-shaken.mjs';
 
 const LIMIT_KB = 150;
 const log = readFileSync(process.argv[2] ?? 'build.log', 'utf8').replace(/\u001b\[[0-9;]*m/g, '');
@@ -16,3 +17,10 @@ if (kb > LIMIT_KB) {
   process.exit(1);
 }
 console.log(`对话页包 gzip ${kb} kB ≤ ${LIMIT_KB} kB（余量 ${(LIMIT_KB - kb).toFixed(2)} kB）`);
+// 关着的开关不进对话页包（不然腾出的余量是假的）
+const leaked = checkFlagsShaken();
+if (leaked.length) {
+  console.error('关着的功能进了对话页包（开关要写成顶层常量、直接 import，见 src/lib/flags.ts）：\n' + leaked.join('\n'));
+  process.exit(1);
+}
+console.log('关着的开关都没进对话页包');

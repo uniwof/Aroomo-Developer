@@ -1,5 +1,5 @@
 /**
- * 方案 v2.2 阶段 3「会话存库，浏览器里的会话可以一键导入 Core」（FLAGS.savedChats）。
+ * 方案 v2.2 阶段 3「会话存库，浏览器里的会话可以一键导入 Core」（SAVED_CHATS）。
  * 打开页面时自动导入一次照旧；没导进去的（自动那次失败、或之后又多了本机会话），会话列表上方给一行说明 + 一个「导入」按钮，
  * 点一下就导，结果读屏能听到。家人账号、全部导入过的、没开存库的都不显示。
  */
@@ -9,7 +9,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { ChatPage } from '@/chat/ChatPage';
 import { importedKey, localPending } from '@/chat/saved';
 import { saveConversations, type Conversation } from '@/chat/store';
-vi.mock('@/lib/flags', () => ({ FLAGS: { taskCards: false, quickReplies: false, convFilter: true, schedulePage: false, assistantDraft: false, assistants: false, savedChats: true, skeletonShimmer: false } }));
+vi.mock('@/lib/flags', () => ({ TASK_CARDS: false, QUICK_REPLIES: false, CONV_FILTER: true, SCHEDULE_PAGE: false, ASSISTANT_DRAFT: false, ASSISTANTS: false, SAVED_CHATS: true, SKELETON_SHIMMER: false }));
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 const A = 'aaaaaaaa-0000-4000-8000-000000000001';

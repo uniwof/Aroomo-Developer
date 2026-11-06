@@ -1,5 +1,5 @@
 /**
- * 会话存库（#250 integrate/stage2，开关 FLAGS.savedChats）：对话列表和消息从 Core 的 /api/conversations 读，
+ * 会话存库（#250 integrate/stage2，开关 SAVED_CHATS）：对话列表和消息从 Core 的 /api/conversations 读，
  * 发消息时 /api/chat/stream 带 conversationId，由 Core 只追加地存（X-21）。
  * 所有者第一次打开时把浏览器本机的旧会话导入一次（本机那份不删）；家人账号不导入。
  * #287：只导当前账号自己存的那份（本机会话按账号分键，store.chatKey）；旧的共用键看不出是谁的，永不导入。

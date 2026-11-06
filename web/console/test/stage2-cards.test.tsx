@@ -4,7 +4,8 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { FLAGS } from '@/lib/flags';
+import * as F from '@/lib/flags';
+import { WORK } from '@/lib/work-flag';
 import { QuickReplies } from '@/chat/thread/cards/QuickReplies';
 import { TaskCard, progressText, type TaskStep } from '@/chat/thread/cards/TaskCard';
 import { AssistantDraftCard, type AssistantDraft } from '@/chat/thread/cards/AssistantDraftCard';
@@ -16,7 +17,8 @@ afterEach(cleanup);
 
 describe('开关', () => {
   it('阶段 1.5（负责人裁定 B）：阶段 2/3 的开关全关，生产不露入口；验收后测一项开一项', () => {
-    expect(FLAGS).toEqual({ taskCards: false, quickReplies: false, convFilter: false, schedulePage: false, assistantDraft: false, assistants: false, savedChats: false, skeletonShimmer: false, work: false });
+    expect({ ...F }).toEqual({ TASK_CARDS: false, QUICK_REPLIES: false, CONV_FILTER: false, SCHEDULE_PAGE: false, ASSISTANT_DRAFT: false, ASSISTANTS: false, SAVED_CHATS: false, SKELETON_SHIMMER: false });
+    expect(WORK).toBe(false);
   });
 });
 

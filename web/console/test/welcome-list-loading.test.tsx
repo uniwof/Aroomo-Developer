@@ -4,7 +4,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ChatPage } from '@/chat/ChatPage';
 
-vi.mock('@/lib/flags', () => ({ FLAGS: { taskCards: true, quickReplies: false, convFilter: true, schedulePage: true, assistantDraft: true, assistants: true, savedChats: true, skeletonShimmer: false } }));
+vi.mock('@/lib/flags', () => ({ TASK_CARDS: true, QUICK_REPLIES: false, CONV_FILTER: true, SCHEDULE_PAGE: true, ASSISTANT_DRAFT: true, ASSISTANTS: true, SAVED_CHATS: true, SKELETON_SHIMMER: false }));
 
 const WELCOME = '你好，我是负责人。想做什么，直接在下面说，我来回答，或者交给合适的成员。想找某一位，就 @ 它的名字。';
 const USUAL = '所有成员都在。直接说，负责人回答；@ 谁，谁回答。';

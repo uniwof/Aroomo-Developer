@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { App } from '@/App';
 import { AppSkeleton } from '@/components/Skeleton';
 import { COOKIE_SESSION, session } from '@/lib/api';
-import { FLAGS } from '@/lib/flags';
+import { SKELETON_SHIMMER } from '@/lib/flags';
 
 const indexHtml = readFileSync(path.resolve(import.meta.dirname, '../index.html'), 'utf8');
 
@@ -32,7 +32,7 @@ describe('打开对话页的骨架屏（所有者 11-05）', () => {
   });
 
   it('默认静态不动：开关关着，没有微光类；打开开关才加 .sk--shimmer', () => {
-    expect(FLAGS.skeletonShimmer).toBe(false);
+    expect(SKELETON_SHIMMER).toBe(false);
     const { container, rerender } = render(<AppSkeleton />);
     expect(container.querySelector('.sk--shimmer')).toBeNull();
     rerender(<AppSkeleton shimmer />);
