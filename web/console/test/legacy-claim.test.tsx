@@ -112,6 +112,15 @@ describe('#290 认领以前的共用会话', () => {
     expect(loadConversations(OWNER)).toHaveLength(3);
   });
 
+  it('store：同一个 id，共用那份更新（updatedAt 更大）就替换她那份里的这段；不更新就不动', () => {
+    saveConversations([local(OLD1, '以前问的体检', 1)], OWNER);
+    localStorage.setItem(LEGACY, JSON.stringify([{ ...local(OLD1, '以前问的体检', 9), messages: [...local(OLD1, 'x').messages, { role: 'user', text: '后来又问的' }] }]));
+    expect(claimLegacy(OWNER)).toBe(1);
+    expect(loadConversations(OWNER)[0]!.messages.map((m) => m.text)).toContain('后来又问的');
+    expect(claimLegacy(OWNER)).toBe(0);
+    expect(loadConversations(OWNER)).toHaveLength(1);
+  });
+
   it('Core 说谁是所有者：admin 账号和主人令牌是；家人（role=user）不是', async () => {
     const f = (b: unknown) => vi.fn(async () => json(b)) as unknown as typeof fetch;
     expect(await fetchAccount(f({ kind: 'user', user: { id: OWNER, role: 'admin' } }))).toEqual({ id: OWNER, owner: true });
@@ -268,6 +277,27 @@ describe('#292 问到账号之前先不保存本机会话', () => {
     expect(old.messages.map((m) => m.text)).toContain('接着问体检');
     expect(loadConversations()).toHaveLength(2);
     expect(loadConversations(OWNER).map((c) => c.id)).not.toContain(OLD1);
+  });
+
+  it('认领过以后：Core 晚回前在旧会话里说的一句存回共用那份，按钮重新出来，点了她那份里这段有这句（负责人 #294 第二轮必改）', async () => {
+    putLegacy();
+    claimLegacy(OWNER);
+    let open = () => {};
+    const gate = new Promise<void>((r) => (open = r));
+    stubCore({ kind: 'user', role: 'admin', id: OWNER }, gate);
+    renderPage();
+    await screen.findByRole('list', { name: '会话列表' });
+    fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '接着问体检' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect(await screen.findByText(REPLY, undefined, { timeout: 8000 })).toBeInTheDocument();
+    open();
+    fireEvent.click(await screen.findByRole('button', { name: BTN }));
+    await screen.findByText(/放进你的账号了/);
+    await tick();
+    const mine = loadConversations(OWNER).find((c) => c.id === OLD1)!;
+    expect(mine.messages.map((m) => m.text)).toContain('接着问体检');
+    expect(loadConversations(OWNER).filter((c) => c.id === OLD1)).toHaveLength(1);
+    expect(legacyClaimed(OWNER)).toBe(true);
   });
 
   it('Core 还没回是谁：不往共用那份写；回了以后写进她自己那份', async () => {
