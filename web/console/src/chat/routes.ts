@@ -5,7 +5,7 @@
  * 助手（只给所有者、开关打开时）：详情 /assistants?assistant=<id>，全部计划 /assistants/schedule。
  * /console（驾驶舱）：只用现有接口（成员、收件箱计数、能力地图、审计），见 cockpit.tsx。
  * /work（项目与版本，规范 §7，docs/api/design-work-v1.md）：/work 项目列表、/work/<项目> 版本时间线、/work/<项目>?v=<版本> 版本详情；只给所有者。
- *   开关 FLAGS.work（= WORK 常量）关着时这些地址落到对话，解析代码随开关一起被摇掉（对话页包 ≤150 KB）。
+ *   开关 WORK（= WORK 常量）关着时这些地址落到对话，解析代码随开关一起被摇掉（对话页包 ≤150 KB）。
  */
 import type { SettingsSection } from './panels';
 import { WORK } from '@/lib/work-flag';

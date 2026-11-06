@@ -4,7 +4,7 @@
  *   右边主对话区（顶栏头像 + 名字、居中日期分隔、无气泡消息、大圆角输入卡片）。
  * - 手机（或字号放大后放不下两栏）：会话列表栏就是唯一一层抽屉；点会话、成员、设置后抽屉关上，内容在主区域原地打开，
  *   面板里的下一层用顶栏「← 返回」，不开第二层抽屉，不用标签页。
- * - 只调用 Core 的标准接口（/api/*）；会话存在 Core（开关 FLAGS.savedChats，saved.ts），Core 拿不到时退回本机浏览器（localStorage）。
+ * - 只调用 Core 的标准接口（/api/*）；会话存在 Core（开关 SAVED_CHATS，saved.ts），Core 拿不到时退回本机浏览器（localStorage）。
  * 边界：store.ts 管数据和请求，Thread.tsx 管对话区，Sidebar.tsx 管会话列表栏，panels.tsx 管面板，这里管拼装。
  */
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -23,7 +23,7 @@ import { BackButton, ExternalPanel, MemberDetail, MembersPanel, PanelHeader, SET
 import { applyDisplay } from '@/lib/display';
 import { ClaimFullError, claimLegacy, legacyClaimed, listTimeLabel, loadConversations, loadDraft, loadPrefs, newConversation, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
 import { useAsk } from '@/components/Dialog';
-import { FLAGS } from '@/lib/flags';
+import { ASSISTANTS, ASSISTANT_DRAFT, SAVED_CHATS, SCHEDULE_PAGE } from '@/lib/flags';
 import { WORK } from '@/lib/work-flag';
 import { useAssistants, type AssistantInput } from '@/lib/assistants';
 import { archiveConversation, createConversation, fetchConversation, fetchConversations, fetchMessages, importLocalOnce, localPending, markRead, mergeRemote, renameConversation } from './saved';
@@ -163,7 +163,7 @@ function useLayout(): { side: boolean; rail: boolean } {
 }
 
 export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
-  const saved = FLAGS.savedChats;
+  const saved = SAVED_CHATS;
   /**
    * #287：本机会话按账号分开存。先用登录时记下的账号 id；存库模式下以 Core（/api/auth/me）说的为准。
    * null = 不知道是谁（如从 Shell 打开、旧的登录记录）：照旧用共用的那份，永不导入。
@@ -375,8 +375,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   const blocked =
     (isFamily() && OWNER_ONLY.includes(routed.kind)) ||
     // 助手开关关着时这两个地址也落到对话（全部计划另有开关）
-    (routed.kind === 'assistant' && !FLAGS.assistants) ||
-    (routed.kind === 'schedule' && !(FLAGS.assistants && FLAGS.schedulePage));
+    (routed.kind === 'assistant' && !ASSISTANTS) ||
+    (routed.kind === 'schedule' && !(ASSISTANTS && SCHEDULE_PAGE));
   const setView = useCallback((v: View, opts: { replace?: boolean; state?: unknown } = {}) => {
     const { navigate: nav, location: loc } = navRef.current;
     const to = pathOf(v);
@@ -431,14 +431,14 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   /** 添加成员弹窗（落地文档 8.2）：资源库卡片带出名字，会话栏「+ 添加」、新建菜单「添加成员」打开空白的 */
   const [addMember, setAddMember] = useState<{ preset?: string } | null>(null);
   const inboxCount = useInboxCount();
-  const assistantsOn = FLAGS.assistants && !isFamily();
+  const assistantsOn = ASSISTANTS && !isFamily();
   const { list: assistants, error: assistantsError, reload: reloadAssistants } = useAssistants(assistantsOn);
   /** 新建助手弹窗：initial = 聊天草稿卡「改一改」带来的内容，onDone = 建好后把那张卡标成已建 */
   const [newAssistant, setNewAssistant] = useState<{ initial?: AssistantInput; onDone?: () => void } | null>(null);
   // X-15：聊天里的助手草稿卡（只给所有者；开关关时不显示）
   const draftActions = useMemo<DraftActions | undefined>(
     () =>
-      assistantsOn && FLAGS.assistantDraft
+      assistantsOn && ASSISTANT_DRAFT
         ? { members, onEdit: (initial, onDone) => setNewAssistant({ initial, onDone }), onCreated: () => reloadAssistants() }
         : undefined,
     [assistantsOn, members, reloadAssistants],
@@ -848,7 +848,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
               setOpen(false);
               setNewAssistant({});
             },
-            ...(FLAGS.schedulePage
+            ...(SCHEDULE_PAGE
               ? {
                   onSchedule: () => {
                     setOpen(false);

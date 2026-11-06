@@ -9,7 +9,8 @@ import { ChatPage } from '@/chat/ChatPage';
 import { loadDraft, saveDraft } from '@/chat/store';
 
 const flags = vi.hoisted(() => ({ taskCards: false, quickReplies: false, convFilter: true, schedulePage: false, assistantDraft: false, assistants: false, savedChats: false, skeletonShimmer: false }));
-vi.mock('@/lib/flags', () => ({ FLAGS: flags }));
+// 一个开关一个常量（flags.ts）；用 getter 让各条测试中途改 flags.savedChats 生效
+vi.mock('@/lib/flags', () => ({ get TASK_CARDS() { return flags.taskCards; }, get QUICK_REPLIES() { return flags.quickReplies; }, get CONV_FILTER() { return flags.convFilter; }, get SCHEDULE_PAGE() { return flags.schedulePage; }, get ASSISTANT_DRAFT() { return flags.assistantDraft; }, get ASSISTANTS() { return flags.assistants; }, get SAVED_CHATS() { return flags.savedChats; }, get SKELETON_SHIMMER() { return flags.skeletonShimmer; } }));
 
 const SHARED = 'aroomo.chat.drafts.v1';
 const A = 'u-mom-1';

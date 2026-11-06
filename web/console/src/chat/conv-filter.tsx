@@ -1,6 +1,6 @@
 /**
- * X-27 会话列表「全部 / 未读 / 进行中」筛选 + X-22 进行中的会话排最前（功能补充 v1，开关 FLAGS.convFilter，默认关）。
- * 「助手」列表的未读、进行中由 /api/assistants 给；「对话」列表在会话存库（FLAGS.savedChats，Core 可用）时由 /api/conversations 给，本机模式不显示筛选。
+ * X-27 会话列表「全部 / 未读 / 进行中」筛选 + X-22 进行中的会话排最前（功能补充 v1，开关 CONV_FILTER，默认关）。
+ * 「助手」列表的未读、进行中由 /api/assistants 给；「对话」列表在会话存库（SAVED_CHATS，Core 可用）时由 /api/conversations 给，本机模式不显示筛选。
  * 筛选是筛选不是标签页：三个胶囊，高 28、点击区 44；「进行中」用静态小标，不转圈。
  */
 import './thread/cards/cards.css';

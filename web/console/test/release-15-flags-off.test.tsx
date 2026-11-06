@@ -11,7 +11,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { MemoryRouter } from 'react-router-dom';
 import { ChatPage } from '@/chat/ChatPage';
 import { saveConversations, type Conversation } from '@/chat/store';
-import { FLAGS } from '@/lib/flags';
+import * as F from '@/lib/flags';
 import type { Member } from '@/lib/api';
 
 const enc = new TextEncoder();
@@ -78,7 +78,7 @@ const hit = (prefix: string) => calls.some((c) => c.url.startsWith(prefix));
 
 describe('阶段 1.5：阶段 2/3 开关关着', () => {
   it('六个开关确实是关的（真开关，不 mock）', () => {
-    expect(FLAGS).toMatchObject({ taskCards: false, convFilter: false, schedulePage: false, assistantDraft: false, assistants: false, savedChats: false });
+    expect(F).toMatchObject({ TASK_CARDS: false, CONV_FILTER: false, SCHEDULE_PAGE: false, ASSISTANT_DRAFT: false, ASSISTANTS: false, SAVED_CHATS: false });
   });
 
   it('assistantDraft 关：说「每天早上提醒我…」→ 照常显示文字回复，没有草稿卡、不空白、不报错', async () => {

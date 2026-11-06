@@ -1,5 +1,5 @@
 /**
- * 助手的三处界面（#250 integrate/stage2，开关 FLAGS.assistants / schedulePage / assistantDraft / taskCards）。点开才下载（对话页包 ≤150 KB gz）。
+ * 助手的三处界面（#250 integrate/stage2，开关 ASSISTANTS / SCHEDULE_PAGE / ASSISTANT_DRAFT / TASK_CARDS）。点开才下载（对话页包 ≤150 KB gz）。
  * - NewAssistantDialog：新建助手（任务说明、成员和组长、计划预设、额度档）→「预览」调 POST /api/assistants/preview，
  *   回来的 data-aroomo-assistant-draft 数据块渲染成 X-15 草稿卡；只有点「建好」才 POST /api/assistants。
  * - AssistantDetail：固定会话（GET …/messages，按 seq 追加）+ 当前运行的 X-03 任务卡（GET …/runs/:run 的步骤）+ 运行记录 + 立即运行 + 暂停 / 继续。
@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import type { Member } from '@/lib/api';
 import { assistantsApi, isActive, newIdemKey, type Assistant, type AssistantInput, type AssistantMessage, type AssistantRun, type BudgetLevel, type CoreSchedule, type DraftPart, type RunStep } from '@/lib/assistants';
-import { FLAGS } from '@/lib/flags';
+import { ASSISTANT_DRAFT, TASK_CARDS } from '@/lib/flags';
 import { Dialog } from '@/components/Dialog';
 import { Avatar } from '../../Avatar';
 import { errText } from '../../ui';
@@ -118,7 +118,7 @@ export function NewAssistantDialog({ members, onClose, onCreated, initial }: { m
 
   return (
     <Dialog open title="新建助手" desc="助手是为一件长期的事设的小队：写清要做什么，挑成员和组长，定好什么时候做。" onClose={onClose}>
-      {draft && FLAGS.assistantDraft ? (
+      {draft && ASSISTANT_DRAFT ? (
         <AssistantDraftCard
           draft={draft.card}
           onCreate={async () => {
@@ -262,7 +262,7 @@ function RunCard({ a, runId, members, live }: { a: Assistant; runId: string; mem
   }, [a.id, runId, live]);
   if (err) return <p role="alert" className="note note-error">{err}</p>;
   if (!run) return <p role="status" className="note">正在加载步骤…</p>;
-  if (!FLAGS.taskCards) return null;
+  if (!TASK_CARDS) return null;
   return <TaskCard title={`${a.name} · ${whenText(run.requestedAt)} · ${RUN_LABEL[run.status]}`} steps={stepsToTask(run.steps, members)} />;
 }
 

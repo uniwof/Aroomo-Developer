@@ -1,12 +1,11 @@
 /**
- * /work 切片 1：FLAGS.work 默认关（真开关，不 mock）。关着时 /work 地址落到对话、不请求 /api/work/*。
+ * /work 切片 1：WORK 默认关（真开关，不 mock）。关着时 /work 地址落到对话、不请求 /api/work/*。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ChatPage } from '@/chat/ChatPage';
 import { viewOf } from '@/chat/routes';
-import { FLAGS } from '@/lib/flags';
 import { WORK } from '@/lib/work-flag';
 
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } });
@@ -32,7 +31,6 @@ afterEach(() => {
 
 describe('/work 开关关着', () => {
   it('开关默认 false', () => {
-    expect(FLAGS.work).toBe(false);
     expect(WORK).toBe(false);
   });
   it('/work 地址当对话处理', () => {

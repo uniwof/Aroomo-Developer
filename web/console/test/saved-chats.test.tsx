@@ -1,5 +1,5 @@
 /**
- * 会话存库（#250 integrate/stage2，FLAGS.savedChats）：对话列表从 Core 读；所有者的本机旧会话导入一次（本机那份不删）；
+ * 会话存库（#250 integrate/stage2，SAVED_CHATS）：对话列表从 Core 读；所有者的本机旧会话导入一次（本机那份不删）；
  * 「全部 / 未读 / 进行中」也作用到对话；发消息带 conversationId；Core 拿不到时退回本机；收件箱条目能打开对应会话。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -10,7 +10,7 @@ import { conversationLink } from '@/pages/Inbox';
 import { importedKey, importLocalOnce, isUuid, mergeRemote } from '@/chat/saved';
 import { loadConversations, saveConversations, streamChat, type Conversation } from '@/chat/store';
 // 这组测试测的是阶段 2/3 开关打开后的行为（以后验收、打开时用）。阶段 1.5 发布默认全关，关着的样子见 release-15-flags-off.test.tsx
-vi.mock('@/lib/flags', () => ({ FLAGS: { taskCards: true, quickReplies: false, convFilter: true, schedulePage: true, assistantDraft: true, assistants: true, savedChats: true, skeletonShimmer: false } }));
+vi.mock('@/lib/flags', () => ({ TASK_CARDS: true, QUICK_REPLIES: false, CONV_FILTER: true, SCHEDULE_PAGE: true, ASSISTANT_DRAFT: true, ASSISTANTS: true, SAVED_CHATS: true, SKELETON_SHIMMER: false }));
 
 const enc = new TextEncoder();
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });

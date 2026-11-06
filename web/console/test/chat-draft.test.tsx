@@ -14,7 +14,7 @@ import { inputFromDraft } from '@/chat/pages/assistants/ChatDraftCard';
 import { api, type Member } from '@/lib/api';
 import { assistantsApi } from '@/lib/assistants';
 // 这组测试测的是阶段 2/3 开关打开后的行为（以后验收、打开时用）。阶段 1.5 发布默认全关，关着的样子见 release-15-flags-off.test.tsx
-vi.mock('@/lib/flags', () => ({ FLAGS: { taskCards: true, quickReplies: false, convFilter: true, schedulePage: true, assistantDraft: true, assistants: true, savedChats: true, skeletonShimmer: false } }));
+vi.mock('@/lib/flags', () => ({ TASK_CARDS: true, QUICK_REPLIES: false, CONV_FILTER: true, SCHEDULE_PAGE: true, ASSISTANT_DRAFT: true, ASSISTANTS: true, SAVED_CHATS: true, SKELETON_SHIMMER: false }));
 
 const enc = new TextEncoder();
 const sse = (objs: unknown[]) => objs.map((o) => (o === 'DONE' ? 'data: [DONE]\n\n' : `data: ${JSON.stringify(o)}\n\n`)).join('');

@@ -1,7 +1,7 @@
 /**
  * 原生对话（#250 spike）：调用 Core 的 POST /api/chat/stream，读 AI SDK UI Message Stream（SSE）。
  * - 只靠控制台会话 Cookie（HttpOnly，脚本读不到）+ X-Aroomo-Request 头；从不发 Authorization，从不碰任何 Key。
- * - 会话列表和消息：开关 FLAGS.savedChats 打开且 Core 可用时存在 Core（saved.ts）；否则存在本机浏览器 localStorage。
+ * - 会话列表和消息：开关 SAVED_CHATS 打开且 Core 可用时存在 Core（saved.ts）；否则存在本机浏览器 localStorage。
  */
 
 import { FONT_VERSION, PREFS_KEY, readDisplayPrefs, type Theme } from '@/lib/display';

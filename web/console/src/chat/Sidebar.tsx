@@ -13,7 +13,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Activity, Bell, Bot, CalendarClock, ChevronDown, MessageSquareText, MessagesSquare, Pin, Plus, Search, Shapes, SquarePen, Users, X } from 'lucide-react';
 import { isFamily, type Member } from '@/lib/api';
 import type { Assistant } from '@/lib/assistants';
-import { FLAGS } from '@/lib/flags';
+import { ASSISTANTS, CONV_FILTER, SCHEDULE_PAGE } from '@/lib/flags';
 import { ConvFilter, RunningTag, applyConvFilter, type ConvFilterValue } from './conv-filter';
 import type { UsageRow } from '@/lib/usage';
 import { Avatar, type AvatarKind } from './Avatar';
@@ -72,7 +72,7 @@ export interface SidebarProps {
   /** 手机抽屉里才有「关闭」和分类横排 */
   onClose?: () => void;
   usage: UsageRow[] | null;
-  /** 助手列表（只给所有者、开关 FLAGS.assistants 打开时）；null = 不显示「助手」分段 */
+  /** 助手列表（只给所有者、开关 ASSISTANTS 打开时）；null = 不显示「助手」分段 */
   assistants?: Assistant[] | null;
   assistantsError?: string;
   currentAssistant?: string | null;
@@ -112,7 +112,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
   const [filter, setFilter] = useState<ConvFilterValue>('all');
   // 家人账号的「助手」是空的（家人看不到助手）：不显示这个分段，免得点了只看到空列表（审计 C11）。
   // 助手开关关着（阶段 1.5 生产）也不显示：没有接口，只会是空列表
-  const noStaff = isFamily() || !FLAGS.assistants;
+  const noStaff = isFamily() || !ASSISTANTS;
   const tab: Tab = noStaff ? 'chats' : ui.tab;
   const setTab = (t: Tab) => setUi((u) => ({ ...u, tab: t }));
   const setQ = (v: string) => setUi((u) => ({ ...u, q: v }));
@@ -215,7 +215,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
   );
 
   const k = q.trim().toLowerCase();
-  const filterOn = FLAGS.convFilter && (tab === 'staff' ? !!assistants?.length : filterable);
+  const filterOn = CONV_FILTER && (tab === 'staff' ? !!assistants?.length : filterable);
   const rows = (filterOn ? applyConvFilter(tab === 'staff' ? staff : chats, filter) : tab === 'staff' ? staff : chats).filter((r) => !k || r.name.toLowerCase().includes(k) || r.preview.toLowerCase().includes(k));
   const isCurrent = (r: Row) =>
     tab === 'chats' ? !!r.convId && r.convId === currentId : r.assistantId ? r.assistantId === currentAssistant : r.lead ? current?.model === 'aroomo' && !current.group?.length : !!r.member && current?.model === `aroomo/${r.member.id}`;
@@ -341,7 +341,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
             <span>{groupLabel}</span>
             <ChevronDown aria-hidden="true" className={folded ? 'folded' : undefined} />
           </button>
-          {tab === 'staff' && FLAGS.schedulePage && onSchedule && (
+          {tab === 'staff' && SCHEDULE_PAGE && onSchedule && (
             <button type="button" className="foot-link hit conv-group-link" aria-current={active === 'schedule' ? 'page' : undefined} onClick={onSchedule}>
               <CalendarClock aria-hidden="true" />
               <span>看全部计划</span>
