@@ -86,6 +86,8 @@ export function trialExpiryJob(trials: TrialService, inbox: InboxService): Job {
             summary: `到期日 ${d.endsAt}。到期后这个能力可能不能用或开始收费；要继续用请自己决定是否续费，不想用可以忽略。`,
             related: { type: 'capability', id: d.id },
             actions: [{ id: 'ack', label: '知道了' }],
+            actor: { type: 'system', name: '试用到期提醒' },
+            impact: [`能力「${d.name}」`],
           },
           audit,
         );

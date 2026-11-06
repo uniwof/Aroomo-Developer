@@ -86,6 +86,8 @@ export function keyReconcileJob(keys: KeyStore, litellm: LiteLLMAdmin, inbox: In
               summary: `末 4 位 ${k.last4}。用这个 Key 的成员现在调不通，请到「成员 → Key 与接入」重新填写（换 Key）。`,
               related: { type: 'key', id: k.id },
               actions: [{ id: 'ack', label: '知道了' }],
+              actor: { type: 'system', name: 'Key 对账' },
+              impact: [`Key「${k.name}」（末 4 位 ${k.last4}）`, `模型：${k.modelName}`],
             },
             audit,
           );
@@ -109,6 +111,8 @@ export function keyReconcileJob(keys: KeyStore, litellm: LiteLLMAdmin, inbox: In
             summary: '换 Key 或删除 Key 时没清理干净留下的。它们不会被使用；需要的话可以在 LiteLLM 管理界面删除。',
             related: { type: 'litellm', id: 'orphans' },
             actions: [{ id: 'ack', label: '知道了' }],
+            actor: { type: 'system', name: 'Key 对账' },
+            impact: [`模型网关里 ${orphans.length} 个多余部署`],
           },
           audit,
         );

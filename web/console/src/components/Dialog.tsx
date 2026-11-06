@@ -67,7 +67,7 @@ function OpenDialog({ title, desc, children, onClose, className, nav }: { title:
 
 type Ask =
   | { kind: 'confirm'; title: string; desc?: string; ok: string; danger?: boolean; resolve: (v: boolean) => void }
-  | { kind: 'prompt'; title: string; desc?: string; ok: string; label: string; value: string; resolve: (v: string | null) => void };
+  | { kind: 'prompt'; title: string; desc?: string; ok: string; label: string; value: string; optional?: boolean; maxLength?: number; danger?: boolean; resolve: (v: string | null) => void };
 
 /** 确认 / 输入一行字：await confirm({...}) 得到 true/false，await prompt({...}) 得到文字或 null */
 export function useAsk() {
@@ -78,7 +78,8 @@ export function useAsk() {
     [],
   );
   const prompt = useCallback(
-    (o: { title: string; label: string; value?: string; desc?: string; ok?: string }) =>
+    /** optional：可以不填（返回 ''），取消才是 null；danger：确定键用危险样式（拒绝理由） */
+    (o: { title: string; label: string; value?: string; desc?: string; ok?: string; optional?: boolean; maxLength?: number; danger?: boolean }) =>
       new Promise<string | null>((resolve) => {
         setText(o.value ?? '');
         setAsk({ kind: 'prompt', ok: '保存', value: o.value ?? '', ...o, resolve });
@@ -99,21 +100,21 @@ export function useAsk() {
           className="dlg-form"
           onSubmit={(e) => {
             e.preventDefault();
-            if (ask.kind === 'prompt' && !text.trim()) return;
+            if (ask.kind === 'prompt' && !ask.optional && !text.trim()) return;
             done(true);
           }}
         >
           {ask.kind === 'prompt' && (
             <label className="form-field">
               <span className="form-label">{ask.label}</span>
-              <input value={text} maxLength={60} required onChange={(e) => setText(e.target.value)} />
+              <input value={text} maxLength={ask.maxLength ?? 60} required={!ask.optional} onChange={(e) => setText(e.target.value)} />
             </label>
           )}
           <div className="dlg-foot">
             <button type="button" className="btn btn-quiet" onClick={() => done(false)} {...(ask.kind === 'confirm' && ask.danger ? { 'data-autofocus': true } : {})}>
               取消
             </button>
-            <button type="submit" className={ask.kind === 'confirm' && ask.danger ? 'btn btn-primary btn-danger-fill' : 'btn btn-primary'} {...(ask.kind === 'confirm' && !ask.danger ? { 'data-autofocus': true } : {})}>
+            <button type="submit" className={ask.danger ? 'btn btn-primary btn-danger-fill' : 'btn btn-primary'} {...(ask.kind === 'confirm' && !ask.danger ? { 'data-autofocus': true } : {})}>
               {ask.ok}
             </button>
           </div>

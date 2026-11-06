@@ -37,6 +37,19 @@ export interface InboxRef {
   id: string;
 }
 
+/** 谁发起的（Poke §8 Actor）：Core 自己填，请求体不能冒充 */
+export const ACTOR_TYPES = ['owner', 'user', 'operator', 'client', 'member', 'assistant', 'executor', 'system'] as const;
+export interface InboxActor {
+  type: (typeof ACTOR_TYPES)[number];
+  id?: string;
+  /** 给人看的名字（助手名、成员名、「每小时 Key 对账」…） */
+  name: string;
+}
+
+export const IMPACT_MAX = 10;
+export const IMPACT_LINE_MAX = 200;
+export const NOTE_MAX = 500;
+
 export interface InboxItem {
   id: string;
   group: InboxGroup;
@@ -46,10 +59,16 @@ export interface InboxItem {
   summary: string;
   related?: InboxRef;
   actions: InboxAction[];
+  /** 发起者；老条目没有 */
+  actor?: InboxActor;
+  /** 影响范围（Poke §8 Impact Scope），每条一句；没写 = [] */
+  impact?: string[];
   status: InboxStatus;
   createdAt: Date;
   resolvedAt?: Date;
   resolvedAction?: string;
+  /** 处理时写的理由（拒绝理由）；只在用户写了时有 */
+  resolvedNote?: string;
   /** 归属账号；缺省 = 所有者（D117） */
   userId?: string;
 }
@@ -73,7 +92,7 @@ export interface InboxStore {
    * 比较并交换：只有当前 status 为 open 时才改成 next.status，返回更新后的条目；
    * 已不是 open、或条目不属于 userId，都返回 null。并发重复请求只有一个能成功。
    */
-  resolveIfOpen(userId: string, id: string, next: { status: Exclude<InboxStatus, 'open'>; resolvedAt: Date; resolvedAction?: string }): Promise<InboxItem | null>;
+  resolveIfOpen(userId: string, id: string, next: { status: Exclude<InboxStatus, 'open'>; resolvedAt: Date; resolvedAction?: string; resolvedNote?: string }): Promise<InboxItem | null>;
 }
 
 export const URGENCY_RANK: Record<Urgency, number> = { urgent: 0, normal: 1, low: 2 };

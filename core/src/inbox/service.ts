@@ -14,7 +14,11 @@ import {
   actionKind,
   INBOX_GROUPS,
   type InboxAction,
+  type InboxActor,
   type InboxGroup,
+  IMPACT_LINE_MAX,
+  IMPACT_MAX,
+  NOTE_MAX,
   type InboxItem,
   type InboxListFilter,
   type InboxRef,
@@ -31,8 +35,20 @@ export interface CreateInboxInput {
   summary?: string;
   related?: InboxRef;
   actions?: InboxAction[];
+  /** 发起者（Poke §8）。内部调用方填自己；HTTP 路由按调用者令牌填，不收请求体里的 */
+  actor?: InboxActor;
+  /** 影响范围，每条一句（≤10 条） */
+  impact?: string[];
   /** 内部用：归属账号。HTTP 路由不开放此字段 */
   userId?: string;
+}
+
+/** 处理理由（拒绝理由）：去空白；空 = 不记；超长 400 */
+function normalizeNote(raw: string | undefined): string | undefined {
+  const t = raw?.trim();
+  if (!t) return undefined;
+  if (t.length > NOTE_MAX) throw badRequest(`理由最长 ${NOTE_MAX} 个字`, 'INVALID_REASON');
+  return t;
 }
 
 export interface BatchDismissResult {
@@ -115,6 +131,8 @@ export class InboxService {
       if (consequences.length === 0) throw badRequest('重要确认的动作必须写明后果（confirm.consequences）', 'CONSEQUENCES_REQUIRED');
       actions.push({ id: raw.id, label, confirm: { kind, consequences } });
     }
+    const impact = (input.impact ?? []).map((l) => l.trim()).filter(Boolean);
+    if (impact.length > IMPACT_MAX || impact.some((l) => l.length > IMPACT_LINE_MAX)) throw badRequest(`影响范围最多 ${IMPACT_MAX} 条、每条 ${IMPACT_LINE_MAX} 字`, 'INVALID_IMPACT');
     const item: InboxItem = {
       id: randomUUID(),
       group: input.group,
@@ -124,6 +142,8 @@ export class InboxService {
       summary: input.summary?.trim() ?? '',
       ...(input.related ? { related: { ...input.related } } : {}),
       actions,
+      ...(input.actor ? { actor: { ...input.actor, name: input.actor.name.slice(0, 100) } } : {}),
+      impact,
       status: 'open',
       createdAt: this.now(),
       ...(input.userId ? { userId: input.userId } : {}),
@@ -147,9 +167,10 @@ export class InboxService {
    * 执行动作。确认由统一确认服务处理（D63）：重要动作没有令牌时抛 428（带 challenge），
    * 操作员不能完成重要确认（403，D62）。
    */
-  async act(userId: string, id: string, actionId: string, ctx: ConfirmCtx, audit: AuditFn): Promise<InboxItem> {
+  async act(userId: string, id: string, actionId: string, ctx: ConfirmCtx, audit: AuditFn, reason?: string): Promise<InboxItem> {
     const target = { type: 'inbox', id };
     try {
+      const note = normalizeNote(reason);
       const item = await this.store.get(userId, id);
       if (!item) throw notFound('找不到这条收件箱事项');
       const action = item.actions.find((a) => a.id === actionId);
@@ -171,7 +192,7 @@ export class InboxService {
 
       const handler = this.#handlers.get(item.kind);
       if (handler) await handler(item, actionId, audit);
-      const done = await this.store.resolveIfOpen(userId, id, { status: 'done', resolvedAt: this.now(), resolvedAction: actionId });
+      const done = await this.store.resolveIfOpen(userId, id, { status: 'done', resolvedAt: this.now(), resolvedAction: actionId, ...(note ? { resolvedNote: note } : {}) });
       if (!done) throw conflict('这条事项已经处理过了', 'ALREADY_RESOLVED');
       await audit('inbox.action.execute', target, 'ok', `${actionId}${kind !== 'normal' ? ` (${kind}, confirmed)` : ''}`);
       return done;
@@ -184,14 +205,15 @@ export class InboxService {
     }
   }
 
-  async dismiss(userId: string, id: string, audit: AuditFn): Promise<InboxItem> {
+  async dismiss(userId: string, id: string, audit: AuditFn, reason?: string): Promise<InboxItem> {
     const target = { type: 'inbox', id };
+    const note = normalizeNote(reason);
     const item = await this.store.get(userId, id);
     if (!item) {
       await audit('inbox.dismiss', target, 'failed', 'NOT_FOUND');
       throw notFound('找不到这条收件箱事项');
     }
-    const done = await this.store.resolveIfOpen(userId, id, { status: 'dismissed', resolvedAt: this.now() });
+    const done = await this.store.resolveIfOpen(userId, id, { status: 'dismissed', resolvedAt: this.now(), ...(note ? { resolvedNote: note } : {}) });
     if (!done) {
       await audit('inbox.dismiss', target, 'failed', 'ALREADY_RESOLVED');
       throw conflict('这条事项已经处理过了', 'ALREADY_RESOLVED');
