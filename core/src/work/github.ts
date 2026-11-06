@@ -24,7 +24,8 @@ export function safeGithubUrl(raw: unknown): string | null {
     return null;
   }
   if (u.protocol !== 'https:' || u.username || u.password || u.port || !ARTIFACT_HOSTS.has(u.hostname)) return null;
-  return raw;
+  // 存规范化后的链接（主机名小写、百分号编码已解开），和上面比的是同一个东西
+  return u.href;
 }
 
 export const MAX_PAGES = 3;
@@ -41,6 +42,30 @@ class SourceError extends Error {
   ) {
     super(message);
   }
+}
+
+/** 边读边数字节，超过 BODY_MAX 就取消下载（不靠 content-length，也不按字符数算） */
+async function readCapped(res: Response): Promise<string> {
+  if (!res.body) return '';
+  const reader = res.body.getReader();
+  const parts: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > BODY_MAX) {
+        await reader.cancel().catch(() => undefined);
+        throw new SourceError('GitHub 返回的内容太大，没有读');
+      }
+      parts.push(value);
+    }
+  } catch (e) {
+    if (e instanceof SourceError) throw e;
+    throw new SourceError('连不上 GitHub（超时或网络不通），稍后再试');
+  }
+  return Buffer.concat(parts).toString('utf8');
 }
 
 async function getPage(f: typeof fetch, url: string): Promise<unknown[]> {
@@ -64,8 +89,7 @@ async function getPage(f: typeof fetch, url: string): Promise<unknown[]> {
   if (!res.ok) throw new SourceError(`GitHub 回了错误（${res.status}），稍后再试`);
   const len = Number(res.headers.get('content-length'));
   if (Number.isFinite(len) && len > BODY_MAX) throw new SourceError('GitHub 返回的内容太大，没有读');
-  const text = await res.text();
-  if (text.length > BODY_MAX) throw new SourceError('GitHub 返回的内容太大，没有读');
+  const text = await readCapped(res);
   let body: unknown;
   try {
     body = JSON.parse(text);
@@ -86,6 +110,7 @@ async function pages(f: typeof fetch, repo: string, kind: 'releases' | 'tags'): 
   return out;
 }
 
+const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
 const str = (v: unknown, max: number): string | null => (typeof v === 'string' && v.length > 0 ? v.slice(0, max) : null);
 const date = (v: unknown): Date | null => {
   if (typeof v !== 'string') return null;
@@ -98,8 +123,9 @@ function fromRelease(r: Record<string, unknown>): VersionInput | null {
   const id = typeof r.id === 'number' || typeof r.id === 'string' ? String(r.id) : null;
   const tag = str(r.tag_name, 200);
   if (!id || !tag) return null;
-  const login = str((r.author as { login?: unknown } | null)?.login, 100);
-  const assets = Array.isArray(r.assets) ? (r.assets as Record<string, unknown>[]).slice(0, 20) : [];
+  const login = str(obj(r.author)?.login, 100);
+  // 形状不对的附件（null、数字、字符串）跳过，不让一个怪响应把整次同步弄崩（负责人 #323 必改 1）
+  const assets = Array.isArray(r.assets) ? r.assets.map(obj).filter((a): a is Record<string, unknown> => a !== null).slice(0, 20) : [];
   const artifacts: Artifact[] = [
     { type: 'page', title: 'GitHub 发布页', url: safeGithubUrl(r.html_url), size: null },
     ...assets.map((a) => ({
@@ -139,11 +165,11 @@ function fromTag(repo: string, t: Record<string, unknown>): VersionInput | null 
 export async function fetchGithubVersions(f: typeof fetch, repo: string): Promise<FetchResult> {
   try {
     const rels = (await pages(f, repo, 'releases'))
-      .map((r) => (r && typeof r === 'object' ? fromRelease(r as Record<string, unknown>) : null))
+      .map((r) => (obj(r) ? fromRelease(obj(r)!) : null))
       .filter((v): v is VersionInput => v !== null);
     if (rels.length > 0) return { ok: true, versions: rels };
     const tags = (await pages(f, repo, 'tags'))
-      .map((t) => (t && typeof t === 'object' ? fromTag(repo, t as Record<string, unknown>) : null))
+      .map((t) => (obj(t) ? fromTag(repo, obj(t)!) : null))
       .filter((v): v is VersionInput => v !== null);
     return { ok: true, versions: tags };
   } catch (e) {

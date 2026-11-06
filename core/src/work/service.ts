@@ -37,9 +37,11 @@ export function normalizeSources(raw: unknown): WorkSource[] {
 const encodeCursor = (v: WorkVersion) => Buffer.from(`${sortAt(v).toISOString()}|${v.id}`).toString('base64url');
 function decodeCursor(raw: string | undefined): Cursor | undefined {
   if (!raw) return undefined;
-  const [iso, id] = Buffer.from(raw, 'base64url').toString().split('|');
+  // 只认自己发出去的样子：规范 base64url、正好两段（负责人 #323 建议）
+  const parts = Buffer.from(raw, 'base64url').toString().split('|');
+  const [iso, id] = parts;
   const at = new Date(iso ?? '');
-  if (!id || Number.isNaN(at.getTime()) || !/^[0-9a-f-]{36}$/i.test(id)) throw badRequest('翻页参数不对');
+  if (parts.length !== 2 || Buffer.from(raw, 'base64url').toString('base64url') !== raw || !id || Number.isNaN(at.getTime()) || !/^[0-9a-f-]{36}$/i.test(id)) throw badRequest('翻页参数不对');
   return { at, id };
 }
 
