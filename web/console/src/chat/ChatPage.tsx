@@ -9,7 +9,7 @@
  */
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Archive, ArrowRight, BookOpen, ChevronDown, ChevronRight, CircleAlert, Download, Ellipsis, KeyRound, Menu, MessagesSquare, Pencil, Plus, Settings, SquarePen, Trash2, Users, Wrench, X } from 'lucide-react';
-import { api, currentUser, fetchAccountId, isFamily, viaShell, type Member } from '@/lib/api';
+import { api, currentUser, fetchAccount, isFamily, viaShell, type Member } from '@/lib/api';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { OWNER_ONLY, legacyPath, pathOf, viewOf, type View } from './routes';
 import { useUsage } from '@/lib/usage';
@@ -20,7 +20,7 @@ import { Thread, type DraftActions } from './Thread';
 import { SIDE_UI, Sidebar, type SideUi } from './Sidebar';
 import { BackButton, ExternalPanel, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type GoTarget } from './panels';
 import { applyDisplay } from '@/lib/display';
-import { listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
+import { ClaimFullError, claimLegacy, clearLegacyClaimed, legacyClaimed, listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
 import { useAsk } from '@/components/Dialog';
 import { FLAGS } from '@/lib/flags';
 import { useAssistants, type AssistantInput } from '@/lib/assistants';
@@ -164,6 +164,10 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   acctRef.current = acct;
   /** 列表里的本机会话是哪个账号那份的：和 acct 不一样时不写本机（负责人 #288 必改 2：账号刚问到时不能把共用那份存进她的账号） */
   const listAcct = useRef(acct);
+  /** #292：本机模式下先问到 Core 是谁再保存（问不到也算问过），免得刚打开就发的话写进共用那份；存库模式只在退回本机时写，照旧 */
+  const [acctChecked, setAcctChecked] = useState<boolean>(saved);
+  /** #290：Core 确认过的所有者账号（认领旧的共用那份只给她）；null = 不是所有者或没确认 */
+  const [ownerAcct, setOwnerAcct] = useState<string | null>(null);
   const [list, setList] = useState<Conversation[]>(() => {
     // 存库模式下家人账号不读本机（家人的会话不导入 Core）
     const l = saved && isFamily() ? [] : loadConversations(acct);
@@ -252,7 +256,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
       try {
         // 所有者：她自己存的本机会话导入一次（本机那份不删）；导入失败不挡着打开，下次再试。
         // #287：账号以 Core 说的为准，问不到就不导；家人的、旧的共用那份都不导
-        const me = isFamily() ? null : await fetchAccountId();
+        const who = isFamily() ? null : await fetchAccount();
+        const me = who?.id ?? null;
         if (me) await importLocalOnce(me).catch(() => 0);
         const fresh = await fetchConversations();
         if (!alive || settled.current) return;
@@ -261,6 +266,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         const switched = !!me && me !== acctRef.current;
         if (me) {
           confirmed.current = me;
+          if (who?.owner) setOwnerAcct(me);
           listAcct.current = me;
           setAcct(me);
           setLocalLeft(localPending(me));
@@ -283,15 +289,32 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   useEffect(() => {
     if (saved) return;
     let alive = true;
-    void fetchAccountId().then((me) => {
-      if (!alive || !me || me === acctRef.current) return;
-      // 先换列表、再换账号（同一次更新）：保存只在列表和账号对得上时才写
-      const mine = loadConversations(me);
-      const next = mine.length ? mine : [newConversation()];
-      listAcct.current = me;
-      setList(next);
-      setCurrentId(next[0]!.id);
-      setAcct(me);
+    void fetchAccount().then((who) => {
+      if (!alive) return;
+      const me = who?.id ?? null;
+      if (me && me !== acctRef.current) {
+        // 先换列表、再换账号（同一次更新）：保存只在列表和账号对得上时才写。
+        // #292：问到之前在这页新开、说过话的会话（打开时没有或是空的）是她的，带过去；读进来的旧那份不带
+        const carry = listRef.current.filter((c) => !c.remote && c.messages.length > 0 && (atMount.current!.get(c.id) ?? 0) === 0);
+        // 打开时读进来的旧会话里接着说过的话（问到之前没存）：存回它原来那份，不丢，也不带进这个账号
+        const was = listAcct.current;
+        const touched = listRef.current.filter((c) => !c.remote && (atMount.current!.get(c.id) ?? 0) > 0 && c.messages.length > atMount.current!.get(c.id)!);
+        if (touched.length) {
+          const t = new Map(touched.map((c) => [c.id, c]));
+          saveConversations(loadConversations(was).map((c) => t.get(c.id) ?? c), was);
+          // 存回的是共用那份：她认领过也要重新提示，不然这句在她账号里看不见（负责人 #294 第二轮）
+          if (!was) clearLegacyClaimed(me);
+        }
+        const keep = new Set(carry.map((c) => c.id));
+        const mine = [...carry, ...loadConversations(me).filter((c) => !keep.has(c.id))];
+        const next = mine.length ? mine : [newConversation()];
+        listAcct.current = me;
+        setList(next);
+        if (!keep.has(currentRef.current)) setCurrentId(next[0]!.id);
+        setAcct(me);
+      }
+      if (me && who?.owner) setOwnerAcct(me);
+      setAcctChecked(true);
     });
     return () => {
       alive = false;
@@ -400,10 +423,49 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
 
   // 本机模式才写本机；存库模式下本机那份（导入前的）原样留着，不覆盖
   useEffect(() => {
-    if (remote === false && listAcct.current === acct) saveConversations(list.filter((c) => c.messages.length > 0 && !c.remote), acct);
-  }, [list, remote, acct]);
+    if (remote === false && acctChecked && listAcct.current === acct) saveConversations(list.filter((c) => c.messages.length > 0 && !c.remote), acct);
+  }, [list, remote, acct, acctChecked]);
   /** #287：旧的共用那份里有几段（知道账号时才数）：看不出是谁存的，不导入、不删、不进列表，只说一句 */
-  const legacyLeft = useMemo(() => (acct ? loadConversations(null).filter((c) => c.messages.length > 0).length : 0), [acct]);
+  const [claimTick, setClaimTick] = useState(0);
+  const legacy = useMemo(
+    () => (acct && !legacyClaimed(acct) ? loadConversations(null).filter((c) => c.messages.length > 0) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [acct, claimTick],
+  );
+  const legacyLeft = legacy.length;
+  /** #290：只有 Core 确认的所有者、且就是现在这份列表的账号，才给「放进我的账号」 */
+  const canClaim = !!acct && ownerAcct === acct && legacyLeft > 0;
+  const [claimNote, setClaimNote] = useState<{ ok: boolean; text: string } | null>(null);
+  /** 点完按钮就没了：焦点移到结果那句上，读屏和放大镜不迷路（负责人 #294 建议 1） */
+  const claimNoteRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (claimNote) claimNoteRef.current?.focus();
+  }, [claimNote]);
+  const claimNow = () => {
+    const me = ownerAcct;
+    if (!me || me !== acct) return;
+    let n: number;
+    try {
+      n = claimLegacy(me);
+    } catch (e) {
+      setClaimNote({ ok: false, text: e instanceof ClaimFullError ? '放不下了：你账号里的会话太多。原来那份还在，没有丢。请告诉 Hark。' : '没放进去，原来那份还在。过一会儿再点一次。' });
+      return;
+    }
+    setClaimTick((t) => t + 1);
+    setClaimNote({ ok: true, text: `放进你的账号了：${n} 段会话。原来那份还留在这台浏览器里。` });
+    // 存库：交给导入（按 id 幂等），导完重取列表；本机：直接并进列表（保存会写回她那份）
+    if (remote === true) {
+      void importNow();
+      return;
+    }
+    // 新复制的加进来，被替换的那段换成新的（不然保存会用列表里旧的盖回去）
+    const mine = new Map(loadConversations(me).map((c) => [c.id, c]));
+    setList((prev) => {
+      const have = new Set(prev.map((c) => c.id));
+      const next = [...prev.map((c) => (c.remote ? c : (mine.get(c.id) ?? c))), ...[...mine.values()].filter((c) => !have.has(c.id))];
+      return next.sort((a, b) => b.updatedAt - a.updatedAt);
+    });
+  };
   // 打开存库的会话：消息还没取就取；有未读就标已读
   const needLoad = !!current.remote && !current.remote.loaded;
   useEffect(() => {
@@ -687,11 +749,32 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
       onOpen={(k) => goto({ kind: k })}
       usage={usage}
       {...(remote === true ? { filterable: true, runningId, onOpenMessage: (id: string, msg: string) => void openConversation(id, msg) } : {})}
-      {...((remote === true && (localLeft > 0 || importNote)) || legacyLeft > 0
+      {...((remote === true && (localLeft > 0 || importNote)) || legacyLeft > 0 || claimNote
         ? {
             notice: (
               <div className="conv-import">
-                {legacyLeft > 0 && <p className="note">这台浏览器里有 {legacyLeft} 段以前的会话，分不清是哪个账号存的，没有导入，也没有删。</p>}
+                {legacyLeft > 0 &&
+                  (canClaim ? (
+                    <>
+                      <p className="note">这台浏览器里有 {legacyLeft} 段以前的会话，分不清是哪个账号存的，还没放进你的账号，也没有删。如果都是你的，点下面的按钮放进你的账号，原来那份不删：</p>
+                      <ul className="note legacy-titles" aria-label="以前的会话">
+                        {legacy.slice(0, 10).map((c) => (
+                          <li key={c.id}>{c.title}</li>
+                        ))}
+                        {legacyLeft > 10 && <li>另外还有 {legacyLeft - 10} 段</li>}
+                      </ul>
+                      <button type="button" className="btn btn-outline hit" onClick={claimNow}>
+                        这些都是我的，放进我的账号
+                      </button>
+                    </>
+                  ) : (
+                    <p className="note">这台浏览器里有 {legacyLeft} 段以前的会话，分不清是哪个账号存的，没有导入，也没有删。</p>
+                  ))}
+                {claimNote && (
+                  <p className="note" role={claimNote.ok ? 'status' : 'alert'} ref={claimNoteRef} tabIndex={-1}>
+                    {claimNote.text}
+                  </p>
+                )}
                 {remote === true && localLeft > 0 && (
                   <>
                     <p className="note">这台浏览器里还有 {localLeft} 段会话没存到 Aroomo。</p>

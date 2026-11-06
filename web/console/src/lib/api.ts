@@ -133,10 +133,19 @@ export function currentUser(): { id: string; email: string; displayName: string;
  * 用在：本机会话导入 Core 前确认「这份本机会话是谁的」（#287），页面里记的那份可能过期，不能当证据。
  */
 export async function fetchAccountId(fetchImpl: typeof fetch = fetch): Promise<string | null> {
+  return (await fetchAccount(fetchImpl))?.id ?? null;
+}
+
+/**
+ * 同 fetchAccountId，另带「是不是所有者」（#290 认领旧会话只给所有者）：主人令牌（kind=owner）或 Core 角色 admin 的账号是；
+ * 家人（role=user）不是。以 Core 为准，不认标签页里记的角色。
+ * shortcut: admin 账号都算所有者（1.5 只有所有者一个 admin）；以后有第二个 admin 时改成看 Core 的所有者映射。
+ */
+export async function fetchAccount(fetchImpl: typeof fetch = fetch): Promise<{ id: string; owner: boolean } | null> {
   try {
-    const r = await api<{ kind?: unknown; user?: { id?: unknown } }>('GET', '/api/auth/me', undefined, fetchImpl);
-    if (r.kind === 'user' && typeof r.user?.id === 'string' && r.user.id) return r.user.id;
-    return r.kind === 'owner' ? 'owner' : null;
+    const r = await api<{ kind?: unknown; user?: { id?: unknown; role?: unknown } }>('GET', '/api/auth/me', undefined, fetchImpl);
+    if (r.kind === 'user' && typeof r.user?.id === 'string' && r.user.id) return { id: r.user.id, owner: r.user.role === 'admin' };
+    return r.kind === 'owner' ? { id: 'owner', owner: true } : null;
   } catch {
     return null;
   }
