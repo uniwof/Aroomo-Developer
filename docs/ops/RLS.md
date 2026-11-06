@@ -16,18 +16,34 @@ migrate() 把整次迁移（所有未执行的文件）放在同一个事务里�
 ## 应用连接角色与上线步骤
 
 - 规则：业务表 `user_id = current_setting('app.user_id')`，ENABLE + FORCE。Core 每个事务开头 `set_config('app.user_id', …, true)`（`core/src/db/scope.ts`）。
-- 角色：`aroomo_core`（能登录、表所有者）只跑迁移和授权；业务连接池 `SET ROLE aroomo_core_app`（NOLOGIN、非所有者、非超级用户）。Core 启动时自检，不满足就拒绝启动。
-- 新装：`deploy/postgres/20-aroomo-dbs.sh` 已创建 `aroomo_core_app`；在 `.env` 设 `CORE_DB_APP_ROLE=aroomo_core_app`。
-- 已有库（staging / 生产各做一次，需 postgres 超级用户，不涉及任何密码）：
+- 角色：`aroomo_core`（能登录、表所有者）只跑迁移和授权；业务连接用应用角色 `aroomo_core_app`（非所有者、非超级用户、无 BYPASSRLS、不建库不建角色）。Core 每次启动由所有者给它授权（只有 SELECT/INSERT/UPDATE/DELETE，只追加的表见下），再在应用连接上自检，不满足就拒绝启动（`core/src/db/app-role.ts`）。
 
-  ```
-  docker compose exec postgres psql -U "$POSTGRES_USER" -d postgres -c "CREATE ROLE aroomo_core_app NOLOGIN NOSUPERUSER NOBYPASSRLS; GRANT aroomo_core_app TO aroomo_core;"
-  ```
+### 两种接法（D213 第 13 项）
+| | 旧做法（SET ROLE） | 独立登录（阶段 3 生产必须） |
+|---|---|---|
+| `.env` | `CORE_DB_APP_ROLE=aroomo_core_app` | 再加 `CORE_APP_DB_PASSWORD=…`（脚本写） |
+| 业务连接的登录身份 | `aroomo_core`（所有者），握手时切到应用角色 | `aroomo_core_app` 自己 |
+| 注入后能不能关掉 RLS | **能**：会话里一句 `SET ROLE aroomo_core` 回到所有者，再 `ALTER TABLE … NO FORCE` | 不能：`SET ROLE`/`RESET ROLE` 都回不到所有者，`ALTER TABLE`、`DROP POLICY`、`TRUNCATE`、`row_security=off` 全部失败 |
+| 自检 | 角色名对、非所有者、非超级用户、FORCE 齐 | 另外要求登录身份就是应用角色、且变不成任何表所有者 |
 
-  然后 `.env` 加 `CORE_DB_APP_ROLE=aroomo_core_app`，重建 core 容器；日志里 `dbAppRole` 显示角色名且无「拒绝启动」即生效。
-- 回滚：去掉 `CORE_DB_APP_ROLE` 重建 core（FORCE RLS 下所有者同样受约束，隔离仍在）。
-- 带 needs-leader-review 且负责人未审的 RLS PR 不上生产（D202/D209）。
-- 角色在连接启动参数里设置（`options=-c role=…`），角色不存在 / 无权切换时连接直接失败，没有「先连上再 SET ROLE」的空窗。
-- 审计日志红线：每次启动授权后接着 `REVOKE UPDATE, DELETE ON audit_log`、`REVOKE INSERT, UPDATE, DELETE ON core_schema_migrations`（`core/src/db/app-role.ts`），应用角色只能追加审计。
+测试：`core/test/db-app-role-login.test.ts`（真 PostgreSQL，CI 必跑）；旧做法能被一句 `SET ROLE` 关掉 FORCE 也在里面作为对照。
+
+### 改成独立登录（staging 先做，生产在第二个用户进来前做；每个环境一次，可重复跑）
+1. 备份：`scripts/backup.sh`。
+2. 在服务器仓库目录跑 `scripts/create-app-db-role.sh`：角色不存在就建，设成 `LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB NOREPLICATION NOINHERIT`，收回它在任何角色里的成员身份，授 `CONNECT`；口令在服务器上用 openssl 生成（.env 里已有就沿用），只经 stdin 进 psql，不显示、不进仓库、不经聊天；先备份 `.env` 再写 `CORE_DB_APP_ROLE`、`CORE_APP_DB_PASSWORD`（权限 600）。
+3. `scripts/compose.sh up -d --force-recreate core`，日志里 `appDatabaseUrl: "(set)"`、没有「拒绝启动」，`/healthz` 通。
+4. 核对：`docker compose exec postgres psql -U "$POSTGRES_USER" -d aroomo_core -c "SELECT usename FROM pg_stat_activity WHERE datname='aroomo_core'"` 里业务连接是 `aroomo_core_app`。
+5. 确认无误后 `.env` 加 `CORE_DB_REQUIRE_APP_ROLE=true` 再重建 core：以后谁把口令删了、或退回旧做法，Core 直接拒绝启动，不会悄悄降级。
+- 回滚（负责人 #285 必改 1）：**`CORE_DB_REQUIRE_APP_ROLE`、`CORE_APP_DB_PASSWORD`、`CORE_DB_APP_ROLE` 三行都删掉**，重建 core，回到生产现在的样子（所有者连接，FORCE RLS 照样生效，只是注入时能被关掉）。角色留着不用删。
+  - 不要只删两行留着 `CORE_DB_APP_ROLE`：那是旧的 SET ROLE 做法，要求 `aroomo_core` 是 `aroomo_core_app` 的成员。生产从来没建过这层关系，脚本建的新角色也不会加，留着这一行 Core 切不过去角色、拒绝启动。
+  - 某个环境确实要退回 SET ROLE：先核 `SELECT pg_has_role('aroomo_core', 'aroomo_core_app', 'MEMBER');`，是 true 才能留 `CORE_DB_APP_ROLE` 那一行。
+  - staging 打开后先按这里演练一次回退，再切回来（负责人 #285）。
+- 新装：`deploy/postgres/20-aroomo-dbs.sh` 只建了 NOLOGIN 的 `aroomo_core_app`，首次启动后同样跑一次第 2 步。
+- 带 needs-leader-review 且负责人未审的 RLS PR 不上生产（D202/D209）。**生产什么时候打开由所有者 / 负责人定**，本脚本不会自己动生产。
+
+### 其他规矩
+- 审计日志红线：每次启动授权后接着 `REVOKE UPDATE, DELETE ON audit_log`、`REVOKE INSERT, UPDATE, DELETE ON core_schema_migrations`、收回 TRUNCATE 和只追加表的 DELETE（`core/src/db/app-role.ts`），应用角色只能追加审计。
+- 新迁移建的表自动带上应用角色的 DML 权限（`ALTER DEFAULT PRIVILEGES`），不用每个迁移里写 GRANT；建 RLS 表必须 ENABLE + FORCE，漏了 FORCE 启动自检就拒绝启动。
 - pg-boss（若启用）用表所有者连接，但只用自己的 schema，不碰业务表。
-- 加固阶段前必须（D213 第 13 项）：SET ROLE / role 启动参数挡不住注入（会话内 `RESET ROLE` 回到表所有者再关 FORCE），要改成单独可登录的应用角色（密码由 Hark 在服务器生成直接写进 .env）；生产未设 `CORE_DB_APP_ROLE` 现在照常启动，加固阶段改成拒绝启动。
+- 已知限制：Core 容器里还放着所有者的连接串（`CORE_DATABASE_URL`，迁移和 pg-boss 要用）。所以独立登录挡住的是 SQL 注入关掉 RLS，挡不住有人拿到容器的执行权限。
+- 这里不需要新迁移：角色是整个数据库集群的对象，迁移用的 `aroomo_core` 没有建角色的权限；表权限每次启动幂等地授，没有可回退的表结构变化。

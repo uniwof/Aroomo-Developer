@@ -137,14 +137,16 @@ export function pgDeps(db: Db, now: () => Date = () => new Date()): CoreDeps {
   };
 }
 
-export async function createDeps(cfg: CoreConfig): Promise<{ deps: CoreDeps; migrated: string[]; storage: 'postgres' | 'memory' }> {
-  if (!cfg.databaseUrl) return { deps: memoryDeps(), migrated: [], storage: 'memory' };
+/**
+ * 打开业务连接池。D206：迁移与授权用登录角色（表所有者）；业务连接用应用角色，并确认它受 RLS 约束。
+ * 设了 CORE_APP_DB_PASSWORD → 应用角色自己登录（D213 第 13 项，会话里 SET ROLE 回不到所有者）；否则旧做法 SET ROLE。
+ */
+export async function openAppDb(cfg: CoreConfig): Promise<{ db: Db; migrated: string[] }> {
+  if (!cfg.databaseUrl) throw new Error('openAppDb 需要 CORE_DATABASE_URL');
   if (!cfg.dbAppRole) {
     const db = createPgDb(cfg.databaseUrl);
-    const migrated = cfg.autoMigrate ? await migrate(db) : [];
-    return { deps: pgDeps(db), migrated, storage: 'postgres' };
+    return { db, migrated: cfg.autoMigrate ? await migrate(db) : [] };
   }
-  // D206：迁移与授权用登录角色（表所有者）；业务连接池切到应用角色，并确认它受 RLS 约束
   const owner = createPgDb(cfg.databaseUrl, { max: 1 });
   let migrated: string[] = [];
   try {
@@ -153,7 +155,18 @@ export async function createDeps(cfg: CoreConfig): Promise<{ deps: CoreDeps; mig
   } finally {
     await owner.close();
   }
-  const db = createPgDb(cfg.databaseUrl, { role: cfg.dbAppRole });
-  await db.tx((q) => assertAppRoleSafe(q));
+  const db = cfg.appDatabaseUrl ? createPgDb(cfg.appDatabaseUrl) : createPgDb(cfg.databaseUrl, { role: cfg.dbAppRole });
+  try {
+    await db.tx((q) => assertAppRoleSafe(q, { expectRole: cfg.dbAppRole, requireLogin: cfg.requireAppRole || cfg.appDatabaseUrl !== undefined }));
+  } catch (err) {
+    await db.close();
+    throw err;
+  }
+  return { db, migrated };
+}
+
+export async function createDeps(cfg: CoreConfig): Promise<{ deps: CoreDeps; migrated: string[]; storage: 'postgres' | 'memory' }> {
+  if (!cfg.databaseUrl) return { deps: memoryDeps(), migrated: [], storage: 'memory' };
+  const { db, migrated } = await openAppDb(cfg);
   return { deps: pgDeps(db), migrated, storage: 'postgres' };
 }

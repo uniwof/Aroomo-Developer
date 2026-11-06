@@ -11,7 +11,7 @@
 - **RLS 防不了 SQL 注入**（负责人 11-05 22:22）：它只把注入后能读写的范围限在当前 `app.user_id` 的行里；防注入靠参数化查询（`$1` 占位，不拼接用户输入）。RLS 是第二道防线，不是第一道。
 
 ## 2. 要改什么（字段 / 配置）
-1. **独立可登录的应用角色**：`aroomo_core_app`，`LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB`，不拥有任何表，不是 `aroomo_core` 的成员（这样 `RESET ROLE` 回不到所有者）。密码由 Hark 在服务器上生成，直接写进 `.env` 的新变量 `CORE_APP_DATABASE_URL`，不经聊天、不进仓库。`CORE_DATABASE_URL`（所有者）只用来跑迁移和授权。
+1. **独立可登录的应用角色**：`aroomo_core_app`，`LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB`，不拥有任何表，不是 `aroomo_core` 的成员（这样 `RESET ROLE` 回不到所有者）。密码由 Hark 在服务器上生成，直接写进 `.env`，不经聊天、不进仓库。**落地（阶段 3，core/app-role）**：变量是 `CORE_APP_DB_PASSWORD`（只放口令，Core 用 `CORE_DATABASE_URL` 的主机和库、用户名换成 `CORE_DB_APP_ROLE` 拼出应用连接，compose 不用嵌套变量），由 `scripts/create-app-db-role.sh` 生成写入；步骤见 docs/ops/RLS.md。`CORE_DATABASE_URL`（所有者）只用来跑迁移和授权。
 2. **启动自检（失败即拒绝启动）**：应用连接 `current_user` ≠ 表所有者、非超级用户、非 BYPASSRLS、拥有表数 = 0、`pg_has_role(current_user,'aroomo_core','MEMBER') = false`；对每张 RLS 表 `relforcerowsecurity = true`；**应用角色不授 TRUNCATE**（负责人 11-05 22:22：TRUNCATE 不走行级策略、不触发 DELETE 触发器，一条就能清空所有账号的数据），授权只给 SELECT/INSERT/UPDATE/DELETE，自检查到应用角色对任何表有 TRUNCATE 权限 → 拒绝启动。新增 `CORE_DB_REQUIRE_APP_ROLE=true`：设了而应用连接不满足 → 拒绝启动（staging 阶段 1 打开，生产阶段 3 打开）。
 3. **补齐 RLS（同一模板，新迁移 0025 起，一表一文件，可回退）**：`client_tokens`、`executors`、`exec_tasks`、`exec_takeovers`。回填放在 ENABLE/FORCE 之前（docs/ops/RLS.md 规矩）。
 4. **`core_settings`**：新迁移加 `user_id text NOT NULL DEFAULT 'owner'`，按现有键名前缀回填（`u<hex>.` → 账号 id 的标准 UUID 写法，否则 `'owner'`），再上同一策略；`scopedSettings` 改为按 `user_id` 读写（键名保留前缀一个版本，便于回退）。用量计数、负责人、规矩因此也进 RLS。
@@ -50,7 +50,7 @@
 5. **staging 实测（阶段 1 验收第 4 条）**：备份 → 建角色、写 `.env`、重建 core → 日志里自检通过 → 用所有者账号和小号在浏览器各走一遍，互相看不到成员、用量、会话 → 截图 + 测试日志附进阶段 1 送审包。
 
 ## 5. 上线与回退
-- staging：先 `scripts/backup.sh`；迁移可逆（每个文件附回退 SQL：`NO FORCE` + `DISABLE` + 删策略 + 删列）；回退 = 去掉 `CORE_APP_DATABASE_URL`/`CORE_DB_REQUIRE_APP_ROLE` 重建 core，再按需跑回退 SQL。
+- staging：先 `scripts/backup.sh`；迁移可逆（每个文件附回退 SQL：`NO FORCE` + `DISABLE` + 删策略 + 删列）；回退 = 去掉 `CORE_APP_DB_PASSWORD`/`CORE_DB_REQUIRE_APP_ROLE`/`CORE_DB_APP_ROLE` 三行重建 core（见 docs/ops/RLS.md），再按需跑回退 SQL。
 - 生产（阶段 3，所有者确认后）：先备份、先查 `user_id=''/NULL` 行数为 0、`core_settings` 回填条数与前缀键数一致，再启用；异常退回上一标签并恢复快照，LobeHub 照常可用。
 
 ## 6. 已定（负责人 11-05 22:22 同意）
