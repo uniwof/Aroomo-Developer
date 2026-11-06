@@ -30,14 +30,19 @@ migrate() 把整次迁移（所有未执行的文件）放在同一个事务里�
 
 ### 改成独立登录（staging 先做，生产在第二个用户进来前做；每个环境一次，可重复跑）
 1. 备份：`scripts/backup.sh`。
-2. 在服务器仓库目录跑 `scripts/create-app-db-role.sh`：角色不存在就建，设成 `LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB NOREPLICATION NOINHERIT`，收回它在任何角色里的成员身份，授 `CONNECT`；口令在服务器上用 openssl 生成（.env 里已有就沿用），只经 stdin 进 psql，不显示、不进仓库、不经聊天；先备份 `.env` 再写 `CORE_DB_APP_ROLE`、`CORE_APP_DB_PASSWORD`（权限 600）。
-3. `scripts/compose.sh up -d --force-recreate core`，日志里 `appDatabaseUrl: "(set)"`、没有「拒绝启动」，`/healthz` 通。
-4. 核对：`docker compose exec postgres psql -U "$POSTGRES_USER" -d aroomo_core -c "SELECT usename FROM pg_stat_activity WHERE datname='aroomo_core'"` 里业务连接是 `aroomo_core_app`。
-5. 确认无误后 `.env` 加 `CORE_DB_REQUIRE_APP_ROLE=true` 再重建 core：以后谁把口令删了、或退回旧做法，Core 直接拒绝启动，不会悄悄降级。
+2. 在服务器仓库目录跑 `scripts/create-app-db-role.sh`（生产，/opt/aroomo）或 `scripts/create-app-db-role.sh --staging`（staging，/opt/aroomo-staging；和 `deploy/staging/deploy-staging.sh` 用同一组 compose 参数 `-p aroomo-staging` + `deploy/staging/compose.staging.yml`，不加会找不到 staging 的 postgres）：角色不存在就建，设成 `LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB NOREPLICATION NOINHERIT`，收回它在任何角色里的成员身份，授 `CONNECT`；口令在服务器上用 openssl 生成（.env 里已有就沿用），只经 stdin 进 psql，不显示、不进仓库、不经聊天；先备份 `.env` 再写 `CORE_DB_APP_ROLE`、`CORE_APP_DB_PASSWORD`（权限 600）。
+3. 重建 core，日志里 `appDatabaseUrl: "(set)"`、没有「拒绝启动」，`/healthz` 通。
+   - 生产：`scripts/compose.sh up -d --force-recreate core`
+   - staging：`docker compose -p aroomo-staging --project-directory deploy --env-file deploy/.env -f deploy/docker-compose.yml -f deploy/staging/compose.staging.yml up -d --no-deps --force-recreate core`
+4. 核对业务连接是 `aroomo_core_app`（compose 没给 postgres 容器设 `POSTGRES_USER`，所以默认用 `postgres`）：
+   - 生产：`scripts/compose.sh exec -T postgres sh -c 'psql -U "${POSTGRES_USER:-postgres}" -d aroomo_core -c "SELECT usename FROM pg_stat_activity WHERE datname = current_database()"'`
+   - staging：把 `scripts/compose.sh` 换成第 3 步 staging 那串 `docker compose -p aroomo-staging …` 参数。
+5. 确认无误后 `.env` 加 `CORE_DB_REQUIRE_APP_ROLE=true` 再按第 3 步重建 core：以后谁把口令删了、或退回旧做法，Core 直接拒绝启动，不会悄悄降级。
 - 回滚（负责人 #285 必改 1）：**`CORE_DB_REQUIRE_APP_ROLE`、`CORE_APP_DB_PASSWORD`、`CORE_DB_APP_ROLE` 三行都删掉**，重建 core，回到生产现在的样子（所有者连接，FORCE RLS 照样生效，只是注入时能被关掉）。角色留着不用删。
   - 不要只删两行留着 `CORE_DB_APP_ROLE`：那是旧的 SET ROLE 做法，要求 `aroomo_core` 是 `aroomo_core_app` 的成员。生产从来没建过这层关系，脚本建的新角色也不会加，留着这一行 Core 切不过去角色、拒绝启动。
   - 某个环境确实要退回 SET ROLE：先核 `SELECT pg_has_role('aroomo_core', 'aroomo_core_app', 'MEMBER');`，是 true 才能留 `CORE_DB_APP_ROLE` 那一行。
   - staging 打开后先按这里演练一次回退，再切回来（负责人 #285）。
+  - staging 已于 2026-11-06 打开 `CORE_DB_REQUIRE_APP_ROLE=true`：两账号越权测试 30/30、回退演练一次后已切回。生产仍未打开。
 - 新装：`deploy/postgres/20-aroomo-dbs.sh` 只建了 NOLOGIN 的 `aroomo_core_app`，首次启动后同样跑一次第 2 步。
 - 带 needs-leader-review 且负责人未审的 RLS PR 不上生产（D202/D209）。**生产什么时候打开由所有者 / 负责人定**，本脚本不会自己动生产。
 

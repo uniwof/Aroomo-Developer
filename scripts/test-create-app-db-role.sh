@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2015
+# shellcheck disable=SC2015,SC2016,SC2001  # 单引号里的 $ 是要原样匹配的文本
 # create-app-db-role.sh 的本机测试（staging 实跑发现的两个问题）：用临时仓库副本 + 假的 docker / psql，不需要真数据库。
 #   scripts/test-create-app-db-role.sh
 # 1. postgres 容器没设 POSTGRES_USER 时 psql 要用 postgres 登录（以前是空的 → 用 root 连 → 失败）。
@@ -51,7 +51,6 @@ run() { # run <说明> [参数…]：每次用新的 .env
   : >"$calls"
   local rc=0
   OUT="$("$repo/scripts/create-app-db-role.sh" "$@" 2>&1)" || rc=$?
-  RC=$rc
   if [ "$rc" = 0 ]; then ok "$name 退出码 0"; else bad "$name 退出码 $rc"; echo "$OUT" | sed 's/^/     /'; fi
 }
 
