@@ -31,12 +31,14 @@
 1. `working` 工作中：本账号有 status=running 的助手运行，且它某一步最新事件是 `running`、`member_id` = 这位。依据：运行 id、步骤开始时间。
 2. `cooldown` 冷却：今天 `lastLimitedAt` 在 10 分钟内（供应商回过 429）。依据：那个时间；「下次可用」不知道就不写。
 3. `depleted` 耗尽：所有者填了每天上限且今天次数 ≥ 上限。依据：「今天的次数已到你填的上限」。
-4. `ready` 就绪：在职、启用、有状态正常的 Key（= 现有 `online`）。
-5. 其余 `unknown` 未知，附原因：已停用 / 候选 / 没有可用的 Key / 这个账号不统计用量（账号用户的用量不分开记，2、3 无从判断时照实说）。
-返回 `{state, reason?, since?}`；不返回任何百分比。聊天流式回答进行中**不算**工作中（Core 没有按成员的进行中记录）——`shortcut`，等有需要再加。
+4. `ready` 就绪：在职、启用、有状态正常的 Key（= 现有 `online`）。账号用户（用量不分开记）有可用 Key 也是就绪：2、3 无从判断就跳过，不因此写未知。
+5. 其余 `unknown` 未知，附原因：已停用 / 候选 / 没有可用的 Key。
+返回 `{state, reason?, since?}`；不返回任何百分比。`shortcut`：只有助手运行（`assistant_runs`/`run_steps`）里正在跑的步骤算工作中；聊天流式回答进行中**不算**（Core 没有按成员的进行中记录），等有需要再加。
 
 ## 隔离与迁移
-- `0031_poke_data.sql`：`ALTER TABLE members ADD role, system_prompt, avatar`；`ALTER TABLE inbox_items ADD actor, impact, resolved_note`。两张表已 FORCE RLS（0019、0023），新列跟随行策略，不新增策略。回退 `down/0031_poke_data.down.sql`：DROP 这 6 列。
+- `0031_member_profile.sql`：`ALTER TABLE members ADD role, system_prompt, avatar`；回退 `down/0031_member_profile.down.sql`：DROP 这 3 列。
+- `0032_inbox_decision.sql`：`ALTER TABLE inbox_items ADD actor, impact, resolved_note`；回退 `down/0032_inbox_decision.down.sql`：DROP 这 3 列。
+- 两张表已 FORCE RLS（0019、0023），新列跟随行策略，不新增策略。
 - 所有读写照旧走 `userScoped(db, userId)` 且 SQL 带 `user_id = $n`；工作中查询只查本账号的 `assistant_runs`/`run_steps`。
 - 反向测试：账号 A 看不到账号 B 的成员字段、收件箱 actor/impact/理由；B 的运行不会让 A 的同名成员显示「工作中」。
 - 风险档：动了迁移 → **A+**。
