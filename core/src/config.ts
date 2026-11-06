@@ -27,6 +27,13 @@ export interface CoreConfig {
   autoMigrate: boolean;
   /** D206：应用连接切换到的数据库角色（迁移仍用 CORE_DATABASE_URL 的登录角色）；未设置 = 不切换 */
   dbAppRole: string | undefined;
+  /**
+   * D213 第 13 项：业务连接直接以应用角色登录（同一主机和库，用户名 = dbAppRole，口令 = CORE_APP_DB_PASSWORD）。
+   * 未设置 = 旧做法（所有者登录后切到应用角色，会话里 SET ROLE 就能回到所有者）。
+   */
+  appDatabaseUrl: string | undefined;
+  /** CORE_DB_REQUIRE_APP_ROLE=true：必须用独立登录的应用角色，否则拒绝启动 */
+  requireAppRole: boolean;
   /** 主人（P0 单用户）访问令牌；未设置时 /api/* 一律 503 */
   ownerToken: string | undefined;
   /**
@@ -143,6 +150,22 @@ export function loadConfig(env: Env = process.env): CoreConfig {
   }
   const dbAppRole = str(env, 'CORE_DB_APP_ROLE');
   if (dbAppRole !== undefined && !/^[a-z_][a-z0-9_]{0,62}$/.test(dbAppRole)) throw new ConfigError('CORE_DB_APP_ROLE 只允许小写字母、数字、下划线');
+  const appDbPassword = str(env, 'CORE_APP_DB_PASSWORD');
+  let appDatabaseUrl: string | undefined;
+  if (appDbPassword !== undefined) {
+    if (dbAppRole === undefined || databaseUrl === undefined) throw new ConfigError('CORE_APP_DB_PASSWORD 要和 CORE_DATABASE_URL、CORE_DB_APP_ROLE 一起设置');
+    if (appDbPassword.length < 32) throw new ConfigError('CORE_APP_DB_PASSWORD 至少 32 个字符（scripts/create-app-db-role.sh 生成）');
+    const u = new URL(databaseUrl);
+    u.username = dbAppRole;
+    u.password = appDbPassword;
+    appDatabaseUrl = u.toString();
+  }
+  const requireAppRoleRaw = (str(env, 'CORE_DB_REQUIRE_APP_ROLE') ?? 'false').toLowerCase();
+  if (requireAppRoleRaw !== 'true' && requireAppRoleRaw !== 'false') throw new ConfigError('CORE_DB_REQUIRE_APP_ROLE 只能是 true 或 false');
+  const requireAppRole = requireAppRoleRaw === 'true';
+  if (requireAppRole && appDatabaseUrl === undefined) {
+    throw new ConfigError('CORE_DB_REQUIRE_APP_ROLE=true 时必须设 CORE_DB_APP_ROLE 和 CORE_APP_DB_PASSWORD（独立登录的应用角色，见 docs/ops/RLS.md）');
+  }
 
   const autoMigrateRaw = (str(env, 'CORE_AUTO_MIGRATE') ?? 'true').toLowerCase();
   if (!['true', 'false', '1', '0'].includes(autoMigrateRaw)) throw new ConfigError('CORE_AUTO_MIGRATE 必须是 true/false');
@@ -196,6 +219,8 @@ export function loadConfig(env: Env = process.env): CoreConfig {
     databaseUrl,
     autoMigrate: autoMigrateRaw === 'true' || autoMigrateRaw === '1',
     dbAppRole,
+    appDatabaseUrl,
+    requireAppRole,
     ownerToken,
     ownerAccountId,
     chatToken,
@@ -225,6 +250,8 @@ export function toSafeJSON(cfg: CoreConfig): Record<string, unknown> {
     databaseUrl: cfg.databaseUrl ? '(set)' : '(unset)',
     autoMigrate: cfg.autoMigrate,
     dbAppRole: cfg.dbAppRole ?? '(unset)',
+    appDatabaseUrl: cfg.appDatabaseUrl ? '(set)' : '(unset)',
+    requireAppRole: cfg.requireAppRole,
     ownerToken: cfg.ownerToken ? '(set)' : '(unset)',
     ownerAccountId: cfg.ownerAccountId ? '(set)' : '(unset)',
     chatToken: cfg.chatToken ? '(set)' : '(unset)',

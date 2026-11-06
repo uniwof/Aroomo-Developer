@@ -92,7 +92,7 @@ bash /tmp/rt.sh deploy v0.1.0 --confirm v0.1.0      # 主会话确认后真切�
 
 ### 上线前必须手工做的事（11-03 首次上生产）
 
-1. **建应用角色**：数据库初始化脚本只在全新的空库上执行，生产库早就存在，所以 `aroomo_core_app` 不会自动创建。由所有者执行 `CREATE ROLE aroomo_core_app NOLOGIN; GRANT aroomo_core_app TO aroomo_core;`，再在 `deploy/.env` 里设 `CORE_DB_APP_ROLE`。不然 Core 拒绝启动。**先在 staging 上照着做一遍。**
+1. **建应用角色**：数据库初始化脚本只在全新的空库上执行，生产库早就存在，所以 `aroomo_core_app` 不会自动创建。阶段 3 起用 `scripts/create-app-db-role.sh` 建独立可登录的应用角色并写 `.env`，步骤见 [RLS.md](RLS.md)「改成独立登录」（D213 第 13 项，第二个用户进生产前必须）。**先在 staging 上照着做一遍。**
 2. 演练（`deploy v0.1.0`）里的生产前检查全绿；有失败按「生产前检查」一节处理。
 3. 主会话确认后带 `--confirm` 切换。部署前备份会自动做并核对 R2。
 4. 切换后若失败且日志写「需要人工处理」：**不要只回滚代码**，先用部署前备份恢复数据库（[BACKUP.md](BACKUP.md)），再回滚。
