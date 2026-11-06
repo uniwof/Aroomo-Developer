@@ -201,6 +201,25 @@ describe.each(twoAccountEnvs)('必改 1 方案 A：所有者账号映射到所�
     expect(me.json()).toMatchObject({ kind: 'user', user: { id: OWNER_ACCOUNT_ID } });
   });
 
+  it('#295：/api/auth/me 回 ownerAccount——所有者账号（Cookie 会话）true；第二个管理员、家人、Bearer 头、没配置都是 false', async () => {
+    const e = await start({ CORE_OWNER_ACCOUNT_ID: OWNER_ACCOUNT_ID });
+    const SECOND_ADMIN = '4e000000-0000-4000-8000-00000000a002';
+    const at = new Date();
+    await e.deps.users.insertUser({ id: SECOND_ADMIN, email: 'admin2@example.test', displayName: '另一个管理员', role: 'admin', status: 'active', passwordHash: await hashPassword(fakePw(9)), createdAt: at, updatedAt: at });
+    const me = async (headers: Record<string, string>) => {
+      const r = await e.app.inject({ method: 'GET', url: '/api/auth/me', headers });
+      expect(r.statusCode).toBe(200);
+      return r.json() as { kind: string; ownerAccount?: unknown; user?: { id: string } };
+    };
+    expect(await me({ cookie: await e.cookie(OWNER_EMAIL, OWNER_PW) })).toMatchObject({ kind: 'user', ownerAccount: true, user: { id: OWNER_ACCOUNT_ID } });
+    expect(await me({ cookie: await e.cookie('admin2@example.test', fakePw(9)) })).toMatchObject({ kind: 'user', ownerAccount: false, user: { id: SECOND_ADMIN } });
+    expect(await me({ cookie: await e.cookie(FAMILY_EMAIL, FAMILY_PW) })).toMatchObject({ kind: 'user', ownerAccount: false });
+    expect(await me(await e.bearer(OWNER_EMAIL, OWNER_PW))).toMatchObject({ kind: 'user', ownerAccount: false });
+    const off = await start({});
+    const r = await off.app.inject({ method: 'GET', url: '/api/auth/me', headers: { cookie: await off.cookie(OWNER_EMAIL, OWNER_PW) } });
+    expect(r.json()).toMatchObject({ kind: 'user', ownerAccount: false });
+  });
+
   it('没配置：行为不变——所有者账号只看到自己账号的数据（空），对话找不到所有者的成员', async () => {
     const e = await start({});
     const ck = await e.cookie(OWNER_EMAIL, OWNER_PW);

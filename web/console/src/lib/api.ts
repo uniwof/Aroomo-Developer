@@ -140,10 +140,9 @@ export async function fetchAccountId(fetchImpl: typeof fetch = fetch): Promise<s
 export const ACCOUNT_TIMEOUT_MS = 5000;
 
 /**
- * 同 fetchAccountId，另带「是不是所有者」（#290 认领旧会话只给所有者）：主人令牌（kind=owner）或 Core 角色 admin 的账号是；
- * 家人（role=user）不是。以 Core 为准，不认标签页里记的角色。
- * shortcut: admin 账号都算所有者（1.5 只有所有者一个 admin）；以后有第二个 admin 时改成看 Core 的所有者映射。
- * Core 超过 timeoutMs 没回按问不到（null），晚到的回答不再用。
+ * 同 fetchAccountId，另带「是不是所有者」（#290 认领旧会话只给所有者）：主人令牌（kind=owner），或 Core 说映射成所有者的账号
+ * （ownerAccount=true，#295）。第二个 admin、家人不是；旧版 Core 没回这个字段也不算（宁可不给按钮）。以 Core 为准，不认标签页里记的。
+ * Core 超过 timeoutMs 没回按问不到（null），晚到的回答不再用（#296）。
  */
 export async function fetchAccount(fetchImpl: typeof fetch = fetch, timeoutMs = ACCOUNT_TIMEOUT_MS): Promise<{ id: string; owner: boolean } | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -157,8 +156,8 @@ export async function fetchAccount(fetchImpl: typeof fetch = fetch, timeoutMs = 
 
 async function whoAmI(fetchImpl: typeof fetch): Promise<{ id: string; owner: boolean } | null> {
   try {
-    const r = await api<{ kind?: unknown; user?: { id?: unknown; role?: unknown } }>('GET', '/api/auth/me', undefined, fetchImpl);
-    if (r.kind === 'user' && typeof r.user?.id === 'string' && r.user.id) return { id: r.user.id, owner: r.user.role === 'admin' };
+    const r = await api<{ kind?: unknown; ownerAccount?: unknown; user?: { id?: unknown } }>('GET', '/api/auth/me', undefined, fetchImpl);
+    if (r.kind === 'user' && typeof r.user?.id === 'string' && r.user.id) return { id: r.user.id, owner: r.ownerAccount === true };
     return r.kind === 'owner' ? { id: 'owner', owner: true } : null;
   } catch {
     return null;
