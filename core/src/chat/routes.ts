@@ -1,12 +1,12 @@
 /**
- * OpenAI 兼容的对话入口 /v1/*（只给 LobeHub 用；只在容器网络内可达）。
- * 鉴权：Authorization: Bearer <CORE_CHAT_TOKEN>（与主人令牌分开：泄露也只能对话，不能管理成员 / Key）。
+ * OpenAI 兼容的对话入口 /v1/models、/v1/chat/completions（执行员的模型规划器、带 models:chat 的客户端令牌在用；只在容器网络内可达）。
+ * 鉴权：Authorization: Bearer <CORE_CHAT_TOKEN>（原给 LobeHub，留不留待核生产与执行员后定，D259）或客户端令牌。
+ * /v1/responses（给 LobeHub 的 Responses API 转换层）已删（D259）。
  */
 import { timingSafeEqual } from 'node:crypto';
 import { Readable } from 'node:stream';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { HttpError } from '../http/errors.js';
-import { chatToResponses, responsesToChat } from './responses.js';
 import type { ChatService, ChatUserCtx } from './service.js';
 
 function bearerOf(req: FastifyRequest): string {
@@ -73,27 +73,6 @@ export function registerChatRoutes(app: FastifyInstance, chat: ChatService, chat
         if (!reply.raw.writableEnded) ctrl.abort();
       });
       const out = await chat.complete(req.body, ctrl.signal, ctx);
-      reply.code(out.status).headers(out.headers);
-      if (out.stream) return reply.send(Readable.fromWeb(out.stream as import('node:stream/web').ReadableStream));
-      return reply.send(out.json);
-    },
-  );
-
-  // LobeHub 开启联网 / 智能搜索时走 Responses API：转成 chat/completions 走同一套路由，再转回来
-  app.post<{ Body: Record<string, unknown> }>(
-    '/v1/responses',
-    {
-      bodyLimit: 32 * 1024 * 1024,
-      schema: { body: { type: 'object', properties: { model: { type: 'string', maxLength: 200 } } } },
-    },
-    async (req, reply) => {
-      const ctx = await callerCtx(req, chatToken, routing);
-      const ctrl = new AbortController();
-      req.raw.on('close', () => {
-        if (!reply.raw.writableEnded) ctrl.abort();
-      });
-      const model = typeof req.body.model === 'string' ? req.body.model : 'aroomo';
-      const out = chatToResponses(await chat.complete(responsesToChat(req.body), ctrl.signal, ctx), model);
       reply.code(out.status).headers(out.headers);
       if (out.stream) return reply.send(Readable.fromWeb(out.stream as import('node:stream/web').ReadableStream));
       return reply.send(out.json);

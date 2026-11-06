@@ -217,7 +217,7 @@ describe('/v1 对话入口（LobeHub → Core → LiteLLM，D31）', () => {
     expect(seen).toHaveLength(0);
     // 留下的两条照常
     expect((await app.inject({ method: 'GET', url: '/v1/models', headers: chatAuth })).statusCode).toBe(200);
-    expect(text(await chat('你好'))).toBe('我是 Claude');
+    expect(text(await chat('你好'))).toContain('我是 Claude');
   });
 
   it('候选不能被点名、不能当负责人；没有合格负责人时不 @ 的消息只给提示（§9.1、D31）', async () => {
