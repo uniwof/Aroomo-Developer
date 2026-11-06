@@ -89,7 +89,7 @@ function parentOf(v: View): { view: View; label: string } | null {
       return null;
     default:
       // /work：详情 → 时间线 → 项目列表 → 对话
-      if (WORK && v.kind === 'work' && v.project) return { view: { kind: 'work', ...(v.version && { project: v.project }) }, label: v.version ? '版本' : '项目' };
+      if (WORK && v.kind === 'work' && v.project) return { view: { kind: 'work', ...(v.version && { project: v.project }) }, label: v.version ? '版本列表' : '项目' };
       return { view: { kind: 'chat' }, label: '对话' };
   }
 }

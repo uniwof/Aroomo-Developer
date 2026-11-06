@@ -40,6 +40,8 @@ interface Version {
 }
 interface SyncResult {
   added: number;
+  /** 预发布转成正式发布的条数（旧版 Core 没有这个字段） */
+  changed?: number;
   unchanged: number;
   failed: { source: string; reason: string }[];
 }
@@ -227,7 +229,7 @@ function AddProject({ onCancel, onAdded }: { onCancel: () => void; onAdded: (p: 
 // ---------------- 版本时间线 ----------------
 
 function syncText(r: SyncResult): string {
-  const head = r.added ? `新加 ${r.added} 个版本` : '没有新版本';
+  const head = [r.added && `新加 ${r.added} 个版本`, r.changed && `${r.changed} 个转成已发布`].filter(Boolean).join('，') || '没有新版本';
   return [head, ...r.failed.map((f) => `${f.source}：${f.reason}`)].join('；');
 }
 
