@@ -98,7 +98,7 @@
 
 ## 6. OpenAI 兼容接口（B4）
 
-- 端点 `/v1/chat/completions`、`/v1/models`（`/v1/responses` 已删，D259）。**现状**：由 `CORE_CHAT_TOKEN` 单一共享令牌保护，面向 LobeHub。
+- 端点 `/v1/chat/completions`、`/v1/models`（`/v1/responses` 已删，D259）。**现状**：带 `models:chat` 的客户端令牌（执行员设备令牌、连接密码）能用；`CORE_CHAT_TOKEN` 那条原给 LobeHub，LobeHub 已停，删除另开 A+ 单（D259）。
 - B4 改造：
   1. 鉴权改为客户端令牌（`arc_`，scope `models:chat`）或账号会话令牌；`CORE_CHAT_TOKEN` 保留为所有者自用的兼容入口，过渡期后废弃。
   2. `/v1/models` 只列该用户可用的成员（别名 = 成员名），**不暴露 LiteLLM 内部模型名与 Key**。
