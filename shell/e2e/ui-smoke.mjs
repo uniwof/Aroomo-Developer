@@ -97,6 +97,14 @@ for (const [label, viewport, isMobile] of [
   check(`${label} core-session 会话 Cookie 是 HttpOnly`, Boolean(c?.httpOnly), JSON.stringify(cookies.map((x) => x.name)));
   // F-144：正文字号调到最大 32px，控制台各页都不能出现左右滚动（整页或内部滚动区；代码块、表格除外）
   await page.evaluate(() => localStorage.setItem('aroomo.chat.prefs.v1', JSON.stringify({ fontSize: 32, fontV: 2 })));
+  // 负责人 #314 小建议：CI 里数据是空的，先放一段很长的会话标题和一条很长的消息（含不断行的长链接），最容易撑出横向滚动或把按钮挤出去
+  await page.evaluate(() => {
+    const u = JSON.parse(sessionStorage.getItem('aroomo.console.user') || 'null');
+    const key = u && /^[A-Za-z0-9_-]{1,64}$/.test(u.id) ? `aroomo.chat.v1:u:${u.id}` : 'aroomo.chat.v1';
+    const text = '这是一条很长的消息，'.repeat(40) + 'https://example.com/' + 'a'.repeat(120);
+    const now = Date.now();
+    localStorage.setItem(key, JSON.stringify([{ id: 'e2e-long', title: '很长的会话标题'.repeat(12), model: 'aroomo', messages: [{ role: 'user', text, at: now }, { role: 'assistant', text }], updatedAt: now }]));
+  });
   // 每页核两件事才算打开了这一页：地址没被退回（比如退回对话页），这一页自己的标题在（负责人 #314 必改：打不开不能算通过）
   for (const [p, heading] of [
     ['/console/chat', '全员'],
@@ -120,11 +128,32 @@ for (const [label, viewport, isMobile] of [
         .filter((e) => /^(auto|scroll)$/.test(getComputedStyle(e).overflowX) && e.scrollWidth > e.clientWidth + 1 && !e.closest('pre,code,table'))
         .slice(0, 3)
         .map((e) => `${e.tagName.toLowerCase()}.${String(e.className).slice(0, 40)}`);
+      // 负责人 #314 小建议：overflow:hidden 把字或按钮切掉也算失败（有省略号的是故意截断，不算；在滚动区里的能滚到，不算）
+      const clipped = [];
+      for (const e of document.querySelectorAll('body *')) {
+        const r = e.getBoundingClientRect();
+        if (r.width <= 2 || r.height <= 2 || e.closest('pre,code,table')) continue;
+        const hasText = [...e.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
+        if (!hasText && !e.matches('button,a,[role=button],input,textarea,select')) continue;
+        let scrollY = false;
+        for (let a = e.parentElement; a; a = a.parentElement) if (/auto|scroll/.test(getComputedStyle(a).overflowY)) { scrollY = true; break; }
+        let by = r.right > innerWidth + 1 || r.left < -1 ? '屏幕左右' : !scrollY && r.top < -1 ? '屏幕上沿' : '';
+        for (let a = e.parentElement; a && !by && a !== document.body; a = a.parentElement) {
+          const s = getComputedStyle(a);
+          if (/auto|scroll/.test(s.overflowX + s.overflowY)) break;
+          if (!/hidden|clip/.test(s.overflowX + s.overflowY)) continue;
+          if (s.textOverflow === 'ellipsis' || getComputedStyle(e).textOverflow === 'ellipsis') break;
+          const q = a.getBoundingClientRect();
+          if ((/hidden|clip/.test(s.overflowX) && (r.right > q.right + 1 || r.left < q.left - 1)) || (/hidden|clip/.test(s.overflowY) && (r.bottom > q.bottom + 1 || r.top < q.top - 1)))
+            by = `${a.tagName.toLowerCase()}.${String(a.className).slice(0, 30)}`;
+        }
+        if (by) clipped.push(`${e.tagName.toLowerCase()}「${(e.textContent || e.getAttribute('aria-label') || '').trim().slice(0, 12)}」被${by}切掉`);
+      }
       const headings = [...document.querySelectorAll('h1,h2,[role=heading]')].filter((e) => e.getClientRects().length).map((e) => e.textContent.trim());
-      return { path: location.pathname, headings: headings.slice(0, 3), fs: getComputedStyle(d).fontSize, page: d.scrollWidth > d.clientWidth + 1 ? `${d.scrollWidth}>${d.clientWidth}` : '', inner };
+      return { path: location.pathname, headings: headings.slice(0, 3), fs: getComputedStyle(d).fontSize, page: d.scrollWidth > d.clientWidth + 1 ? `${d.scrollWidth}>${d.clientWidth}` : '', inner, clipped: clipped.slice(0, 3) };
     });
     const onPage = m.path === p && m.headings[0] === heading;
-    check(name, onPage && parseFloat(m.fs) > 30 && !m.page && m.inner.length === 0, JSON.stringify(m));
+    check(name, onPage && parseFloat(m.fs) > 30 && !m.page && m.inner.length === 0 && m.clipped.length === 0, JSON.stringify(m));
   }
   await shoot(page, `${label}-console-font32`);
   await ctx.close();
