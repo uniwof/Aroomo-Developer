@@ -55,7 +55,7 @@ describe('切片 16：C15 群聊只列群成员', () => {
     expect(viewOf('/team', '?member=m1')).toEqual({ kind: 'member', id: 'm1' });
   });
 
-  it('群聊顶栏卡「看群里有谁」→ 只列甲、乙，不列丙；一句说明；「看全部成员」回到全部', async () => {
+  it('群聊顶栏卡「看群里有谁」→ 只列甲、乙，不列丙；一句说明；成员页「查看所有成员」回到全部', async () => {
     page();
     fireEvent.click(await screen.findByRole('button', { name: '对话信息' }, { timeout: 8000 }));
     fireEvent.click(screen.getByRole('button', { name: /看群里有谁/ }));
@@ -64,7 +64,7 @@ describe('切片 16：C15 群聊只列群成员', () => {
     expect(memberRow('乙')).not.toBeNull();
     expect(memberRow('丙')).toBeNull();
     expect(screen.getByText('只列「周末计划」这个群里的 2 位成员。')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '看全部成员' }));
+    fireEvent.click(screen.getByRole('button', { name: '查看所有成员' }));
     await waitFor(() => expect(where).toBe('/team'));
     await waitFor(() => expect(memberRow('丙')).not.toBeNull());
   });

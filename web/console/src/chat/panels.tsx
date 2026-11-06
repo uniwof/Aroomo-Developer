@@ -406,7 +406,7 @@ function Switch({ label, on, onChange }: { label: string; on: boolean; onChange:
 export type SettingsSection = 'profile' | 'prefs' | 'safety' | 'general' | 'family' | 'lead' | 'push' | 'budget' | 'external' | 'shortcuts';
 export const SETTINGS_SECTIONS: { id: SettingsSection; label: string; sub: string; Icon: typeof Keyboard }[] = [
   { id: 'profile', label: '个人资料', sub: '你在 Aroomo 里的名字和登录账号。', Icon: UserRound },
-  { id: 'prefs', label: '偏好', sub: '改动立即生效，不用保存。', Icon: SlidersHorizontal },
+  { id: 'prefs', label: '偏好', sub: '在这里改，马上就用上。', Icon: SlidersHorizontal },
   { id: 'safety', label: '安全', sub: '密码、登录和敏感内容保护。', Icon: ShieldCheck },
   { id: 'general', label: '通用', sub: '这个 Aroomo 的概况和总额度。', Icon: Home },
   { id: 'family', label: '家人与邀请', sub: '家里谁在用 Aroomo。', Icon: Users },

@@ -307,7 +307,7 @@ const Working: FC<{ name: string }> = ({ name }) => {
   if (!empty) return null;
   return (
     <p className="msg-working" aria-hidden="true">
-      {name} 正在回复…
+      {name} 收到了，马上回你…
     </p>
   );
 };
@@ -692,7 +692,7 @@ export function Thread({ conversation, onMessages, insert, onInserted, hidden = 
     document.getElementById('chat-input')?.focus();
   };
   const info: ThreadInfo = { memberName, members, messages };
-  const placeholder = memberName ? `回复，或者交给 ${memberName} 一件新任务…` : conversation.group?.length ? '发消息给群里，@ 一位成员' : '发给全员，或 @ 一位成员…';
+  const placeholder = memberName ? `想让 ${memberName} 做什么，写在这里…` : conversation.group?.length ? '发消息给群里，@ 一位成员' : '发给全员，或 @ 一位成员…';
 
   return (
     <AnnounceContext.Provider value={announce}>
@@ -705,12 +705,12 @@ export function Thread({ conversation, onMessages, insert, onInserted, hidden = 
         <ThreadPrimitive.Viewport className="chat-viewport" role="log" aria-label="对话内容" aria-live="off">
           <div className="chat-column">
             <ThreadPrimitive.Empty>
-              {/* 空对话（照 sumus）：正中是头像 + 名字 + 一句简介 + 浅灰「说点什么，开始这个话题」 */}
+              {/* 空对话（照 sumus）：正中是头像 + 名字 + 一句简介 + 浅灰「在下面写第一句话」 */}
               <div className="chat-empty">
                 <Avatar name={memberName ?? (conversation.group?.length ? conversation.title : '负责人')} kind={memberName ? 'member' : conversation.group?.length ? 'group' : 'lead'} size="lg" />
                 <p className="chat-empty-title">{conversation.group?.length ? conversation.title.replace(/^群聊：/, '') : memberName ?? '全员'}</p>
                 {intro && <p className="chat-empty-intro">{intro}</p>}
-                <p className="chat-empty-hint">说点什么，开始这个话题</p>
+                <p className="chat-empty-hint">在下面写第一句话</p>
               </div>
             </ThreadPrimitive.Empty>
             <ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage }} />

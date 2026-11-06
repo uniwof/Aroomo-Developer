@@ -1031,8 +1031,6 @@
   gap: calc(1 * var(--k));
   margin: calc(0.75 * var(--k)) 0 calc(0.5 * var(--k));
   color: var(--faint);
-  font-family: Georgia, 'Times New Roman', 'Noto Serif CJK SC', serif;
-  font-style: italic;
   font-size: calc(0.8125 * var(--k));
 }
 .msg-day::before,
