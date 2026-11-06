@@ -878,6 +878,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   if (!inChat) {
     // C15：从群聊进来的成员页只列群里的人；找不到这个群就列全部
     const groupConv = view.kind === 'members' && view.chat ? list.find((c) => c.id === view.chat && c.group?.length) : undefined;
+    const shownMembers = groupConv ? allMembers.filter((m) => groupConv.group!.includes(m.name)) : allMembers;
     const parent = groupConv ? { go: () => void openConversation(groupConv.id), label: '对话', aria: '返回这段群聊' } : phone ? phoneParent(view) : parentOf(view);
     const member = view.kind === 'member' ? allMembers.find((m) => m.id === view.id) : undefined;
     const title = view.kind === 'member' ? (member?.name ?? '成员') : view.kind === 'assistant' ? (assistants?.find((a) => a.id === view.id)?.name ?? '助手') : view.kind === 'settings' && view.section ? SETTINGS_SECTIONS.find((x) => x.id === view.section)!.label : TITLES[view.kind];
@@ -891,7 +892,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
             <>
               {groupConv && (
                 <div className="panel">
-                  <p className="row-hint">只列「{groupConv.title.replace(/^群聊：/, '')}」这个群里的 {groupConv.group!.length} 位成员。</p>
+                  <p className="row-hint">只列「{groupConv.title.replace(/^群聊：/, '')}」这个群里的 {shownMembers.length} 位成员。</p>
                   <div className="group">
                     <button type="button" className="row row-button" onClick={() => setView({ kind: 'members' })}>
                       <span className="row-text">
@@ -901,7 +902,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
                   </div>
                 </div>
               )}
-              <MembersPanel members={groupConv ? allMembers.filter((m) => groupConv.group!.includes(m.name)) : allMembers} failed={membersFailed} onRetry={reloadMembers} onOpen={(m) => setView({ kind: 'member', id: m.id })} {...(isFamily() ? {} : { onAdd: () => setAddMember({}) })} />
+              <MembersPanel members={shownMembers} failed={membersFailed} onRetry={reloadMembers} onOpen={(m) => setView({ kind: 'member', id: m.id })} {...(isFamily() ? {} : { onAdd: () => setAddMember({}) })} />
               <div className="panel">
                 <div className="group">
                   <button type="button" className="row row-button" onClick={() => setView({ kind: 'capmap' })}>

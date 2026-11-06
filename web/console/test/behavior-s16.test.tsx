@@ -78,6 +78,14 @@ describe('切片 16：C15 群聊只列群成员', () => {
     expect(await screen.findByRole('heading', { name: /周末计划/ })).toBeInTheDocument();
   });
 
+  it('群里存的名字有一个对不上成员（改名 / 删了）：说明写实际列出来的人数（负责人 #283 必改）', async () => {
+    page('/team?chat=g1', [PLAIN, { ...GROUP, group: ['甲', '乙', '丁'] }]);
+    await waitFor(() => expect(memberRow('甲')).not.toBeNull(), { timeout: 8000 });
+    expect(memberRow('乙')).not.toBeNull();
+    expect(screen.getByText('只列「周末计划」这个群里的 2 位成员。')).toBeInTheDocument();
+    expect(screen.queryByText(/3 位成员/)).toBeNull();
+  });
+
   it('找不到这个群（会话已删 / 不是群聊）：列全部成员，不显示群说明', async () => {
     page('/team?chat=nope');
     await waitFor(() => expect(memberRow('丙')).not.toBeNull(), { timeout: 8000 });
