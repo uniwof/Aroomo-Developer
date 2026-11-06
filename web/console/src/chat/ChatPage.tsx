@@ -16,12 +16,12 @@ import { useUsage } from '@/lib/usage';
 import { MeFace, Rail, meLabel, quotaState, type RailTarget } from './Rail';
 import { HeaderCard } from './HeaderCard';
 import { useInboxCount } from '@/lib/inbox';
-import { Thread, type DraftActions } from './Thread';
+import { Thread, newDraftKey, type DraftActions } from './Thread';
 import { OFFLINE_NOTE, ONLINE_AGAIN, useOnline } from './online';
 import { SIDE_UI, Sidebar, type SideUi } from './Sidebar';
 import { BackButton, ExternalPanel, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type GoTarget } from './panels';
 import { applyDisplay } from '@/lib/display';
-import { ClaimFullError, claimLegacy, legacyClaimed, listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
+import { ClaimFullError, claimLegacy, legacyClaimed, listTimeLabel, loadConversations, loadDraft, loadPrefs, newConversation, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
 import { useAsk } from '@/components/Dialog';
 import { FLAGS } from '@/lib/flags';
 import { useAssistants, type AssistantInput } from '@/lib/assistants';
@@ -199,6 +199,13 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   /** 打开页面时本机已有的会话和它们当时的消息数（这些会导入 Core）；比这多出来的消息是还没存的 */
   const atMount = useRef<Map<string, number> | null>(null);
   if (!atMount.current) atMount.current = new Map(list.filter((c) => !c.remote).map((c) => [c.id, c.messages.length]));
+  /** #316：她在当前话题里自己打了字（Thread 记） */
+  const typed = useRef(false);
+  /** #316：问到是谁后，正开着的是空白新话题、她没打字、她那份也没草稿 → 最近那段（她看到一片空白会以为旧话没了）；否则 undefined，照 #291 不动 */
+  const latest = (l: Conversation[], me: string) => {
+    const c = l.find((x) => x.id === currentRef.current);
+    return c && !c.remote && !c.messages.length && !typed.current && !loadDraft(newDraftKey(c), me) ? l.find((x) => x !== c && (x.remote || x.messages.length)) : undefined;
+  };
   /** 正在排队等列表的会话（话还在对话区里、没进列表，列表盖上来时不能丢） */
   const waiting = useRef(new Set<string>());
   /** 本机会话里还没存到 Core 的话（列表没到时就发了，或建会话失败） */
@@ -275,7 +282,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         setList((prev) => {
           // 正打开的空白新会话留着（没内容，不算带过去）：输入框不重建，她问到之前打的字不丢（#291）
           const next = adopt(switched ? prev.filter((c) => c.remote || (c.id === currentRef.current && c.messages.length === 0)) : prev, fresh);
-          if (!next.some((c) => c.id === currentRef.current)) setCurrentId(next[0]!.id);
+          const to = me ? latest(next, me) : undefined;
+          if (to || !next.some((c) => c.id === currentRef.current)) setCurrentId((to ?? next[0]!).id);
           return next;
         });
         setRemote(true);
@@ -312,7 +320,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         const next = mine.length ? mine : [newConversation()];
         listAcct.current = me;
         setList(next);
-        if (!keep.has(currentRef.current)) setCurrentId(next[0]!.id);
+        const to = latest(next, me);
+        if (to || !keep.has(currentRef.current)) setCurrentId((to ?? next[0]!).id);
         setAcct(me);
       }
       if (me && who?.owner) setOwnerAcct(me);
@@ -1056,6 +1065,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           {...(remote !== false ? { persist } : {})}
           {...(focusMsg ? { focusMessageId: focusMsg } : {})}
           draftAccount={acct}
+          typed={typed}
           offline={!online}
           onRunning={(r) => setRunningId(r ? current.id : null)}
         />

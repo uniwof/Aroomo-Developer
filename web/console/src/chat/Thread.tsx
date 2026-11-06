@@ -43,7 +43,7 @@ const toolsOfMessage = (m: { metadata?: { custom?: unknown } }): ChatTool[] | un
 const CORE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** 还没发过消息的新对话：草稿按对象记（全员 / 某位成员 / 某个群），换一位新开对话不带出别人的草稿（审计 C14） */
-const newDraftKey = (c: Conversation) => `new:${c.model}${c.group?.length ? `:${c.group.join('、')}` : ''}`;
+export const newDraftKey = (c: Conversation) => `new:${c.model}${c.group?.length ? `:${c.group.join('、')}` : ''}`;
 
 
 
@@ -426,13 +426,15 @@ export interface ThreadProps {
   focusMessageId?: string;
   /** #291：草稿存在哪个账号名下（同本机会话的账号）；null = 不知道是谁，用共用那份 */
   draftAccount?: string | null;
+  /** #316：她自己打了字（不是读进来的草稿）就记 true，ChatPage 问到是谁后据此决定换不换会话 */
+  typed?: { current: boolean };
   /** F-020：断网时输入框上方显示一行静态字（判断和读屏播报在 ChatPage，整页只播一次） */
   offline?: boolean;
   /** 一轮对话结束：成功给 null，接口回了错误状态给 HTTP 状态（别的失败给 undefined） */
   onResult?: (status: number | null | undefined) => void;
 }
 
-export function Thread({ conversation, onMessages, insert, onInserted, hidden = false, routes = [], members = [], fetchImpl, speechRate = DEFAULT_RATE, speechOnline = false, onAllowOnlineSpeech, memberName, onRunning, intro, notice, onResult, draftActions, persist, focusMessageId, draftAccount = null, offline = false }: ThreadProps) {
+export function Thread({ conversation, onMessages, insert, onInserted, hidden = false, routes = [], members = [], fetchImpl, speechRate = DEFAULT_RATE, speechOnline = false, onAllowOnlineSpeech, memberName, onRunning, intro, notice, onResult, draftActions, persist, focusMessageId, draftAccount = null, offline = false, typed }: ThreadProps) {
   const resultCb = useRef(onResult);
   resultCb.current = onResult;
   const convRef = useRef(conversation);
@@ -612,11 +614,14 @@ export function Thread({ conversation, onMessages, insert, onInserted, hidden = 
     }
     let last = c.getState().text;
     let lastKey = key();
+    const mark = (t: string) => typed && (typed.current = !!t && t !== fromDraft.current);
+    mark(last);
     return c.subscribe(() => {
       const t = c.getState().text;
       const k = key();
       if (t === last && k === lastKey) return;
       if (t !== fromDraft.current) fromDraft.current = null;
+      mark(t);
       if (k !== lastKey) saveDraft(lastKey, '', draftAccount); // 新对话发出第一句后，「新对话」名下的草稿清掉
       last = t;
       lastKey = k;
