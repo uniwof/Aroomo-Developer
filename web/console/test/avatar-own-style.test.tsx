@@ -32,7 +32,7 @@ import { readFileSync } from 'node:fs';
 describe('不再用照 sumus 翻译的文案', () => {
   const src = ['Thread.tsx', 'Sidebar.tsx', 'panels.tsx', 'HeaderCard.tsx', 'ChatPage.tsx'].map((f) => readFileSync(`src/chat/${f}`, 'utf8')).join('\n');
   const css = readFileSync('src/chat/chat.css', 'utf8');
-  it.each(['说点什么，开始这个话题', '一件新任务…', '} 正在回复…', "'搜索对话'", '改动立即生效', '查看成员', '查看群成员', "'查看所有成员'"])('源码里没有「%s」', (t) => {
+  it.each(['说点什么，开始这个话题', '一件新任务…', '} 正在回复…', "'搜索对话'", '改动立即生效', '查看成员', '查看群成员', '查看所有成员'])('源码里没有「%s」', (t) => {
     expect(src).not.toContain(t);
   });
   it('日期分隔不再用 Georgia 斜体', () => {
