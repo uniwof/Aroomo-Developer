@@ -216,26 +216,6 @@ fi
 [ -z "$others" ] || say "信息  清单外带 user_id 的表（没开 RLS，不检查）：${others# }"
 
 # ---------------------------------------------------------------------------
-# 检查 8（#277）：已执行的迁移在目标版本里都要有文件。库比代码新（回退到旧标签、标签打错、迁移文件改名或删了）就拦下。
-if [ ! -d "$mig_dir" ]; then
-  fail "检查 8 找不到目标版本的迁移目录，无法核对已执行的迁移有没有对应文件"
-elif [ "$applied_ok" != 1 ]; then
-  fail "检查 8 读不出迁移记录 core_schema_migrations，无法核对已执行的迁移有没有对应文件"
-else
-  missing_migs=""; applied_n=0
-  while IFS= read -r v; do
-    [[ "$v" =~ ^[0-9]{4}_[a-z0-9_]+\.sql$ ]] || continue   # 与 core/src/db/migrate.ts 的 FILE_RE 一致
-    applied_n=$((applied_n + 1))
-    [ -f "$mig_dir/$v" ] || missing_migs="$missing_migs $v"
-  done <<<"$applied_migs"
-  if [ -n "$missing_migs" ]; then
-    fail "检查 8 数据库里已执行、目标版本迁移目录里却没有的迁移：${missing_migs# }（要上线的版本比数据库旧、标签打错，或迁移文件被改名/删了；真要回退请走回退流程并人工确认）"
-  else
-    pass "检查 8 已执行的 $applied_n 个迁移在目标版本里都有对应文件"
-  fi
-fi
-
-# ---------------------------------------------------------------------------
 # 检查 2：迁移后唯一索引试算。每行：表|其他键列|条件
 # 注意：不能写成 printf | grep -q —— pipefail 下 grep 提前退出会让 printf 吃 SIGPIPE，整条管道判失败
 has_user_id() { grep -qx "$1" <<<"$tables"; }
@@ -405,6 +385,26 @@ elif [ "$paid_launch" = 1 ]; then
   fail "检查 7 core/src/third_party/ekko 还有 $borrowed_n 个借用文件（Ekko Studio，BSL 1.1 只许非商用）：收费上线前必须按 BORROWED.md 剥离清空"
 else
   say "信息  检查 7 core/src/third_party/ekko 有 $borrowed_n 个借用文件（BSL 1.1）：自用发布可以；收费上线前必须清空（--paid-launch 会拦）"
+fi
+
+# ---------------------------------------------------------------------------
+# 检查 8（#277）：已执行的迁移在目标版本里都要有文件。库比代码新（回退到旧标签、标签打错、迁移文件改名或删了）就拦下。
+if [ ! -d "$mig_dir" ]; then
+  fail "检查 8 找不到目标版本的迁移目录，无法核对已执行的迁移有没有对应文件"
+elif [ "$applied_ok" != 1 ]; then
+  fail "检查 8 读不出迁移记录 core_schema_migrations，无法核对已执行的迁移有没有对应文件"
+else
+  missing_migs=""; applied_n=0
+  while IFS= read -r v; do
+    [[ "$v" =~ ^[0-9]{4}_[a-z0-9_]+\.sql$ ]] || continue   # 与 core/src/db/migrate.ts 的 FILE_RE 一致
+    applied_n=$((applied_n + 1))
+    [ -f "$mig_dir/$v" ] || missing_migs="$missing_migs $v"
+  done <<<"$applied_migs"
+  if [ -n "$missing_migs" ]; then
+    fail "检查 8 数据库里已执行、目标版本迁移目录里却没有的迁移：${missing_migs# }（要上线的版本比数据库旧、标签打错，或迁移文件被改名/删了；真要回退请走回退流程并人工确认）"
+  else
+    pass "检查 8 已执行的 $applied_n 个迁移在目标版本里都有对应文件"
+  fi
 fi
 
 # ---------------------------------------------------------------------------

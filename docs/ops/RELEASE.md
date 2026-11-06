@@ -60,13 +60,14 @@ scripts/release-tag.sh rollback --confirm v0.1.0 --lobe-session-ok  # 明确要�
 | 检查 3 | 逐表行数能读出来，存到 `.release/precheck-<时间>.counts.tsv` | 读不出来 = 失败；部署后可以对照 |
 | 检查 4 | 生产 `deploy/.env` 里 Shell 所有者已设置，按 `SHELL_AUTH` 分（没写按 compose 默认 `core-session`）：`core-session` 要 `SHELL_OWNER_EMAIL` 恰好一行、非空、含 @；`lobe-session`（回退旧登录）要 `SHELL_OWNER_USER_ID` 恰好一行且非空（#252）。**不打印值** | 没有 .env、`SHELL_AUTH` 不是这两个值（含 off）、对应项缺失/为空/空引号/等号后空白/被注释/出现两行、邮箱不含 @ = 失败 |
 | 检查 5 | MCP 专用网段（`.env` 的 `MCP_NET_SUBNET`，默认 `172.29.77.0/29`）有没有和主机上别的 docker 网络（`docker network inspect`）或路由（`ip route`）重叠；Aroomo 自己的 `aroomo_aroomo-mcp` 不算 | 冲突 = 失败，提示改 `MCP_NET_SUBNET` 和 `CORE_MCP_IP`；读不出网络或路由也算失败 |
+| 检查 8 | （#277）`core_schema_migrations` 里已执行的迁移（符合 `NNNN_name.sql`）在目标版本迁移目录里都要有同名文件 | 缺了 = 失败并列出文件名（要上线的版本比数据库旧、标签打错、迁移文件改名或删了）；迁移目录或迁移记录读不出来也失败。没有跳过开关：回到旧版本只走 `rollback`（见「回退到 v0.1.0」） |
 | 备份 | 调用 `backup now`（主密钥公钥加密 → R2；强制 `BACKUP_CHECK=always`），核对：状态 ok、`offsite:true`、**`checked:true`（已从 R2 重新下载核对 SHA-256 和 age 文件头）**、大小 > 0、备份名在 **R2 远端**列表里**完全相等**（`backup snapshots --from offsite`，不是本地目录，不做子串匹配）。上传后 `backup.sh` 还会比对 R2 上文件大小与本地 `size_bytes`，不等就失败 | 任一不满足 = 失败 |
 
 - 检查有失败时**不做备份**（先修数据再备份）。通过的备份名记在 `.release/precheck.ok`。
 - 这台机器没有主密钥（D64），备份能不能解开只靠恢复演练验证（见 [BACKUP.md](BACKUP.md)）。
 - 查到问题怎么办：不要手工改生产数据，把输出（只有表名和数字）交给后台线/负责人，决定怎么清理，再重跑。
 - 生产实际执行前，日志写「**需要主会话：确认执行生产检查**」，由主会话在服务器上跑。
-- 测试：`scripts/test-release-precheck.sh`（真 PostgreSQL + 假备份命令；需要 `RELEASE_TEST_PSQL` 或 `psql`+`PGHOST`，否则跳过）。覆盖：干净库通过、NULL 与 owner 撞索引失败、不同账号同内容不算撞、空串 user_id 失败（library_items、provider_keys）、NULL user_id 在回填清单外的表里失败/清单内的表放行、备份失败/没上传 R2/没从 R2 重新核对/大小 0/不在 R2 列表里/只是名字子串 都拒绝、检查失败不备份、`--no-backup` 不备份、连不上库失败、不改数据；另覆盖：清单外的表有 NULL/空串照样通过、清单里的表不存在或查询出错失败、清单文件丢失失败、检查 4 两种登录方式：core-session 下只有 SHELL_OWNER_EMAIL 即通过、缺失/为空/空引号/不像邮箱/注释/重复失败，SHELL_AUTH=off 失败；lobe-session 下 SHELL_OWNER_USER_ID 缺失（只有 SHELL_OWNER_EMAIL 也算缺失）/为空/空引号/注释/重复失败；都不打印值、网段被别的 docker 网络或路由占用失败（自己的 MCP 网络不算）、读不出网络失败、**第一次部署（脚本从临时目录跑、生产目录没有 scripts/lib/）能通过**；检查 1 的待执行迁移：0025–0027 的表还不存在且迁移待执行 → 通过并列出迁移号，迁移已记为执行过但表不存在 → 失败，迁移记录表或迁移目录读不出来 → 失败，只在注释里出现的 CREATE TABLE 不算，没人新建的表（vault_secrets）照旧失败。
+- 测试：`scripts/test-release-precheck.sh`（真 PostgreSQL + 假备份命令；需要 `RELEASE_TEST_PSQL` 或 `psql`+`PGHOST`，否则跳过）。覆盖：干净库通过、NULL 与 owner 撞索引失败、不同账号同内容不算撞、空串 user_id 失败（library_items、provider_keys）、NULL user_id 在回填清单外的表里失败/清单内的表放行、备份失败/没上传 R2/没从 R2 重新核对/大小 0/不在 R2 列表里/只是名字子串 都拒绝、检查失败不备份、`--no-backup` 不备份、连不上库失败、不改数据；另覆盖：清单外的表有 NULL/空串照样通过、清单里的表不存在或查询出错失败、清单文件丢失失败、检查 4 两种登录方式：core-session 下只有 SHELL_OWNER_EMAIL 即通过、缺失/为空/空引号/不像邮箱/注释/重复失败，SHELL_AUTH=off 失败；lobe-session 下 SHELL_OWNER_USER_ID 缺失（只有 SHELL_OWNER_EMAIL 也算缺失）/为空/空引号/注释/重复失败；都不打印值、网段被别的 docker 网络或路由占用失败（自己的 MCP 网络不算）、读不出网络失败、**第一次部署（脚本从临时目录跑、生产目录没有 scripts/lib/）能通过**；检查 1 的待执行迁移：0025–0027 的表还不存在且迁移待执行 → 通过并列出迁移号，迁移已记为执行过但表不存在 → 失败，迁移记录表或迁移目录读不出来 → 失败，只在注释里出现的 CREATE TABLE 不算（#278：整行 `--`、行尾 `--`、单行和跨行 `/* */` 都去掉；`/* x */ CREATE TABLE`、`IF NOT EXISTS public."…"` 照旧认），没人新建的表（vault_secrets）照旧失败；检查 8：都对上通过，库里多一条（0099）或目标版本少一个（0010）失败并列出文件名，不像迁移文件名的记录不核对，迁移记录或迁移目录读不出来失败。
 
 ## 脚本绝不做的事
 
@@ -133,6 +134,8 @@ bash /tmp/rt.sh deploy v0.2.0          # 演练：应打印「切换失败时会
 - 文件格式：`.release/compose-extra/<版本>`（标签名，或提交号前 7 位），一行一个叠加文件的绝对路径；`nobuild: 服务名…` 列出不重建的服务；`#` 起是注释。列的文件不存在就拒绝切换。
 
 ### 跨过 0025–0030 回退：先恢复数据库
+
+**回退不跑生产前检查（含检查 8）**：`release-tag.sh` 只在 `deploy` 时调 `release-precheck.sh`，`rollback` 不调；数据库比回退目标新时由 `rollback` 自己的迁移核对拒绝（第 9 步）。所以顺序永远是**先退库**（下面用部署前备份恢复；或按 `core/migrations/down/` 的回退 SQL 人工退），**再换版本**。不要用 `deploy` 部署一个更旧的标签来回退——检查 8 会拦（这正是它要拦的）。
 
 v0.2.0 会执行迁移 0025–0030（会话、助手、运行、存库、推送、步骤；0025/0026/0027/0029 带 FORCE RLS）。执行之后数据库里有 v0.1.0 不认识的迁移，`rollback` 会拒绝（第 9 步）。顺序：
 
