@@ -813,7 +813,7 @@
   min-width: 0;
 }
 /* 顶栏右边「···」那一格不缩：大字号 + 长话题时它曾被挤到 20px，按钮露出屏幕右边 */
-.topic:has(> .icon-btn) {
+.topic-more {
   flex: none;
 }
 .topic-chip {

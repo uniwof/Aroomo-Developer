@@ -965,7 +965,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
               </div>
             }
             right={
-              <div className="topic">
+              <div className="topic topic-more">
                 <button type="button" className="icon-btn hit" aria-label="更多" title="更多" aria-haspopup="true" aria-expanded={menu === 'more'} onClick={() => setMenu((m) => (m === 'more' ? 'none' : 'more'))}>
                   <Ellipsis aria-hidden="true" />
                 </button>
