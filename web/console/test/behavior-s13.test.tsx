@@ -78,11 +78,11 @@ describe('切片 13：小项', () => {
     await waitFor(() => expect((screen.getByLabelText('输入消息') as HTMLTextAreaElement).value).toBe('给全员的草稿'));
   }, 20000);
 
-  it('C15 群聊顶栏卡：按钮叫「查看群成员」（只列群里的人，见 behavior-s16）', () => {
+  it('C15 群聊顶栏卡：按钮叫「看群里有谁」（只列群里的人，见 behavior-s16）', () => {
     const onView = vi.fn();
     render(<HeaderCard title="甲、乙" name="甲、乙" kind="group" type="群聊 · 2 位成员" intro="" model="甲、乙" onView={onView} />);
     fireEvent.click(screen.getByRole('button', { name: '对话信息' }));
-    fireEvent.click(screen.getByRole('button', { name: /查看群成员/ }));
+    fireEvent.click(screen.getByRole('button', { name: /看群里有谁/ }));
     expect(onView).toHaveBeenCalled();
   });
 

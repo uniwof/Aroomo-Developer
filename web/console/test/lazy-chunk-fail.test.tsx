@@ -53,7 +53,7 @@ describe('#300 点开才下载的部分下载失败', () => {
     // 不是整页白屏：设置弹窗的分区导航、底下对话页的会话搜索和输入框都在
     expect(within(screen.getByRole('list', { name: '设置分组' })).getByRole('button', { name: /偏好/ })).toBeTruthy();
     expect(screen.getByLabelText('输入消息')).toBeTruthy();
-    expect(screen.getByRole('searchbox', { name: '搜索对话' })).toBeTruthy();
+    expect(screen.getByRole('searchbox', { name: '找对话' })).toBeTruthy();
   }, 20000);
 
   it('资源库 › 外部接入（/hub/mcp）：同样只在连接密码那块说一句，不是整面板出错', async () => {

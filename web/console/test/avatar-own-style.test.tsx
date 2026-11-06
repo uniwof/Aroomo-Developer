@@ -26,3 +26,16 @@ describe('头像是 Aroomo 自己的样子', () => {
     for (const s of container.querySelectorAll('.av')) expect(s.getAttribute('aria-hidden')).toBe('true');
   });
 });
+
+// 阶段 4（负责人）：照 sumus 英文翻过来的 7 条文案改成 Aroomo 自己的话
+import { readFileSync } from 'node:fs';
+describe('不再用照 sumus 翻译的文案', () => {
+  const src = ['Thread.tsx', 'Sidebar.tsx', 'panels.tsx', 'HeaderCard.tsx'].map((f) => readFileSync(`src/chat/${f}`, 'utf8')).join('\n');
+  const css = readFileSync('src/chat/chat.css', 'utf8');
+  it.each(['说点什么，开始这个话题', '一件新任务…', '} 正在回复…', "'搜索对话'", '改动立即生效', '查看成员', '查看群成员', "'查看所有成员'"])('源码里没有「%s」', (t) => {
+    expect(src).not.toContain(t);
+  });
+  it('日期分隔不再用 Georgia 斜体', () => {
+    expect(css).not.toMatch(/\.msg-day\s*\{[^}]*Georgia/);
+  });
+});

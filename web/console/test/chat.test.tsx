@@ -253,7 +253,7 @@ describe('原生对话页', () => {
       // 手机设置是整页：先分组列表，点进去看详情，← 回到分组列表（不用横向标签）
       expect(screen.queryByRole('dialog')).toBeNull();
       fireEvent.click(screen.getByRole('button', { name: '偏好' }));
-      expect(screen.getByText('改动立即生效，不用保存。')).toBeInTheDocument();
+      expect(screen.getByText('在这里改，马上就用上。')).toBeInTheDocument();
       expect(screen.getByRole('slider', { name: /字号/ })).toBeInTheDocument();
       fireEvent.click(screen.getByRole('button', { name: '返回设置' }));
       fireEvent.click(screen.getByRole('button', { name: '返回我' }));

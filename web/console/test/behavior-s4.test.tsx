@@ -44,7 +44,7 @@ describe('切片 4：搜索框与输入框', () => {
       ]),
     );
     page();
-    const s = screen.getByRole('searchbox', { name: '搜索对话' });
+    const s = screen.getByRole('searchbox', { name: '找对话' });
     fireEvent.change(s, { target: { value: '买菜' } });
     fireEvent.keyDown(s, { key: 'ArrowDown' });
     expect(document.activeElement?.getAttribute('aria-label')).toMatch(/^买菜清单/);
