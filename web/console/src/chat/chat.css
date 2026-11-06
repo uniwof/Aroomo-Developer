@@ -834,7 +834,13 @@
   cursor: pointer;
 }
 .topic-text {
-  /* 自审 B8：长标题换行，不用省略号（落地文档 0.3「按钮不截断」） */
+  /* 自审 B8 长标题换行；#317 最多两行加省略号（D260：落地文档 0.3「按钮不截断」只在这里例外，32px 下长话题不再挤掉对话区；读屏名字带全名，会话列表照样全名） */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  text-overflow: ellipsis;
   min-width: 0;
   overflow-wrap: anywhere;
   text-align: left;
