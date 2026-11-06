@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ChatPage } from '@/chat/ChatPage';
-import { loadConversations } from '@/chat/store';
+import { claimLegacy, legacyClaimed, loadConversations } from '@/chat/store';
 import { fetchAccount } from '@/lib/api';
 
 const flags = vi.hoisted(() => ({ taskCards: false, quickReplies: false, convFilter: true, schedulePage: false, assistantDraft: false, assistants: false, savedChats: false, skeletonShimmer: false }));
@@ -74,4 +74,43 @@ describe('#296 问「是谁」超时', () => {
     expect(await screen.findByText(REPLY, undefined, { timeout: 8000 })).toBeInTheDocument();
     await waitFor(() => expect(loadConversations().some((c) => c.messages.some((m) => m.text === '帮我记一下明天买药'))).toBe(true), { timeout: 8000 });
   }, 15000);
+  it('认领过以后：Core 超时，在旧会话里说的一句存回共用那份；下次打开 Core 按时回，按钮重新出来，点了她那份里有这句（负责人 #298 必改）', async () => {
+    const OWNER = 'u-owner-1';
+    const OLD1 = 'cccccccc-0000-4000-8000-000000000003';
+    const old = { id: OLD1, title: '以前问的体检', model: 'aroomo', messages: [{ role: 'user', text: '体检要空腹吗', at: 1 }, { role: 'assistant', text: '要' }], updatedAt: 5 };
+    localStorage.setItem('aroomo.chat.v1', JSON.stringify([old]));
+    claimLegacy(OWNER);
+    let answer = false;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url === '/api/members') return json({ members: [] });
+        if (url === '/api/chat/stream') return stream();
+        if (url === '/api/auth/me') return answer ? json({ kind: 'user', ownerAccount: true, user: { id: OWNER, email: 'o@example.test', displayName: '', role: 'admin' } }) : never;
+        return json({}, 404);
+      }),
+    );
+    const first = render(
+      <MemoryRouter>
+        <ChatPage />
+      </MemoryRouter>,
+    );
+    await screen.findByRole('list', { name: '会话列表' });
+    fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '接着问体检' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect(await screen.findByText(REPLY, undefined, { timeout: 8000 })).toBeInTheDocument();
+    await waitFor(() => expect(loadConversations().find((c) => c.id === OLD1)!.messages.map((m) => m.text)).toContain('接着问体检'), { timeout: 8000 });
+    first.unmount();
+
+    answer = true;
+    render(
+      <MemoryRouter>
+        <ChatPage />
+      </MemoryRouter>,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: '这些都是我的，放进我的账号' }, { timeout: 4000 }));
+    await screen.findByText(/放进你的账号了/);
+    expect(loadConversations(OWNER).find((c) => c.id === OLD1)!.messages.map((m) => m.text)).toContain('接着问体检');
+    expect(legacyClaimed(OWNER)).toBe(true);
+  }, 20000);
 });
