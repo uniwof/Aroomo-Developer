@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ChatPage } from '@/chat/ChatPage';
+// 这组测试测的是阶段 2/3 开关打开后的行为（「对话 / 助手」分段要助手开关）。阶段 1.5 发布默认全关，关着的样子见 release-15-flags-off.test.tsx
+vi.mock('@/lib/flags', () => ({ FLAGS: { taskCards: true, quickReplies: false, convFilter: true, schedulePage: true, assistantDraft: true, assistants: true, savedChats: true, skeletonShimmer: false } }));
 
 beforeEach(() => {
   localStorage.clear();

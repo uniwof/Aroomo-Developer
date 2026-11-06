@@ -153,6 +153,8 @@ services:
       CORE_OWNER_ACCOUNT_ID: ${CORE_OWNER_ACCOUNT_ID:-}
       # 助手定时执行器总开关：只有 .env 写 ASSISTANT_SCHEDULER_ENABLED=true 才开（生产阶段 3 前不写，保持关）
       ASSISTANT_SCHEDULER_ENABLED: ${ASSISTANT_SCHEDULER_ENABLED:-false}
+      # X-19 长会话自动压缩（会自动调免费成员做摘要）：只有 .env 写 COMPACT_ENABLED=true 才开（生产阶段 1.5 不写，保持关）
+      COMPACT_ENABLED: ${COMPACT_ENABLED:-false}
       # 对话入口 /v1 的令牌（LobeHub 用它调 Core；提议 H5）
       CORE_CHAT_TOKEN: ${CORE_CHAT_TOKEN:-}
       CORE_TOKEN_SECRET: ${CORE_TOKEN_SECRET:-}
