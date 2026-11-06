@@ -83,7 +83,9 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      - run: npm run build
+      - run: npm run build 2>&1 | tee build.log
+      - name: 对话页包体积 ≤150 KB gz（#281）
+        run: node scripts/check-chat-size.mjs build.log
 
   licenses:
     name: 许可证闸门（D179：npm + Python）
