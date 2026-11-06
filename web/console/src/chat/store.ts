@@ -365,6 +365,9 @@ export function legacyClaimed(account: string, storage: Storage | undefined = gl
   }
 }
 
+/** #290：放不下（超过上限或浏览器存满）：再点也没用，界面要换一句话（负责人 #294 必改 2） */
+export class ClaimFullError extends Error {}
+
 /**
  * #290：把旧的共用那份（有消息的）复制进这个账号自己那份，按 id 去重（点两次不重复）。共用那份不删、不改。
  * 写完读回核对每一段都在，才记「已认领」；存不下（超过上限、存满）就抛错，什么都不记。返回新复制了几段。
@@ -378,8 +381,12 @@ export function claimLegacy(account: string, storage: Storage = globalThis.local
   const add = legacy.filter((c) => !have.has(c.id));
   if (add.length) {
     const merged = [...mine, ...add].sort((a, b) => b.updatedAt - a.updatedAt);
-    if (merged.length > MAX_CONVERSATIONS) throw new Error('too many');
-    storage.setItem(chatKey(account), JSON.stringify(merged));
+    if (merged.length > MAX_CONVERSATIONS) throw new ClaimFullError('too many');
+    try {
+      storage.setItem(chatKey(account), JSON.stringify(merged));
+    } catch (e) {
+      throw e instanceof DOMException && (e.name === 'QuotaExceededError' || e.code === 22) ? new ClaimFullError('quota') : e;
+    }
   }
   const saved = new Set(loadConversations(account, storage).map((c) => c.id));
   if (!legacy.every((c) => saved.has(c.id))) throw new Error('not saved');

@@ -20,7 +20,7 @@ import { Thread, type DraftActions } from './Thread';
 import { SIDE_UI, Sidebar, type SideUi } from './Sidebar';
 import { BackButton, ExternalPanel, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type GoTarget } from './panels';
 import { applyDisplay } from '@/lib/display';
-import { claimLegacy, legacyClaimed, listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
+import { ClaimFullError, claimLegacy, legacyClaimed, listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
 import { useAsk } from '@/components/Dialog';
 import { FLAGS } from '@/lib/flags';
 import { useAssistants, type AssistantInput } from '@/lib/assistants';
@@ -296,6 +296,13 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         // 先换列表、再换账号（同一次更新）：保存只在列表和账号对得上时才写。
         // #292：问到之前在这页新开、说过话的会话（打开时没有或是空的）是她的，带过去；读进来的旧那份不带
         const carry = listRef.current.filter((c) => !c.remote && c.messages.length > 0 && (atMount.current!.get(c.id) ?? 0) === 0);
+        // 打开时读进来的旧会话里接着说过的话（问到之前没存）：存回它原来那份，不丢，也不带进这个账号
+        const was = listAcct.current;
+        const touched = listRef.current.filter((c) => !c.remote && (atMount.current!.get(c.id) ?? 0) > 0 && c.messages.length > atMount.current!.get(c.id)!);
+        if (touched.length) {
+          const t = new Map(touched.map((c) => [c.id, c]));
+          saveConversations(loadConversations(was).map((c) => t.get(c.id) ?? c), was);
+        }
         const keep = new Set(carry.map((c) => c.id));
         const mine = [...carry, ...loadConversations(me).filter((c) => !keep.has(c.id))];
         const next = mine.length ? mine : [newConversation()];
@@ -427,14 +434,19 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   /** #290：只有 Core 确认的所有者、且就是现在这份列表的账号，才给「放进我的账号」 */
   const canClaim = !!acct && ownerAcct === acct && legacyLeft > 0;
   const [claimNote, setClaimNote] = useState<{ ok: boolean; text: string } | null>(null);
+  /** 点完按钮就没了：焦点移到结果那句上，读屏和放大镜不迷路（负责人 #294 建议 1） */
+  const claimNoteRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (claimNote) claimNoteRef.current?.focus();
+  }, [claimNote]);
   const claimNow = () => {
     const me = ownerAcct;
     if (!me || me !== acct) return;
     let n: number;
     try {
       n = claimLegacy(me);
-    } catch {
-      setClaimNote({ ok: false, text: '没放进去，原来那份还在。过一会儿再点一次。' });
+    } catch (e) {
+      setClaimNote({ ok: false, text: e instanceof ClaimFullError ? '放不下了：你账号里的会话太多。原来那份还在，没有丢。请告诉 Hark。' : '没放进去，原来那份还在。过一会儿再点一次。' });
       return;
     }
     setClaimTick((t) => t + 1);
@@ -756,7 +768,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
                     <p className="note">这台浏览器里有 {legacyLeft} 段以前的会话，分不清是哪个账号存的，没有导入，也没有删。</p>
                   ))}
                 {claimNote && (
-                  <p className="note" role={claimNote.ok ? 'status' : 'alert'}>
+                  <p className="note" role={claimNote.ok ? 'status' : 'alert'} ref={claimNoteRef} tabIndex={-1}>
                     {claimNote.text}
                   </p>
                 )}

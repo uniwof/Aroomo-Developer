@@ -189,7 +189,8 @@ describe('#290 认领以前的共用会话', () => {
     putLegacy();
     const many = Array.from({ length: 200 }, (_, i) => local(`cccccccc-0000-4000-8000-1${String(i).padStart(11, '0')}`, `第${i}段`, 100 + i));
     saveConversations(many, OWNER);
-    const mineBefore = localStorage.getItem(`${LEGACY}:u:${OWNER}`);
+    const ids = (k: string | null) => (loadConversations(k).map((c) => c.id).sort() as string[]).join(',');
+    const mineBefore = ids(OWNER);
     const before = localStorage.getItem(LEGACY);
     stubCore({ kind: 'user', role: 'admin', id: OWNER });
     renderPage();
@@ -199,7 +200,7 @@ describe('#290 认领以前的共用会话', () => {
     expect(screen.queryByText(/过一会儿再点/)).toBeNull();
     expect(legacyClaimed(OWNER)).toBe(false);
     await tick();
-    expect(localStorage.getItem(`${LEGACY}:u:${OWNER}`)).toBe(mineBefore);
+    expect(ids(OWNER) === mineBefore).toBe(true); // 页面照常保存会重排顺序，比 id 集合
     expect(localStorage.getItem(LEGACY)).toBe(before);
   });
 
