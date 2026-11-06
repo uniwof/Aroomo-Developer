@@ -865,7 +865,11 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         : '这里的话只发给 TA。'
       : singleName
         ? '这里的话只发给 TA。'
-        : '所有成员都在。直接说，负责人回答；@ 谁，谁回答。';
+        : // F-018（D213-9）：一句话都没说过（没有带消息的会话）时，全员对话的空状态换成负责人的欢迎引导；只是空状态的字，不写进会话、不调 Core。
+          // 存库模式下列表还没到（remote === null）时先用平常那句，免得到了再换一闪
+          remote !== null && list.every((c) => !c.remote && c.messages.length === 0)
+          ? '你好，我是负责人。想做什么，直接在下面说，我来回答，或者交给合适的成员。想找某一位，就 @ 它的名字。'
+          : '所有成员都在。直接说，负责人回答；@ 谁，谁回答。';
   const q = currentMember ? quotaState(usage?.find((u) => u.memberId === currentMember.id)) : null;
   // 自审 A16：提示条可关，关了当天这位成员不再出现（只记在本机）
   const noticeKey = currentMember ? `${currentMember.id}:${new Date().toLocaleDateString('sv-SE')}` : '';
