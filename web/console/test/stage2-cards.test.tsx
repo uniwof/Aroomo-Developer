@@ -15,8 +15,8 @@ import { ConvFilter, RunningTag, applyConvFilter } from '@/chat/conv-filter';
 afterEach(cleanup);
 
 describe('开关', () => {
-  it('integrate/stage2：Core 助手接口、会话存库已并入，除快速回复（Core 还没有反问数据块）外全部打开', () => {
-    expect(FLAGS).toEqual({ taskCards: true, quickReplies: false, convFilter: true, schedulePage: true, assistantDraft: true, assistants: true, savedChats: true, skeletonShimmer: false });
+  it('阶段 1.5（负责人裁定 B）：阶段 2/3 的开关全关，生产不露入口；验收后测一项开一项', () => {
+    expect(FLAGS).toEqual({ taskCards: false, quickReplies: false, convFilter: false, schedulePage: false, assistantDraft: false, assistants: false, savedChats: false, skeletonShimmer: false });
   });
 });
 

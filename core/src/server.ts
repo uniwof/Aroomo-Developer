@@ -435,8 +435,8 @@ export function buildServer(
   };
   const conversationSvc = new ConversationService({ store: deps.conversations, now: deps.now });
   registerConversationRoutes(app, conversationSvc);
-  // X-19：长会话自动压缩，只用本账号的免费成员（同助手的免费判断），每天次数按低额度档
-  const compactor = new Compactor({
+  // X-19：长会话自动压缩，只用本账号的免费成员（同助手的免费判断），每天次数按低额度档。COMPACT_ENABLED=true 才建（默认关）
+  const compactor = cfg.compactEnabled ? new Compactor({
     store: deps.conversations,
     summarize: freeSummarizer({
       membersFor: membersOf,
@@ -448,8 +448,8 @@ export function buildServer(
     timezone: cfg.timezone,
     ...(deps.compactLimits ? { limits: deps.compactLimits } : {}),
     warn: (event) => app.log.warn(event),
-  });
-  registerChatStreamRoute(app, chatService, { ctxFor: chatRouting.ctxFor, draftFor, conversations: conversationSvc, compactor, ...(deps.chatStreamLimits ? { limits: deps.chatStreamLimits } : {}) });
+  }) : undefined;
+  registerChatStreamRoute(app, chatService, { ctxFor: chatRouting.ctxFor, draftFor, conversations: conversationSvc, ...(compactor ? { compactor } : {}), ...(deps.chatStreamLimits ? { limits: deps.chatStreamLimits } : {}) });
   // 付费调用确认卡（kind=payment，重要确认）：同意 → 同一条运行继续；拒绝 → 取消
   inbox.registerHandler("assistant.run.confirm", async (item, actionId, audit) => {
     if (item.related?.type !== "assistant_run") return;

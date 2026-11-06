@@ -108,8 +108,9 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
   const setUi = onUi ?? setOwn;
   const { q, folded } = ui;
   const [filter, setFilter] = useState<ConvFilterValue>('all');
-  // 家人账号的「助手」是空的（家人看不到助手）：不显示这个分段，免得点了只看到空列表（审计 C11）
-  const noStaff = isFamily();
+  // 家人账号的「助手」是空的（家人看不到助手）：不显示这个分段，免得点了只看到空列表（审计 C11）。
+  // 助手开关关着（阶段 1.5 生产）也不显示：没有接口，只会是空列表
+  const noStaff = isFamily() || !FLAGS.assistants;
   const tab: Tab = noStaff ? 'chats' : ui.tab;
   const setTab = (t: Tab) => setUi((u) => ({ ...u, tab: t }));
   const setQ = (v: string) => setUi((u) => ({ ...u, q: v }));
