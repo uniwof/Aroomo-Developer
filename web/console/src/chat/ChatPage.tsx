@@ -24,7 +24,7 @@ import { listTimeLabel, loadConversations, loadPrefs, newConversation, saveConve
 import { useAsk } from '@/components/Dialog';
 import { FLAGS } from '@/lib/flags';
 import { useAssistants, type AssistantInput } from '@/lib/assistants';
-import { archiveConversation, createConversation, fetchConversation, fetchConversations, fetchMessages, importLocalOnce, markRead, mergeRemote, renameConversation } from './saved';
+import { archiveConversation, createConversation, fetchConversation, fetchConversations, fetchMessages, importLocalOnce, localPending, markRead, mergeRemote, renameConversation } from './saved';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import './chat.css';
 
@@ -209,6 +209,29 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     settled.current = true;
     setRemote(false);
   }, []);
+  /** 阶段 3「一键导入」：这台浏览器里还没存到 Core 的本机会话段数（只给所有者；自动导入那次失败或之后又多了才会 >0） */
+  const [localLeft, setLocalLeft] = useState(0);
+  const [importing, setImporting] = useState(false);
+  const [importNote, setImportNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const importNow = async () => {
+    const n = localPending(loadConversations());
+    setImporting(true);
+    setImportNote(null);
+    try {
+      await importLocalOnce(loadConversations());
+    } catch {
+      setImportNote({ ok: false, text: '没导进去，本机那份还在。过一会儿再点一次。' });
+      setImporting(false);
+      return;
+    }
+    setLocalLeft(localPending(loadConversations()));
+    setImportNote({ ok: true, text: `导入好了 ${n} 段会话。` });
+    setImporting(false);
+    // 导完重取列表，导入的会话马上出现；取不到也没关系，定时刷新会带上
+    fetchConversations()
+      .then((fresh) => setList((prev) => adopt(prev, fresh)))
+      .catch(() => undefined);
+  };
   useEffect(() => {
     if (!saved) return;
     let alive = true;
@@ -219,6 +242,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         const fresh = await fetchConversations();
         if (!alive || settled.current) return;
         settled.current = true;
+        if (!isFamily()) setLocalLeft(localPending(loadConversations()));
         setList((prev) => {
           const next = adopt(prev, fresh);
           if (!next.some((c) => c.id === currentRef.current)) setCurrentId(next[0]!.id);
@@ -621,6 +645,27 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
       onOpen={(k) => goto({ kind: k })}
       usage={usage}
       {...(remote === true ? { filterable: true, runningId, onOpenMessage: (id: string, msg: string) => void openConversation(id, msg) } : {})}
+      {...(remote === true && (localLeft > 0 || importNote)
+        ? {
+            notice: (
+              <div className="conv-import">
+                {localLeft > 0 && (
+                  <>
+                    <p className="note">这台浏览器里还有 {localLeft} 段会话没存到 Aroomo。</p>
+                    <button type="button" className="btn btn-outline hit" disabled={importing} onClick={() => void importNow()}>
+                      {importing ? '正在导入…' : `导入这 ${localLeft} 段会话`}
+                    </button>
+                  </>
+                )}
+                {importNote && (
+                  <p className="note" role={importNote.ok ? 'status' : 'alert'}>
+                    {importNote.text}
+                  </p>
+                )}
+              </div>
+            ),
+          }
+        : {})}
       {...(assistantsOn
         ? {
             assistants,

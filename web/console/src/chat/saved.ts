@@ -149,6 +149,12 @@ function importedIds(storage: Storage): Set<string> {
   }
 }
 
+/** 这台浏览器里还没导入过、有消息的本机会话有几段（「一键导入」那行显示用） */
+export function localPending(local: Conversation[], storage: Storage = localStorage): number {
+  const done = importedIds(storage);
+  return local.filter((c) => c.messages.length > 0 && !done.has(c.id)).length;
+}
+
 /**
  * 把还没导入过的本机会话交给 Core（按 id 幂等，导过的记在本机，不再发）。本机那份不删、不改。
  * 本机 id 不是 uuid 的（很旧的会话）按它算一个固定的 uuid。返回导入了几个；失败抛错，下次打开再试。

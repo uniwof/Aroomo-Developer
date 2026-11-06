@@ -9,7 +9,7 @@
  * 不放点了没反应的按钮。
  * 桌面常显；手机上它就是唯一一层抽屉（外层 <dialog>）：最上面多一排分类（资源库 / 工具 / API / 成员）。
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Activity, Bell, Bot, CalendarClock, ChevronDown, MessageSquareText, MessagesSquare, Pin, Plus, Search, Shapes, SquarePen, Users, X } from 'lucide-react';
 import { isFamily, type Member } from '@/lib/api';
 import type { Assistant } from '@/lib/assistants';
@@ -87,6 +87,8 @@ export interface SidebarProps {
   onOpenMessage?: (conversationId: string, messageId: string) => void;
   ui?: SideUi;
   onUi?: (f: (u: SideUi) => SideUi) => void;
+  /** 「对话」分段在列表上方显示的一行（会话存库时的「一键导入本机会话」） */
+  notice?: ReactNode;
 }
 
 /** 片段里把搜索词加粗（不分大小写；只是显示，读屏照常读整句） */
@@ -102,7 +104,7 @@ function Marked({ text, q }: { text: string; q: string }) {
   );
 }
 
-export function Sidebar({ list, currentId, members, inboxCount, active, onPick, onMember, onLead, onNew, onOpen, onClose, usage, ui: given, onUi, assistants, assistantsError, currentAssistant, onAssistant, onNewAssistant, onSchedule, filterable = false, runningId = null, onOpenMessage }: SidebarProps) {
+export function Sidebar({ list, currentId, members, inboxCount, active, onPick, onMember, onLead, onNew, onOpen, onClose, usage, ui: given, onUi, assistants, assistantsError, currentAssistant, onAssistant, onNewAssistant, onSchedule, filterable = false, runningId = null, onOpenMessage, notice }: SidebarProps) {
   const [own, setOwn] = useState<SideUi>(SIDE_UI);
   const ui = given ?? own;
   const setUi = onUi ?? setOwn;
@@ -333,6 +335,7 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
       </div>
 
       <div className="conv-scroll">
+        {tab === 'chats' && notice}
         <div className="conv-group-row">
           <button type="button" className="conv-group hit" aria-expanded={!folded} onClick={() => setFolded((f) => !f)}>
             <span>{groupLabel}</span>
