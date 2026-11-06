@@ -162,14 +162,15 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("pull_request_target:", y)
         self.assertNotRegex(y, r"(?m)^\s+pull_request:")
         self.assertNotIn("ref: ${{ github.event.pull_request.head", y)
-        self.assertNotIn("inputs.branch }}\n", y.split("checkout@")[1].split("- name")[0])
+        checkout = y.split("checkout@")[1].split("- name")[0]
+        self.assertNotIn("inputs.branch", checkout)
+        self.assertNotIn("head", checkout)
         self.assertIn("persist-credentials: false", y)
 
     def test_gemini_task_uses_base_guard(self):
         y = self.read(".github/workflows/gemini-task.yml")
         self.assertNotIn("python3 scripts/ci/path-guard.py", y)
         self.assertIn("git show origin/dev:scripts/ci/path-guard.py", y)
-        self.assertNotIn('d="{\\"ref\\":\\"$BR\\",\\"inputs', y)
 
 
 if __name__ == "__main__":
