@@ -1191,7 +1191,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
 
   return (
     <div className={`app${prefs.highContrast ? ' chat-hc' : ''}${wide ? ' app-wide' : ''}${layout.rail ? ' app-rail' : ''}${phone ? ' app-phone' : ''}${wide && collapsed ? ' app-collapsed' : ''}`}>
-      <p className="sr-only" role="status" aria-live="polite" data-net-status="">
+      {/* 只用 aria-live，不加 role=status：对话区已有一个 role=status，页面上只留一个，读屏和测试都不混 */}
+      <p className="sr-only" aria-live="polite" data-net-status="">
         {netSay}
       </p>
       {layout.rail && <Rail active={settingsOpen && !phone ? 'settings' : view.kind} onOpen={(t: RailTarget) => goto({ kind: t })} usage={usage} />}

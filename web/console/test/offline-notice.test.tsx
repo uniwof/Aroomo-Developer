@@ -37,12 +37,12 @@ describe('断网提示（F-020）', () => {
       </MemoryRouter>,
     );
 
-  /** 数整页所有状态区（role=status，读屏会播）里这句话一共出现了几次（每个状态区从没有到有算一次） */
+  /** 数整页所有播报区（role=status 或 aria-live，读屏会播）里这句话一共出现了几次（每个状态区从没有到有算一次） */
   const countSpoken = (text: string) => {
     const seen = { n: 0 };
     const had = new WeakSet<Element>();
     new MutationObserver(() => {
-      for (const el of document.querySelectorAll('[role="status"]')) {
+      for (const el of document.querySelectorAll('[role="status"],[aria-live="polite"],[aria-live="assertive"]')) {
         const has = el.textContent === text;
         if (has && !had.has(el)) seen.n += 1;
         if (has) had.add(el);
