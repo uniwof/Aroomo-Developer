@@ -161,8 +161,8 @@ for (const [label, viewport, isMobile] of [
         if (by) clipped.push(`${e.tagName.toLowerCase()}「${(e.textContent || e.getAttribute('aria-label') || '').trim().slice(0, 12)}」被${by}切掉`);
       }
       const headings = [...document.querySelectorAll('h1,h2,[role=heading]')].filter((e) => e.getClientRects().length).map((e) => e.textContent.trim());
-      // 负责人 #315 必改：长数据真的显示出来才算查过（标题在 DOM 里——窄屏顶栏会收起话题胶囊；长链接要看得见）
-      const seeded = { title: document.body.textContent.includes('很长的会话标题很长的会话标题'), link: document.body.innerText.includes('https://example.com/aaaa') };
+      // 负责人 #315 必改：长数据真的显示出来才算查过（标题在 DOM 里——窄屏顶栏会收起话题胶囊；长链接里那串不断行的 a 要看得见；不用网址字符串比对，免得 CodeQL 当成网址校验）
+      const seeded = { title: document.body.textContent.includes('很长的会话标题很长的会话标题'), link: document.body.innerText.includes('a'.repeat(100)) };
       return { seeded, path: location.pathname, headings: headings.slice(0, 3), fs: getComputedStyle(d).fontSize, page: d.scrollWidth > d.clientWidth + 1 ? `${d.scrollWidth}>${d.clientWidth}` : '', inner, clipped: clipped.slice(0, 3) };
     });
     const onPage = m.path === p && m.headings[0] === heading;
