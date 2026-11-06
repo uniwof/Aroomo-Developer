@@ -20,7 +20,7 @@ import { Thread, type DraftActions } from './Thread';
 import { SIDE_UI, Sidebar, type SideUi } from './Sidebar';
 import { BackButton, ExternalPanel, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type GoTarget } from './panels';
 import { applyDisplay } from '@/lib/display';
-import { ClaimFullError, claimLegacy, clearLegacyClaimed, legacyClaimed, listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
+import { ClaimFullError, claimLegacy, legacyClaimed, listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
 import { useAsk } from '@/components/Dialog';
 import { FLAGS } from '@/lib/flags';
 import { useAssistants, type AssistantInput } from '@/lib/assistants';
@@ -301,9 +301,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         const touched = listRef.current.filter((c) => !c.remote && (atMount.current!.get(c.id) ?? 0) > 0 && c.messages.length > atMount.current!.get(c.id)!);
         if (touched.length) {
           const t = new Map(touched.map((c) => [c.id, c]));
+          // 存回的是共用那份时，「已认领」记号对不上了，提示和按钮会重新出来（负责人 #294 第二轮、#298）
           saveConversations(loadConversations(was).map((c) => t.get(c.id) ?? c), was);
-          // 存回的是共用那份：她认领过也要重新提示，不然这句在她账号里看不见（负责人 #294 第二轮）
-          if (!was) clearLegacyClaimed(me);
         }
         const keep = new Set(carry.map((c) => c.id));
         const mine = [...carry, ...loadConversations(me).filter((c) => !keep.has(c.id))];
