@@ -16,17 +16,18 @@ import { useUsage } from '@/lib/usage';
 import { MeFace, Rail, meLabel, quotaState, type RailTarget } from './Rail';
 import { HeaderCard } from './HeaderCard';
 import { useInboxCount } from '@/lib/inbox';
-import { Thread, type DraftActions } from './Thread';
+import { Thread, newDraftKey, type DraftActions } from './Thread';
 import { OFFLINE_NOTE, ONLINE_AGAIN, useOnline } from './online';
 import { SIDE_UI, Sidebar, type SideUi } from './Sidebar';
-import { BackButton, ExternalPanel, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type GoTarget } from './panels';
+import { BackButton, ExternalPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type GoTarget } from './panels';
 import { applyDisplay } from '@/lib/display';
-import { ClaimFullError, claimLegacy, legacyClaimed, listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
+import { ClaimFullError, claimLegacy, legacyClaimed, listTimeLabel, loadConversations, loadDraft, loadPrefs, newConversation, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
 import { useAsk } from '@/components/Dialog';
 import { FLAGS } from '@/lib/flags';
 import { useAssistants, type AssistantInput } from '@/lib/assistants';
 import { archiveConversation, createConversation, fetchConversation, fetchConversations, fetchMessages, importLocalOnce, localPending, markRead, mergeRemote, renameConversation } from './saved';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { LazyChunk } from '@/components/LazyChunk';
 import './chat.css';
 
 // 不常开的面板点开才下载（#250：对话页包 ≤150 KB gz）。设置、成员随对话页一起加载，打开不用等。
@@ -42,6 +43,7 @@ const Executors = lazy(() => import('@/pages/Executors').then((m) => ({ default:
 const AssistantDetail = lazy(() => import('./pages/assistants/AssistantPages').then((m) => ({ default: m.AssistantDetail })));
 const NewAssistantDialog = lazy(() => import('./pages/assistants/AssistantPages').then((m) => ({ default: m.NewAssistantDialog })));
 const ScheduleView = lazy(() => import('./pages/assistants/AssistantPages').then((m) => ({ default: m.ScheduleView })));
+const GroupNewPanel = lazy(() => import('./group-new').then((m) => ({ default: m.GroupNewPanel })));
 const CapabilityPanel = lazy(() => import('./capability-panel').then((m) => ({ default: m.CapabilityPanel })));
 
 /** 懒加载面板下载时：一句静态文字（不转圈，无动画） */
@@ -199,6 +201,27 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   /** 打开页面时本机已有的会话和它们当时的消息数（这些会导入 Core）；比这多出来的消息是还没存的 */
   const atMount = useRef<Map<string, number> | null>(null);
   if (!atMount.current) atMount.current = new Map(list.filter((c) => !c.remote).map((c) => [c.id, c.messages.length]));
+  /** #316：她在当前话题里自己打了字（Thread 记） */
+  const typed = useRef(false);
+  /** #316：页面打开时自己开的那个空白话题（她自己点开的新对话、单聊、群聊 id 都不一样，不会被换走；负责人 #319 必改） */
+  const autoBlank = useRef<string | null>(null);
+  autoBlank.current ??= list[0]!.messages.length || list[0]!.remote ? '' : list[0]!.id;
+  /** #316：问到是谁后，正开着的还是页面自己开的空白话题、她没打字、她那份也没草稿 → 最近那段（她看到一片空白会以为旧话没了）；否则 undefined，照 #291 不动 */
+  const latest = (l: Conversation[], me: string) => {
+    const c = l.find((x) => x.id === currentRef.current);
+    const to = c && c.id === autoBlank.current && !c.messages.length && !typed.current && !loadDraft(newDraftKey(c), me) ? l.find((x) => x !== c && (x.remote || x.messages.length)) : undefined;
+    // 存库那条路在 setList 的 updater 里调：这里只记下换到哪段（写同一个值，跑两遍也一样），播报在下面的 effect 里（负责人 #319 第二轮）
+    if (to) autoTo.current = to.id;
+    return to;
+  };
+  /** #316：自动换到的那段；换好后读屏说一句（整页状态区，焦点不动），只说一次 */
+  const autoTo = useRef<string | null>(null);
+  useEffect(() => {
+    const to = autoTo.current && list.find((c) => c.id === autoTo.current);
+    if (!to || to.id !== currentId) return;
+    autoTo.current = null;
+    setNetSay(`打开了你最近的会话：${to.title}`);
+  }, [currentId, list]);
   /** 正在排队等列表的会话（话还在对话区里、没进列表，列表盖上来时不能丢） */
   const waiting = useRef(new Set<string>());
   /** 本机会话里还没存到 Core 的话（列表没到时就发了，或建会话失败） */
@@ -275,7 +298,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         setList((prev) => {
           // 正打开的空白新会话留着（没内容，不算带过去）：输入框不重建，她问到之前打的字不丢（#291）
           const next = adopt(switched ? prev.filter((c) => c.remote || (c.id === currentRef.current && c.messages.length === 0)) : prev, fresh);
-          if (!next.some((c) => c.id === currentRef.current)) setCurrentId(next[0]!.id);
+          const to = me ? latest(next, me) : undefined;
+          if (to || !next.some((c) => c.id === currentRef.current)) setCurrentId((to ?? next[0]!).id);
           return next;
         });
         setRemote(true);
@@ -312,7 +336,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         const next = mine.length ? mine : [newConversation()];
         listAcct.current = me;
         setList(next);
-        if (!keep.has(currentRef.current)) setCurrentId(next[0]!.id);
+        const to = latest(next, me);
+        if (to || !keep.has(currentRef.current)) setCurrentId((to ?? next[0]!).id);
         setAcct(me);
       }
       if (me && who?.owner) setOwnerAcct(me);
@@ -1056,6 +1081,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           {...(remote !== false ? { persist } : {})}
           {...(focusMsg ? { focusMessageId: focusMsg } : {})}
           draftAccount={acct}
+          typed={typed}
           offline={!online}
           onRunning={(r) => setRunningId(r ? current.id : null)}
         />
@@ -1130,16 +1156,18 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           {view.kind === 'assistant' && <AssistantDetail key={view.id} id={view.id} members={members} onChanged={reloadAssistants} onInbox={() => setView({ kind: 'inbox' })} />}
           {view.kind === 'schedule' && <ScheduleView list={assistants} error={assistantsError} members={members} onOpen={(id) => setView({ kind: 'assistant', id })} onChanged={reloadAssistants} />}
           {view.kind === 'group-new' && (
-            <GroupNewPanel
-              members={members}
-              {...(isFamily() ? {} : { onAdd: () => setAddMember({}) })}
-              onStart={(names) => {
-                // 只挑一位 = 和 TA 单聊；两位以上 = 这几位在场，默认负责人回答，@ 谁谁答（落地方案 v2 第 1 节，不让每位都回一遍）
-                const one = names.length === 1 ? members.find((m) => m.name === names[0]) : undefined;
-                if (one) chatWith(one);
-                else start({ title: `群聊：${names.join('、')}`, group: names });
-              }}
-            />
+            <LazyChunk>
+              <GroupNewPanel
+                members={members}
+                {...(isFamily() ? {} : { onAdd: () => setAddMember({}) })}
+                onStart={(names) => {
+                  // 只挑一位 = 和 TA 单聊；两位以上 = 这几位在场，默认负责人回答，@ 谁谁答（落地方案 v2 第 1 节，不让每位都回一遍）
+                  const one = names.length === 1 ? members.find((m) => m.name === names[0]) : undefined;
+                  if (one) chatWith(one);
+                  else start({ title: `群聊：${names.join('、')}`, group: names });
+                }}
+              />
+            </LazyChunk>
           )}
           {view.kind === 'settings' && <SettingsPanel prefs={prefs} setPrefs={setPrefs} members={members} {...(view.section ? { section: view.section } : {})} onOpen={(k) => setView({ kind: 'settings', section: k })} onGo={(k: GoTarget) => setView({ kind: k })} />}
           {view.kind === 'tools' && <ToolsView onGo={(k) => setView({ kind: k })} />}

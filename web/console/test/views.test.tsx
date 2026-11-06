@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 import { AddMemberDialog, ApiView, FamilySection, GeneralSection, ProfileSection } from '../src/chat/views';
-import { GroupNewPanel } from '../src/chat/panels';
+import { GroupNewPanel } from '../src/chat/group-new';
 
 afterEach(() => {
   cleanup();
