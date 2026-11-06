@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { migrate } from '../src/db/migrate.js';
-import { safeGithubUrl } from '../src/work/github.js';
+import { fetchGithubVersions, safeGithubUrl } from '../src/work/github.js';
 import { openPglite } from './helpers/db.js';
 import { twoAccountEnvs, twoAccounts, type DepsEnv, type TwoAccounts } from './helpers/two-accounts.js';
 
@@ -182,6 +182,10 @@ describe.each(twoAccountEnvs)('/work 切片 1（$name）', (env: DepsEnv) => {
     const second = (await t.owner('GET', `/api/work/projects/${p.id}/versions?cursor=${encodeURIComponent(first.nextCursor)}`)).json();
     expect(second.versions).toHaveLength(30);
     expect(new Set([...first.versions, ...second.versions].map((v: { id: string }) => v.id)).size).toBe(60);
+    // 游标只认自己发出去的样子：多一段、非规范 base64url 都 400（负责人 #323 建议）
+    const raw = Buffer.from(first.nextCursor, 'base64url').toString();
+    for (const bad of [Buffer.from(raw + '|x').toString('base64url'), first.nextCursor + '=', 'not a cursor'])
+      expect((await t.owner('GET', `/api/work/projects/${p.id}/versions?cursor=${encodeURIComponent(bad)}`)).statusCode, bad).toBe(400);
   });
 
   it('GitHub 限流 / 仓库不存在 / 重定向：写进 failed，不加版本', async () => {
@@ -241,5 +245,80 @@ describe('迁移 0033 /work', () => {
     expect(await migrate(db)).toEqual(['0033_work.sql']);
     expect(await has()).toBe(2);
     await db.close();
+  });
+});
+
+describe('GitHub 响应体（负责人 #323 必改 1）', () => {
+  const url = (kind: string) => `https://api.github.com/repos/acme/app/${kind}?per_page=30&page=1`;
+  /** 一块一块给的响应体，不带 content-length；记下读到第几块 */
+  const streamed = (chunks: Uint8Array[]) => {
+    let pulled = 0;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(c) {
+        if (pulled >= chunks.length) return c.close();
+        c.enqueue(chunks[pulled++]!);
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    return { res: new Response(body, { status: 200 }), stats: () => ({ pulled, cancelled }) };
+  };
+
+  it('没有 content-length 的超大响应：按字节数到 1 MB 就停止读取、取消下载，来源失败、不加版本', async () => {
+    const chunk = new Uint8Array(256 * 1024).fill(0x20);
+    const s = streamed(Array.from({ length: 40 }, () => chunk)); // 10 MB
+    const r = await fetchGithubVersions((async () => s.res) as unknown as typeof fetch, 'acme/app');
+    expect(r).toEqual({ ok: false, reason: 'GitHub 返回的内容太大，没有读' });
+    expect(s.stats().pulled).toBeLessThanOrEqual(6);
+    expect(s.stats().cancelled).toBe(true);
+  });
+
+  it('按字节算不按字符：60 万个汉字（约 1.8 MB）也算太大', async () => {
+    const big = new TextEncoder().encode(JSON.stringify([{ id: 1, tag_name: 'v1', name: '汉'.repeat(600_000) }]));
+    expect(big.length).toBeGreaterThan(1024 * 1024);
+    const s = streamed([big]);
+    const r = await fetchGithubVersions((async () => s.res) as unknown as typeof fetch, 'acme/app');
+    expect(r).toMatchObject({ ok: false, reason: 'GitHub 返回的内容太大，没有读' });
+  });
+
+  it('形状不对的字段不抛错：assets 里的 null / 数字跳过，author 不是对象也行，数组里的 null 跳过', async () => {
+    const body = [
+      null,
+      7,
+      {
+        id: 9,
+        tag_name: 'v9',
+        name: 'x',
+        author: 'octo',
+        html_url: 'https://github.com/acme/app/releases/tag/v9',
+        assets: [null, 5, 'a', { name: 'ok.zip', browser_download_url: 'https://github.com/acme/app/releases/download/v9/ok.zip', size: 3 }],
+      },
+      { id: 10, tag_name: 'v10', assets: 'not-an-array', author: null },
+    ];
+    const f = (async (u: string) =>
+      u === url('releases') ? new Response(JSON.stringify(body), { status: 200 }) : new Response('[]', { status: 200 })) as unknown as typeof fetch;
+    const r = await fetchGithubVersions(f, 'acme/app');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.versions.map((v) => v.label)).toEqual(['v9', 'v10']);
+    expect(r.versions[0]!.actor).toBeNull();
+    expect(r.versions[0]!.artifacts.filter((a) => a.type === 'file').map((a) => a.title)).toEqual(['ok.zip']);
+  });
+
+  it('JSON 不是数组 / 坏 JSON：受控失败', async () => {
+    for (const text of ['{"message":"x"}', '[{', '']) {
+      const r = await fetchGithubVersions((async () => new Response(text, { status: 200 })) as unknown as typeof fetch, 'acme/app');
+      expect(r, text).toEqual({ ok: false, reason: 'GitHub 返回的内容看不懂' });
+    }
+  });
+});
+
+describe('产物链接过滤（负责人 #323 建议）', () => {
+  it('按 URL 规范化后的主机名比，存规范化后的链接；带尾点、藏在账号里的别的主机丢掉', () => {
+    expect(safeGithubUrl('https://GitHub.com/acme/app')).toBe('https://github.com/acme/app');
+    expect(safeGithubUrl('https://git%68ub.com/x')).toBe('https://github.com/x');
+    for (const bad of ['https://github.com./x', 'https://github.com%2f@evil.com/x', 'https://evil.com\\@github.com/x', 'https://evil.com#@github.com/x']) expect(safeGithubUrl(bad), bad).toBeNull();
   });
 });
