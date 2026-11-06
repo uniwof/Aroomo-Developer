@@ -23,7 +23,7 @@ import { ChatStreamError, type ChatDraft, type ChatTool, type FailureCode, dayLa
 import { ToolCalls } from './thread/cards/ToolCalls';
 import { Avatar } from './Avatar';
 import { AnnounceContext, useAnnounce } from './announce';
-import { OFFLINE_NOTE, ONLINE_AGAIN, useOnline } from './online';
+import { OFFLINE_NOTE } from './online';
 import { DEFAULT_RATE, pickVoice, speaker, speechSupported } from './speech';
 import { useAsk } from '@/components/Dialog';
 
@@ -426,11 +426,13 @@ export interface ThreadProps {
   focusMessageId?: string;
   /** #291：草稿存在哪个账号名下（同本机会话的账号）；null = 不知道是谁，用共用那份 */
   draftAccount?: string | null;
+  /** F-020：断网时输入框上方显示一行静态字（判断和读屏播报在 ChatPage，整页只播一次） */
+  offline?: boolean;
   /** 一轮对话结束：成功给 null，接口回了错误状态给 HTTP 状态（别的失败给 undefined） */
   onResult?: (status: number | null | undefined) => void;
 }
 
-export function Thread({ conversation, onMessages, insert, onInserted, hidden = false, routes = [], members = [], fetchImpl, speechRate = DEFAULT_RATE, speechOnline = false, onAllowOnlineSpeech, memberName, onRunning, intro, notice, onResult, draftActions, persist, focusMessageId, draftAccount = null }: ThreadProps) {
+export function Thread({ conversation, onMessages, insert, onInserted, hidden = false, routes = [], members = [], fetchImpl, speechRate = DEFAULT_RATE, speechOnline = false, onAllowOnlineSpeech, memberName, onRunning, intro, notice, onResult, draftActions, persist, focusMessageId, draftAccount = null, offline = false }: ThreadProps) {
   const resultCb = useRef(onResult);
   resultCb.current = onResult;
   const convRef = useRef(conversation);
@@ -574,15 +576,6 @@ export function Thread({ conversation, onMessages, insert, onInserted, hidden = 
     setStatus('');
     setTimeout(() => setStatus(text), 50);
   }, []);
-
-  // F-020 断网：一行静态提示；状态稳定后才切换，切换时读屏只说一次（打开时就断网不播，提示本身在）
-  const online = useOnline();
-  const wasOnline = useRef(online);
-  useEffect(() => {
-    if (wasOnline.current === online) return;
-    wasOnline.current = online;
-    announce(online ? ONLINE_AGAIN : OFFLINE_NOTE);
-  }, [online, announce]);
 
   // 回复结束 → 存本机；同时给读屏一句状态（完成 / 已停止 / 出错）
   useEffect(() => {
@@ -738,7 +731,7 @@ export function Thread({ conversation, onMessages, insert, onInserted, hidden = 
         </p>
         <div className="chat-column composer-wrap">
           {notice}
-          {!online && <p className="note offline-note">{OFFLINE_NOTE}</p>}
+          {offline && <p className="note offline-note">{OFFLINE_NOTE}</p>}
           {mentionOpen && members.length > 0 && (
             // 组合框（A1）：焦点留在输入框，↑↓ 选、回车/Tab 点名、Esc 关；读屏经 aria-activedescendant 读出当前项；样式与全站菜单同一种 .pop
             <ul id="mention-list" role="listbox" className="pop mention-pop" aria-label="点名一位成员">

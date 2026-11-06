@@ -17,6 +17,7 @@ import { MeFace, Rail, meLabel, quotaState, type RailTarget } from './Rail';
 import { HeaderCard } from './HeaderCard';
 import { useInboxCount } from '@/lib/inbox';
 import { Thread, type DraftActions } from './Thread';
+import { OFFLINE_NOTE, ONLINE_AGAIN, useOnline } from './online';
 import { SIDE_UI, Sidebar, type SideUi } from './Sidebar';
 import { BackButton, ExternalPanel, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type GoTarget } from './panels';
 import { applyDisplay } from '@/lib/display';
@@ -367,6 +368,15 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     }
   }, [sideW]);
   const [insert, setInsert] = useState<{ text: string; seq: number } | null>(null);
+  // F-020 断网：判断和读屏播报放在整页这一层，挂几个对话都只播一次；状态稳定后才切换（online.ts），打开时就断网不播、那行字在
+  const online = useOnline();
+  const [netSay, setNetSay] = useState('');
+  const wasOnline = useRef(online);
+  useEffect(() => {
+    if (wasOnline.current === online) return;
+    wasOnline.current = online;
+    setNetSay(online ? ONLINE_AGAIN : OFFLINE_NOTE);
+  }, [online]);
   const [sideUi, setSideUi] = useState<SideUi>(SIDE_UI);
   const { members: allMembers, failed: membersFailed, reload: reloadMembers, upsert: upsertMember } = useMembers();
   const members = useMemo(() => allMembers.filter((m) => m.enabled && m.status === 'active'), [allMembers]);
@@ -1042,6 +1052,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           {...(remote !== false ? { persist } : {})}
           {...(focusMsg ? { focusMessageId: focusMsg } : {})}
           draftAccount={acct}
+          offline={!online}
           onRunning={(r) => setRunningId(r ? current.id : null)}
         />
         )}
@@ -1180,6 +1191,9 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
 
   return (
     <div className={`app${prefs.highContrast ? ' chat-hc' : ''}${wide ? ' app-wide' : ''}${layout.rail ? ' app-rail' : ''}${phone ? ' app-phone' : ''}${wide && collapsed ? ' app-collapsed' : ''}`}>
+      <p className="sr-only" role="status" aria-live="polite" data-net-status="">
+        {netSay}
+      </p>
       {layout.rail && <Rail active={settingsOpen && !phone ? 'settings' : view.kind} onOpen={(t: RailTarget) => goto({ kind: t })} usage={usage} />}
       {wide && !collapsed && (
         <aside className="side" aria-label="会话列表" style={{ width: `calc(${sideW} * var(--k))` }}>
