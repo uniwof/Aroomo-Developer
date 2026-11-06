@@ -1,4 +1,5 @@
-# 主密钥小工具的回归测试（#248，负责人 #192 补审必改）：没插 U 盘就停、不默认存桌面；OneDrive 下的位置警告并不写文件。
+﻿# 主密钥小工具的回归测试（#248，负责人 #192 补审必改）：没插 U 盘就停、不默认存桌面；OneDrive 下的位置警告并不写文件。
+# 文件存 UTF-8 带 BOM：Windows PowerShell 5.1 读不带 BOM 的 .ps1 会按本机代码页解析，中文字符串会坏（CI 第一次就坏在这）。
 # 不联网、不弹窗、不生成真私钥：AROOMO_MK_LOAD_ONLY=1 只加载函数。
 # 运行：powershell -NoProfile -ExecutionPolicy Bypass -File tools/master-key/MasterKey.Tests.ps1（pwsh 也可以）
 $ErrorActionPreference = 'Stop'
