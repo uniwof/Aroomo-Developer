@@ -47,7 +47,7 @@
 
 ## staging 起了哪些服务
 
-postgres、redis、rustfs（+ rustfs-init）、core、lobe、shell。
+postgres、redis、rustfs（+ rustfs-init）、core、shell。**lobe 不再起**（见下面「LobeHub 已停」）。
 
 **没有起 litellm**：4 GB 机器上生产已用约 2 GB，litellm 常驻 0.6–0.8 GB 装不下。所以 staging 里**不能真正对话**（发消息会报上游不可用）；
 登录、控制台（/console）、各页面、成员/Key/收件箱等不依赖模型调用的功能都能测。等换更大的机器或生产减负后，
@@ -112,3 +112,15 @@ sudo systemctl enable --now aroomo-staging-deploy.timer
 - 已撤除：tunnel `aroomo-app` 的 `chat-staging.pcmanai.com` 路由、该 DNS 记录、Access 应用「Aroomo staging」里的这个域名（应用和策略保留）、
   服务器上的 `aroomo-staging-core-edge` 容器（已断开生产网络）、`aroomo-staging-core-edge.{service,timer}` 和 `/usr/local/bin/aroomo-staging-core-edge.sh`。
 - 备份与恢复步骤：服务器 `/opt/aroomo-archive/core-edge-removal-20261105T142732Z/README.md`（含撤除前的 tunnel 配置、Access 应用、DNS 记录导出，无密钥）。
+
+## LobeHub 已停（2026-11-07，D259）
+
+- 所有者 2026-11-05 决定停用 LobeHub；负责人 2026-11-07 阶段 4 裁定：staging 的 LobeHub 先停容器，**数据不删**。
+- 现在：`aroomo-staging-lobe-1`（lobehub/lobehub:2.2.20）是停止状态，没有挂卷；它的数据在 staging 的 `aroomo-staging_pg-data`（lobechat 库）
+  和 `aroomo-staging_rustfs-data`（lobe 桶）里，**都留着**，12-05 前后由所有者定删不删。
+- `aroomo-staging-lobehub-placeholder`（nginx）占着 `aroomo-staging-lobe` 这个别名，Shell 的 `LOBE_UPSTREAM` 指过去不会报解析错误。
+- 持久停用：`compose.staging.yml` 里 lobe 加了 `profiles: [lobe]`，不点名 `--profile lobe` 就不会起（手动 `docker compose up -d` 不写服务名也一样）；`deploy-staging.sh` 的 `SERVICES` 和健康检查里也去掉了 lobe，shell 只依赖 core。CI 的 `scripts/check-compose.sh` 检查 staging 不带 profile 时服务里没有 lobe。
+- 在这一改动合进 dev 之前，服务器上的兜底是 systemd drop-in
+  `/etc/systemd/system/aroomo-staging-deploy.service.d/lobehub-stopped.conf`（每次部署结束 `docker stop aroomo-staging-lobe-1`）。
+  合入并部署过一次、确认 lobe 没再启动后，这个 drop-in 可以删（`sudo rm` 该文件 + `sudo systemctl daemon-reload`）。
+- 回退（重新启用）：临时起一次用 `docker compose ... --profile lobe up -d lobe`（命令同部署脚本里的 `dc`）；长期恢复要把 lobe 加回 `SERVICES` 和健康检查、shell 的 depends_on 加回 lobe、去掉 `profiles`，删 drop-in，再 `deploy-staging.sh --force`。

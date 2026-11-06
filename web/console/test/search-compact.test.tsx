@@ -81,7 +81,7 @@ describe('X-09 会话搜索', () => {
     const calls = stubCore((q) => json({ results: q === '西红柿' ? [{ conversationId: B, title: '买菜清单', messageId: HIT, seq: 6, role: 'assistant', snippet: '记得买西红柿和鸡蛋', createdAt: 'Thu 2026-11-05 1:00 PM CST (UTC+08:00)' }] : [], nextBeforeSeq: null }));
     renderPage();
     await screen.findByRole('list', { name: '会话列表' });
-    const box = screen.getByRole('searchbox', { name: '搜索对话' });
+    const box = screen.getByRole('searchbox', { name: '找对话' });
     fireEvent.change(box, { target: { value: '西红柿' } });
     const results = await screen.findByRole('list', { name: '消息搜索结果' }, W);
     const btn = within(results).getByRole('button', { name: /^买菜清单，回复：记得买西红柿和鸡蛋，.*打开并跳到这条$/ });
@@ -98,7 +98,7 @@ describe('X-09 会话搜索', () => {
     stubCore(() => (fail ? json({ error: { code: 'X', message: '坏了' } }, 503) : json({ results: [], nextBeforeSeq: null })));
     renderPage();
     await screen.findByRole('list', { name: '会话列表' });
-    fireEvent.change(screen.getByRole('searchbox', { name: '搜索对话' }), { target: { value: '没有的词' } });
+    fireEvent.change(screen.getByRole('searchbox', { name: '找对话' }), { target: { value: '没有的词' } });
     expect(await screen.findByText(/没能搜消息：连不上 Aroomo/, {}, W)).toBeInTheDocument();
     fail = false;
     fireEvent.click(screen.getByRole('button', { name: '重试' }));
@@ -109,7 +109,7 @@ describe('X-09 会话搜索', () => {
     stubCore(() => json({ results: [], nextBeforeSeq: null }));
     renderPage();
     await screen.findByRole('list', { name: '会话列表' });
-    const box = screen.getByRole('searchbox', { name: '搜索对话' });
+    const box = screen.getByRole('searchbox', { name: '找对话' });
     // jsdom 没有布局：offsetParent 恒为 null，这里补上「看得见」
     Object.defineProperty(box, 'offsetParent', { configurable: true, get: () => document.body });
     fireEvent.keyDown(window, { key: 'k', ctrlKey: true });

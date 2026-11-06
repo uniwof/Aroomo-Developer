@@ -92,4 +92,16 @@ for tier in demo-2g standard full; do
   fi
 done
 
+# D259：staging 的 LobeHub 已停。lobe 只在点名 --profile lobe 时才起，不点名的 up（不写服务名也一样）不会把它拉起来
+# shellcheck disable=SC2086
+if svcs="$($compose --project-directory "$deploy" --env-file "$tmp_env" -f "$deploy/docker-compose.yml" -f "$deploy/staging/compose.staging.yml" config --services)"; then
+  if printf '%s\n' "$svcs" | grep -qx lobe; then
+    echo "FAIL staging: lobe 不带 --profile lobe 也会起" >&2; status=1
+  else
+    echo "ok   staging: lobe 只在 --profile lobe 时起"
+  fi
+else
+  echo "FAIL staging compose 解析失败" >&2; status=1
+fi
+
 exit $status

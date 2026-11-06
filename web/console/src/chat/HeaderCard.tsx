@@ -1,7 +1,7 @@
 /**
  * 对话顶栏（照 sumus）：左边头像 + 名字（悬浮出详细信息卡）+ 话题小标签，右边 ⓘ 和 ···。
  * 鼠标停在名字上、键盘聚焦后按回车、点名字或右边的 ⓘ 都会打开卡片；Esc、点外面或移开就关。不做动画。
- * 卡片内容（照 sumus 的悬浮卡）：头像、名字、类型；一句简介；分隔线；模型；底部「查看成员 ↗」。
+ * 卡片内容（照 sumus 的悬浮卡）：头像、名字、类型；一句简介；分隔线；模型；底部「打开成员资料 ↗」。
  */
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { ArrowUpRight, Info } from 'lucide-react';
@@ -113,7 +113,7 @@ export function HeaderCard({
               }}
             >
               {/* 群聊打开成员页时只列这个群里的成员（审计 C15）；交给负责人的对话打开全部 */}
-              <span>{kind === 'member' ? '查看成员' : kind === 'group' ? '查看群成员' : '查看所有成员'}</span>
+              <span>{kind === 'member' ? '打开成员资料' : kind === 'group' ? '看群里有谁' : '看全部成员'}</span>
               <ArrowUpRight aria-hidden="true" />
             </button>
           )}

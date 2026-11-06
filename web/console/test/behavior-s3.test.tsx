@@ -28,18 +28,18 @@ describe('切片 3：抽屉', () => {
     open();
     const d = document.querySelector('dialog.drawer') as HTMLDialogElement;
     await waitFor(() => expect(d.hasAttribute('open')).toBe(true));
-    fireEvent.change(within(d).getByRole('searchbox', { name: '搜索对话' }), { target: { value: 'abc' } });
+    fireEvent.change(within(d).getByRole('searchbox', { name: '找对话' }), { target: { value: 'abc' } });
     fireEvent.click(within(d).getByRole('radio', { name: '助手' }));
     // 点的是 <dialog> 自己（背景），不是里面的内容
     fireEvent.click(d);
     await waitFor(() => expect(d.hasAttribute('open')).toBe(false));
     open();
     await waitFor(() => expect(d.hasAttribute('open')).toBe(true));
-    // 停在「助手」分段：搜索框跟着叫「搜索助手」（integrate/stage2）
-    expect((within(d).getByRole('searchbox', { name: '搜索助手' }) as HTMLInputElement).value).toBe('abc');
+    // 停在「助手」分段：搜索框跟着叫「找助手」（integrate/stage2）
+    expect((within(d).getByRole('searchbox', { name: '找助手' }) as HTMLInputElement).value).toBe('abc');
     expect(within(d).getByRole('radio', { name: '助手' })).toHaveAttribute('aria-checked', 'true');
     // 点抽屉里面不关
-    fireEvent.click(within(d).getByRole('searchbox', { name: '搜索助手' }));
+    fireEvent.click(within(d).getByRole('searchbox', { name: '找助手' }));
     expect(d.hasAttribute('open')).toBe(true);
   });
 });

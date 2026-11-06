@@ -99,7 +99,7 @@ describe('阶段 1.5：阶段 2/3 开关关着', () => {
     saveConversations([conv('c-1', '周末买菜清单', now), conv('c-2', '体检报告怎么看', now - 1000)]);
     renderPage();
     const list = await screen.findByRole('list', { name: '会话列表' });
-    fireEvent.change(screen.getByRole('searchbox', { name: '搜索对话' }), { target: { value: '体检' } });
+    fireEvent.change(screen.getByRole('searchbox', { name: '找对话' }), { target: { value: '体检' } });
     await waitFor(() => expect(within(list).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? '').join('|')).toMatch(/体检报告怎么看/));
     expect(within(list).queryByRole('button', { name: /周末买菜清单/ })).toBeNull();
     // 没有「消息」那组（那是 Core 存库后的 X-09）
@@ -108,7 +108,7 @@ describe('阶段 1.5：阶段 2/3 开关关着', () => {
     expect(hit('/api/search')).toBe(false);
     expect(screen.queryByRole('alert')).toBeNull();
     // 搜不到：一句「没有找到」
-    fireEvent.change(screen.getByRole('searchbox', { name: '搜索对话' }), { target: { value: '没有的词' } });
+    fireEvent.change(screen.getByRole('searchbox', { name: '找对话' }), { target: { value: '没有的词' } });
     expect(await within(list).findByText('没有找到。换个词试试。')).toBeInTheDocument();
   });
 

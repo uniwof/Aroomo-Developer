@@ -1,8 +1,8 @@
 /**
- * 头像（2026-11-04 所有者：界面完全照 sumus，头像用我们自己画的同类风格彩色方块小图形）。
- * 做法照 sumus：没有底色方块，直接是一个纯色的几何小身体 + 两个深色小眼睛；颜色取黄 / 蓝 / 粉 / 青 / 绿 / 紫。
- * 图形全是我们自己画的（拱门、台阶、圆角方、胶囊、T 形、圆），不用 sumus 的小人文件、标志或任何图片。
- * 负责人固定用黄色拱门；群聊是浅蓝底「#」；你自己是浅灰底首字。头像只是装饰：aria-hidden，名字由旁边的文字读出。
+ * 头像：Aroomo 自己的图形语言（阶段 4 负责人 S1–S3，替换原先仿 sumus 的「彩色小身体 + 两只眼睛」）。
+ * 圆角方底色块 + 一个白色几何记号；记号取自 Aroomo 标志的元素（圆、圆角方、半圆），不画脸、不画眼睛。
+ * 颜色是一组偏沉的色（白记号对底 ≥3:1）；负责人固定 Aroomo 珊瑚色底 + 标志里的「圆 + 圆角方」。
+ * 群聊浅珊瑚底「#」；你自己是浅灰底首字。头像只是装饰：aria-hidden，名字由旁边的文字读出。
  */
 export const TONES = 6;
 
@@ -12,30 +12,21 @@ export function toneOf(name: string): number {
   return h % TONES;
 }
 
-/** 六种身体（40×40 画布），颜色和图形一一对应 */
-const COLORS = ['#ffd23f', '#4f8ef7', '#f7748c', '#4cc8e6', '#43cf9c', '#a98bfa'];
-const BODIES = [
-  // 黄：拱门
-  <path key="a" d="M8 33V19a12 12 0 0 1 24 0v14z" />,
-  // 蓝：台阶（左高右低两块）
-  <path key="s" d="M6 15a3 3 0 0 1 3-3h11a3 3 0 0 1 3 3v6h8a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3H9a3 3 0 0 1-3-3z" />,
-  // 粉：圆角方
-  <rect key="r" x="8" y="10" width="24" height="22" rx="5" />,
-  // 青：胶囊
-  <rect key="p" x="5" y="14" width="30" height="16" rx="8" />,
-  // 绿：T 形
-  <path key="t" d="M7 13a3 3 0 0 1 3-3h20a3 3 0 0 1 3 3v5a3 3 0 0 1-3 3h-5v9a3 3 0 0 1-3 3h-4a3 3 0 0 1-3-3v-9h-5a3 3 0 0 1-3-3z" />,
-  // 紫：圆
-  <circle key="c" cx="20" cy="21" r="12" />,
-];
-/** 每种身体的两只眼睛位置 */
-const EYES: [number, number][] = [
-  [16, 22],
-  [12, 18],
-  [17, 19],
-  [16, 21],
-  [17, 15],
-  [17, 19],
+/** 0 = 负责人（珊瑚）；1–5 给成员。和记号一一对应 */
+const COLORS = ['#d9532a', '#3f7d7a', '#4a5f8a', '#7a4d7a', '#6b7a2e', '#a86e12'];
+const MARKS = [
+  // 负责人：标志里的圆 + 圆角方
+  <g key="l"><circle cx="13.5" cy="20" r="5" /><rect x="20" y="15" width="10" height="10" rx="2" /></g>,
+  // 圆环
+  <path key="o" fillRule="evenodd" d="M20 11a9 9 0 1 1 0 18a9 9 0 1 1 0-18zm0 4.5a4.5 4.5 0 1 0 0 9a4.5 4.5 0 1 0 0-9z" />,
+  // 半圆
+  <path key="h" d="M11 23a9 9 0 0 1 18 0z" />,
+  // 菱形
+  <rect key="d" x="14" y="14" width="12" height="12" rx="2" transform="rotate(45 20 20)" />,
+  // 两道横条
+  <g key="b"><rect x="11" y="13.5" width="18" height="5" rx="2.5" /><rect x="11" y="21.5" width="12" height="5" rx="2.5" /></g>,
+  // 四分之一圆
+  <path key="q" d="M12 12a16 16 0 0 1 16 16H12z" />,
 ];
 
 export type AvatarKind = 'lead' | 'member' | 'group' | 'user';
@@ -43,12 +34,10 @@ export type AvatarSize = 'xs' | 'sm' | 'msg' | 'md' | 'lg';
 
 export function Figure({ tone }: { tone: number }) {
   const t = ((tone % TONES) + TONES) % TONES;
-  const [x, y] = EYES[t]!;
   return (
-    <svg viewBox="5 6 30 30" className="av-fig" aria-hidden="true">
-      <g fill={COLORS[t]}>{BODIES[t]}</g>
-      <circle cx={x} cy={y} r="1.7" fill="#262626" />
-      <circle cx={x + 6} cy={y} r="1.7" fill="#262626" />
+    <svg viewBox="0 0 40 40" className="av-fig" aria-hidden="true">
+      <rect data-av-tile="" width="40" height="40" fill={COLORS[t]} />
+      <g fill="#ffffff">{MARKS[t]}</g>
     </svg>
   );
 }
@@ -75,7 +64,7 @@ export function Avatar({ name, kind = 'member', size = 'md', off = false, glyph 
     );
   return (
     <span className={cls} aria-hidden="true">
-      {/* 黄色拱门只给负责人；成员从其余五种里按名字取 */}
+      {/* 珊瑚色只给负责人；成员从其余五种里按名字取 */}
       <Figure tone={kind === 'lead' ? 0 : 1 + (toneOf(name) % (TONES - 1))} />
     </span>
   );
