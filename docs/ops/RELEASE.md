@@ -20,6 +20,7 @@ scripts/release-tag.sh deploy v0.1.0 --confirm v0.1.0   # 真正切换
 scripts/release-tag.sh rollback                      # 演练：显示将回到哪个版本
 scripts/release-tag.sh rollback --confirm <版本>      # 一键回滚到上一个
 scripts/release-tag.sh deploy v0.1.1 --confirm v0.1.1 --hotfix   # 跳过合并闸门（其他检查照旧）
+scripts/release-tag.sh rollback --confirm v0.1.0 --lobe-session-ok  # 明确要回 LobeHub 旧登录时才用（见「回退到 v0.1.0」）
 ```
 
 - 演练和确认之间，日志会写「**需要主会话：确认生产切到标签版**」。没有带正确 `--confirm` 的调用永远不会切换。
@@ -37,13 +38,14 @@ scripts/release-tag.sh deploy v0.1.1 --confirm v0.1.1 --hotfix   # 跳过合并�
 5. **数据库迁移不超前**：只读查 `core_schema_migrations`，和目标版本 `core/migrations/` 比对；数据库里有目标版本不认识的迁移就拒绝（部署旧版本、回滚都一样）。
 6. 合并闸门（#189）：存在 `scripts/merge-gate.sh` 时先跑（`--hotfix` 豁免）；还没有就只记一行提示。
 7. 生产前检查 + 部署前备份（#229，见下节）：`scripts/release-precheck.sh` 必须存在且通过，缺了或不过都拒绝部署。演练时只检查、不备份。
-   - 第 6、7 步**用目标版本里的脚本**：脚本从 `git archive <标签> scripts` 取出到临时目录再运行（`RELEASE_ROOT` 仍指向生产目录）。因为只有新版本知道自己要跑哪些迁移；也因为生产现在的版本里根本没有这些脚本。
+   - 第 6、7 步**用目标版本里的脚本**：脚本从 `git archive <标签> scripts`（连同 `core/migrations`，precheck 检查 1 要看待执行的迁移）取出到临时目录再运行（`RELEASE_ROOT` 仍指向生产目录）。因为只有新版本知道自己要跑哪些迁移；也因为生产现在的版本里根本没有这些脚本。
 8. `git checkout <标签>`（不加 `--force`）→ 控制台有改动才重建 → `build core shell` → `up -d --remove-orphans` → 健康检查（core、lobe、shell 都 healthy，最长 7 分钟）。compose 的输出写进 `.release/compose.log`（权限 600，不含 `.env` 的值），出问题看这里。
 9. 任何一步失败：先判断**数据库是不是已经迁移过了**——
    - 迁移本身失败：整个迁移在一个事务里，数据库没变 → 照常**自动回到切换前的版本**并记日志。
    - 新版本迁移成功、之后才失败（比如健康检查超时）：数据库里有回退目标不认识的迁移（RLS 的 FORCE + CHECK 就是这种），旧代码不会设置 `app.user_id`，什么都读不到、写入也失败。这时**不自动回退**，日志写「**需要人工处理：先用部署前备份恢复（BACKUP.md），再回滚代码**」，代码停在新版本、`.release/current` 仍记录旧版本（不假装成功）。恢复步骤见 [BACKUP.md](BACKUP.md)。
    - 读不出迁移记录：同样不自动回退，写「需要人工处理」。
    - `rollback` 命令同样先做这个检查：数据库已迁移到更新的版本时拒绝，不让你只退代码。
+10. **回退目标的 Shell 登录方式**（演练也做）：`rollback` 的目标、以及 `deploy` 失败时会自动回到的当前版本，如果它的 `deploy/docker-compose.yml` 写死 `SHELL_AUTH: lobe-session`（v0.1.0 就是），又没有配版本专属叠加文件，就拒绝——切过去 Shell 只认 LobeHub 登录，而 LobeHub 已停，所有者进不去。配法见下节「回退到 v0.1.0」；确实要回旧登录时加 `--lobe-session-ok`。
 
 脚本把自己复制到 `/tmp` 再执行，所以检出新标签不会改到正在运行的脚本。
 
@@ -53,7 +55,7 @@ scripts/release-tag.sh deploy v0.1.1 --confirm v0.1.1 --hotfix   # 跳过合并�
 
 | 项 | 做什么 | 不过时 |
 |----|--------|--------|
-| 检查 1 | 只查开了 RLS 的表（清单 `scripts/lib/rls-tables.txt`：members、public_memory、public_memory_versions、library_items、vault_secrets、inbox_items、provider_keys），数 `user_id = ''` 和 `user_id IS NULL` 的行 | 列出「表=行数」。空串：RLS 迁移的 `CHECK (user_id <> '')` 会失败。NULL：`CHECK` 对 NULL 放行，但 RLS 下这些行谁都看不见；只有迁移会先回填的表（`BACKFILL_NULL=(inbox_items provider_keys)`，0023/0024）可以有 NULL。清单里的表不存在、查询出错都算失败；清单外带 `user_id` 的表只打一行信息，不拦发布。以后新增 RLS 迁移要同步改清单 |
+| 检查 1 | 只查开了 RLS 的表（清单 `scripts/lib/rls-tables.txt`：members、public_memory、public_memory_versions、library_items、vault_secrets、inbox_items、provider_keys，以及 0025–0027 的 conversations、conversation_messages、assistants、assistant_members、assistant_runs、run_steps），数 `user_id = ''` 和 `user_id IS NULL` 的行 | 列出「表=行数」。空串：RLS 迁移的 `CHECK (user_id <> '')` 会失败。NULL：`CHECK` 对 NULL 放行，但 RLS 下这些行谁都看不见；只有迁移会先回填的表（`BACKFILL_NULL=(inbox_items provider_keys)`，0023/0024）可以有 NULL。清单里的表不存在、查询出错都算失败——**唯一例外**：表不存在、且目标版本 `core/migrations/` 里还没执行（不在 `core_schema_migrations`）的迁移会 `CREATE TABLE` 它，打一行「将由本次待执行的迁移新建」放行（新表是空的；比如 v0.2.0 第一次带上 0025–0030）。迁移已记为执行过但表不存在、迁移目录或迁移记录读不出来，都照旧失败（`RELEASE_MIGRATIONS_DIR` 可改迁移目录，默认脚本旁边的 `../core/migrations`）；清单外带 `user_id` 的表只打一行信息，不拦发布。以后新增 RLS 迁移要同步改清单 |
 | 检查 2 | 按迁移后的表达式（`coalesce(user_id,'owner')` + 各唯一索引原有列和条件）试算 `inbox_items`、`members`、`vault_secrets`、`library_items`、`public_memory`、`executors` 有没有重复 | 列出「表=重复组数」；典型：收件箱里 NULL（旧所有者）和 `'owner'` 有同一条 open 记录，迁移 0023 把 NULL 改成 `'owner'` 后撞 `inbox_open_dedup_uq` |
 | 检查 3 | 逐表行数能读出来，存到 `.release/precheck-<时间>.counts.tsv` | 读不出来 = 失败；部署后可以对照 |
 | 检查 4 | 生产 `deploy/.env` 里 Shell 所有者已设置，按 `SHELL_AUTH` 分（没写按 compose 默认 `core-session`）：`core-session` 要 `SHELL_OWNER_EMAIL` 恰好一行、非空、含 @；`lobe-session`（回退旧登录）要 `SHELL_OWNER_USER_ID` 恰好一行且非空（#252）。**不打印值** | 没有 .env、`SHELL_AUTH` 不是这两个值（含 off）、对应项缺失/为空/空引号/等号后空白/被注释/出现两行、邮箱不含 @ = 失败 |
@@ -64,7 +66,7 @@ scripts/release-tag.sh deploy v0.1.1 --confirm v0.1.1 --hotfix   # 跳过合并�
 - 这台机器没有主密钥（D64），备份能不能解开只靠恢复演练验证（见 [BACKUP.md](BACKUP.md)）。
 - 查到问题怎么办：不要手工改生产数据，把输出（只有表名和数字）交给后台线/负责人，决定怎么清理，再重跑。
 - 生产实际执行前，日志写「**需要主会话：确认执行生产检查**」，由主会话在服务器上跑。
-- 测试：`scripts/test-release-precheck.sh`（真 PostgreSQL + 假备份命令；需要 `RELEASE_TEST_PSQL` 或 `psql`+`PGHOST`，否则跳过）。覆盖：干净库通过、NULL 与 owner 撞索引失败、不同账号同内容不算撞、空串 user_id 失败（library_items、provider_keys）、NULL user_id 在回填清单外的表里失败/清单内的表放行、备份失败/没上传 R2/没从 R2 重新核对/大小 0/不在 R2 列表里/只是名字子串 都拒绝、检查失败不备份、`--no-backup` 不备份、连不上库失败、不改数据；另覆盖：清单外的表有 NULL/空串照样通过、清单里的表不存在或查询出错失败、清单文件丢失失败、检查 4 两种登录方式：core-session 下只有 SHELL_OWNER_EMAIL 即通过、缺失/为空/空引号/不像邮箱/注释/重复失败，SHELL_AUTH=off 失败；lobe-session 下 SHELL_OWNER_USER_ID 缺失（只有 SHELL_OWNER_EMAIL 也算缺失）/为空/空引号/注释/重复失败；都不打印值、网段被别的 docker 网络或路由占用失败（自己的 MCP 网络不算）、读不出网络失败、**第一次部署（脚本从临时目录跑、生产目录没有 scripts/lib/）能通过**。
+- 测试：`scripts/test-release-precheck.sh`（真 PostgreSQL + 假备份命令；需要 `RELEASE_TEST_PSQL` 或 `psql`+`PGHOST`，否则跳过）。覆盖：干净库通过、NULL 与 owner 撞索引失败、不同账号同内容不算撞、空串 user_id 失败（library_items、provider_keys）、NULL user_id 在回填清单外的表里失败/清单内的表放行、备份失败/没上传 R2/没从 R2 重新核对/大小 0/不在 R2 列表里/只是名字子串 都拒绝、检查失败不备份、`--no-backup` 不备份、连不上库失败、不改数据；另覆盖：清单外的表有 NULL/空串照样通过、清单里的表不存在或查询出错失败、清单文件丢失失败、检查 4 两种登录方式：core-session 下只有 SHELL_OWNER_EMAIL 即通过、缺失/为空/空引号/不像邮箱/注释/重复失败，SHELL_AUTH=off 失败；lobe-session 下 SHELL_OWNER_USER_ID 缺失（只有 SHELL_OWNER_EMAIL 也算缺失）/为空/空引号/注释/重复失败；都不打印值、网段被别的 docker 网络或路由占用失败（自己的 MCP 网络不算）、读不出网络失败、**第一次部署（脚本从临时目录跑、生产目录没有 scripts/lib/）能通过**；检查 1 的待执行迁移：0025–0027 的表还不存在且迁移待执行 → 通过并列出迁移号，迁移已记为执行过但表不存在 → 失败，迁移记录表或迁移目录读不出来 → 失败，只在注释里出现的 CREATE TABLE 不算，没人新建的表（vault_secrets）照旧失败。
 
 ## 脚本绝不做的事
 
@@ -106,9 +108,44 @@ bash /tmp/rt.sh deploy v0.1.0 --confirm v0.1.0      # 主会话确认后真切�
 
 可以按本文手动部署，但下面两件事一件都不能少：①手动跑一遍 `release-precheck.sh` 里的 SQL（或直接 `scripts/release-precheck.sh --no-backup`）；②手动备份一次并确认 R2 上有这个文件（`backup snapshots --from offsite`）。迁移执行过之后，不要只回滚代码，先恢复备份。
 
+## 回退到 v0.1.0（阶段 1.5 起；生产 Shell 不是 v0.1.0 自己的构建）
+
+现状（2026-11-06 核对）：生产代码是 `v0.1.0`，但 Shell 用的是树外叠加文件 `/opt/aroomo-overrides/prod-shell-core-auth.yml` 钉住的镜像 `aroomo-shell:core-auth-0f1895d`（`SHELL_AUTH=core-session`，2026-11-05 换上）。`v0.1.0` 自己的 compose 写死 `SHELL_AUTH: lobe-session`，而 LobeHub 已停。所以：
+
+- **不叠这个文件回到 v0.1.0 = 所有者进不去控制台。** `release-tag.sh` 现在会拦：没配叠加文件时 `rollback` 演练、确认都拒绝；`deploy` 新版本时，因为失败会自动回到 v0.1.0，演练也会先拒绝。
+- **部署 v0.2.0 之前**（一次性，主会话在服务器上做；只新建一个文本文件，不改 `.env`、不删东西）：
+
+```bash
+mkdir -p /opt/aroomo/.release/compose-extra
+cat > /opt/aroomo/.release/compose-extra/v0.1.0 <<'X'
+# 回到 v0.1.0 时叠加 core-session 的 Shell（v0.1.0 的 compose 写死 lobe-session，LobeHub 已停）
+/opt/aroomo-overrides/prod-shell-core-auth.yml
+# shell 用叠加文件里钉住的镜像，不用 v0.1.0 的代码重建（否则会覆盖 aroomo-shell:core-auth-0f1895d 这个标签）
+nobuild: shell
+X
+docker image inspect aroomo-shell:core-auth-0f1895d >/dev/null && echo 镜像在
+bash /tmp/rt.sh deploy v0.2.0          # 演练：应打印「切换失败时会自动回到 v0.1.0 时会叠加：/opt/aroomo-overrides/…」
+```
+
+- 有了它之后，切到 v0.1.0（`rollback`，或 v0.2.0 切换失败自动回退）时脚本会：照 `compose.sh` 的同一组文件（`docker-compose.yml` + `tiers/standard.yml`）再加 `-f /opt/aroomo-overrides/prod-shell-core-auth.yml` 直接调 `docker compose`（v0.1.0 的 `compose.sh` 不认叠加文件）；只 `build core`；`up -d --remove-orphans --no-build`（镜像缺了宁可失败，不悄悄造一个旧登录的同名镜像）。日志写「叠加：…；不重建：shell」。
+- **`/opt/aroomo-overrides/prod-shell-core-auth.yml` 和镜像 `aroomo-shell:core-auth-0f1895d` 在不再需要回到 v0.1.0 之前都不能删**（`docker image prune -a` 会删掉没在用的镜像：v0.2.0 上线后这个镜像就没在用了，清理镜像前先确认）。新版本自己的 compose 默认 `core-session`，不需要叠加文件。
+- 文件格式：`.release/compose-extra/<版本>`（标签名，或提交号前 7 位），一行一个叠加文件的绝对路径；`nobuild: 服务名…` 列出不重建的服务；`#` 起是注释。列的文件不存在就拒绝切换。
+
+### 跨过 0025–0030 回退：先恢复数据库
+
+v0.2.0 会执行迁移 0025–0030（会话、助手、运行、存库、推送、步骤；0025/0026/0027/0029 带 FORCE RLS）。执行之后数据库里有 v0.1.0 不认识的迁移，`rollback` 会拒绝（第 9 步）。顺序：
+
+1. 记下切换时的部署前备份名（`.release/precheck.ok`，或日志里的「部署前备份：aroomo-…」）。
+2. 按 [BACKUP.md](BACKUP.md) 用这个备份恢复 `aroomo_core`（要主密钥；会丢掉上线后写进新表的数据——新表都是阶段 1.5 起才有的会话/助手数据）。
+3. `bash /tmp/rt.sh rollback`（演练，应显示会叠加 override）→ `rollback --confirm v0.1.0`。
+4. 核对：`docker inspect aroomo-shell-1 --format '{{.Config.Image}}'` = `aroomo-shell:core-auth-0f1895d`；匿名访问 `/aroomo/auth/me` 302 到 `/aroomo/login`；她能登录。
+5. 还不行：让她临时回 staging（v2.2 §9）。
+
+只有迁移**没执行**（切换在迁移前就失败）时，脚本会自动回到 v0.1.0（同样会叠加 override），不需要恢复数据库。
+
 ## 测试
 
-`scripts/test-release.sh`：临时 git 仓库 + 假的 compose，不需要 docker。覆盖列标签、拒绝 dev 标签/分支/不存在的标签、演练不切换、写错确认不切换、切换成功、坏版本自动回退（迁移没执行）、**迁移已执行后不自动回退并写「需要人工处理」**、**数据库超前时 `rollback` 演练和确认都拒绝**、**已跟踪文件有改动时演练和确认都拒绝且改动原样保留**、一键回滚、`.env` 缺项在演练时就拒绝、闸门/生产前检查取自目标版本且失败或缺失时拒绝、读不出迁移记录时拒绝、本地密钥文件不被动、`compose.log` 权限 600、日志无密钥。
+`scripts/test-release.sh`：临时 git 仓库 + 假的 compose，不需要 docker。覆盖列标签、拒绝 dev 标签/分支/不存在的标签、演练不切换、写错确认不切换、切换成功、坏版本自动回退（迁移没执行）、**迁移已执行后不自动回退并写「需要人工处理」**、**数据库超前时 `rollback` 演练和确认都拒绝**、**已跟踪文件有改动时演练和确认都拒绝且改动原样保留**、一键回滚、`.env` 缺项在演练时就拒绝、闸门/生产前检查取自目标版本且失败或缺失时拒绝、读不出迁移记录时拒绝、本地密钥文件不被动、`compose.log` 权限 600、日志无密钥；precheck 拿到目标版本的 `core/migrations/`；回退目标写死 lobe-session 且没配叠加文件时 `deploy` 演练、`rollback` 演练和确认都拒绝，`--lobe-session-ok` 放行，叠加文件列了但不存在拒绝；配好后回滚带上叠加文件、只重建 core、`up --no-build`，没有叠加文件的版本照常走 `compose.sh`。
 
 两个测试脚本都在 CI 的 `release-scripts` 任务里跑（precheck 的测试用 CI 的真 PostgreSQL 服务；输出里出现「跳过」或没有「全部通过」都算失败）。
 

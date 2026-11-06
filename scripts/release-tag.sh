@@ -9,6 +9,13 @@
 #   scripts/release-tag.sh rollback                      演练：显示将回到哪个版本
 #   scripts/release-tag.sh rollback --confirm <上一个版本>  真正回滚
 #   加 --hotfix：跳过合并闸门（#189），其他检查照旧。
+#   加 --lobe-session-ok：回退目标写死 SHELL_AUTH: lobe-session 也照样切（只在确实要回旧登录、LobeHub 在跑时用）。
+#
+# 版本专属的 compose 叠加文件（docs/ops/RELEASE.md「回退到 v0.1.0」）：
+#   .release/compose-extra/<版本>（版本 = 标签名，或提交号前 7 位）一行一个叠加文件的绝对路径；
+#   「nobuild: 服务名…」= 这些服务用叠加文件里指定的现成镜像，不重建（否则会用旧代码重建并覆盖那个镜像标签）。
+#   切到这个版本时（deploy、rollback、切换失败自动回退）都叠上；列出的文件不存在就拒绝切换。
+#   生产 v0.1.0 的 Shell 来自 /opt/aroomo-overrides/prod-shell-core-auth.yml（core-session 镜像），不叠它回退后所有者进不去。
 #
 # 切换前一律打印「需要主会话：确认生产切到标签版」，由主会话确认后带 --confirm 再跑。
 # 切换步骤：git fetch --tags → 检查标签在 main 上 → 工作区干净 + .env 自检（演练也做）→ 数据库迁移不超前
@@ -55,7 +62,51 @@ log() { printf '%s %s\n' "$(date '+%F %T %Z')" "$*" | tee -a "$state/history.log
 die() { log "拒绝：$*"; exit 1; }
 
 git_() { git -C "$ROOT" "$@"; }
-compose() { AROOMO_TIER="$TIER" "$ROOT/scripts/compose.sh" "$@"; }
+# 当前要用的叠加文件（load_extra 设置）。有叠加文件时不经过目标版本的 compose.sh（v0.1.0 的 compose.sh 不认叠加文件），
+# 按 compose.sh 的同一组文件直接调 docker compose，再加上叠加文件。
+EXTRA_FILES=()
+NOBUILD=()
+compose() {
+  if [ "${#EXTRA_FILES[@]}" -gt 0 ]; then
+    local f args=(-f "$ROOT/deploy/docker-compose.yml" -f "$ROOT/deploy/tiers/$TIER.yml")
+    for f in "${EXTRA_FILES[@]}"; do args+=(-f "$f"); done
+    # shellcheck disable=SC2086  # RELEASE_DOCKER 只在测试里设成桩命令
+    ${RELEASE_DOCKER:-docker} compose --project-directory "$ROOT/deploy" "${args[@]}" "$@"
+  else
+    AROOMO_TIER="$TIER" "$ROOT/scripts/compose.sh" "$@"
+  fi
+}
+
+# load_extra <版本>：读 .release/compose-extra/<版本>，设 EXTRA_FILES / NOBUILD。文件里列的叠加文件不存在 → 返回 1
+load_extra() {
+  local name="$1" line f missing=0
+  EXTRA_FILES=(); NOBUILD=()
+  [ -f "$state/compose-extra/$name" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%%#*}"; line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
+    [ -n "$line" ] || continue
+    case "$line" in
+      nobuild:*) for f in ${line#nobuild:}; do NOBUILD+=("$f"); done ;;
+      /*) if [ -f "$line" ]; then EXTRA_FILES+=("$line"); else log "叠加文件不存在：$line（.release/compose-extra/$name 里列的）"; missing=1; fi ;;
+      *) log ".release/compose-extra/$name 里这一行看不懂（要绝对路径或 nobuild: 服务名）：$line"; missing=1 ;;
+    esac
+  done <"$state/compose-extra/$name"
+  [ "$missing" = 0 ]
+}
+
+# 回退目标的 compose 写死了 SHELL_AUTH: lobe-session、又没配叠加文件 → 切过去所有者会被挡在外面（LobeHub 已停）
+LOBE_OK=0
+guard_shell_auth() { # guard_shell_auth <提交> <版本名> <用途>
+  local commit="$1" name="$2" why="$3"
+  [ "$LOBE_OK" = 1 ] && return 0
+  git_ show "$commit:deploy/docker-compose.yml" 2>/dev/null | grep -qE '^[[:space:]]*SHELL_AUTH:[[:space:]]*"?lobe-session"?[[:space:]]*$' || return 0
+  load_extra "$name" || return 1
+  if [ "${#EXTRA_FILES[@]}" = 0 ]; then
+    log "$why $name 的 compose 写死 SHELL_AUTH: lobe-session，又没有 .release/compose-extra/$name：切过去 Shell 只认 LobeHub 登录，所有者会进不去。先按 docs/ops/RELEASE.md「回退到 v0.1.0」配好叠加文件（或确认要回旧登录时加 --lobe-session-ok）"
+    return 1
+  fi
+  log "$why $name 时会叠加：${EXTRA_FILES[*]}${NOBUILD[*]:+（不重建：${NOBUILD[*]}）}"
+}
 
 short() {
   local r="$1"
@@ -193,6 +244,8 @@ extract_scripts() {
   local commit="$1" d
   d="$(mktemp -d /tmp/release-scripts.XXXXXX)"
   git_ archive "$commit" scripts 2>/dev/null | tar -x -C "$d" 2>/dev/null || true
+  # 迁移目录也取出来：precheck 检查 1 要知道本次发布有哪些待执行迁移（分开取，旧版本没有这个目录也不影响 scripts/）
+  git_ archive "$commit" core/migrations 2>/dev/null | tar -x -C "$d" 2>/dev/null || true
   printf '%s' "$d"
 }
 
@@ -200,13 +253,21 @@ extract_scripts() {
 switch_to() {
   local ref="$1" from="$2" to
   to="$(commit_of "$ref")" || { log "找不到 $ref"; return 1; }
+  load_extra "$(short "$ref")" || { log "$(short "$ref") 的叠加文件不全，不切换"; return 1; }
   git_ -c advice.detachedHead=false checkout -q "$to" || { log "检出 $(short "$ref") 失败"; return 1; }
   check_env || return 1
   build_console_if_needed "$from" "$to" || { log "控制台构建失败"; return 1; }
   export AROOMO_COMMIT="$to"
-  compose build core shell >>"$compose_log" 2>&1 || { log "镜像构建失败"; return 1; }
+  local s build=() up=(-d --remove-orphans)
+  for s in core shell; do [[ " ${NOBUILD[*]} " == *" $s "* ]] || build+=("$s"); done
+  # 有不重建的服务：up 也不许顺手构建（镜像缺了宁可失败，也不用旧代码造一个同名镜像）
+  [ "${#NOBUILD[@]}" = 0 ] || up+=(--no-build)
+  [ "${#EXTRA_FILES[@]}" = 0 ] || log "叠加：${EXTRA_FILES[*]}${NOBUILD[*]:+；不重建：${NOBUILD[*]}}"
+  if [ "${#build[@]}" -gt 0 ]; then
+    compose build "${build[@]}" >>"$compose_log" 2>&1 || { log "镜像构建失败"; return 1; }
+  fi
   compose pull --ignore-buildable -q >>"$compose_log" 2>&1 || true
-  compose up -d --remove-orphans >>"$compose_log" 2>&1 || { log "compose up 失败"; return 1; }
+  compose up "${up[@]}" >>"$compose_log" 2>&1 || { log "compose up 失败"; return 1; }
   wait_healthy || { log "健康检查超时"; return 1; }
 }
 
@@ -264,6 +325,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --confirm) confirm="${2:-}"; shift 2 || die "--confirm 后面要写版本号" ;;
     --hotfix) hotfix=1; shift ;;
+    --lobe-session-ok) LOBE_OK=1; shift ;;
     -*) die "不认识的参数 $1" ;;
     *) target="$1"; shift ;;
   esac
@@ -312,6 +374,13 @@ fi
 require_clean_tree
 check_env || die "deploy/.env 不合格（见上一行），先处理再发布"
 migration_guard "$tcommit" "拒绝切到它" || die "数据库迁移与目标版本不匹配"
+# 回退目标（rollback 的目标；deploy 失败时自动回到的当前版本）不能把所有者挡在门外
+if [ "$cmd" = rollback ]; then
+  guard_shell_auth "$tcommit" "$(short "$target")" "回滚到" || die "回滚目标的 Shell 登录方式不对，不回滚"
+elif ccommit="$(commit_of "$cur")"; then
+  guard_shell_auth "$ccommit" "$(short "$cur")" "切换失败时会自动回到" || die "自动回退目标的 Shell 登录方式不对，先配好叠加文件再部署"
+fi
+EXTRA_FILES=(); NOBUILD=()
 
 # 生产前检查和闸门用目标版本里的 scripts/（RELEASE_ROOT 仍指向生产目录）
 tscripts="$(extract_scripts "$tcommit")"
