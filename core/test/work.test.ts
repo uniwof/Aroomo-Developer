@@ -117,7 +117,7 @@ describe.each(twoAccountEnvs)('/work 切片 1（$name）', (env: DepsEnv) => {
     };
     const r = await t.owner('POST', `/api/work/projects/${p.id}/sync`);
     expect(r.statusCode).toBe(200);
-    expect(r.json()).toEqual({ added: 2, unchanged: 0, failed: [] });
+    expect(r.json()).toEqual({ added: 2, changed: 0, unchanged: 0, failed: [] });
     expect(calls.map((c) => c.url)).toEqual([releases('acme/app')]);
     expect(calls.every((c) => c.redirect === 'manual')).toBe(true);
 
@@ -153,7 +153,7 @@ describe.each(twoAccountEnvs)('/work 切片 1（$name）', (env: DepsEnv) => {
     expect(again.json().error.retryAfterSeconds).toBeGreaterThan(0);
     t.clock.advance(11 * 60 * 1000);
     routes[releases('acme/app')] = { status: 200, body: [rel(2, 'v1.1.0'), rel(1, 'v1.0.0', { name: '改过标题' })] };
-    expect((await t.owner('POST', `/api/work/projects/${p.id}/sync`)).json()).toEqual({ added: 1, unchanged: 1, failed: [] });
+    expect((await t.owner('POST', `/api/work/projects/${p.id}/sync`)).json()).toEqual({ added: 1, changed: 0, unchanged: 1, failed: [] });
     const vs = (await t.owner('GET', `/api/work/projects/${p.id}/versions`)).json().versions;
     // 不可变快照：GitHub 上后来改了标题，这里还是当时的
     expect(vs.find((v: { label: string }) => v.label === 'v1.0.0').title).toBe('发布 v1.0.0');
@@ -164,7 +164,7 @@ describe.each(twoAccountEnvs)('/work 切片 1（$name）', (env: DepsEnv) => {
     const p = await mk('只有标签', 'acme/tagsonly');
     routes[releases('acme/tagsonly')] = { status: 200, body: [] };
     routes[tags('acme/tagsonly')] = { status: 200, body: [{ name: 'v0.1.0', commit: { sha: 'abc123', url: 'https://api.github.com/repos/acme/tagsonly/commits/abc123' } }] };
-    expect((await t.owner('POST', `/api/work/projects/${p.id}/sync`)).json()).toEqual({ added: 1, unchanged: 0, failed: [] });
+    expect((await t.owner('POST', `/api/work/projects/${p.id}/sync`)).json()).toEqual({ added: 1, changed: 0, unchanged: 0, failed: [] });
     const [v] = (await t.owner('GET', `/api/work/projects/${p.id}/versions`)).json().versions;
     expect(v).toMatchObject({ label: 'v0.1.0', sourceState: 'tagged', actor: null, sourceAt: null, title: null });
     expect(v.artifacts).toEqual([{ type: 'page', title: 'GitHub 标签', url: 'https://github.com/acme/tagsonly/tree/v0.1.0', size: null }]);
@@ -186,6 +186,66 @@ describe.each(twoAccountEnvs)('/work 切片 1（$name）', (env: DepsEnv) => {
     const raw = Buffer.from(first.nextCursor, 'base64url').toString();
     for (const bad of [Buffer.from(raw + '|x').toString('base64url'), first.nextCursor + '=', 'not a cursor'])
       expect((await t.owner('GET', `/api/work/projects/${p.id}/versions?cursor=${encodeURIComponent(bad)}`)).statusCode, bad).toBe(400);
+  });
+
+  it('负责人 #323 必改 1：同一次同步进来的 tag，时间线和「最新」按 GitHub 给的先后，不按随机 id', async () => {
+    await start();
+    const p = await mk('只有标签', 'acme/tagsonly');
+    const names = ['v0.6.0', 'v0.5.0', 'v0.4.0', 'v0.3.0', 'v0.2.0', 'v0.1.0'];
+    routes[releases('acme/tagsonly')] = { status: 200, body: [] };
+    routes[tags('acme/tagsonly')] = { status: 200, body: names.map((name) => ({ name })) };
+    expect((await t.owner('POST', `/api/work/projects/${p.id}/sync`)).json()).toMatchObject({ added: 6 });
+    const vs = (await t.owner('GET', `/api/work/projects/${p.id}/versions`)).json().versions;
+    expect(vs.map((v: { label: string }) => v.label)).toEqual(names);
+    expect((await t.owner('GET', '/api/work/projects')).json().projects[0].latest.label).toBe('v0.6.0');
+  });
+
+  it('负责人 #323 必改 2：预发布转正式后再同步，显示「已发布」，算一条「有变化」；别的内容不跟着改，也不会往回改', async () => {
+    await start();
+    const p = await mk();
+    routes[releases('acme/app')] = { status: 200, body: [rel(3, 'v1.2.0', { prerelease: true })] };
+    expect((await t.owner('POST', `/api/work/projects/${p.id}/sync`)).json()).toEqual({ added: 1, changed: 0, unchanged: 0, failed: [] });
+    t.clock.advance(11 * 60 * 1000);
+    routes[releases('acme/app')] = { status: 200, body: [rel(3, 'v1.2.0', { prerelease: false, name: '改了标题' })] };
+    expect((await t.owner('POST', `/api/work/projects/${p.id}/sync`)).json()).toEqual({ added: 0, changed: 1, unchanged: 0, failed: [] });
+    let [v] = (await t.owner('GET', `/api/work/projects/${p.id}/versions`)).json().versions;
+    expect(v).toMatchObject({ label: 'v1.2.0', sourceState: 'published', title: '发布 v1.2.0' });
+    t.clock.advance(11 * 60 * 1000);
+    routes[releases('acme/app')] = { status: 200, body: [rel(3, 'v1.2.0', { prerelease: true })] };
+    expect((await t.owner('POST', `/api/work/projects/${p.id}/sync`)).json()).toEqual({ added: 0, changed: 0, unchanged: 1, failed: [] });
+    [v] = (await t.owner('GET', `/api/work/projects/${p.id}/versions`)).json().versions;
+    expect(v.sourceState).toBe('published');
+  });
+
+  it('负责人 #323 必改 3：先有 tag、后来发了 release，时间线、最新、项目列表里同一个版本只出现一次（显示已发布）；tag 行不删', async () => {
+    await start();
+    const p = await mk('先标签后发布', 'acme/later');
+    routes[releases('acme/later')] = { status: 200, body: [] };
+    routes[tags('acme/later')] = { status: 200, body: [{ name: 'v0.2.0' }, { name: 'v0.1.0' }] };
+    expect((await t.owner('POST', `/api/work/projects/${p.id}/sync`)).json()).toMatchObject({ added: 2 });
+    const tagRow = (await t.owner('GET', `/api/work/projects/${p.id}/versions`)).json().versions.find((v: { label: string }) => v.label === 'v0.2.0');
+    t.clock.advance(11 * 60 * 1000);
+    routes[releases('acme/later')] = { status: 200, body: [rel(5, 'v0.2.0', { published_at: new Date(t.clock.now().getTime() + 1000).toISOString() })] };
+    expect((await t.owner('POST', `/api/work/projects/${p.id}/sync`)).json()).toMatchObject({ added: 1 });
+    const vs = (await t.owner('GET', `/api/work/projects/${p.id}/versions`)).json().versions;
+    expect(vs.map((v: { label: string; sourceState: string }) => `${v.label}:${v.sourceState}`)).toEqual(['v0.2.0:published', 'v0.1.0:tagged']);
+    expect((await t.owner('GET', '/api/work/projects')).json().projects[0].latest).toMatchObject({ label: 'v0.2.0', sourceState: 'published' });
+    // 数据照样留着：tag 那一行按 id 还能打开
+    expect((await t.owner('GET', `/api/work/versions/${tagRow.id}`)).statusCode).toBe(200);
+  });
+
+  it('负责人 #323 建议：每个账号每小时最多同步 3 次（不带令牌的 GitHub 额度按出口 IP 算，staging 和生产共用）', async () => {
+    await start();
+    const ps = [];
+    for (const n of ['一', '二', '三', '四']) ps.push(await mk(`项目${n}`, `acme/p${ps.length}`));
+    for (const p of ps.slice(0, 3)) expect((await t.owner('POST', `/api/work/projects/${p.id}/sync`)).statusCode).toBe(200);
+    const fourth = await t.owner('POST', `/api/work/projects/${ps[3]!.id}/sync`);
+    expect(fourth.statusCode).toBe(429);
+    expect(fourth.json().error.message).toContain('每小时最多同步 3 次');
+    expect(fourth.json().error.retryAfterSeconds).toBeGreaterThan(0);
+    // 被挡的这次不占项目的 10 分钟
+    t.clock.advance(61 * 60 * 1000);
+    expect((await t.owner('POST', `/api/work/projects/${ps[3]!.id}/sync`)).statusCode).toBe(200);
   });
 
   it('GitHub 限流 / 仓库不存在 / 重定向：写进 failed，不加版本', async () => {
@@ -240,6 +300,17 @@ describe('迁移 0033 /work', () => {
       INSERT INTO work_versions (id, user_id, project_id, source_type, source_ref, label, source_state, synced_at)
       VALUES ('00000000-0000-4000-8000-0000000000b1', 'owner', '00000000-0000-4000-8000-0000000000a1', 'github_release', '1', 'v1', 'published', now())`);
     await expect(db.exec(`UPDATE work_versions SET label = 'v9'`)).rejects.toThrow(/不可变/);
+    // 负责人 #323 必改 2：只放行 prerelease → published 这一种改动，别的列一起改、往回改、tagged → published 都拒
+    await db.exec(`INSERT INTO work_versions (id, user_id, project_id, source_type, source_ref, label, source_state, synced_at)
+      VALUES ('00000000-0000-4000-8000-0000000000b2', 'owner', '00000000-0000-4000-8000-0000000000a1', 'github_release', '2', 'v2', 'prerelease', now()),
+             ('00000000-0000-4000-8000-0000000000b3', 'owner', '00000000-0000-4000-8000-0000000000a1', 'github_tag', 'v3', 'v3', 'tagged', now())`);
+    const b2 = `id = '00000000-0000-4000-8000-0000000000b2'`;
+    await expect(db.exec(`UPDATE work_versions SET source_state = 'published', label = 'x' WHERE ${b2}`)).rejects.toThrow(/不可变/);
+    await expect(db.exec(`UPDATE work_versions SET source_state = 'published', artifacts = '[{"type":"page"}]' WHERE ${b2}`)).rejects.toThrow(/不可变/);
+    await db.exec(`UPDATE work_versions SET source_state = 'published' WHERE ${b2}`);
+    await expect(db.exec(`UPDATE work_versions SET source_state = 'prerelease' WHERE ${b2}`)).rejects.toThrow(/不可变/);
+    await expect(db.exec(`UPDATE work_versions SET source_state = 'published' WHERE id = '00000000-0000-4000-8000-0000000000b3'`)).rejects.toThrow(/不可变/);
+    expect((await db.query<{ source_state: string }>(`SELECT source_state FROM work_versions WHERE ${b2}`)).rows[0]!.source_state).toBe('published');
     await db.exec(readFileSync(fileURLToPath(new URL('../migrations/down/0033_work.down.sql', import.meta.url)), 'utf8'));
     expect(await has()).toBe(0);
     expect(await migrate(db)).toEqual(['0033_work.sql']);
