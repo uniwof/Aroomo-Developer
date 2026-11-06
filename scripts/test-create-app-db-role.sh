@@ -4,6 +4,8 @@
 #   scripts/test-create-app-db-role.sh
 # 1. postgres 容器没设 POSTGRES_USER 时 psql 要用 postgres 登录（以前是空的 → 用 root 连 → 失败）。
 # 2. --staging（或 AROOMO_STAGING=1）要和 deploy/staging/deploy-staging.sh 用同一组 compose 参数（-p aroomo-staging + staging 覆盖文件）。
+# 负责人 #289 必改：3. 跑错目录（staging 目录不加 --staging / 别处加了 --staging）直接拒绝、不调 docker；
+#                   4. 检出的代码不认 CORE_APP_DB_PASSWORD（#285 之前的版本）拒绝；5. 生产重建命令带 --no-deps。
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 work="$(mktemp -d)"
@@ -14,7 +16,8 @@ bad() { echo "FAIL - $1"; fail=1; }
 
 # 临时仓库：只要脚本本身、compose.sh、select-tier.sh 和一个 .env
 repo="$work/repo"
-mkdir -p "$repo/scripts" "$repo/deploy/staging" "$repo/deploy/tiers"
+mkdir -p "$repo/scripts" "$repo/deploy/staging" "$repo/deploy/tiers" "$repo/core/src"
+echo "const appDbPassword = str(env, 'CORE_APP_DB_PASSWORD');" >"$repo/core/src/config.ts"
 cp "$here/create-app-db-role.sh" "$here/compose.sh" "$here/select-tier.sh" "$repo/scripts/"
 touch "$repo/deploy/docker-compose.yml" "$repo/deploy/tiers/standard.yml" "$repo/deploy/staging/compose.staging.yml"
 
@@ -43,6 +46,9 @@ exit 0
 STUB
 chmod +x "$bin/docker" "$bin/psql"
 export PATH="$bin:$PATH" AROOMO_TIER=standard
+unset AROOMO_STAGING
+# staging 根目录默认 /opt/aroomo-staging；测试里只有 staging 那几次把它指向临时仓库
+export STAGING_ROOT="$work/not-staging"
 calls="$work/calls"; export T_CALLS="$calls"
 
 run() { # run <说明> [参数…]：每次用新的 .env
@@ -62,13 +68,13 @@ grep -q -- "--project-directory $repo/scripts/../deploy -f $repo/scripts/../depl
 grep -q -- '-p aroomo-staging' "$calls" && bad "默认不该带 staging 项目名" || ok "默认不带 staging 项目名"
 grep -q '^CORE_DB_APP_ROLE=aroomo_core_app$' "$repo/deploy/.env" && ok ".env 写了 CORE_DB_APP_ROLE" || bad ".env 没写 CORE_DB_APP_ROLE"
 [ "$(stat -c %a "$repo/deploy/.env")" = 600 ] && ok ".env 权限 600" || bad ".env 权限不对"
-echo "$OUT" | grep -q 'scripts/compose.sh up -d --force-recreate core' && ok "默认提示生产的重建命令" || bad "默认下一步提示不对：$OUT"
+echo "$OUT" | grep -q 'scripts/compose.sh up -d --no-deps --force-recreate core' && ok "默认提示生产的重建命令（带 --no-deps）" || bad "默认下一步提示不对：$OUT"
 grep -q "$(grep '^CORE_APP_DB_PASSWORD=' "$repo/deploy/.env" | cut -d= -f2)" <<<"$OUT$(cat "$calls")" && bad "口令出现在输出或 docker 参数里" || ok "口令不在输出和 docker 参数里"
 
 # --- staging：和 deploy-staging.sh 同一组 compose 参数
 stg_args="compose -p aroomo-staging --project-directory $repo/deploy --env-file $repo/deploy/.env -f $repo/deploy/docker-compose.yml -f $repo/deploy/staging/compose.staging.yml"
 for how in flag env; do
-  if [ "$how" = flag ]; then run "--staging" --staging; else AROOMO_STAGING=1 run "AROOMO_STAGING=1"; fi
+  if [ "$how" = flag ]; then STAGING_ROOT="$repo" run "--staging" --staging; else STAGING_ROOT="$repo" AROOMO_STAGING=1 run "AROOMO_STAGING=1"; fi
   grep -q -- "^$stg_args exec -T postgres" "$calls" && ok "staging（$how）用 -p aroomo-staging + staging 覆盖文件" || bad "staging（$how）compose 参数不对：$(cat "$calls")"
   grep -qx 'psql-user=\[postgres\]' "$calls" && ok "staging（$how）psql 用 postgres" || bad "staging（$how）psql 用户不对"
   echo "$OUT" | grep -q -- "-p aroomo-staging .*compose.staging.yml up -d --no-deps --force-recreate core" && ok "staging（$how）提示 staging 的重建命令" || bad "staging（$how）下一步提示不对：$OUT"
@@ -85,9 +91,25 @@ printf 'x=1\n' >"$repo/deploy/.env"; : >"$calls"
 rc=0; "$repo/scripts/create-app-db-role.sh" --stagin >/dev/null 2>&1 || rc=$?
 [ "$rc" != 0 ] && [ ! -s "$calls" ] && ok "未知参数拒绝、没碰数据库" || bad "未知参数没被拒绝（退出码 $rc）"
 
+# 跑错地方：拒绝且不调 docker、不动 .env
+refuse() { # refuse <说明> <命令…>
+  local name="$1"; shift
+  printf 'x=1\n' >"$repo/deploy/.env"; : >"$calls"
+  local rc=0; "$@" >/dev/null 2>&1 || rc=$?
+  if [ "$rc" != 0 ] && [ ! -s "$calls" ] && [ "$(cat "$repo/deploy/.env")" = x=1 ]; then ok "$name：拒绝、没调 docker、.env 没动"; else bad "$name：没拒绝（退出码 $rc，docker 调用：$(cat "$calls")）"; fi
+}
+refuse "staging 目录里忘了加 --staging" env STAGING_ROOT="$repo" "$repo/scripts/create-app-db-role.sh"
+refuse "不是 staging 目录却加了 --staging" "$repo/scripts/create-app-db-role.sh" --staging
+refuse "不是 staging 目录、环境里残留 AROOMO_STAGING=1" env AROOMO_STAGING=1 "$repo/scripts/create-app-db-role.sh"
+mv "$repo/core/src/config.ts" "$work/config.ts"; echo "// #285 之前" >"$repo/core/src/config.ts"
+refuse "检出的版本不认 CORE_APP_DB_PASSWORD（#285 之前）" "$repo/scripts/create-app-db-role.sh"
+mv "$work/config.ts" "$repo/core/src/config.ts"
+
 # RLS.md 的命令同步（第 3、4 步）
 doc="$here/../docs/ops/RLS.md"
 grep -q -- '-U "${POSTGRES_USER:-postgres}"' "$doc" && ! grep -q -- '-U "$POSTGRES_USER"' "$doc" && ok "RLS.md 核对命令默认 postgres" || bad "RLS.md 核对命令的 -U 没改"
 grep -q 'create-app-db-role.sh --staging' "$doc" && grep -q -- '-p aroomo-staging' "$doc" && ok "RLS.md 写了 staging 的跑法" || bad "RLS.md 没写 staging 的跑法"
+grep -q 'scripts/compose.sh up -d --no-deps --force-recreate core' "$doc" && grep -q 'config_files' "$doc" && ok "RLS.md 生产重建带 --no-deps、核对 config_files" || bad "RLS.md 生产重建命令没改"
+grep -q 'CORE_APP_DB_PASSWORD' "$here/../docs/ops/RELEASE.md" && ok "RELEASE.md 回退一节写了先删三行" || bad "RELEASE.md 回退没写应用角色三行"
 
 [ "$fail" = 0 ] && echo "全部通过" || { echo "有失败"; exit 1; }
