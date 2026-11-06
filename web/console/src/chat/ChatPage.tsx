@@ -44,6 +44,12 @@ const Executors = lazy(() => import('@/pages/Executors').then((m) => ({ default:
 const AssistantDetail = lazy(() => import('./pages/assistants/AssistantPages').then((m) => ({ default: m.AssistantDetail })));
 const NewAssistantDialog = lazy(() => import('./pages/assistants/AssistantPages').then((m) => ({ default: m.NewAssistantDialog })));
 const ScheduleView = lazy(() => import('./pages/assistants/AssistantPages').then((m) => ({ default: m.ScheduleView })));
+/**
+ * ASSISTANTS 关着时不引用 useAssistants，lib/assistants（assistantsApi 等）就不进对话页包（#327）。
+ * 开关是编译期常量，同一个构建里每次渲染调用的都是同一个钩子，不违反钩子规则。
+ */
+const ASSISTANTS_OFF = { list: null, error: '', reload: () => {} };
+const useAssistantList: typeof useAssistants = ASSISTANTS ? useAssistants : () => ASSISTANTS_OFF;
 const GroupNewPanel = lazy(() => import('./group-new').then((m) => ({ default: m.GroupNewPanel })));
 const CapabilityPanel = lazy(() => import('./capability-panel').then((m) => ({ default: m.CapabilityPanel })));
 // /work 单独懒加载块；开关关着时连这一行都被摇掉（对话页包 ≤150 KB）
@@ -432,7 +438,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   const [addMember, setAddMember] = useState<{ preset?: string } | null>(null);
   const inboxCount = useInboxCount();
   const assistantsOn = ASSISTANTS && !isFamily();
-  const { list: assistants, error: assistantsError, reload: reloadAssistants } = useAssistants(assistantsOn);
+  const { list: assistants, error: assistantsError, reload: reloadAssistants } = useAssistantList(assistantsOn);
   /** 新建助手弹窗：initial = 聊天草稿卡「改一改」带来的内容，onDone = 建好后把那张卡标成已建 */
   const [newAssistant, setNewAssistant] = useState<{ initial?: AssistantInput; onDone?: () => void } | null>(null);
   // X-15：聊天里的助手草稿卡（只给所有者；开关关时不显示）
