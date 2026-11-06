@@ -1,6 +1,6 @@
 /**
  * 对话页里每个面板的地址（Poke 行为规范 §2 / 审计 C3）：能直接打开、刷新不丢、浏览器前进后退按面板走。
- * 地址都在 /console 下：/chat、/team（成员）、/hub（资源库、工具、API）、/inbox、/settings[/分组]、/settings/audit、/settings/executors。
+ * 地址都在 /console 下：/chat、/team（成员）、/hub（资源库、能力地图、工具、API、外部接入 /hub/mcp）、/inbox、/settings[/分组]、/settings/audit、/settings/executors。
  * 成员详情用 /team?member=<id>，不占 /team/:id（规范：成员详情不能和别的路由撞，也不是进对话）。
  * 助手（只给所有者、开关打开时）：详情 /assistants?assistant=<id>，全部计划 /assistants/schedule。
  * /console（驾驶舱）：只用现有接口（成员、收件箱计数、能力地图、审计），见 cockpit.tsx。
@@ -20,6 +20,8 @@ export type View =
   | { kind: 'inbox' }
   | { kind: 'library' }
   | { kind: 'keys' }
+  /** 外部接入（MCP 配置 + 连接密码）：规范 §6 Hub 的一类；和设置 › 外部接入是同一组内容 */
+  | { kind: 'mcp' }
   /** 所有者：审计记录（设置·安全里进入）、本机执行员（设置·电脑助手提醒里进入） */
   | { kind: 'audit' }
   | { kind: 'executors' }
@@ -52,6 +54,8 @@ export function pathOf(v: View): string {
       return '/hub/tools';
     case 'keys':
       return '/hub/keys';
+    case 'mcp':
+      return '/hub/mcp';
     case 'library':
       return '/hub';
     case 'inbox':
@@ -103,6 +107,7 @@ export function viewOf(pathname: string, search: string): View {
   if (p === '/hub') return { kind: 'library' };
   if (p === '/hub/tools') return { kind: 'tools' };
   if (p === '/hub/keys') return { kind: 'keys' };
+  if (p === '/hub/mcp') return { kind: 'mcp' };
   if (p === '/inbox') return { kind: 'inbox' };
   if (p === '/me') return { kind: 'me' };
   if (p === '/assistants/schedule') return { kind: 'schedule' };
@@ -119,4 +124,4 @@ export function viewOf(pathname: string, search: string): View {
 }
 
 /** 只给所有者的面板（家人账号打开这些地址落到对话） */
-export const OWNER_ONLY: readonly View['kind'][] = ['library', 'tools', 'keys', 'audit', 'executors', 'assistant', 'schedule'];
+export const OWNER_ONLY: readonly View['kind'][] = ['library', 'tools', 'keys', 'mcp', 'audit', 'executors', 'assistant', 'schedule'];

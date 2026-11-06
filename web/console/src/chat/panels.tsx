@@ -157,6 +157,7 @@ export function MemberDetail({ member, onChat, onMention, onChanged }: { member:
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState('');
   const [err, setErr] = useState('');
+  const canTalk = member.enabled && member.status === 'active';
   async function change(kind: 'enable' | 'disable' | 'onboard') {
     if (busy) return;
     if (kind === 'disable' && !(await ask.confirm({ title: `停用 ${member.name}？`, desc: '停用后 TA 不再回答，对话里也 @ 不到；随时可以再启用。', ok: '停用', danger: true }))) return;
@@ -187,12 +188,17 @@ export function MemberDetail({ member, onChat, onMention, onChanged }: { member:
         </div>
       </div>
       <div className="panel-actions">
-        <button type="button" className="btn btn-primary" onClick={onChat} aria-label={`和 ${member.name} 单独对话`}>
-          单独聊
-        </button>
-        <button type="button" className="btn btn-outline" onClick={onMention} aria-label={`在当前对话里点名 ${member.name}`}>
-          在当前对话里点名
-        </button>
+        {/* 对话、@ 只认在职成员（ChatPage 的 members 只留 enabled && active）；停用、候选的不放点了没用的按钮（审计清单第 7 项） */}
+        {canTalk && (
+          <>
+            <button type="button" className="btn btn-primary" onClick={onChat} aria-label={`和 ${member.name} 单独对话`}>
+              单独聊
+            </button>
+            <button type="button" className="btn btn-outline" onClick={onMention} aria-label={`在当前对话里点名 ${member.name}`}>
+              在当前对话里点名
+            </button>
+          </>
+        )}
         {member.enabled && member.status === 'candidate' && !isFamily() && (
           <button type="button" className="btn btn-outline" disabled={busy} onClick={() => void change('onboard')} aria-label={`让 ${member.name} 入职`}>
             入职
@@ -208,6 +214,7 @@ export function MemberDetail({ member, onChat, onMention, onChanged }: { member:
           </button>
         )}
       </div>
+      {!canTalk && <p className="note">{member.enabled ? `${member.name} 还是候选，入职后才能对话。` : `${member.name} 已停用，启用后才能对话。`}</p>}
       <p role="status" className="note">
         {done}
       </p>
@@ -476,16 +483,30 @@ export function SettingsSectionBody({ section, prefs, setPrefs, onGo, members = 
           <NavRow icon={<Monitor aria-hidden="true" />} label="电脑助手" value="哪些电脑、在做什么" onClick={() => onGo('executors')} />
         </div>
       )}
-      {section === 'external' && (
-        <div className="group">
-          <McpSection />
-          <div className="row row-stack">
-            <ClientTokens />
-          </div>
-        </div>
-      )}
+      {section === 'external' && <ExternalGroup />}
       {section === 'shortcuts' && <ShortcutList />}
     </section>
+  );
+}
+
+/** 外部接入（MCP 配置 + 连接密码）：设置 › 外部接入和资源库 › 外部接入（/hub/mcp）共用这一组 */
+function ExternalGroup() {
+  return (
+    <div className="group">
+      <McpSection />
+      <div className="row row-stack">
+        <ClientTokens />
+      </div>
+    </div>
+  );
+}
+
+/** /hub/mcp：规范 §6 Hub 的「MCPs」一类，内容同设置 › 外部接入 */
+export function ExternalPanel() {
+  return (
+    <div className="panel">
+      <ExternalGroup />
+    </div>
   );
 }
 

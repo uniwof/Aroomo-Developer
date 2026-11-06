@@ -137,13 +137,12 @@ describe('能力清单（M1）', () => {
     expect(quotaText(items[1].quota)).toBe('额度：已用 3 / 10 次');
   });
 
-  it('接口未上线(404)时显示示例数据并标明', async () => {
+  it('接口未上线(404)时显示空状态，不放示例数字（切片 15）', async () => {
     const { CapabilityMap } = await import('@/components/CapabilityMap');
     vi.stubGlobal('fetch', vi.fn(async () => json(404, { error: { code: 'NOT_FOUND', message: 'x' } })));
     render(<CapabilityMap />);
-    await waitFor(() => expect(screen.getByTestId('cap-summary')).toHaveTextContent('能聊天 5 个 · 能画图 2 个 · 能做视频 0 个'));
-    expect(screen.getByRole('note')).toHaveTextContent('示例数据');
-    expect(screen.getAllByText('永久免费').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('试用').length).toBeGreaterThan(0);
+    expect(await screen.findByText('能力清单还读不到，等后台接上就会列在这里。')).toBeInTheDocument();
+    expect(screen.queryByTestId('cap-summary')).toBeNull();
+    expect(screen.queryByText('永久免费')).toBeNull();
   });
 });
