@@ -10,7 +10,10 @@
 #         CHECK (user_id <> '')，空串行会让迁移失败，或在策略里被当作「未设置」）；有就列出表名 + 行数并失败。
 #         NULL 同样算失败：CHECK 对 NULL 放行，而 RLS 下 user_id = x 对 NULL 行永远不成立，行还在但谁都看不见。
 #         只有 BACKFILL_NULL 里的表（迁移 0023 inbox_items、0024 provider_keys 会先把 NULL 改成 'owner'）可以有 NULL。
-#         清单里的表不存在、查询出错，都算失败（失败即关闭）；清单外带 user_id 的表（比如允许系统事件 NULL 的审计表）
+#         清单里的表不存在、查询出错，都算失败（失败即关闭）；唯一例外：表不存在、且目标版本 core/migrations/ 里
+#         还没执行（不在 core_schema_migrations）的迁移会 CREATE TABLE 它——打一行「将由待执行迁移 NNNN 新建」放行
+#         （新表是空的，没有要查的行；比如 v0.2.0 首次带上 0025–0030）。迁移目录或迁移记录读不出来就不放行。
+#         RELEASE_MIGRATIONS_DIR 可改迁移目录（默认脚本旁边的 ../core/migrations，release-tag.sh 会一起取出）；清单外带 user_id 的表（比如允许系统事件 NULL 的审计表）
 #         只打一行信息，不拦发布。
 # 检查 2  『owner』与 NULL 会不会撞唯一索引：迁移 0023/0024 把 NULL 改成 'owner'。按迁移后的表达式
 #         （coalesce(user_id,'owner') + 各索引原有列和条件）试算重复，撞了就失败。表名 + 重复组数，不打印任何数据内容。
@@ -88,6 +91,8 @@ is_backfill() { local x; for x in "${BACKFILL_NULL[@]}"; do [ "$x" = "$1" ] && r
 rls_file="$here/lib/rls-tables.txt"
 
 ident_ok() { [[ "$1" =~ ^[a-z_][a-z0-9_]*$ ]]; }
+# 0 = 存在；1 = 不存在；2 = 查询出错
+table_exists() { local r; r="$(sql "select to_regclass('public.$1') is not null")" || return 2; [ "$r" = t ]; }
 
 say "== 生产前检查 $(date '+%F %T %Z') =="
 
@@ -115,6 +120,35 @@ if [ -f "$rls_file" ]; then
   done <"$rls_file"
 fi
 [ "${#rls_tables[@]}" -gt 0 ] || fail "检查 1 读不到 RLS 表清单（$rls_file 不存在或为空）"
+# 本次发布还没执行的迁移：目标版本的 core/migrations/ 里有、core_schema_migrations 里没有的文件。
+# release-tag.sh 把目标版本的 core/migrations/ 和 scripts/ 一起取到临时目录，所以默认就在脚本旁边的 ../core/migrations。
+# 迁移目录或迁移记录读不出来 → 不算出任何待执行迁移（失败即关闭：不存在的表照旧失败）。
+mig_dir="${RELEASE_MIGRATIONS_DIR:-$here/../core/migrations}"
+pending_migs=()
+pending_note=""
+if [ ! -d "$mig_dir" ]; then
+  pending_note="；找不到目标版本的迁移目录，不按待执行迁移放行"
+elif ! applied_migs="$(sql "select version from core_schema_migrations")"; then
+  pending_note="；读不出迁移记录 core_schema_migrations，不按待执行迁移放行"
+else
+  for f in "$mig_dir"/*.sql; do
+    [ -f "$f" ] || continue
+    b="$(basename "$f")"
+    [[ "$b" =~ ^[0-9]{4}_[a-z0-9_]+\.sql$ ]] || continue   # 与 core/src/db/migrate.ts 的 FILE_RE 一致
+    grep -qxF "$b" <<<"$applied_migs" || pending_migs+=("$b")
+  done
+  [ "${#pending_migs[@]}" -gt 0 ] || pending_note="；没有待执行的迁移会新建它"
+fi
+# created_by_pending <表> → 打印新建它的待执行迁移文件名（去掉 -- 注释行后找 CREATE TABLE）
+created_by_pending() {
+  local t="$1" f re
+  re="^[[:space:]]*create[[:space:]]+table[[:space:]]+(if[[:space:]]+not[[:space:]]+exists[[:space:]]+)?(public\.)?\"?$t\"?([[:space:](]|$)"
+  for f in "${pending_migs[@]}"; do
+    if grep -v '^[[:space:]]*--' "$mig_dir/$f" | grep -qiE "$re"; then printf '%s' "$f"; return 0; fi
+  done
+  return 1
+}
+rls_pending=""
 bad_tables=""
 null_bad=""
 nullable_info=""
@@ -122,7 +156,12 @@ rls_checked=0
 for t in "${rls_tables[@]}"; do
   ident_ok "$t" || { fail "检查 1 清单里表名不合法：$t"; continue; }
   if ! grep -qx "$t" <<<"$tables"; then
-    fail "检查 1 RLS 表 $t 不存在或没有文本列 user_id（schema 不对或连错了库？）"; continue
+    # 表还不存在、且本次发布的待执行迁移会新建它（空表，没有要查的行）→ 放行；其余情况照旧失败
+    te=0; table_exists "$t" || te=$?
+    if [ "$te" = 1 ] && mig="$(created_by_pending "$t")"; then
+      rls_pending="$rls_pending $t(${mig%%_*})"; continue
+    fi
+    fail "检查 1 RLS 表 $t 不存在或没有文本列 user_id（schema 不对或连错了库？${pending_note}）"; continue
   fi
   n="$(sql "select count(*) from public.\"$t\" where user_id = ''")" || { fail "检查 1 查询 $t 空串时出错"; continue; }
   nulls="$(sql "select count(*) from public.\"$t\" where user_id is null")" || { fail "检查 1 查询 $t NULL 时出错"; continue; }
@@ -149,6 +188,7 @@ if [ -n "$null_bad" ]; then
 elif [ "$rls_checked" -gt 0 ]; then
   pass "检查 1 NULL user_id：除迁移会回填的表外没有 NULL"
 fi
+[ -z "$rls_pending" ] || say "信息  检查 1 这些 RLS 表还不存在，将由本次待执行的迁移新建（空表，不查）：${rls_pending# }"
 [ -z "$nullable_info" ] || say "信息  user_id 为 NULL 的行（迁移 0023/0024 会改成 'owner'）：${nullable_info# }"
 [ -z "$others" ] || say "信息  清单外带 user_id 的表（没开 RLS，不检查）：${others# }"
 
@@ -156,8 +196,6 @@ fi
 # 检查 2：迁移后唯一索引试算。每行：表|其他键列|条件
 # 注意：不能写成 printf | grep -q —— pipefail 下 grep 提前退出会让 printf 吃 SIGPIPE，整条管道判失败
 has_user_id() { grep -qx "$1" <<<"$tables"; }
-# 0 = 存在；1 = 不存在；2 = 查询出错
-table_exists() { local r; r="$(sql "select to_regclass('public.$1') is not null")" || return 2; [ "$r" = t ]; }
 
 trial_rows=(
   "inbox_items|kind, related_type, related_id|status = 'open' AND related_type IS NOT NULL"  # 0015 + 0023
