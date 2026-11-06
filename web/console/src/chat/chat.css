@@ -657,7 +657,7 @@
   }
 }
 
-/* ---------- 头像：纯色小身体 + 眼睛（无底色）；群聊浅蓝底「#」；我 = 浅灰底首字 ---------- */
+/* ---------- 头像：圆角方色块 + 白色记号；群聊浅珊瑚底「#」；我 = 浅灰底首字 ---------- */
 .av {
   flex: none;
   display: inline-flex;
@@ -669,6 +669,7 @@
   font-weight: 600;
   line-height: 1;
   box-sizing: border-box;
+  overflow: hidden;
 }
 .av-sm {
   width: calc(1.5 * var(--k));
@@ -706,8 +707,8 @@
   filter: grayscale(1);
 }
 .av-group {
-  background: #cdeaff;
-  color: #1d5fa8;
+  background: #f6e3d8;
+  color: #9a3f1c;
   font-size: 1em;
 }
 .av-sm.av-group {
@@ -718,8 +719,8 @@
   color: var(--fg);
 }
 :root.dark .av-group {
-  background: #17344f;
-  color: #a9d4ff;
+  background: #3b2418;
+  color: #e8a183;
 }
 :root.dark .av-user {
   background: #333;
