@@ -27,6 +27,7 @@ import { FLAGS } from '@/lib/flags';
 import { useAssistants, type AssistantInput } from '@/lib/assistants';
 import { archiveConversation, createConversation, fetchConversation, fetchConversations, fetchMessages, importLocalOnce, localPending, markRead, mergeRemote, renameConversation } from './saved';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { LazyChunk } from '@/components/LazyChunk';
 import './chat.css';
 
 // 不常开的面板点开才下载（#250：对话页包 ≤150 KB gz）。设置、成员随对话页一起加载，打开不用等。
@@ -202,10 +203,16 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   if (!atMount.current) atMount.current = new Map(list.filter((c) => !c.remote).map((c) => [c.id, c.messages.length]));
   /** #316：她在当前话题里自己打了字（Thread 记） */
   const typed = useRef(false);
-  /** #316：问到是谁后，正开着的是空白新话题、她没打字、她那份也没草稿 → 最近那段（她看到一片空白会以为旧话没了）；否则 undefined，照 #291 不动 */
+  /** #316：页面打开时自己开的那个空白话题（她自己点开的新对话、单聊、群聊 id 都不一样，不会被换走；负责人 #319 必改） */
+  const autoBlank = useRef<string | null>(null);
+  autoBlank.current ??= list[0]!.messages.length || list[0]!.remote ? '' : list[0]!.id;
+  /** #316：问到是谁后，正开着的还是页面自己开的空白话题、她没打字、她那份也没草稿 → 最近那段（她看到一片空白会以为旧话没了）；否则 undefined，照 #291 不动 */
   const latest = (l: Conversation[], me: string) => {
     const c = l.find((x) => x.id === currentRef.current);
-    return c && !c.remote && !c.messages.length && !typed.current && !loadDraft(newDraftKey(c), me) ? l.find((x) => x !== c && (x.remote || x.messages.length)) : undefined;
+    const to = c && c.id === autoBlank.current && !c.messages.length && !typed.current && !loadDraft(newDraftKey(c), me) ? l.find((x) => x !== c && (x.remote || x.messages.length)) : undefined;
+    // 负责人 #319 小建议：读屏说一句，走整页那个状态区，焦点不动
+    if (to) setNetSay(`打开了你最近的会话：${to.title}`);
+    return to;
   };
   /** 正在排队等列表的会话（话还在对话区里、没进列表，列表盖上来时不能丢） */
   const waiting = useRef(new Set<string>());
@@ -1141,16 +1148,18 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           {view.kind === 'assistant' && <AssistantDetail key={view.id} id={view.id} members={members} onChanged={reloadAssistants} onInbox={() => setView({ kind: 'inbox' })} />}
           {view.kind === 'schedule' && <ScheduleView list={assistants} error={assistantsError} members={members} onOpen={(id) => setView({ kind: 'assistant', id })} onChanged={reloadAssistants} />}
           {view.kind === 'group-new' && (
-            <GroupNewPanel
-              members={members}
-              {...(isFamily() ? {} : { onAdd: () => setAddMember({}) })}
-              onStart={(names) => {
-                // 只挑一位 = 和 TA 单聊；两位以上 = 这几位在场，默认负责人回答，@ 谁谁答（落地方案 v2 第 1 节，不让每位都回一遍）
-                const one = names.length === 1 ? members.find((m) => m.name === names[0]) : undefined;
-                if (one) chatWith(one);
-                else start({ title: `群聊：${names.join('、')}`, group: names });
-              }}
-            />
+            <LazyChunk>
+              <GroupNewPanel
+                members={members}
+                {...(isFamily() ? {} : { onAdd: () => setAddMember({}) })}
+                onStart={(names) => {
+                  // 只挑一位 = 和 TA 单聊；两位以上 = 这几位在场，默认负责人回答，@ 谁谁答（落地方案 v2 第 1 节，不让每位都回一遍）
+                  const one = names.length === 1 ? members.find((m) => m.name === names[0]) : undefined;
+                  if (one) chatWith(one);
+                  else start({ title: `群聊：${names.join('、')}`, group: names });
+                }}
+              />
+            </LazyChunk>
           )}
           {view.kind === 'settings' && <SettingsPanel prefs={prefs} setPrefs={setPrefs} members={members} {...(view.section ? { section: view.section } : {})} onOpen={(k) => setView({ kind: 'settings', section: k })} onGo={(k: GoTarget) => setView({ kind: k })} />}
           {view.kind === 'tools' && <ToolsView onGo={(k) => setView({ kind: k })} />}

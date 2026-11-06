@@ -90,6 +90,20 @@ describe.each([true, false])('#316 问到是谁后换到最近那段（存库 %s
     expect(screen.queryByText('周末去哪玩')).toBeNull();
     open();
     expect(await screen.findByText('周末去哪玩')).toBeInTheDocument();
+    // 负责人 #319 小建议：读屏说一句（整页状态区），焦点不动
+    expect(document.querySelector('[data-net-status]')!.textContent).toBe('打开了你最近的会话：周末去哪');
+  });
+
+  it('Core 晚回，这期间她自己点了「新对话」→ 不换（负责人 #319 必改：只换页面自己开的那个空白话题）', async () => {
+    const open = openFromShell();
+    await screen.findByLabelText('输入消息');
+    // 新对话 / 单独聊 / 新建群聊都走同一个 start()，各开一个新 id
+    fireEvent.keyDown(window, { key: 'O', ctrlKey: true, shiftKey: true });
+    await tick();
+    open();
+    await tick(300);
+    expect(screen.queryByText('周末去哪玩')).toBeNull();
+    expect(document.querySelector('[data-net-status]')!.textContent).toBe('');
   });
 
   it('Core 晚回、她已经打了几个字 → 不换，字还在', async () => {
