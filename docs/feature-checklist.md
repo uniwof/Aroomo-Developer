@@ -1,6 +1,7 @@
-# 功能核对表 v0（落地方案 v2 第 6 节）
+# 功能核对表 v0.1（落地方案 v2 第 6 节）
 
 - 维护：Hark。版本：v0.1（2026-11-06，按 dev `6e4138f` 更新状态；v0 是 2026-11-05 spike/native-chat）。负责人 11-06 回意见。
+- **阶段 1.5 开关**（负责人裁定 B，#282）：会话存库、助手、定时列表、草稿卡、任务卡、筛选六个前端开关在阶段 1.5 发布时**关着**，X-19 长会话压缩由 `COMPACT_ENABLED` 控制、默认关；这些功能代码已做，生产不显示，所有者验收后测一项开一项。
 - **BSL 标记**：功能名后带 **BSL** 的，Core 路径用到 `core/src/third_party/ekko/`（Ekko Studio，BSL 1.1，只许非商用；清单见该目录 `BORROWED.md`，业务代码只经 `core/src/borrowed/ekko.ts` 引用）。所有者 11-05 同意自用阶段借用。**收费前或放外部用户进来之前**，必须把 `borrowed/ekko.ts` 换成自研实现并删空 `core/src/third_party/ekko/`（`scripts/release-precheck.sh --paid-launch` 会检查目录为空）。
 - 规则：每个 PR 描述写上改动的 F 编号；标「新界面已有」必须有证据；改成「以后」要负责人同意并在送审包单列；**删掉一个功能必须所有者确认**；「LobeHub 现有」的每件事单独一行，是关 LobeHub 的依据。
 - 状态只有四种：**新界面已有**（之前就有）／**前端本轮补**（本轮 spike 补上，证据见列）／**需 Core**（前端等接口，接口好之前不放入口）／**以后**（待负责人同意）。
@@ -47,7 +48,7 @@
 | F-033 | LH | 重命名、删除话题（统一弹窗） | 4 ··· | 新界面已有 | 1 | dialog.test | H |
 | F-034 | LH | 导出话题为 Markdown | 4 ··· | 新界面已有 | 1 | ChatPage exportMd | H |
 | F-035 | LH | 搜索会话（标题和预览） | 3 | 新界面已有 | 1 | Sidebar 搜索 | H |
-| F-036 | LH / 方案 v2 §5 | 会话存进 Core、多设备同步 | 3 | 新界面已有 | 2 | dev `6e4138f`：/api/conversations + 流落库（0028），FLAGS.savedChats=true；saved-chats.test | 负 |
+| F-036 | LH / 方案 v2 §5 | 会话存进 Core、多设备同步 | 3 | 新界面已有 | 2 | dev `6e4138f`：/api/conversations + 流落库（0028）；**已做，开关关着（FLAGS.savedChats=false），1.5 生产不显示**；saved-chats.test | 负 |
 | F-037 | 方案 v2 §5 | 浏览器里的会话一键导入 Core | 3 | 新界面已有 | 2 | dev `6e4138f`：POST /api/conversations/import（conversations/routes.ts:64）；saved-chats.test | 负 |
 | F-038 | LH / N6 | 全文搜索（含消息正文） | 3 | 新界面已有 | 3 | dev `6e4138f`：GET /api/search（conversations/routes.ts:115），Sidebar 搜索；conversations-search.test、search-compact.test | 负 |
 | F-039 | 自审 A11 | 用户自己置顶 / 取消置顶 | 3、4 | 以后 | 1 | 现为自动置顶最近负责人会话 | 负 |
@@ -62,7 +63,7 @@
 |---|---|---|---|---|---|---|---|
 | F-050 | 所有者 11-05 12:16 | 会话栏分段「对话 \| 助手」改名，读屏名字、空状态一起改 | 3 | 前端本轮补 | 1 | chat.test › 助手没有预置 | 所 |
 | F-051 | 所有者 11-05 12:38 | 不预置任何助手；空状态一句话 | 3 | 前端本轮补 | 1 | chat.test › 助手没有预置 | 所 |
-| F-052 | 所有者 11-05 12:38 | 新建助手（长期任务 + 一位或几位成员 + 固定会话） **BSL** | 3、助手页 | 新界面已有 | 2–3 | dev `6e4138f`：/api/assistants 系列（assistants/routes.ts:74–147，只给所有者范围），助手页 AssistantPages；assistants.test、assistants-ui.test。运行器用 Ekko 借用代码（工具标记清理、交接深度、通知摘要） | 所 |
+| F-052 | 所有者 11-05 12:38 | 新建助手（长期任务 + 一位或几位成员 + 固定会话） **BSL** | 3、助手页 | 新界面已有 | 2–3 | dev `6e4138f`：/api/assistants 系列（assistants/routes.ts:74–147，只给所有者范围），助手页 AssistantPages；**已做，开关关着（FLAGS.assistants=false），1.5 生产不显示**；assistants.test、assistants-ui.test。运行器用 Ekko 借用代码（工具标记清理、交接深度、通知摘要） | 所 |
 | F-053 | 所有者 11-05 12:38 | 助手定时干活 **BSL** | 助手页 | 新界面已有 | 2–3 | dev `6e4138f`：定时规则 + 执行器（assistants/schedule.ts → Ekko nextCronAt）；执行器总开关 ASSISTANT_SCHEDULER_ENABLED 默认关，生产关、staging 开（观察到 11-09）；「立即运行」不受开关管；assistants-scheduler.test | 所 |
 | F-054 | 所有者 11-05 12:38 | 多成员小团队一起完成长期定时项目 **BSL** | 助手页 | 新界面已有 | 2–3 | dev `6e4138f`：组长 + 成员分工（runner.ts handoffAllowed，Ekko 交接深度）；assistants-delivery.test | 所 |
 
@@ -197,8 +198,8 @@
 | 编号 | 来源 | 功能 | 新界面位置 | 状态 | 阶段 | 证据 | 验收人 |
 |---|---|---|---|---|---|---|---|
 | X-01 | 功能补充 v1 | 后台结果发回会话并进收件箱（页面关着也写，会话行变未读） **BSL** | 5、13 | 新界面已有 | 2 | dev `6e4138f`：助手运行结果写回固定会话 + 收件箱（runner.ts，通知摘要用 Ekko notificationText）；assistants-delivery.test | 负 |
-| X-02 | 功能补充 v1 | 定时列表整页「全部计划」（头像叠放、目标、指令摘要、人话计划、时区、下次、上次结果、启用开关；手机是卡片）+ 4 个预设，不让写 cron **BSL** | 3.3 助手 › 看全部计划 | 新界面已有 | 2 | dev `6e4138f`：FLAGS.schedulePage=true；GET /api/assistants、pause/resume；下次时间由 Ekko nextCronAt 算；stage2-cards.test › X-02 | 负 |
-| X-03 | 功能补充 v1 | 任务卡：步骤进度、确认块（想做什么/为什么/花多少 + 拒绝/同意）、反问块（快速回复或输入框） | 5 组长消息下 | 新界面已有 | 2 | dev `6e4138f`：FLAGS.taskCards=true；运行步骤 + 确认块（0027/0030）；stage2-cards.test › X-03 | 负 |
+| X-02 | 功能补充 v1 | 定时列表整页「全部计划」（头像叠放、目标、指令摘要、人话计划、时区、下次、上次结果、启用开关；手机是卡片）+ 4 个预设，不让写 cron **BSL** | 3.3 助手 › 看全部计划 | 新界面已有 | 2 | dev `6e4138f`：**已做，开关关着（FLAGS.schedulePage=false），1.5 生产不显示**；GET /api/assistants、pause/resume；下次时间由 Ekko nextCronAt 算；stage2-cards.test › X-02 | 负 |
+| X-03 | 功能补充 v1 | 任务卡：步骤进度、确认块（想做什么/为什么/花多少 + 拒绝/同意）、反问块（快速回复或输入框） | 5 组长消息下 | 新界面已有 | 2 | dev `6e4138f`：**已做，开关关着（FLAGS.taskCards=false），1.5 生产不显示**；运行步骤 + 确认块（0027/0030）；stage2-cards.test › X-03 | 负 |
 | X-04a | 功能补充 v1 | 收件箱筛选「等你处理 / 全部」，默认等你处理；没有等你处理时一句话 + 看全部 | 13、7.6 | 前端本轮补 | 2 | pages/Inbox.tsx；inbox-filter.test；unify5-inbox-*.png | 负 |
 | X-04b | 功能补充 v1 | 会话行「等你」小标；点了打开会话并滚到那张卡加焦点框 | 3.2、5 | 需 Core | 2 | integrate/stage2：收件箱 related={type:'conversation', id:'会话:消息'} →「打开对话」滚到那条加焦点框；Core 还没有产生方 | 负 |
 | X-05 | 功能补充 v1 | 工具调用过程可见（折叠灰字行，脱敏参数和结果） **BSL** | 5 | 新界面已有 | 2–3 | dev `6e4138f`：chat/tool-parts.ts 部件（所有者 full / 家人 summary），ToolCalls.tsx；x05-x06.test、chat-tools.test。助手回复里漏出的工具标记用 Ekko stripToolMarkup 清理 | 负 |
@@ -209,28 +210,28 @@
 | X-10 | 功能补充 v1 | 手机扫码连电脑上的助手 | — | 以后 | 不排期 | 功能补充 v1 定为以后 | 负 |
 | X-11 | 功能补充 v1 | 快速回复：2–3 个答案 + 「我自己写…」，点了立刻发出，读屏「快速回复：可以」 | 5 任务卡反问块 | 需 Core | 2–3 | 前端已备（开关 quickReplies）：thread/cards/QuickReplies.tsx；stage2-cards.test › X-11；等成员反问数据块 | 负 |
 | X-12 | 功能补充 v1 | 助手「每次汇总完先给我看」开关 | 7.11 | 需 Core | 3 | — | 负 |
-| X-13 | 功能补充 v1 | 运行预算、截止、停止、重跑、历史（附录 C 已含） **BSL** | 7.12 | 新界面已有 | 2 | dev `6e4138f`：额度档 low/mid/high（runner.ts BUDGETS）、取消（runs/:run/cancel）、重跑（POST runs）、运行记录；等确认 24 小时作废；assistants.test、assistants-confirm-expiry.test | 负 |
+| X-13 | 功能补充 v1 | 运行预算、截止、停止、重跑、历史（附录 C 已含） **BSL** | 7.12 | 新界面已有 | 2 | dev `6e4138f`：额度档 low/mid/high（runner.ts BUDGETS）、取消（runs/:run/cancel）、重跑（POST runs）、运行记录；确认卡 24 小时没回自动作废（已做，有测试）；assistants.test、assistants-confirm-expiry.test | 负 |
 | X-14 | 功能补充 v1 / N10 | 第二意见（换模型的队友复查） | 5 | 以后 | 3 | 功能补充排在阶段 3 | 负 |
-| X-15 | 功能补充 v1 | 聊天里一句话建助手：草稿卡（名字、任务、组长和成员、计划、下次、额度档；建好/改一改/不用了，只有点「建好」才建） **BSL** | 5 | 新界面已有 | 2 | dev `6e4138f`：FLAGS.assistantDraft=true；Core 规则判断出草稿卡（assistants/intent.ts，只给所有者），POST /api/assistants；assistants-chat-draft.test、stage2-cards.test › X-15 | 所 |
+| X-15 | 功能补充 v1 | 聊天里一句话建助手：草稿卡（名字、任务、组长和成员、计划、下次、额度档；建好/改一改/不用了，只有点「建好」才建） **BSL** | 5 | 新界面已有 | 2 | dev `6e4138f`：**已做，开关关着（FLAGS.assistantDraft=false），1.5 生产不显示**；Core 规则判断出草稿卡（assistants/intent.ts，只给所有者），POST /api/assistants；assistants-chat-draft.test、stage2-cards.test › X-15 | 所 |
 | X-16 | 功能补充 v1 | 任务说明 4 个写法提示 | 7.11 | 需 Core | 2 | 随新建助手弹窗（等 /api/assistants） | 负 |
 | X-17 | 功能补充 v1 | 生成文件预览（HTML 不渲染） | 7.9 右侧 | 需 Core | 3 | 等 N1 上传 | 负 |
 | X-18 | 功能补充 v1 | 打字、听写、发新消息时停掉朗读 | 6 | 新界面已有（部分） | 2 | 发新消息、换会话已停（Thread.tsx speaker.stop）；开始打字/听写时停未做（线 A） | H |
-| X-19 | 功能补充 v1 | 长会话自动压缩并插一行灰字说明 | 5 | 新界面已有 | 3 | dev `6e4138f`：conversations/compact.ts（只用免费成员、原文不删、每天 40 次），流里插灰字；**无开关，生产默认开**；conversations-compact.test、search-compact.test | 负 |
+| X-19 | 功能补充 v1 | 长会话自动压缩并插一行灰字说明 | 5 | 新界面已有 | 3 | dev `6e4138f`：conversations/compact.ts（只用免费成员、原文不删、每天 40 次），流里插灰字；**`COMPACT_ENABLED` 默认关**（#282；staging/生产要用在 .env 写 true）；conversations-compact.test、search-compact.test | 负 |
 | X-20 | 功能补充 v1 | 把会话分享给家人 | — | 以后 | 以后 | 功能补充 v1 定为以后 | 所 |
 | X-21 | 功能补充 v1 | 会话和事件只追加、重启后运行变「失败：服务重启」 | Core | 新界面已有 | 2 | dev `6e4138f`：重启后 queued/running → failed/server_restart（server.ts onReady recoverAfterRestart）；聊天会话只追加（0028） | 负 |
-| X-22 | 功能补充 v1 | 运行中的会话排最前，静态「进行中」小标 | 3.2 | 新界面已有 | 2 | dev `6e4138f`：FLAGS.convFilter=true；助手由 /api/assistants、对话由 /api/conversations 给进行中 | 负 |
+| X-22 | 功能补充 v1 | 运行中的会话排最前，静态「进行中」小标 | 3.2 | 新界面已有 | 2 | dev `6e4138f`：**已做，开关关着（FLAGS.convFilter=false），1.5 生产不显示**；助手由 /api/assistants、对话由 /api/conversations 给进行中 | 负 |
 | X-23 | 功能补充 v1 | 越权测试补两条（跨助手会话 403、作者字段忽略） | Core | 新界面已有 | 2 | dev `6e4138f`：x23-cross-account.test（跨助手会话 403、浏览器自带作者/部件 400） | 负 |
 | X-24 | 功能补充 v1 | IM 通知桥 | — | 以后 | 以后 | — | 所 |
 | X-25 | 功能补充 v1 | 每个助手一台电脑 | — | 以后 | 不排期 | — | 所 |
 | X-26 | 功能补充 v1 | Alt+J 跳到下一张等你处理的卡 | 5 | 以后 | 3 | 等 X-03 / X-04b 上线 | 负 |
-| X-27 | 功能补充 v1 | 会话列表「全部 / 未读 / 进行中」三个胶囊（筛选，不是标签页） | 3.1 | 新界面已有 | 2 | dev `6e4138f`：FLAGS.convFilter=true；未读、进行中由 /api/assistants、/api/conversations 给；stage2-cards.test › X-27 | 负 |
+| X-27 | 功能补充 v1 | 会话列表「全部 / 未读 / 进行中」三个胶囊（筛选，不是标签页） | 3.1 | 新界面已有 | 2 | dev `6e4138f`：**已做，开关关着（FLAGS.convFilter=false），1.5 生产不显示**；未读、进行中由 /api/assistants、/api/conversations 给；stage2-cards.test › X-27 | 负 |
 | X-28 | 功能补充 v1 | 置顶消息 | 7.10 | 以后 | 4 | — | 负 |
 
 ## 汇总（v0.1 · 2026-11-06）
 
 - 本次改成「新界面已有」：F-036/037/038、F-052/053/054、X-01/02/03/05/06/08/09/13/15/19/21/22/23/27（证据列写了 dev 上的文件和测试）。
 - 带 BSL 的：F-052、F-053、F-054、X-01、X-02、X-05、X-06、X-13、X-15（都经助手运行器或定时规则用到 Ekko 借用代码）。
-- 生产默认开关见 `poke-tasks/release-1.5-flags-audit.md`（不在仓库）：只有 X-08 推送、定时执行器有服务器开关且生产关；其余阶段 2/3 功能前端开关写死 true，生产发布后默认开。
+- 阶段 1.5 生产默认状态（2026-11-06 核对，负责人裁定 B）：X-08 推送（`PUSH_ENABLED`）、定时执行器（`ASSISTANT_SCHEDULER_ENABLED`）、X-19 压缩（`COMPACT_ENABLED`，#282）是服务器开关，生产都关；会话存库、助手、定时列表、草稿卡、任务卡、筛选六个前端开关在发布提交上关（#282）。X-09 消息搜索、X-05/06、#273、#275 照开着（只读或收紧权限）；X-09 前端「消息」一组依赖会话存库，存库关时不显示。
 
 ### v0 原汇总
 
