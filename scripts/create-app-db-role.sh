@@ -6,7 +6,9 @@
 #     staging 和 deploy/staging/deploy-staging.sh 用同一组 compose 参数（-p aroomo-staging + staging 覆盖文件），
 #     否则项目名会变成 deploy、找不到 staging 的 postgres（2026-11-06 staging 实跑发现）。
 #   跑错地方直接退出、什么都不碰（负责人 #289 必改 1；staging 和生产在同一台服务器，compose 写了 name: aroomo）：
-#     仓库在 staging 目录（$STAGING_ROOT，默认 /opt/aroomo-staging）就必须加 --staging；不在就不能加。
+#     只认两个目录：生产（$PROD_ROOT，默认 /opt/aroomo）不加 --staging；staging（$STAGING_ROOT，默认 /opt/aroomo-staging）必须加。
+#     别的目录一律退出（另检出一份去跑会改掉生产角色的口令、新口令却写进没人用的 .env；负责人 #289 第二轮）。
+#     新装在别的目录：显式设 PROD_ROOT=<那个仓库目录> 再跑。
 #   检出的版本不认 CORE_APP_DB_PASSWORD（#285 之前）也退出：旧版 core 看到 CORE_DB_APP_ROLE 会走 SET ROLE、起不来（必改 3）。
 #
 # 做的事（幂等）：
@@ -30,11 +32,13 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 env_file="$here/../deploy/.env"
 root="$(cd "$here/.." && pwd -P)"
 stg_root="$(realpath -m "${STAGING_ROOT:-/opt/aroomo-staging}")"
-if [[ "$root" == "$stg_root" && "$staging" != "1" ]]; then
-  echo "这里是 staging 目录（$root），要加 --staging；不加会进生产的 postgres。什么都没改。" >&2; exit 2
-fi
-if [[ "$root" != "$stg_root" && "$staging" == "1" ]]; then
-  echo "加了 --staging（或环境里有 AROOMO_STAGING=1），但这里不是 staging 目录（$stg_root）。什么都没改。" >&2; exit 2
+prod_root="$(realpath -m "${PROD_ROOT:-/opt/aroomo}")"
+if [[ "$root" == "$stg_root" ]]; then
+  [[ "$staging" == "1" ]] || { echo "这里是 staging 目录（$root），要加 --staging；不加会进生产的 postgres。什么都没改。" >&2; exit 2; }
+elif [[ "$root" == "$prod_root" ]]; then
+  [[ "$staging" != "1" ]] || { echo "这里是生产目录（$root），不能加 --staging（或环境里有 AROOMO_STAGING=1）。什么都没改。" >&2; exit 2; }
+else
+  echo "这里（$root）既不是生产目录（$prod_root）也不是 staging 目录（$stg_root），什么都没改。新装在别的目录：设 PROD_ROOT=$root 再跑。" >&2; exit 2
 fi
 if ! grep -q 'CORE_APP_DB_PASSWORD' "$root/core/src/config.ts" 2>/dev/null; then
   echo "这里检出的版本还不认 CORE_APP_DB_PASSWORD（#285 之前）：先部署含 #285 的版本、跑稳了再跑本脚本（docs/ops/RLS.md）。什么都没改。" >&2; exit 2
