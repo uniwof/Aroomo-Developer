@@ -95,6 +95,22 @@ for (const [label, viewport, isMobile] of [
   const cookies = await ctx.cookies();
   const c = cookies.find((x) => x.name === '__Host-aroomo_session' || x.name === 'aroomo_session');
   check(`${label} core-session 会话 Cookie 是 HttpOnly`, Boolean(c?.httpOnly), JSON.stringify(cookies.map((x) => x.name)));
+  // F-144：正文字号调到最大 32px，控制台各页都不能出现左右滚动（整页或内部滚动区；代码块、表格除外）
+  await page.evaluate(() => localStorage.setItem('aroomo.chat.prefs.v1', JSON.stringify({ fontSize: 32, fontV: 2 })));
+  for (const p of ['/console/chat', '/console/team', '/console/inbox', '/console/hub/tools', '/console/settings', '/console/settings/prefs', '/console/me']) {
+    await page.goto(base + p, { waitUntil: 'networkidle' }).catch(() => {});
+    await page.waitForTimeout(1000);
+    const m = await page.evaluate(() => {
+      const d = document.documentElement;
+      const inner = [...document.querySelectorAll('body *')]
+        .filter((e) => /^(auto|scroll)$/.test(getComputedStyle(e).overflowX) && e.scrollWidth > e.clientWidth + 1 && !e.closest('pre,code,table'))
+        .slice(0, 3)
+        .map((e) => `${e.tagName.toLowerCase()}.${String(e.className).slice(0, 40)}`);
+      return { fs: getComputedStyle(d).fontSize, page: d.scrollWidth > d.clientWidth + 1 ? `${d.scrollWidth}>${d.clientWidth}` : '', inner };
+    });
+    check(`${label} 32px 字号无左右滚动 ${p}`, parseFloat(m.fs) > 30 && !m.page && m.inner.length === 0, JSON.stringify(m));
+  }
+  await shoot(page, `${label}-console-font32`);
   await ctx.close();
 }
 // 后面的对话检查同时需要 LobeHub 会话（对话界面）和 Core 会话（/aroomo/api）：在同一个请求上下文里再登录 Core
@@ -242,7 +258,7 @@ await browser.close();
 writeFileSync(path.join(out, 'checks.json'), JSON.stringify(checks, null, 1));
 const failed = checks.filter((c) => !c.ok);
 // 第一轮只把核心项设为必须通过；其余写进报告供核对选择器
-const required = /core-session|D190 页面未被注入|设置 6 个 Tab|登录接口|填 Key|Key 明文|对话：|进入候选|一键入职|退出登录|敏感内容保护开关|发收件箱卡片|确认卡|倒计时|处理完毕|删除 Key/;
+const required = /core-session|32px 字号无左右滚动|D190 页面未被注入|设置 6 个 Tab|登录接口|填 Key|Key 明文|对话：|进入候选|一键入职|退出登录|敏感内容保护开关|发收件箱卡片|确认卡|倒计时|处理完毕|删除 Key/;
 const hard = failed.filter((c) => required.test(c.name));
 console.log(`\n${checks.length - failed.length}/${checks.length} 通过；必须项失败 ${hard.length}`);
 process.exit(hard.length ? 1 : 0);
