@@ -245,7 +245,7 @@ describe('core-session：不把 aroomo_session 给 LobeHub（#259 必改 1）', 
   it('HTTP 和 WebSocket 转给 LobeHub 前都删掉 aroomo_session，其余 Cookie 照转', async () => {
     lobeSeen.length = 0;
     const cookie = 'aroomo_session=owner_sess_1; better-auth.session_token=lobe; LOBE_LOCALE=zh-CN';
-    const r = await fetch(base + '/chat/x', { headers: { cookie } });
+    const r = await fetch(base + '/discover/x', { headers: { cookie } });
     expect(await r.text()).toBe('lobe');
     // WebSocket：手写一个升级请求
     await new Promise<void>((resolve, reject) => {
@@ -331,7 +331,7 @@ describe('core-session：__Host- Cookie 名（#264 必改 1）', () => {
   it('两个名字都不转给 LobeHub；退出时 __Host- 和旧名一起清', async () => {
     expect(dropCookie('__Host-aroomo_session=a; aroomo_session=b; x=1', ['__Host-aroomo_session', 'aroomo_session'])).toBe('x=1');
     lobeSeen.length = 0;
-    await fetch(base + '/chat/y', { headers: { cookie: '__Host-aroomo_session=owner_sess_1; x=1' } });
+    await fetch(base + '/discover/y', { headers: { cookie: '__Host-aroomo_session=owner_sess_1; x=1' } });
     expect(lobeSeen.find((x) => x.kind === 'http')!.cookie).not.toContain('aroomo_session');
     const r = await fetch(base + '/aroomo/logout', { method: 'POST', headers: { cookie: '__Host-aroomo_session=owner_sess_1', 'x-aroomo-request': '1' } });
     const sc = r.headers.getSetCookie();

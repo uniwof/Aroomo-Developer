@@ -61,6 +61,9 @@ check('登录接口', login.ok(), login.status());
 const browser = await chromium.launch();
 // —— core-session（SHELL_AUTH=core-session）：Core 所有者账号 ——
 const onConsole = (u) => new URL(u).pathname.startsWith('/console');
+// core-session 下 Shell 把裸地址 /、/chat… 302 到 /console/*（新界面）。LobeHub 的首页改从 /agent 进：
+// 它的 SPA 在浏览器里把 /agent 重定向回自己的首页（客户端跳转，不再经过 Shell）
+const LOBE_HOME = '/agent';
 {
   // 设密码页：脚本用主人令牌发的 admin 邀请 → 设密码 → 直接进控制台
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'en-US' });
@@ -132,7 +135,7 @@ for (const [label, viewport, isMobile] of [
   const jsErrors = [];
   page.on('pageerror', (e) => jsErrors.push(String(e)));
 
-  await page.goto(base + '/', { waitUntil: 'domcontentloaded' });
+  await page.goto(base + LOBE_HOME, { waitUntil: 'domcontentloaded' });
   await page.waitForLoadState('networkidle', { timeout: 60000 }).catch(() => {});
   await shoot(page, `${label}-first-open`);
   // 新用户引导（LobeHub 自带）：依次点「开始 / 下一步 / 跳过 / 完成」或右侧的「→」图标按钮，最多 12 步，每步截图
@@ -167,7 +170,7 @@ for (const [label, viewport, isMobile] of [
     await page.waitForTimeout(2000);
     await shoot(page, `${label}-onboarding-${i}`);
   }
-  await page.goto(base + '/', { waitUntil: 'domcontentloaded' });
+  await page.goto(base + LOBE_HOME, { waitUntil: 'domcontentloaded' });
   await page.waitForLoadState('networkidle', { timeout: 60000 }).catch(() => {});
   await shoot(page, `${label}-home`);
   // D190：LobeHub 原样使用——页面不再注入 Aroomo 的 CSS / JS，不替换品牌，不隐藏入口
@@ -189,6 +192,11 @@ for (const [label, viewport, isMobile] of [
   // 旧 /aroomo 页面已被控制台取代：必须跳转到 /console/（旧页面逐页点测随旧页面删除，控制台页面由 web/console 自己的测试负责）
   await page.goto(base + '/aroomo/members', { waitUntil: 'domcontentloaded' });
   check(`${label} 旧 /aroomo 跳转到 /console`, new URL(page.url()).pathname.startsWith('/console'), page.url());
+  // 裸地址跳到新界面（只看 Shell 的 302，不等控制台自己的前端路由）：/ → /console/chat，/inbox?x → /console/inbox?x
+  for (const [from, to] of [['/', '/console/chat'], ['/inbox?tab=e2e', '/console/inbox?tab=e2e']]) {
+    const r = await api.get(base + from, { maxRedirects: 0 });
+    check(`${label} ${from} 302 到 ${to}`, r.status() === 302 && r.headers()['location'] === to, `${r.status()} ${r.headers()['location']}`);
+  }
 
   if (!isMobile) {
     // —— 对话：填一个指向假模型的 Key，在 LobeHub 里说一句话（LobeHub → Core → LiteLLM → 模型，PRODUCT 16.1）——
@@ -205,7 +213,7 @@ for (const [label, viewport, isMobile] of [
       ['placeholder', 'sk', 'fake', 'ABCDEFGHIJKLMNOP'].join('-'),
     );
     check('对话：填入指向假模型的 Key', k === 201, k);
-    await page.goto(base + '/', { waitUntil: 'domcontentloaded' });
+    await page.goto(base + LOBE_HOME, { waitUntil: 'domcontentloaded' });
     await page.waitForLoadState('networkidle', { timeout: 60000 }).catch(() => {});
     const input = page.locator('[data-testid="chat-input"] [contenteditable="true"], [data-testid="chat-input"] textarea').first();
     await input.waitFor({ timeout: 30000 }).catch(() => {});

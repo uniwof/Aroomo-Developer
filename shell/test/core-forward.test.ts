@@ -7,7 +7,7 @@ import http, { type Server } from 'node:http';
 import { type AddressInfo } from 'node:net';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
-import { CORE_COOKIE_ROUTES, coreCookieRouteMethods, createShellServer } from '../src/server.js';
+import { CORE_COOKIE_ROUTES, consoleRedirect, coreCookieRouteMethods, createShellServer } from '../src/server.js';
 
 const TOKEN = 'placeholder-owner-token-0123456789abcdef';
 const GOOD = 'user_sess_01';
@@ -209,6 +209,52 @@ describe('白名单直通 Core：POST /api/chat/stream', () => {
   });
 });
 
+describe('core-session：裸地址跳到新界面 /console/*', () => {
+  const get = (p: string, method = 'GET') => fetch(base + p, { method, redirect: 'manual', headers: { accept: 'text/html' } });
+  it('/ → /console/chat；各入口带子路径和查询串原样跳过去（302），LobeHub 收不到', async () => {
+    const cases: [string, string][] = [
+      ['/', '/console/chat'],
+      ['/?x=1', '/console/chat?x=1'],
+      ['/chat', '/console/chat'],
+      ['/chat/abc?member=m1&q=%E4%BD%A0', '/console/chat/abc?member=m1&q=%E4%BD%A0'],
+      ['/team', '/console/team'],
+      ['/hub/x/y', '/console/hub/x/y'],
+      ['/inbox?tab=open', '/console/inbox?tab=open'],
+      ['/settings/', '/console/settings/'],
+      ['/settings/keys', '/console/settings/keys'],
+      ['/assistants/a1', '/console/assistants/a1'],
+    ];
+    for (const [from, to] of cases) {
+      const r = await get(from);
+      expect(r.status, from).toBe(302);
+      expect(r.headers.get('location'), from).toBe(to);
+      expect(r.headers.get('cache-control')).toBe('no-store');
+    }
+    const h = await get('/team?x=2', 'HEAD');
+    expect(h.status).toBe(302);
+    expect(h.headers.get('location')).toBe('/console/team?x=2');
+    expect(lobeSeen).toHaveLength(0);
+    expect(coreSeen).toHaveLength(0);
+  });
+  it('只匹配整段：/chats、/teamx、/settingsx、/api/*、/console/* 不跳', async () => {
+    for (const p of ['/chats', '/teamx', '/settingsx', '/hubs/x', '/api/chat/stream', '/api/members', '/console/chat', '/aroomo/login']) {
+      expect(consoleRedirect(p), p).toBeUndefined();
+    }
+    const r = await get('/chats');
+    expect(r.status).toBe(404); // 落到 LobeHub（假上游 404）
+    expect(lobeSeen).toEqual(['GET /chats']);
+  });
+  it('非 GET/HEAD 不跳（照旧给 LobeHub）；D256 白名单 /api/chat/stream 不受影响', async () => {
+    const r = await fetch(base + '/chat', { method: 'POST', redirect: 'manual', body: '{}' });
+    expect(r.status).toBe(404);
+    expect(lobeSeen).toEqual(['POST /chat']);
+    const c = await chat({ 'x-aroomo-request': '1', cookie: `__Host-aroomo_session=${GOOD}` });
+    expect(c.status).toBe(200);
+    await c.text();
+    expect(coreSeen).toHaveLength(1);
+  });
+});
+
 describe('lobe-session 下不开直通', () => {
   it('POST /api/chat/stream 照旧给 LobeHub，Core 收不到', async () => {
     const coreUrl = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
@@ -221,6 +267,10 @@ describe('lobe-session 下不开直通', () => {
     expect(r.status).toBe(404);
     expect(coreSeen).toHaveLength(0);
     expect(lobeSeen).toEqual(['POST /api/chat/stream']);
+    // 裸地址在 lobe-session 下是 LobeHub 自己的页面：不跳
+    const g = await fetch(b + '/chat?x=1', { redirect: 'manual' });
+    expect(g.status).toBe(404);
+    expect(lobeSeen).toEqual(['POST /api/chat/stream', 'GET /chat?x=1']);
     s.closeAllConnections?.();
     await new Promise((r2) => s.close(r2));
   });
