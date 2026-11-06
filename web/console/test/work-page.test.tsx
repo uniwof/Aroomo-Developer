@@ -158,7 +158,7 @@ describe('/work/<项目> 版本时间线', () => {
       if (method === 'POST' && url === '/api/work/projects/p1/sync') {
         await gate;
         synced = true;
-        return json(200, { added: 1, unchanged: 0, failed: [{ source: 'octo/beta', reason: 'GitHub 限流，稍后再试' }] });
+        return json(200, { added: 1, changed: 2, unchanged: 0, failed: [{ source: 'octo/beta', reason: 'GitHub 限流，稍后再试' }] });
       }
       return json(404, {});
     };
@@ -168,6 +168,8 @@ describe('/work/<项目> 版本时间线', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '正在同步…' })).toBeDisabled());
     release();
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('新加 1 个版本'));
+    // 负责人 #323：预发布转正式的也说出来
+    expect(screen.getByRole('status')).toHaveTextContent('2 个转成已发布');
     expect(screen.getByRole('status')).toHaveTextContent('octo/beta：GitHub 限流，稍后再试');
     expect(await screen.findByRole('list', { name: '版本' })).toHaveTextContent('v1.2.0');
     expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1);
