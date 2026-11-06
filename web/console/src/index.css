@@ -571,6 +571,15 @@ textarea[aria-invalid='true'] {
   color: var(--danger);
 }
 
+/* 会话列表上方「一键导入本机会话」那一行（会话存库时） */
+.conv-import {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0 0.75rem 0.75rem;
+}
+
 /* 弹窗（原生 <dialog>，showModal：背后页面 inert、Esc 关、焦点进来）：白底、14px 圆角、柔和大阴影（照 sumus New agent） */
 .dlg {
   width: min(28rem, calc(100vw - 2rem));
