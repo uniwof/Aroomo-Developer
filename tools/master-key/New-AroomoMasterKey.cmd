@@ -46,7 +46,7 @@ function Test-AroomoOneDrivePath([string]$Path) {
 # 保存对话框打开在 U 盘；没插 U 盘就停（不回退到桌面）
 function Get-AroomoKeyDir($Drives = ([IO.DriveInfo]::GetDrives())) {
     $usb = @($Drives) | Where-Object { $_ -and "$($_.DriveType)" -eq 'Removable' -and $_.IsReady } | Select-Object -First 1
-    if (-not $usb) { throw '没找到 U 盘。请先插 U 盘，再双击运行一次。私钥不会存到桌面（桌面常被 OneDrive 同步上云）。' }
+    if (-not $usb) { throw '没找到 U 盘。请先插 U 盘，再双击运行一次。私钥不会存到桌面（桌面常被 OneDrive 同步上云）。已经插了还看到这句，就告诉 Hark。' }
     return $usb.RootDirectory.FullName
 }
 
@@ -82,7 +82,7 @@ function Invoke-AroomoMasterKeyTool {
             # 先确认插了 U 盘，再下载、生成：没插就什么都不做
             try { $keyDir = Get-AroomoKeyDir } catch {
                 Say $_.Exception.Message 'Yellow'
-                Speak '没找到 U 盘。请先插上 U 盘，再运行一次。'
+                Speak '没找到 U 盘。请先插上 U 盘，再运行一次。已经插了还听到这句，就告诉 Hark。'
                 return 1
             }
             Add-Type -AssemblyName System.Windows.Forms

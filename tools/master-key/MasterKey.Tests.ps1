@@ -26,6 +26,7 @@ try {
     $msg = $null
     try { [void](Get-AroomoKeyDir -Drives @()) } catch { $msg = $_.Exception.Message }
     Check '没有 U 盘 → 报「请先插 U 盘」' ($msg -and $msg.Contains('请先插 U 盘'))
+    Check '提示里告诉她插了还报就找 Hark（有的 U 盘被认成本地磁盘）' ($msg -and $msg.Contains('已经插了还看到这句，就告诉 Hark'))
     $fixed = [pscustomobject]@{ DriveType = 'Fixed'; IsReady = $true; RootDirectory = [pscustomobject]@{ FullName = 'C:\' } }
     $msg = $null
     try { [void](Get-AroomoKeyDir -Drives @($fixed)) } catch { $msg = $_.Exception.Message }

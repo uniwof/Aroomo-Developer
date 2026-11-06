@@ -310,6 +310,15 @@ jobs:
       - name: 没插 U 盘就停、不默认存桌面；OneDrive 下警告不写（#248）
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/master-key/MasterKey.Tests.ps1
+      - name: 双击入口没插 U 盘：退出码 1、窗口停住等按键、不留私钥（#332 负责人；runner 只有本地磁盘）
+        shell: cmd
+        timeout-minutes: 3
+        run: |
+          echo.| call tools\master-key\New-AroomoMasterKey.cmd > "%RUNNER_TEMP%\mk-nousb.txt" 2>&1
+          set RC=%errorlevel%
+          type "%RUNNER_TEMP%\mk-nousb.txt"
+          if "%RC%"=="0" (echo expected non-zero exit & exit /b 1)
+          powershell -NoProfile -Command "if ((Get-Content $env:RUNNER_TEMP\mk-nousb.txt -Raw) -notmatch 'Press any key') { throw 'window did not pause' }; if (Get-ChildItem -Path $env:USERPROFILE\Desktop -Filter 'aroomo-master-key*' -ErrorAction SilentlyContinue) { throw 'key written to Desktop' }"
       - name: 双击入口（cmd）无交互生成
         shell: cmd
         env:
