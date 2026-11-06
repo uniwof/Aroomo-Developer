@@ -187,6 +187,14 @@ export function hostAllowed(hostHeader: string | undefined, allowed: string[]): 
   return allowed.includes(name);
 }
 
+/** 跳到新界面的裸地址（#250 方向 A：对话页管 /chat、/team、/hub、/inbox、/settings…） */
+const CONSOLE_PATHS = /^\/(chat|team|hub|inbox|settings|assistants)(\/.*)?$/;
+/** core-session 下裸地址 → /console 下的同一路径（/ → /console/chat）；别的地址返回 undefined */
+export function consoleRedirect(pathname: string): string | undefined {
+  if (pathname === '/') return '/console/chat';
+  return CONSOLE_PATHS.test(pathname) ? '/console' + pathname : undefined;
+}
+
 /** 登录 / 设密码后跳去哪：只接受站内 /console 开头的相对路径（防开放跳转），其余一律回 /console/ */
 export function safeNext(raw: string | null): string {
   if (!raw || !/^\/console(\/|\?|$)/.test(raw) || raw.includes('\\') || raw.includes('//')) return '/console/';
@@ -554,6 +562,16 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
         const cookie = coreSessionCookie(req.headers.cookie);
         if (!cookie) return sendJson(res, 401, { error: { code: 'UNAUTHORIZED', message: '请先登录' } });
         return proxyCoreCookie(req, res, url, cookie);
+      }
+    }
+
+    // core-session：新界面在 /console/*，这些裸地址（旧 LobeHub 的入口）跳过去，保留子路径和查询串；/ → /console/chat。
+    // 只接 GET/HEAD 页面地址；/api 不在这里（D256 白名单在上面，其余 /api/* 照旧）。lobe-session 下这些是 LobeHub 自己的页面，不跳
+    if (coreAuth && (req.method === 'GET' || req.method === 'HEAD')) {
+      const to = consoleRedirect(p);
+      if (to) {
+        res.writeHead(302, { location: to + url.search, 'cache-control': 'no-store' });
+        return res.end();
       }
     }
 

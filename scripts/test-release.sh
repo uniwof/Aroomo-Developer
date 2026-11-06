@@ -182,6 +182,60 @@ RELEASE_DB_CMD="$work/db-notable.sh" expect "迁移记录表不存在：拒绝�
 RELEASE_DB_CMD="$work/db-notable.sh" expect "迁移记录表不存在：确认回滚也拒绝" 1 "$rel" rollback --confirm "$(cat "$root/.release/previous")"
 [ "$(head_tag)" = v0.2.0 ] && ok "迁移记录表不存在时代码没动" || bad "检出变了：$(head_tag)"
 
+# ---------------------------------------------------------------------------
+# 回退目标写死 SHELL_AUTH: lobe-session（生产 v0.1.0 的情况）：没配叠加文件就拒绝；配了就叠加、不重建被钉住的镜像
+printf '0001_a.sql\n0002_b.sql\n0003_c.sql\n' >"$applied"
+git -C "$seed" checkout -q main
+rm -f "$seed/FAIL_UP"
+printf 'services:\n  shell:\n    environment:\n      SHELL_AUTH: lobe-session\n' >"$seed/deploy/docker-compose.yml"
+# 生产前检查桩：记下目标版本的迁移目录有没有一起取出来
+cat >"$seed/scripts/release-precheck.sh" <<'G'
+#!/usr/bin/env bash
+ls "$(dirname "$0")/../core/migrations" >"${RELEASE_ROOT:?}/precheck.migs" 2>&1 || true
+exit 0
+G
+commit "Shell 写死 lobe-session"; git -C "$seed" tag v0.4.0
+# shellcheck disable=SC2016  # 写进 compose 文件的就是字面量 ${…}
+printf 'services:\n  shell:\n    environment:\n      SHELL_AUTH: ${SHELL_AUTH:-core-session}\n' >"$seed/deploy/docker-compose.yml"
+commit "Shell 默认 core-session"; git -C "$seed" tag v0.5.0
+git -C "$seed" push -q "$origin" main --tags
+expect "切到 v0.4.0（自动回退目标 v0.2.0 没有 compose，不受影响）" 0 "$rel" deploy v0.4.0 --confirm v0.4.0
+[ "$(head_tag)" = v0.4.0 ] && ok "现在是 v0.4.0" || bad "检出不对：$(head_tag)"
+grep -qx '0003_c.sql' "$root/precheck.migs" && ok "precheck 拿到了目标版本的 core/migrations/" || bad "precheck 没拿到迁移目录：$(cat "$root/precheck.migs")"
+
+expect "部署 v0.5.0：自动回退目标 v0.4.0 写死 lobe-session、没配叠加文件 → 演练就拒绝" 1 "$rel" deploy v0.5.0
+echo "$LAST_OUT" | grep -q '所有者会进不去' && ok "拒绝理由写明所有者会进不去" || bad "拒绝理由不对：$LAST_OUT"
+expect "--lobe-session-ok 明确要旧登录时放行" 0 "$rel" deploy v0.5.0 --lobe-session-ok
+mkdir -p "$root/.release/compose-extra"
+ovr="$work/overrides/prod-shell-core-auth.yml"
+printf '# 回到 v0.4.0 时叠加 core-session 的 Shell\n%s\nnobuild: shell\n' "$ovr" >"$root/.release/compose-extra/v0.4.0"
+expect "叠加文件列了但不存在 → 拒绝" 1 "$rel" deploy v0.5.0
+echo "$LAST_OUT" | grep -q '叠加文件不存在' && ok "写明叠加文件不存在" || bad "输出不对：$LAST_OUT"
+mkdir -p "$work/overrides"; printf 'services:\n  shell:\n    image: aroomo-shell:core-auth-x\n' >"$ovr"
+expect "配好叠加文件后演练通过" 0 "$rel" deploy v0.5.0
+echo "$LAST_OUT" | grep -q "会叠加：$ovr" && ok "演练写明回退时会叠加哪个文件" || bad "输出不对：$LAST_OUT"
+docker_calls="$work/docker.calls"; : >"$docker_calls"
+printf '#!/usr/bin/env bash\necho "$*" >>"%s"\nexit 0\n' "$docker_calls" >"$work/docker.sh"; chmod +x "$work/docker.sh"
+export RELEASE_DOCKER="$work/docker.sh"
+expect "切到 v0.5.0" 0 "$rel" deploy v0.5.0 --confirm v0.5.0
+[ ! -s "$docker_calls" ] && ok "没有叠加文件的版本照常走 compose.sh" || bad "v0.5.0 却直接调了 docker：$(cat "$docker_calls")"
+
+mv "$root/.release/compose-extra/v0.4.0" "$work/extra.bak"
+expect "回滚到写死 lobe-session 的 v0.4.0、没配叠加文件 → 拒绝" 1 "$rel" rollback
+expect "确认回滚也拒绝" 1 "$rel" rollback --confirm v0.4.0
+[ "$(head_tag)" = v0.5.0 ] && ok "拒绝后仍是 v0.5.0" || bad "检出变了：$(head_tag)"
+mv "$work/extra.bak" "$root/.release/compose-extra/v0.4.0"
+expect "回滚演练：写明会叠加" 0 "$rel" rollback
+echo "$LAST_OUT" | grep -q "回滚到 v0.4.0 时会叠加：$ovr" && ok "回滚演练写明叠加文件" || bad "输出不对：$LAST_OUT"
+: >"$docker_calls"
+expect "回滚到 v0.4.0（叠加 core-session 的 Shell）" 0 "$rel" rollback --confirm v0.4.0
+[ "$(head_tag)" = v0.4.0 ] && ok "回滚后是 v0.4.0" || bad "检出不对：$(head_tag)"
+grep -q -- "-f $ovr build core\$" "$docker_calls" && ok "叠加文件参与构建，只重建 core" || bad "构建调用不对：$(cat "$docker_calls")"
+grep -q 'build.*shell' "$docker_calls" && bad "重建了被钉住的 shell 镜像" || ok "没有重建 shell（不覆盖钉住的镜像）"
+grep -q -- "-f $ovr up -d --remove-orphans --no-build\$" "$docker_calls" && ok "up 带叠加文件且 --no-build" || bad "up 调用不对：$(cat "$docker_calls")"
+grep -q -- "--project-directory $root/deploy -f $root/deploy/docker-compose.yml -f $root/deploy/tiers/standard.yml" "$docker_calls" && ok "和 compose.sh 用同一组基础文件" || bad "基础文件不对：$(cat "$docker_calls")"
+unset RELEASE_DOCKER
+
 # compose 输出写进 600 权限的日志文件，不再丢掉
 [ "$(stat -c %a "$root/.release/compose.log")" = 600 ] && ok "compose.log 权限 600" || bad "compose.log 权限不对"
 

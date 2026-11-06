@@ -32,6 +32,9 @@ bad() { echo "FAIL - $1"; fail=1; }
 mkdir -p "$work/scripts/lib" "$work/.release"
 cp "$here/lib/table-counts.sql" "$here/lib/rls-tables.txt" "$work/scripts/lib/"
 cp "$here/release-precheck.sh" "$work/scripts/"
+# 目标版本的迁移目录（release-tag.sh 会把它和 scripts/ 一起取出，precheck 默认读 ../core/migrations）：用仓库里真实的迁移文件
+mkdir -p "$work/core/migrations"
+cp "$here/../core/migrations/"*.sql "$work/core/migrations/"
 pre="$work/scripts/release-precheck.sh"
 
 # 假备份：成功 / 失败 / 没上传 / 列表里没有
@@ -100,6 +103,11 @@ adm "create table audit_log (id serial, user_id text, action text)" >/dev/null
 # 迁移 0025–0027 的六张 RLS 表（scripts/lib/rls-tables.txt 里列着，表不存在检查 1 就失败）
 for t in conversations conversation_messages assistants assistant_members assistant_runs run_steps; do
   adm "create table $t (id serial, user_id text not null)" >/dev/null
+done
+# 迁移记录：模拟生产（11-06）已执行到 0024，0025 起是本次发布待执行的
+adm "create table core_schema_migrations (version text primary key, applied_at timestamptz not null default now())" >/dev/null
+for f in "$work"/core/migrations/*.sql; do
+  b="$(basename "$f")"; [ "${b%%_*}" -le 24 ] 2>/dev/null && adm "insert into core_schema_migrations (version) values ('$b')" >/dev/null
 done
 adm "insert into audit_log (user_id, action) values (null, 'system-event')" >/dev/null
 adm "insert into members values ('owner','m1','小明',null),('u-b','m2','小明',null)" >/dev/null
@@ -175,6 +183,43 @@ adm "alter table public_memory_versions rename to pmv_hidden" >/dev/null
 run "RLS 清单里的 public_memory_versions 不存在 → 失败" 1 --no-backup
 has "public_memory_versions 不存在"
 adm "alter table pmv_hidden rename to public_memory_versions" >/dev/null
+
+# 检查 1：表还不存在、但本次待执行的迁移（0025–0027）会新建它 → 放行，打一行信息（11-06 生产的真实情况）
+for t in conversations conversation_messages assistants assistant_members assistant_runs run_steps; do
+  adm "alter table $t rename to ${t}_hidden" >/dev/null
+done
+run "0025–0027 的 6 张 RLS 表还不存在、迁移待执行 → 通过" 0 --no-backup
+has "将由本次待执行的迁移新建"; has "conversations(0025)"; has "assistants(0026)"; has "run_steps(0027)"
+has "检查了 7 张开了 RLS 的表"
+# 迁移已执行（记录在）但表不存在 → 不是「待执行」，失败
+adm "insert into core_schema_migrations (version) values ('0026_assistants.sql')" >/dev/null
+run "0026 已记为执行过、assistants 却不存在 → 失败" 1 --no-backup
+has "assistants 不存在"
+adm "delete from core_schema_migrations where version = '0026_assistants.sql'" >/dev/null
+# 读不出迁移记录 → 不放行（失败即关闭）
+adm "alter table core_schema_migrations rename to csm_hidden" >/dev/null
+run "迁移记录表读不出来 → 不按待执行迁移放行，失败" 1 --no-backup
+has "读不出迁移记录"
+adm "alter table csm_hidden rename to core_schema_migrations" >/dev/null
+# 找不到迁移目录 → 不放行
+mv "$work/core/migrations" "$work/mig.bak"
+run "找不到目标版本的迁移目录 → 失败" 1 --no-backup
+has "找不到目标版本的迁移目录"
+mv "$work/mig.bak" "$work/core/migrations"
+# RELEASE_MIGRATIONS_DIR 指向的目录里待执行迁移只在注释里提到 CREATE TABLE → 不算
+alt="$work/alt-mig"; mkdir -p "$alt"
+cp "$work"/core/migrations/00[01]*.sql "$work"/core/migrations/002[0-4]*.sql "$alt/"
+printf -- '-- CREATE TABLE conversations (\nselect 1;\n' >"$alt/0025_conversations.sql"
+OUT="$(RELEASE_MIGRATIONS_DIR="$alt" "$pre" --no-backup 2>&1)" && rc=0 || rc=$?
+[ "$rc" = 1 ] && out_has -q 'conversations 不存在' && ok "注释里的 CREATE TABLE 不算新建" || { bad "注释里的 CREATE TABLE 却放行了（退出码 $rc）"; echo "$OUT" | sed 's/^/     /'; }
+# 表不存在、待执行迁移里也没人建它 → 失败（只放行 conversations 一类，别的照旧）
+adm "alter table vault_secrets rename to vs_hidden" >/dev/null
+run "vault_secrets 不存在且没有待执行迁移新建它 → 失败（其余 6 张照样放行）" 1 --no-backup
+has "vault_secrets 不存在"
+adm "alter table vs_hidden rename to vault_secrets" >/dev/null
+for t in conversations conversation_messages assistants assistant_members assistant_runs run_steps; do
+  adm "alter table ${t}_hidden rename to $t" >/dev/null
+done
 # 检查 1：查询出错不能当成 0（权限被收回时 count 出错）
 # 用 PGOPTIONS 在连接时切到只读角色（超级用户可直接 set role，不需要给这个角色设密码）
 adm "create role precheck_ro nologin" >/dev/null 2>&1 || true

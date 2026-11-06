@@ -151,6 +151,8 @@ services:
       CORE_OWNER_TOKEN: ${CORE_OWNER_TOKEN:-}
       # 方案 A：所有者自己的 Core 账号 id；她用控制台（Cookie 会话）登录时用所有者名下的数据。留空 = 不映射
       CORE_OWNER_ACCOUNT_ID: ${CORE_OWNER_ACCOUNT_ID:-}
+      # 助手定时执行器总开关：只有 .env 写 ASSISTANT_SCHEDULER_ENABLED=true 才开（生产阶段 3 前不写，保持关）
+      ASSISTANT_SCHEDULER_ENABLED: ${ASSISTANT_SCHEDULER_ENABLED:-false}
       # 对话入口 /v1 的令牌（LobeHub 用它调 Core；提议 H5）
       CORE_CHAT_TOKEN: ${CORE_CHAT_TOKEN:-}
       CORE_TOKEN_SECRET: ${CORE_TOKEN_SECRET:-}
