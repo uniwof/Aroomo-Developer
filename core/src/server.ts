@@ -76,6 +76,8 @@ import { registerConversationRoutes } from "./conversations/routes.js";
 import { Compactor, freeSummarizer } from "./conversations/compact.js";
 import { PushService } from "./push/service.js";
 import { registerPushRoutes } from "./push/routes.js";
+import { WorkService } from "./work/service.js";
+import { registerWorkRoutes } from "./work/routes.js";
 import { assistantSchedulerJob, confirmExpiryJob } from "./scheduler/assistant-scheduler.js";
 
 export const VERSION = "0.0.1";
@@ -273,6 +275,8 @@ export function buildServer(
   });
   inbox.onCreated((item) => push.notifyInbox(item));
   registerPushRoutes(app, push);
+  // /work 项目与版本（切片 1）：只给所有者；同步只请求 api.github.com
+  registerWorkRoutes(app, new WorkService(deps.work, deps.now, deps.workFetch ?? fetch));
   const interruptBudget = new InterruptBudget((u) => scopedSettings(deps.settings, u), deps.now);
   const executorSvc = new ExecutorService(
     deps.executor,

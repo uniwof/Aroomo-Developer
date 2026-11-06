@@ -24,6 +24,7 @@ import { applyDisplay } from '@/lib/display';
 import { ClaimFullError, claimLegacy, legacyClaimed, listTimeLabel, loadConversations, loadDraft, loadPrefs, newConversation, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
 import { useAsk } from '@/components/Dialog';
 import { FLAGS } from '@/lib/flags';
+import { WORK } from '@/lib/work-flag';
 import { useAssistants, type AssistantInput } from '@/lib/assistants';
 import { archiveConversation, createConversation, fetchConversation, fetchConversations, fetchMessages, importLocalOnce, localPending, markRead, mergeRemote, renameConversation } from './saved';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -45,6 +46,8 @@ const NewAssistantDialog = lazy(() => import('./pages/assistants/AssistantPages'
 const ScheduleView = lazy(() => import('./pages/assistants/AssistantPages').then((m) => ({ default: m.ScheduleView })));
 const GroupNewPanel = lazy(() => import('./group-new').then((m) => ({ default: m.GroupNewPanel })));
 const CapabilityPanel = lazy(() => import('./capability-panel').then((m) => ({ default: m.CapabilityPanel })));
+// /work 单独懒加载块；开关关着时连这一行都被摇掉（对话页包 ≤150 KB）
+const WorkPage = WORK ? lazy(() => import('./pages/work/WorkPage')) : null;
 
 /** 懒加载面板下载时：一句静态文字（不转圈，无动画） */
 function Later({ children }: { children: ReactNode }) {
@@ -66,6 +69,7 @@ const TITLES: Record<Exclude<View['kind'], 'chat' | 'member' | 'assistant'>, str
   keys: 'API',
   audit: '审计记录',
   executors: '电脑助手',
+  work: '项目',
 };
 
 /** 上一层是哪里（顶栏「← 返回」） */
@@ -84,6 +88,8 @@ function parentOf(v: View): { view: View; label: string } | null {
     case 'me':
       return null;
     default:
+      // /work：详情 → 时间线 → 项目列表 → 对话
+      if (WORK && v.kind === 'work' && v.project) return { view: { kind: 'work', ...(v.version && { project: v.project }) }, label: v.version ? '版本列表' : '项目' };
       return { view: { kind: 'chat' }, label: '对话' };
   }
 }
@@ -758,6 +764,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           ['/hub/keys', 'API', { kind: 'keys' }],
           ['/inbox', '收件箱', { kind: 'inbox' }],
           ['/settings', '设置', { kind: 'settings' }],
+          ...(WORK ? [['/work', '项目', { kind: 'work' }]] : []),
         ] as [string, string, View][]
       )
         .filter(([, , v]) => !(isFamily() && OWNER_ONLY.includes(v.kind)))
@@ -1144,6 +1151,9 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
             />
           )}
           {view.kind === 'capmap' && <CapabilityPanel />}
+          {WorkPage && view.kind === 'work' && (
+            <WorkPage key={pathOf(view)} {...view} onGo={(w) => setView({ kind: 'work', ...w })} />
+          )}
           {view.kind === 'console' && (
             <Cockpit
               members={allMembers}

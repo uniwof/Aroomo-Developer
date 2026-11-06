@@ -46,6 +46,7 @@ import { MemoryConversationStore } from './conversations/memory.js';
 import { PgConversationStore } from './conversations/pg.js';
 import type { ConversationStore } from './conversations/types.js';
 import { MemoryPushStore, PgPushStore, type PushStore } from './push/store.js';
+import { MemoryWorkStore, PgWorkStore, type WorkStore } from './work/store.js';
 import { MemorySettingsStore, PgSettingsStore, type SettingsStore } from './settings/store.js';
 
 export interface CoreDeps {
@@ -72,6 +73,10 @@ export interface CoreDeps {
   push: PushStore;
   /** 测试时注入：推送服务的 fetch */
   pushFetch?: typeof fetch;
+  /** /work 项目与版本（0033） */
+  work: WorkStore;
+  /** 测试时注入：/work 同步 GitHub 用的 fetch */
+  workFetch?: typeof fetch;
   /** 测试时注入：对话入口调用 LiteLLM 用的 fetch */
   chatFetch?: typeof fetch;
   /** 测试时注入：/api/chat/stream 的每账号频率 / 并发限制（默认 20 次/分钟、同时 2 条） */
@@ -109,6 +114,7 @@ export function memoryDeps(now: () => Date = () => new Date()): CoreDeps {
     assistants: new MemoryAssistantStore(),
     conversations: new MemoryConversationStore(),
     push: new MemoryPushStore(),
+    work: new MemoryWorkStore(),
   };
 }
 
@@ -132,6 +138,7 @@ export function pgDeps(db: Db, now: () => Date = () => new Date()): CoreDeps {
     assistants: new PgAssistantStore(db),
     conversations: new PgConversationStore(db),
     push: new PgPushStore(db),
+    work: new PgWorkStore(db),
     // 操作员令牌的签发 / 持久化属于负责人体系，后续 Issue 再落库
     operatorTokens: new MemoryOperatorTokenStore(),
   };

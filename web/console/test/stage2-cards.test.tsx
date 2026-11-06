@@ -16,7 +16,7 @@ afterEach(cleanup);
 
 describe('开关', () => {
   it('阶段 1.5（负责人裁定 B）：阶段 2/3 的开关全关，生产不露入口；验收后测一项开一项', () => {
-    expect(FLAGS).toEqual({ taskCards: false, quickReplies: false, convFilter: false, schedulePage: false, assistantDraft: false, assistants: false, savedChats: false, skeletonShimmer: false });
+    expect(FLAGS).toEqual({ taskCards: false, quickReplies: false, convFilter: false, schedulePage: false, assistantDraft: false, assistants: false, savedChats: false, skeletonShimmer: false, work: false });
   });
 });
 

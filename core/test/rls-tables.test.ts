@@ -40,6 +40,11 @@ const TABLES: Record<string, (userIdSql: string) => string> = {
      INSERT INTO run_steps (run_id, user_id, seq, step_no, action, status, created_at) SELECT r.id, r.user_id, 0, 0, 'plan', 'pending', ${NOW} FROM r`,
   push_subscriptions: (u) =>
     `INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth, created_at) VALUES ('${randomUUID()}', ${u}, 'https://fcm.googleapis.com/fcm/send/${randomUUID()}', '${'B'.repeat(87)}', '${'a'.repeat(22)}', ${NOW})`,
+  // /work（0033）：版本的父行（项目）在同一条语句里先建
+  work_projects: (u) => `INSERT INTO work_projects (id, user_id, name, created_at, updated_at) VALUES ('${randomUUID()}', ${u}, 'p', ${NOW}, ${NOW})`,
+  work_versions: (u) =>
+    `WITH p AS (INSERT INTO work_projects (id, user_id, name, created_at, updated_at) VALUES ('${randomUUID()}', ${u}, 'p-${randomUUID().slice(0, 8)}', ${NOW}, ${NOW}) RETURNING id, user_id)
+     INSERT INTO work_versions (id, user_id, project_id, source_type, source_ref, label, source_state, synced_at) SELECT '${randomUUID()}', p.user_id, p.id, 'github_release', '1', 'v1', 'published', ${NOW} FROM p`,
   library_items: (u) =>
     `INSERT INTO library_items (id, user_id, kind, title, url, body, tags, source, created_at, updated_at) VALUES ('${randomUUID()}', ${u}, 'idea', 't', NULL, '', '', 'manual', ${NOW}, ${NOW})`,
 };

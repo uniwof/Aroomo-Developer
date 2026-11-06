@@ -12,6 +12,7 @@ import { assertAppRoleSafe, grantAppRole } from '../src/db/app-role.js';
 import { createPgDb, type Db } from '../src/db/db.js';
 import { migrate } from '../src/db/migrate.js';
 import { userScoped } from '../src/db/scope.js';
+import { PgWorkStore } from '../src/work/store.js';
 import { openAppDb } from '../src/deps.js';
 
 const url = process.env.CORE_TEST_DATABASE_URL;
@@ -135,6 +136,19 @@ describe.skipIf(!url)('独立可登录的应用角色（真 PostgreSQL）', () =
     expect((await app.query('SELECT count(*)::int AS n FROM conversations')).rows).toEqual([{ n: 0 }]);
     // A 的数据原样还在
     expect((await userScoped(app, 'acct_a').query('SELECT name FROM members WHERE id = $1', [mid])).rows).toEqual([{ name: 'A的成员' }]);
+  });
+
+  it('负责人 #323：以应用角色登录，work_versions 能插（seq 自增）、预发布能转已发布，别的改不了、删不了', async () => {
+    const store = new PgWorkStore(app);
+    const now = new Date();
+    const p = await store.createProject('acct_w', `p-${tag}`, [], now, 10);
+    if (!p.ok) throw new Error('建项目失败');
+    const v = { sourceType: 'github_release' as const, sourceRef: '1', label: 'v1', title: 't', actor: null, artifacts: [], sourceAt: now };
+    expect(await store.addVersions('acct_w', p.project.id, [{ ...v, sourceState: 'prerelease' }], now)).toEqual({ added: 1, changed: 0 });
+    expect(await store.addVersions('acct_w', p.project.id, [{ ...v, sourceState: 'published' }], now)).toEqual({ added: 0, changed: 1 });
+    expect((await store.listVersions('acct_w', p.project.id, 10)).map((r) => r.sourceState)).toEqual(['published']);
+    await expect(userScoped(app, 'acct_w').query(`UPDATE work_versions SET label = 'x'`)).rejects.toThrow(/不可变/);
+    await expect(userScoped(app, 'acct_w').query('DELETE FROM work_versions')).rejects.toThrow(/permission denied/);
   });
 
   it('对照：旧的 SET ROLE 方式（登录身份是表所有者）一句 SET ROLE 就回到所有者、关掉 FORCE；自检在 requireLogin 下拒绝', async () => {

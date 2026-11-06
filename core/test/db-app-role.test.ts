@@ -6,6 +6,8 @@ import { loadConfig } from '../src/config.js';
 import { assertAppRoleSafe, checkAppRole, grantAppRole } from '../src/db/app-role.js';
 import { createPgDb } from '../src/db/db.js';
 import { userScoped } from '../src/db/scope.js';
+import { PgWorkStore } from '../src/work/store.js';
+import type { VersionInput } from '../src/work/types.js';
 import { openPglite } from './helpers/db.js';
 
 describe('应用数据库角色（PGlite）', () => {
@@ -70,6 +72,29 @@ describe('应用数据库角色（PGlite）', () => {
       expect(await assertAppRoleSafe(db)).toMatchObject({ truncatable: [], appendOnlyDeletable: [] });
       await db.exec('RESET ROLE; GRANT DELETE ON audit_log TO aroomo_core_app; SET ROLE aroomo_core_app');
       await expect(assertAppRoleSafe(db)).rejects.toThrow(/只追加的表 audit_log/);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('负责人 #323：应用角色能插 work_versions（seq 自增）、能把预发布转成已发布，不能改别的、不能删', async () => {
+    const db = await openPglite();
+    try {
+      await db.exec('CREATE ROLE aroomo_core_app NOLOGIN');
+      await grantAppRole(db, 'aroomo_core_app');
+      await db.exec('SET ROLE aroomo_core_app');
+      const store = new PgWorkStore(db);
+      const now = new Date();
+      const p = await store.createProject('owner', 'p', [], now, 10);
+      if (!p.ok) throw new Error('建项目失败');
+      const v = (state: VersionInput['sourceState']): VersionInput => ({ sourceType: 'github_release', sourceRef: '1', label: 'v1', title: 't', actor: null, artifacts: [], sourceState: state, sourceAt: now });
+      expect(await store.addVersions('owner', p.project.id, [v('prerelease'), { ...v('published'), sourceRef: '0', label: 'v0' }], now)).toEqual({ added: 2, changed: 0 });
+      expect(await store.addVersions('owner', p.project.id, [v('published')], now)).toEqual({ added: 0, changed: 1 });
+      const rows = await store.listVersions('owner', p.project.id, 10);
+      expect(rows.map((r) => `${r.label}:${r.sourceState}`)).toEqual(['v1:published', 'v0:published']);
+      expect(rows[0]!.seq).toBeGreaterThan(rows[1]!.seq);
+      await expect(userScoped(db, 'owner').query(`UPDATE work_versions SET label = 'x'`)).rejects.toThrow(/不可变/);
+      await expect(userScoped(db, 'owner').query('DELETE FROM work_versions')).rejects.toThrow(/permission denied/);
     } finally {
       await db.close();
     }
