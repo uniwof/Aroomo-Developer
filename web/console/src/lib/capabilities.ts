@@ -1,6 +1,6 @@
 /**
  * 能力清单合同类型（GET /api/capabilities，后台线提供）。
- * 后台线未就绪（404/501）时用模拟数据，页面顶部明示「示例数据」，不冒充真实数字。
+ * 后台线未就绪（404/501）时页面显示空状态，不放示例数字（切片 15）。
  */
 export type CapabilityKind = 'text' | 'image' | 'video';
 /** free = 永久免费；trial = 试用（限时/一次性额度）；paid = 付费 */
@@ -22,8 +22,8 @@ export interface CapabilityItem {
 
 export interface CapabilityList {
   items: CapabilityItem[];
-  /** true = 模拟数据 */
-  sample?: boolean;
+  /** true = 接口还没上线（404/501），页面显示空状态 */
+  unavailable?: boolean;
 }
 
 export const KIND_LABEL: Record<CapabilityKind, string> = { text: '聊天', image: '画图', video: '做视频' };
@@ -45,17 +45,6 @@ export function quotaText(q: CapabilityItem['quota']): string {
   if (!q || q.used == null || q.limit == null || q.limit <= 0) return '额度：未知';
   return `额度：已用 ${q.used} / ${q.limit} ${q.unit}`;
 }
-
-/** 种子参考 aroomo-resource-list.md（只含名称与公开额度，不含 Key） */
-export const SAMPLE_ITEMS: CapabilityItem[] = [
-  { id: 's-groq-120b', name: 'gpt-oss-120b', kind: 'text', provider: 'Groq', access: 'free', quota: { used: null, limit: 1000, unit: '次/天', resets: '每天' } },
-  { id: 's-groq-20b', name: 'gpt-oss-20b', kind: 'text', provider: 'Groq', access: 'free', quota: { used: null, limit: 1000, unit: '次/天', resets: '每天' } },
-  { id: 's-gemini-flash', name: 'gemini-2.5-flash', kind: 'text', provider: 'Google Gemini', access: 'free', quota: null },
-  { id: 's-cf-ai', name: 'Workers AI 开源模型', kind: 'text', provider: 'Cloudflare', access: 'free', quota: { used: null, limit: 10000, unit: 'neurons/天', resets: '每天 00:00 UTC' } },
-  { id: 's-agnes-flash', name: 'agnes-3.0-flash', kind: 'text', provider: 'Agnes AI', access: 'trial', quota: null, trialEndsAt: null },
-  { id: 's-agnes-img', name: 'agnes-image-2.5', kind: 'image', provider: 'Agnes AI', access: 'trial', quota: null, trialEndsAt: null },
-  { id: 's-agnes-img-flash', name: 'agnes-image-2.1-flash', kind: 'image', provider: 'Agnes AI', access: 'trial', quota: null, trialEndsAt: null },
-];
 
 /** 试用状态一句话：未填到期日 / 还剩 N 天 / 今天到期 / 已过期 N 天；非试用返回 null */
 export function trialText(i: Pick<CapabilityItem, 'access' | 'trialEndsAt' | 'trialDaysLeft'>): string | null {
