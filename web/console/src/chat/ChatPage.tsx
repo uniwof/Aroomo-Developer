@@ -18,7 +18,7 @@ import { HeaderCard } from './HeaderCard';
 import { useInboxCount } from '@/lib/inbox';
 import { Thread, type DraftActions } from './Thread';
 import { SIDE_UI, Sidebar, type SideUi } from './Sidebar';
-import { BackButton, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type GoTarget } from './panels';
+import { BackButton, ExternalPanel, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type GoTarget } from './panels';
 import { applyDisplay } from '@/lib/display';
 import { listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
 import { useAsk } from '@/components/Dialog';
@@ -54,6 +54,7 @@ const TITLES: Record<Exclude<View['kind'], 'chat' | 'member' | 'assistant'>, str
   me: '我',
   members: '成员',
   capmap: '能力地图',
+  mcp: '外部接入',
   'group-new': '挑选成员',
   settings: '设置',
   tools: '工具',
@@ -70,6 +71,7 @@ function parentOf(v: View): { view: View; label: string } | null {
     case 'member':
       return { view: { kind: 'members' }, label: '成员' };
     case 'capmap':
+    case 'mcp':
       return { view: { kind: 'library' }, label: '资源库' };
     case 'audit':
       return { view: { kind: 'settings', section: 'safety' }, label: '设置' };
@@ -965,7 +967,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
               </ul>
             </div>
           )}
-          {view.kind === 'library' && <LibraryView members={allMembers} onOpenMember={(m) => setView({ kind: 'member', id: m.id })} onAddMember={(preset) => setAddMember(preset ? { preset } : {})} />}
+          {view.kind === 'library' && <LibraryView members={allMembers} onOpenMember={(m) => setView({ kind: 'member', id: m.id })} onAddMember={(preset) => setAddMember(preset ? { preset } : {})} onGo={(k) => setView({ kind: k })} />}
+          {view.kind === 'mcp' && <ExternalPanel />}
           {view.kind === 'keys' && <ApiView members={members} onOpenMember={(id) => setView({ kind: 'member', id })} />}
           {view.kind === 'audit' && (
             <div className="panel panel-embed">

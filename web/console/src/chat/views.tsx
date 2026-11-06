@@ -5,7 +5,7 @@
  * - Key 的完整值永远不回到浏览器：新增 / 替换用只写的密码框，提交后清空，不存本机。
  */
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { Plus, Search, Trash2 } from 'lucide-react';
+import { ChevronRight, Plus, Search, Trash2 } from 'lucide-react';
 import { ApiError, api, type Challenge, type Member } from '@/lib/api';
 import { useUsage, type UsageRow } from '@/lib/usage';
 import { ACCESS_LABEL, KIND_LABEL, quotaText, trialText, type CapabilityAccess, type CapabilityKind } from '@/lib/capabilities';
@@ -282,7 +282,16 @@ function SaveDialog({ open, onClose, onSaved }: { open: boolean; onClose: () => 
   );
 }
 
-export function LibraryView({ onAddMember, members = [], onOpenMember }: { onAddMember: (preset?: string) => void; members?: Member[]; onOpenMember?: (m: Member) => void }) {
+/** 资源库（Hub）里的另外几类（规范 §6 / 审计清单第 9 项）：沙箱算力、工具分配要 Core，没有就不列 */
+const HUB_LINKS: readonly [HubTarget, string, string][] = [
+  ['capmap', '能力地图', '可以入职的模型、额度和试用期'],
+  ['tools', '工具', '成员能用的工具和还差什么'],
+  ['keys', 'API Key', '填 Key、看用量'],
+  ['mcp', '外部接入（MCP）', '在别的 AI 软件里用你的 Aroomo'],
+];
+export type HubTarget = 'capmap' | 'tools' | 'keys' | 'mcp';
+
+export function LibraryView({ onAddMember, members = [], onOpenMember, onGo }: { onAddMember: (preset?: string) => void; members?: Member[]; onOpenMember?: (m: Member) => void; onGo?: (k: HubTarget) => void }) {
   const [caps, setCaps] = useState<CapItem[] | null>(null);
   const [capErr, setCapErr] = useState('');
   const [saved, setSaved] = useState<LibraryEntry[] | null>(null);
@@ -453,6 +462,24 @@ export function LibraryView({ onAddMember, members = [], onOpenMember }: { onAdd
               ))}
             </ul>
           )}
+        </section>
+      )}
+      {onGo && (
+        <section className="group-block" aria-labelledby="lib-more">
+          <h2 id="lib-more" className="group-title">
+            资源库里还有
+          </h2>
+          <div className="group">
+            {HUB_LINKS.map(([k, label, hint]) => (
+              <button key={k} type="button" className="row row-button" onClick={() => onGo(k)}>
+                <span className="row-text">
+                  <span className="row-label">{label}</span>
+                  <span className="row-hint">{hint}</span>
+                </span>
+                <ChevronRight aria-hidden="true" className="row-chevron" />
+              </button>
+            ))}
+          </div>
         </section>
       )}
       <SaveDialog
