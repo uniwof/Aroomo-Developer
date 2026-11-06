@@ -3,7 +3,7 @@
  * 参照 sumus：侧栏底部「Members」、顶部齿轮打开的内容都在主区域原地显示，不开第二层抽屉；
  * 面板内容一律是分组列表（iOS / sumus 式），不用标签页。最终位置等负责人的 sumus→Aroomo 逐屏映射方案再定。
  */
-import { lazy, Suspense, useState, type ReactNode } from 'react';
+import { lazy, useState, type ReactNode } from 'react';
 import { Bell, BellRing, ArrowLeft, ChevronRight, Home, Keyboard, Monitor, Moon, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Sun, UserRound, Users, X } from 'lucide-react';
 import { activityLabel, api, isFamily, type Member } from '@/lib/api';
 import { useAsk } from '@/components/Dialog';
@@ -12,6 +12,7 @@ import { UsageLine } from '@/components/UsageLine';
 import { BudgetSection, Field, Group, LeadSection, McpSection, SecuritySection } from '@/pages/Settings';
 import { FamilySection, GeneralSection, PasswordRow, ProfileSection, SignOutGroup } from './settings-sections';
 import { ClientTokensLazy } from '@/components/ClientTokensLazy';
+import { LazyChunk } from '@/components/LazyChunk';
 import { Dialog } from '@/components/Dialog';
 import { Avatar } from './Avatar';
 import { Empty, errText } from './ui';
@@ -21,7 +22,7 @@ import { type ChatPrefs } from './store';
 import { FONT_DEFAULT, FONT_MAX, FONT_MIN, clampFont } from '@/lib/display';
 import type { Theme } from '@/lib/display';
 
-// #281：设置 › 通知点开才下载（对话页包 ≤150 KB gz）；下载时一句静态文字，不转圈
+// #281：设置 › 通知点开才下载（对话页包 ≤150 KB gz）；下载时一句静态文字，不转圈；下载失败说一句 + 「刷新」
 const PushSection = lazy(() => import('./push-section').then((m) => ({ default: m.PushSection })));
 
 /**
@@ -487,9 +488,9 @@ export function SettingsSectionBody({ section, prefs, setPrefs, onGo, members = 
       {section === 'general' && <GeneralSection members={members} onUsage={() => onGo('keys')} />}
       {section === 'family' && <FamilySection />}
       {section === 'push' && (
-        <Suspense fallback={<p role="status" className="note panel-loading">正在加载…</p>}>
+        <LazyChunk>
           <PushSection />
-        </Suspense>
+        </LazyChunk>
       )}
       {section === 'budget' && (
         <div className="group">
