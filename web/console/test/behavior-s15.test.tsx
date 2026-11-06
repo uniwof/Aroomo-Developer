@@ -1,6 +1,6 @@
 /**
  * Poke 行为规范 切片 15（审计验收清单第 7、9 项的前端余项 + 能力地图不造数）：
- * - 第 7 项：成员详情只给在职成员「单独聊 / 点名」，停用、候选的说一句为什么（不留点了没用的按钮）
+ * - 第 7 项：成员详情只给在职成员「单独聊 / 点名」，停用、候选的说一句为什么（不留点了没用的按钮）；其他状态说一句通用的（#280 负责人建议）
  * - 第 9 项：资源库（Hub）把现有的几类列在一起：能力地图、工具、API Key、外部接入（MCP，/hub/mcp）
  * - 能力地图：/api/capabilities 回 404/501 时显示空状态，不再放示例数字
  */
@@ -75,6 +75,18 @@ describe('切片 15 · 第 7 项：成员详情不留点了没用的按钮', () 
     expect(await within(main).findByRole('button', { name: '让 候选甲 入职' })).toBeInTheDocument();
     expect(within(main).queryByRole('button', { name: '和 候选甲 单独对话' })).toBeNull();
     expect(within(main).getByText('候选甲 还是候选，入职后才能对话。')).toBeInTheDocument();
+  });
+
+  it('其他状态（Core 以后加的，比如 archived）：不当成候选，说一句通用的，不放单独聊、点名、入职', async () => {
+    members = [M('m1', 'Kimi'), M('m4', '其他丙', { status: 'archived' })];
+    at('/team?member=m4');
+    const main = screen.getByRole('main');
+    expect(await within(main).findByRole('button', { name: '停用 其他丙' })).toBeInTheDocument();
+    expect(within(main).queryByRole('button', { name: '和 其他丙 单独对话' })).toBeNull();
+    expect(within(main).queryByRole('button', { name: '在当前对话里点名 其他丙' })).toBeNull();
+    expect(within(main).queryByRole('button', { name: '让 其他丙 入职' })).toBeNull();
+    expect(within(main).queryByText(/还是候选/)).toBeNull();
+    expect(within(main).getByText('其他丙 现在不能对话。')).toBeInTheDocument();
   });
 });
 

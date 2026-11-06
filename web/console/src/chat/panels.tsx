@@ -214,7 +214,15 @@ export function MemberDetail({ member, onChat, onMention, onChanged }: { member:
           </button>
         )}
       </div>
-      {!canTalk && <p className="note">{member.enabled ? `${member.name} 还是候选，入职后才能对话。` : `${member.name} 已停用，启用后才能对话。`}</p>}
+      {!canTalk && (
+        <p className="note">
+          {!member.enabled
+            ? `${member.name} 已停用，启用后才能对话。`
+            : member.status === 'candidate'
+              ? `${member.name} 还是候选，入职后才能对话。`
+              : `${member.name} 现在不能对话。`}
+        </p>
+      )}
       <p role="status" className="note">
         {done}
       </p>
