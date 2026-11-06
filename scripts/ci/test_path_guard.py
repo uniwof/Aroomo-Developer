@@ -164,6 +164,11 @@ class WorkflowTest(unittest.TestCase):
         self.assertNotIn("ref: ${{ github.event.pull_request.head", y)
         checkout = y.split("checkout@")[1].split("- name")[0]
         self.assertNotIn("inputs.branch", checkout)
+        # 派发时也只检出 dev：inputs.base 只决定 diff 跟谁比，不决定跑哪份脚本（负责人 #331 必改 2）
+        self.assertNotIn("inputs.base", checkout)
+        self.assertIn("ref: ${{ github.event.pull_request.base.ref || 'dev' }}", checkout)
+        # 不同 PR 不能分到同一组互相取消（必改 1）
+        self.assertIn("group: path-guard-${{ github.event.pull_request.number || inputs.branch }}", y)
         self.assertNotIn("head", checkout)
         self.assertIn("persist-credentials: false", y)
 

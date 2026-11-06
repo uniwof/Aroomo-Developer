@@ -115,6 +115,8 @@ def main():
 
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     lines = [f"### 路径闸门：{'失败' if errors else '通过'}", f"改动文件 {len(files)} 个；自动程序员={'是' if robot else '否'}"]
+    if not files:
+        lines.append(f"- ⚠️ diff 为空（{base}...{head}）：什么都没查，确认 head 取对了")
     lines += [f"- ❌ {e}" for e in errors] + [f"- ⚠️ {n}" for n in notes]
     text = "\n".join(lines)
     print(text)

@@ -16,7 +16,7 @@ on:
         description: '要检查的分支（gemini-task 推送后用它补跑；GITHUB_TOKEN 建的 PR 不会自动触发 CI）'
         required: true
       base:
-        description: '对照的 base（dev 或 main；过渡期 dev→main 的 PR 用 main 补跑，见 #247 PR 说明）'
+        description: '和谁比 diff（dev 或 main）；脚本永远用 dev 版。dev→main 补跑：ref=dev，branch=dev，base=main'
         required: false
         default: dev
 permissions:
@@ -29,10 +29,11 @@ jobs:
     name: 路径闸门（A+ / 自动程序员白名单）
     runs-on: ubuntu-24.04
     steps:
+      # 派发时也一律检出 dev（受保护、审过的脚本）；输入 base 只决定 diff 跟谁比（负责人 #331 必改 2）
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.base.ref || (inputs.base == 'main' && 'main') || 'dev' }}
+          ref: ${{ github.event.pull_request.base.ref || 'dev' }}
           persist-credentials: false
       - name: 闸门自测（base 版）
         run: python3 -B scripts/ci/test_path_guard.py
