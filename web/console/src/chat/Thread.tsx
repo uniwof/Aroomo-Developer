@@ -595,17 +595,25 @@ export function Thread({ conversation, onMessages, insert, onInserted, hidden = 
   // 还没发过消息的新会话不进会话列表（刷新后 id 会变），草稿先记在固定的「新对话」名下；发过消息后记在会话 id 名下。
   const hasMessages = useRef(messages.length > 0);
   hasMessages.current = messages.length > 0;
+  // #291：账号刚问到（draftAccount 变了）时，输入框里如果还是刚才从别的那份（如共用那份）读进来、她没改过的草稿，
+  // 换成这个账号自己那份（没有就清空），不把别人的草稿存进她的账号（负责人 #299 必改）；她自己打的字留着。
+  const fromDraft = useRef<string | null>(null);
   useEffect(() => {
     const key = () => (hasMessages.current ? conversation.id : newDraftKey(convRef.current));
     const c = runtime.thread.composer;
     const draft = loadDraft(key(), draftAccount);
-    if (draft && !c.getState().text) c.setText(draft);
+    const now = c.getState().text;
+    if (!now || now === fromDraft.current) {
+      if (draft !== now) c.setText(draft);
+      fromDraft.current = draft || null;
+    }
     let last = c.getState().text;
     let lastKey = key();
     return c.subscribe(() => {
       const t = c.getState().text;
       const k = key();
       if (t === last && k === lastKey) return;
+      if (t !== fromDraft.current) fromDraft.current = null;
       if (k !== lastKey) saveDraft(lastKey, '', draftAccount); // 新对话发出第一句后，「新对话」名下的草稿清掉
       last = t;
       lastKey = k;

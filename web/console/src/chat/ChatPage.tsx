@@ -272,7 +272,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           setLocalLeft(localPending(me));
         }
         setList((prev) => {
-          const next = adopt(switched ? prev.filter((c) => c.remote) : prev, fresh);
+          // 正打开的空白新会话留着（没内容，不算带过去）：输入框不重建，她问到之前打的字不丢（#291）
+          const next = adopt(switched ? prev.filter((c) => c.remote || (c.id === currentRef.current && c.messages.length === 0)) : prev, fresh);
           if (!next.some((c) => c.id === currentRef.current)) setCurrentId(next[0]!.id);
           return next;
         });
@@ -295,7 +296,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
       if (me && me !== acctRef.current) {
         // 先换列表、再换账号（同一次更新）：保存只在列表和账号对得上时才写。
         // #292：问到之前在这页新开、说过话的会话（打开时没有或是空的）是她的，带过去；读进来的旧那份不带
-        const carry = listRef.current.filter((c) => !c.remote && c.messages.length > 0 && (atMount.current!.get(c.id) ?? 0) === 0);
+        // 正打开的空白新会话也留着（没内容）：输入框不重建，问到之前打的字不丢（#291）
+        const carry = listRef.current.filter((c) => !c.remote && (atMount.current!.get(c.id) ?? 0) === 0 && (c.messages.length > 0 || c.id === currentRef.current));
         // 打开时读进来的旧会话里接着说过的话（问到之前没存）：存回它原来那份，不丢，也不带进这个账号
         const was = listAcct.current;
         const touched = listRef.current.filter((c) => !c.remote && (atMount.current!.get(c.id) ?? 0) > 0 && c.messages.length > atMount.current!.get(c.id)!);
