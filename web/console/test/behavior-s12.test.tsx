@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ChatPage } from '@/chat/ChatPage';
+// 所有者的「助手」分段要助手开关打开（阶段 2/3 验收时）；阶段 1.5 发布默认关、没有分段，见 release-15-flags-off.test.tsx
+vi.mock('@/lib/flags', () => ({ FLAGS: { taskCards: true, quickReplies: false, convFilter: true, schedulePage: true, assistantDraft: true, assistants: true, savedChats: true, skeletonShimmer: false } }));
 
 const asRole = (role: string) => sessionStorage.setItem('aroomo.console.user', JSON.stringify({ email: 'a@example.test', displayName: '测试', role }));
 beforeEach(() => {
