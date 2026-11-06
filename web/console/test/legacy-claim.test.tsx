@@ -17,6 +17,27 @@ import { fetchAccount } from '@/lib/api';
 const flags = vi.hoisted(() => ({ taskCards: false, quickReplies: false, convFilter: true, schedulePage: false, assistantDraft: false, assistants: false, savedChats: false, skeletonShimmer: false }));
 vi.mock('@/lib/flags', () => ({ FLAGS: flags }));
 
+const enc = new TextEncoder();
+const REPLY = '好的，记下了。';
+const sseReply = [
+  { type: 'start', messageId: 'm' },
+  { type: 'text-start', id: 't' },
+  { type: 'text-delta', id: 't', delta: REPLY },
+  { type: 'text-end', id: 't' },
+  { type: 'finish' },
+]
+  .map((o) => `data: ${JSON.stringify(o)}\n\n`)
+  .join('') + 'data: [DONE]\n\n';
+const stream = () =>
+  new Response(
+    new ReadableStream({
+      start(c) {
+        c.enqueue(enc.encode(sseReply));
+        c.close();
+      },
+    }),
+    { status: 200, headers: { 'content-type': 'text/event-stream', 'x-vercel-ai-ui-message-stream': 'v1' } },
+  );
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 const OWNER = 'u-owner-1';
 const KID = 'u-kid-2';
@@ -39,6 +60,7 @@ function stubCore(me: Me, gate?: Promise<void>) {
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
       calls.push({ url, method, body });
       if (url === '/api/members') return json({ members: [] });
+      if (url === '/api/chat/stream') return stream();
       if (url === '/api/auth/me') {
         if (gate) await gate;
         if (!me) return json({ error: { code: 'X', message: '坏了' } }, 500);
@@ -163,6 +185,24 @@ describe('#290 认领以前的共用会话', () => {
     expect(screen.queryByRole('button', { name: BTN })).toBeNull();
   });
 
+  it('放不下（超过上限）：说「放不下了」，不叫她再点；什么都不记，两份都原样（负责人 #294 必改 2）', async () => {
+    putLegacy();
+    const many = Array.from({ length: 200 }, (_, i) => local(`cccccccc-0000-4000-8000-1${String(i).padStart(11, '0')}`, `第${i}段`, 100 + i));
+    saveConversations(many, OWNER);
+    const mineBefore = localStorage.getItem(`${LEGACY}:u:${OWNER}`);
+    const before = localStorage.getItem(LEGACY);
+    stubCore({ kind: 'user', role: 'admin', id: OWNER });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: BTN }));
+    const note = await screen.findByText('放不下了：你账号里的会话太多。原来那份还在，没有丢。请告诉 Hark。');
+    expect(note.getAttribute('role')).toBe('alert');
+    expect(screen.queryByText(/过一会儿再点/)).toBeNull();
+    expect(legacyClaimed(OWNER)).toBe(false);
+    await tick();
+    expect(localStorage.getItem(`${LEGACY}:u:${OWNER}`)).toBe(mineBefore);
+    expect(localStorage.getItem(LEGACY)).toBe(before);
+  });
+
   it('存库打开时：认领过来的照常导入 Core', async () => {
     flags.savedChats = true;
     putLegacy();
@@ -183,6 +223,50 @@ describe('#292 问到账号之前先不保存本机会话', () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+  });
+
+  it('Core 回得晚：之前新开一段说了一句，回了以后她那份里有新的那段、没有共用那份的旧会话，共用那份原样（负责人 #294 必改 1）', async () => {
+    putLegacy();
+    const before = localStorage.getItem(LEGACY);
+    let open = () => {};
+    const gate = new Promise<void>((r) => (open = r));
+    stubCore({ kind: 'user', role: 'admin', id: OWNER }, gate);
+    renderPage();
+    await screen.findByRole('list', { name: '会话列表' });
+    fireEvent.click(screen.getAllByRole('button', { name: '新建对话' })[0]!);
+    fireEvent.click(screen.getByRole('button', { name: /新对话（全员）/ }));
+    fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '帮我记一下明天买药' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect(await screen.findByText(REPLY, undefined, { timeout: 8000 })).toBeInTheDocument();
+    await tick();
+    expect(localStorage.getItem(LEGACY)).toBe(before);
+    open();
+    await waitFor(() => expect(loadConversations(OWNER).some((c) => c.messages.some((m) => m.text === '帮我记一下明天买药'))).toBe(true));
+    const ids = loadConversations(OWNER).map((c) => c.id);
+    expect(ids).toHaveLength(1);
+    expect(ids).not.toContain(OLD1);
+    expect(ids).not.toContain(OLD2);
+    expect(localStorage.getItem(LEGACY)).toBe(before);
+    expect(screen.getByRole('list', { name: '会话列表' })).toHaveTextContent('帮我记一下明天买药');
+  });
+
+  it('Core 回得晚：之前在共用那份的旧会话里接着说了一句，这句存回共用那份（不丢），不带进她的账号', async () => {
+    putLegacy();
+    let open = () => {};
+    const gate = new Promise<void>((r) => (open = r));
+    stubCore({ kind: 'user', role: 'admin', id: OWNER }, gate);
+    renderPage();
+    await screen.findByRole('list', { name: '会话列表' });
+    fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '接着问体检' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect(await screen.findByText(REPLY, undefined, { timeout: 8000 })).toBeInTheDocument();
+    open();
+    await waitFor(() => expect(localStorage.getItem(`${LEGACY}:u:${OWNER}`)).not.toBeNull());
+    await tick();
+    const old = loadConversations().find((c) => c.id === OLD1)!;
+    expect(old.messages.map((m) => m.text)).toContain('接着问体检');
+    expect(loadConversations()).toHaveLength(2);
+    expect(loadConversations(OWNER).map((c) => c.id)).not.toContain(OLD1);
   });
 
   it('Core 还没回是谁：不往共用那份写；回了以后写进她自己那份', async () => {
