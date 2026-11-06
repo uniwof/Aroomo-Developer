@@ -278,8 +278,8 @@ export function Sidebar({ list, currentId, members, inboxCount, active, onPick, 
         <div className="side-search">
           <label className="search2">
             <Search aria-hidden="true" />
-            <span className="sr-only">{tab === 'staff' ? '搜索助手' : '搜索对话'}</span>
-            <input ref={searchRef} type="search" placeholder={tab === 'staff' ? '搜索助手' : '搜索对话'} aria-keyshortcuts="Control+K Meta+K" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onSearchKey} />
+            <span className="sr-only">{tab === 'staff' ? '找助手' : '找对话'}</span>
+            <input ref={searchRef} type="search" placeholder={tab === 'staff' ? '找助手' : '找对话'} aria-keyshortcuts="Control+K Meta+K" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onSearchKey} />
           </label>
           {/* 新建对话菜单（所有者 11-05 12:15）：默认全员（不 @ 由负责人安排，@ 谁谁答）/ 自己挑成员 / 和某一位单聊；所有者另有「添加成员」。「助手」分段里这个位置是「新建助手」 */}
           {tab === 'staff' && onNewAssistant ? (

@@ -1,6 +1,6 @@
 /**
- * Poke 行为审计 C15（切片 16）：群聊顶栏卡「查看群成员」只列这个群里的成员（/team?chat=<会话 id>，能直接打开、刷新不丢），
- * 一句说明 + 「查看所有成员」回到全部；返回回到这段群聊。不是群聊的对话照旧「查看所有成员」。假 fetch，占位数据。
+ * Poke 行为审计 C15（切片 16）：群聊顶栏卡「看群里有谁」只列这个群里的成员（/team?chat=<会话 id>，能直接打开、刷新不丢），
+ * 一句说明 + 「看全部成员」回到全部；返回回到这段群聊。不是群聊的对话照旧「看全部成员」。假 fetch，占位数据。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -55,16 +55,16 @@ describe('切片 16：C15 群聊只列群成员', () => {
     expect(viewOf('/team', '?member=m1')).toEqual({ kind: 'member', id: 'm1' });
   });
 
-  it('群聊顶栏卡「查看群成员」→ 只列甲、乙，不列丙；一句说明；「查看所有成员」回到全部', async () => {
+  it('群聊顶栏卡「看群里有谁」→ 只列甲、乙，不列丙；一句说明；成员页「看全部成员」回到全部', async () => {
     page();
     fireEvent.click(await screen.findByRole('button', { name: '对话信息' }, { timeout: 8000 }));
-    fireEvent.click(screen.getByRole('button', { name: /查看群成员/ }));
+    fireEvent.click(screen.getByRole('button', { name: /看群里有谁/ }));
     await waitFor(() => expect(where).toBe('/team?chat=g1'));
     await waitFor(() => expect(memberRow('甲')).not.toBeNull());
     expect(memberRow('乙')).not.toBeNull();
     expect(memberRow('丙')).toBeNull();
     expect(screen.getByText('只列「周末计划」这个群里的 2 位成员。')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '查看所有成员' }));
+    fireEvent.click(screen.getByRole('button', { name: '看全部成员' }));
     await waitFor(() => expect(where).toBe('/team'));
     await waitFor(() => expect(memberRow('丙')).not.toBeNull());
   });
@@ -93,10 +93,10 @@ describe('切片 16：C15 群聊只列群成员', () => {
     expect(screen.queryByText(/这个群里的/)).toBeNull();
   });
 
-  it('不是群聊（交给负责人）：顶栏卡照旧「查看所有成员」→ /team', async () => {
+  it('不是群聊（交给负责人）：顶栏卡照旧「看全部成员」→ /team', async () => {
     page('/chat', [PLAIN]);
     fireEvent.click(await screen.findByRole('button', { name: '对话信息' }, { timeout: 8000 }));
-    fireEvent.click(screen.getByRole('button', { name: /查看所有成员/ }));
+    fireEvent.click(screen.getByRole('button', { name: /看全部成员/ }));
     await waitFor(() => expect(where).toBe('/team'));
   });
 });

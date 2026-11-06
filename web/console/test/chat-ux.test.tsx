@@ -114,7 +114,7 @@ describe('对话页：对标改进', () => {
   it('空状态照 sumus：头像 + 名字 + 简介 + 「说点什么」；不放没接上的附件按钮，不自动发请求', () => {
     const chatFetch = vi.fn();
     renderPage(chatFetch as unknown as typeof fetch);
-    expect(screen.getByText('说点什么，开始这个话题')).toBeInTheDocument();
+    expect(screen.getByText('在下面写第一句话')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '添加附件' })).toBeNull();
     expect(chatFetch).not.toHaveBeenCalled();
   });
