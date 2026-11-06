@@ -97,6 +97,80 @@ class PathGuardTest(unittest.TestCase):
         self.assertEqual(aplus, [])
         self.assertEqual(errors, [])
 
+    # #247（负责人 #187 补审必改）：名单从 base 读，PR 自己改宽的白名单 / 删掉的 A+ 条目不算数
+    def write_list(self, name, extra=None, drop=None):
+        p = os.path.join(self.d, ".github", name)
+        with open(p, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+        if drop:
+            lines = [l for l in lines if l.strip() != drop]
+        if extra:
+            lines.append(extra)
+        self.write(".github/" + name, "\n".join(lines) + "\n")
+
+    def test_gemini_widening_allowlist_in_same_pr_still_fails(self):
+        self.write_list("gemini-allowed-paths.txt", extra="core/**")
+        self.write("core/src/confirm/index.ts", "export const confirm = 2;\n")
+        self.commit()
+        _, aplus, robot, errors, _ = self.run_guard(head_ref="gemini/x")
+        self.assertTrue(robot)
+        self.assertTrue(any("越界" in e for e in errors), errors)
+        self.assertTrue(any("core/src/confirm/index.ts" in a for a in aplus), aplus)
+
+    def test_dropping_aplus_entry_in_same_pr_still_aplus(self):
+        self.write_list("a-plus-paths.txt", drop="core/src/vault/crypto.ts")
+        self.write("core/src/vault/crypto.ts", "export const y = 1;\n")
+        self.commit()
+        _, aplus, _, errors, _ = self.run_guard()
+        self.assertIn("core/src/vault/crypto.ts", aplus)
+        self.assertTrue(errors, "删 A+ 条目也要按 base 判 A+，没标签应失败")
+
+    def test_new_aplus_entry_added_by_pr_counts(self):
+        self.write_list("a-plus-paths.txt", extra="docs/secret/**")
+        self.write("docs/secret/a.md", "x\n")
+        self.commit()
+        _, aplus, _, _, _ = self.run_guard()
+        self.assertIn("docs/secret/a.md", aplus)
+
+    def test_head_given_as_ref_not_checked_out(self):
+        # 工作流只检出 base，head 只 fetch 成一个 ref 用来算 diff：工作区停在 base 上也能判
+        self.write("core/src/vault/crypto.ts", "export const z = 1;\n")
+        self.commit()
+        sh("git", "branch", "-q", "pr-head", cwd=self.d)
+        sh("git", "checkout", "-q", "base", cwd=self.d)
+        files, aplus, _, errors, _ = pg.evaluate("base", "feature", set(), head="pr-head")
+        self.assertEqual(files, ["core/src/vault/crypto.ts"])
+        self.assertTrue(errors)
+
+    def test_robot_touching_ci_needs_human(self):
+        # 临时规则（负责人 #187）：Gemini 碰 .github/ 或 scripts/ci/ 一律人工看
+        self.write("scripts/ci/other.py", "print(1)\n")
+        self.commit()
+        _, _, _, errors, _ = self.run_guard(labels=["gemini-task"])
+        self.assertTrue(errors)
+
+
+class WorkflowTest(unittest.TestCase):
+    """工作流不执行 head 的任何代码（#247 验收 3）。"""
+
+    def read(self, rel):
+        with open(os.path.join(ROOT, rel), encoding="utf-8") as f:
+            return f.read()
+
+    def test_path_guard_runs_base_version(self):
+        y = self.read(".github/workflows/path-guard.yml")
+        self.assertIn("pull_request_target:", y)
+        self.assertNotRegex(y, r"(?m)^\s+pull_request:")
+        self.assertNotIn("ref: ${{ github.event.pull_request.head", y)
+        self.assertNotIn("inputs.branch }}\n", y.split("checkout@")[1].split("- name")[0])
+        self.assertIn("persist-credentials: false", y)
+
+    def test_gemini_task_uses_base_guard(self):
+        y = self.read(".github/workflows/gemini-task.yml")
+        self.assertNotIn("python3 scripts/ci/path-guard.py", y)
+        self.assertIn("git show origin/dev:scripts/ci/path-guard.py", y)
+        self.assertNotIn('d="{\\"ref\\":\\"$BR\\",\\"inputs', y)
+
 
 if __name__ == "__main__":
     sys.exit(0 if unittest.main(exit=False).result.wasSuccessful() else 1)
