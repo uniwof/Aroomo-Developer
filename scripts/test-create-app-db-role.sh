@@ -47,8 +47,9 @@ STUB
 chmod +x "$bin/docker" "$bin/psql"
 export PATH="$bin:$PATH" AROOMO_TIER=standard
 unset AROOMO_STAGING
-# staging 根目录默认 /opt/aroomo-staging；测试里只有 staging 那几次把它指向临时仓库
-export STAGING_ROOT="$work/not-staging"
+# 只认两个目录（负责人 #289 第二轮）：生产 PROD_ROOT（默认 /opt/aroomo）、staging STAGING_ROOT（默认 /opt/aroomo-staging）。
+# 测试里默认把生产指向临时仓库；staging 那几次把 staging 指向它、生产指别处
+export STAGING_ROOT="$work/not-staging" PROD_ROOT="$repo"
 calls="$work/calls"; export T_CALLS="$calls"
 
 run() { # run <说明> [参数…]：每次用新的 .env
@@ -74,7 +75,7 @@ grep -q "$(grep '^CORE_APP_DB_PASSWORD=' "$repo/deploy/.env" | cut -d= -f2)" <<<
 # --- staging：和 deploy-staging.sh 同一组 compose 参数
 stg_args="compose -p aroomo-staging --project-directory $repo/deploy --env-file $repo/deploy/.env -f $repo/deploy/docker-compose.yml -f $repo/deploy/staging/compose.staging.yml"
 for how in flag env; do
-  if [ "$how" = flag ]; then STAGING_ROOT="$repo" run "--staging" --staging; else STAGING_ROOT="$repo" AROOMO_STAGING=1 run "AROOMO_STAGING=1"; fi
+  if [ "$how" = flag ]; then STAGING_ROOT="$repo" PROD_ROOT="$work/not-prod" run "--staging" --staging; else STAGING_ROOT="$repo" PROD_ROOT="$work/not-prod" AROOMO_STAGING=1 run "AROOMO_STAGING=1"; fi
   grep -q -- "^$stg_args exec -T postgres" "$calls" && ok "staging（$how）用 -p aroomo-staging + staging 覆盖文件" || bad "staging（$how）compose 参数不对：$(cat "$calls")"
   grep -qx 'psql-user=\[postgres\]' "$calls" && ok "staging（$how）psql 用 postgres" || bad "staging（$how）psql 用户不对"
   echo "$OUT" | grep -q -- "-p aroomo-staging .*compose.staging.yml up -d --no-deps --force-recreate core" && ok "staging（$how）提示 staging 的重建命令" || bad "staging（$how）下一步提示不对：$OUT"
@@ -98,9 +99,11 @@ refuse() { # refuse <说明> <命令…>
   local rc=0; "$@" >/dev/null 2>&1 || rc=$?
   if [ "$rc" != 0 ] && [ ! -s "$calls" ] && [ "$(cat "$repo/deploy/.env")" = x=1 ]; then ok "$name：拒绝、没调 docker、.env 没动"; else bad "$name：没拒绝（退出码 $rc，docker 调用：$(cat "$calls")）"; fi
 }
-refuse "staging 目录里忘了加 --staging" env STAGING_ROOT="$repo" "$repo/scripts/create-app-db-role.sh"
-refuse "不是 staging 目录却加了 --staging" "$repo/scripts/create-app-db-role.sh" --staging
-refuse "不是 staging 目录、环境里残留 AROOMO_STAGING=1" env AROOMO_STAGING=1 "$repo/scripts/create-app-db-role.sh"
+refuse "staging 目录里忘了加 --staging" env STAGING_ROOT="$repo" PROD_ROOT="$work/not-prod" "$repo/scripts/create-app-db-role.sh"
+refuse "生产目录却加了 --staging" "$repo/scripts/create-app-db-role.sh" --staging
+refuse "生产目录、环境里残留 AROOMO_STAGING=1" env AROOMO_STAGING=1 "$repo/scripts/create-app-db-role.sh"
+refuse "别的目录（既不是生产也不是 staging）不加参数" env PROD_ROOT="$work/not-prod" "$repo/scripts/create-app-db-role.sh"
+refuse "别的目录加 --staging" env PROD_ROOT="$work/not-prod" "$repo/scripts/create-app-db-role.sh" --staging
 mv "$repo/core/src/config.ts" "$work/config.ts"; echo "// #285 之前" >"$repo/core/src/config.ts"
 refuse "检出的版本不认 CORE_APP_DB_PASSWORD（#285 之前）" "$repo/scripts/create-app-db-role.sh"
 mv "$work/config.ts" "$repo/core/src/config.ts"
