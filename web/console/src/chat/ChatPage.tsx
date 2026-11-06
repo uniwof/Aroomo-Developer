@@ -210,10 +210,18 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   const latest = (l: Conversation[], me: string) => {
     const c = l.find((x) => x.id === currentRef.current);
     const to = c && c.id === autoBlank.current && !c.messages.length && !typed.current && !loadDraft(newDraftKey(c), me) ? l.find((x) => x !== c && (x.remote || x.messages.length)) : undefined;
-    // 负责人 #319 小建议：读屏说一句，走整页那个状态区，焦点不动
-    if (to) setNetSay(`打开了你最近的会话：${to.title}`);
+    // 存库那条路在 setList 的 updater 里调：这里只记下换到哪段（写同一个值，跑两遍也一样），播报在下面的 effect 里（负责人 #319 第二轮）
+    if (to) autoTo.current = to.id;
     return to;
   };
+  /** #316：自动换到的那段；换好后读屏说一句（整页状态区，焦点不动），只说一次 */
+  const autoTo = useRef<string | null>(null);
+  useEffect(() => {
+    const to = autoTo.current && list.find((c) => c.id === autoTo.current);
+    if (!to || to.id !== currentId) return;
+    autoTo.current = null;
+    setNetSay(`打开了你最近的会话：${to.title}`);
+  }, [currentId, list]);
   /** 正在排队等列表的会话（话还在对话区里、没进列表，列表盖上来时不能丢） */
   const waiting = useRef(new Set<string>());
   /** 本机会话里还没存到 Core 的话（列表没到时就发了，或建会话失败） */

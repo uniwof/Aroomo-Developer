@@ -91,7 +91,7 @@ describe.each([true, false])('#316 问到是谁后换到最近那段（存库 %s
     open();
     expect(await screen.findByText('周末去哪玩')).toBeInTheDocument();
     // 负责人 #319 小建议：读屏说一句（整页状态区），焦点不动
-    expect(document.querySelector('[data-net-status]')!.textContent).toBe('打开了你最近的会话：周末去哪');
+    await waitFor(() => expect(document.querySelector('[data-net-status]')!.textContent).toBe('打开了你最近的会话：周末去哪'));
   });
 
   it('Core 晚回，这期间她自己点了「新对话」→ 不换（负责人 #319 必改：只换页面自己开的那个空白话题）', async () => {
