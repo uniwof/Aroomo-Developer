@@ -1040,6 +1040,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           {...(fetchImpl ? { fetchImpl } : {})}
           {...(remote !== false ? { persist } : {})}
           {...(focusMsg ? { focusMessageId: focusMsg } : {})}
+          draftAccount={acct}
           onRunning={(r) => setRunningId(r ? current.id : null)}
         />
         )}

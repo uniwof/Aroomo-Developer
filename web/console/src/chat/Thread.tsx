@@ -423,11 +423,13 @@ export interface ThreadProps {
   persist?: (firstUserText: string) => Promise<string | null>;
   /** X-04b：打开后滚到这条消息并给焦点（收件箱「打开对话」） */
   focusMessageId?: string;
+  /** #291：草稿存在哪个账号名下（同本机会话的账号）；null = 不知道是谁，用共用那份 */
+  draftAccount?: string | null;
   /** 一轮对话结束：成功给 null，接口回了错误状态给 HTTP 状态（别的失败给 undefined） */
   onResult?: (status: number | null | undefined) => void;
 }
 
-export function Thread({ conversation, onMessages, insert, onInserted, hidden = false, routes = [], members = [], fetchImpl, speechRate = DEFAULT_RATE, speechOnline = false, onAllowOnlineSpeech, memberName, onRunning, intro, notice, onResult, draftActions, persist, focusMessageId }: ThreadProps) {
+export function Thread({ conversation, onMessages, insert, onInserted, hidden = false, routes = [], members = [], fetchImpl, speechRate = DEFAULT_RATE, speechOnline = false, onAllowOnlineSpeech, memberName, onRunning, intro, notice, onResult, draftActions, persist, focusMessageId, draftAccount = null }: ThreadProps) {
   const resultCb = useRef(onResult);
   resultCb.current = onResult;
   const convRef = useRef(conversation);
@@ -596,7 +598,7 @@ export function Thread({ conversation, onMessages, insert, onInserted, hidden = 
   useEffect(() => {
     const key = () => (hasMessages.current ? conversation.id : newDraftKey(convRef.current));
     const c = runtime.thread.composer;
-    const draft = loadDraft(key());
+    const draft = loadDraft(key(), draftAccount);
     if (draft && !c.getState().text) c.setText(draft);
     let last = c.getState().text;
     let lastKey = key();
@@ -604,12 +606,12 @@ export function Thread({ conversation, onMessages, insert, onInserted, hidden = 
       const t = c.getState().text;
       const k = key();
       if (t === last && k === lastKey) return;
-      if (k !== lastKey) saveDraft(lastKey, ''); // 新对话发出第一句后，「新对话」名下的草稿清掉
+      if (k !== lastKey) saveDraft(lastKey, '', draftAccount); // 新对话发出第一句后，「新对话」名下的草稿清掉
       last = t;
       lastKey = k;
-      saveDraft(k, t);
+      saveDraft(k, t, draftAccount);
     });
-  }, [runtime, conversation.id]);
+  }, [runtime, conversation.id, draftAccount]);
 
   // X-04b：收件箱「打开对话」→ 滚到那条消息，给焦点框（读屏从这条开始读）
   useEffect(() => {
