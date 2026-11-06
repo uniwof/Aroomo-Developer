@@ -129,6 +129,7 @@ bash /tmp/rt.sh deploy v0.2.0          # 演练：应打印「切换失败时会
 
 - 有了它之后，切到 v0.1.0（`rollback`，或 v0.2.0 切换失败自动回退）时脚本会：照 `compose.sh` 的同一组文件（`docker-compose.yml` + `tiers/standard.yml`）再加 `-f /opt/aroomo-overrides/prod-shell-core-auth.yml` 直接调 `docker compose`（v0.1.0 的 `compose.sh` 不认叠加文件）；只 `build core`；`up -d --remove-orphans --no-build`（镜像缺了宁可失败，不悄悄造一个旧登录的同名镜像）。日志写「叠加：…；不重建：shell」。
 - **`/opt/aroomo-overrides/prod-shell-core-auth.yml` 和镜像 `aroomo-shell:core-auth-0f1895d` 在不再需要回到 v0.1.0 之前都不能删**（`docker image prune -a` 会删掉没在用的镜像：v0.2.0 上线后这个镜像就没在用了，清理镜像前先确认）。新版本自己的 compose 默认 `core-session`，不需要叠加文件。
+- **打开了独立登录的应用角色以后**（[RLS.md](RLS.md)「改成独立登录」）要回退到 #285 之前的版本（v0.1.0）：**先删 `deploy/.env` 里 `CORE_DB_REQUIRE_APP_ROLE`、`CORE_APP_DB_PASSWORD`、`CORE_DB_APP_ROLE` 三行，再回退。** 旧版 core 不认 `CORE_APP_DB_PASSWORD`，留着 `CORE_DB_APP_ROLE` 会走旧的 SET ROLE、切不过去、起不来（负责人 #289 必改 3）。
 - 文件格式：`.release/compose-extra/<版本>`（标签名，或提交号前 7 位），一行一个叠加文件的绝对路径；`nobuild: 服务名…` 列出不重建的服务；`#` 起是注释。列的文件不存在就拒绝切换。
 
 ### 跨过 0025–0030 回退：先恢复数据库
