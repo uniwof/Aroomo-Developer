@@ -82,6 +82,18 @@ export function withRules(messages: ChatMessage[], rules: string | null): ChatMe
   return [{ role: 'system', content: `【Aroomo 规矩】请遵守下面的规矩：\n${r.slice(0, RULES_MAX)}` }, ...messages];
 }
 
+/**
+ * 这位成员自己的系统提示词（Poke §4 New Member 的 system prompt）：放在开头那几条系统消息（规矩、客户端的）之后。
+ * 没填 = 原样返回。只在交给这位成员的那一次调用里加，不进日志。
+ */
+export function withMemberPrompt(messages: ChatMessage[], m: Pick<Member, 'systemPrompt'> | undefined): ChatMessage[] {
+  const p = m?.systemPrompt?.trim();
+  if (!p) return messages;
+  let i = 0;
+  while (i < messages.length && messages[i]!.role === 'system') i++;
+  return [...messages.slice(0, i), { role: 'system', content: p }, ...messages.slice(i)];
+}
+
 export const NO_LEAD_TEXT =
   '还没有合格的负责人（要能文字对话、上下文 ≥32k、支持工具调用）。可以用「@成员名」直接点名，或在「成员」里让一个合格的模型入职。';
 
@@ -282,6 +294,7 @@ export class ChatService {
     const routable: RoutableMember[] = members.map((m) => ({ id: m.id, name: m.name, aliases: m.aliases, enabled: m.enabled }));
     const leadState = await this.d.lead.get();
     const nameOf = (id: string | null) => members.find((m) => m.id === id)?.name ?? null;
+    const byId = (id: string | null) => members.find((m) => m.id === id);
 
     if (!members.length) {
       return textReply(stream, '还没有可用的成员。请先打开「成员 → Key 与接入」填入一个 Key，再在「成员」里点「入职」，就能对话了。');
@@ -291,7 +304,7 @@ export class ChatService {
     if (typeof req.model === 'string' && req.model.startsWith(MEMBER_MODEL_PREFIX) && req.model !== AUTO_MODEL) {
       const target = resolveMemberModel(req.model, members);
       if (!target) return textReply(stream, `没有这位在职成员（${req.model}）。请在「成员」里确认名字，或改用 aroomo/auto 交给负责人。`);
-      return by(await this.#forward({ ...req, messages: withRules(messages, await this.#rules()) }, target.name, '', '', stream, signal), [{ memberId: target.id, name: target.name }]);
+      return by(await this.#forward({ ...req, messages: withMemberPrompt(withRules(messages, await this.#rules()), target) }, target.name, '', '', stream, signal), [{ memberId: target.id, name: target.name }]);
     }
 
     // 系统任务（起标题、翻译等）：交给负责人，不解析 @、不加提示和署名。
@@ -311,13 +324,13 @@ export class ChatService {
     if (plan.mode === 'delegate') {
       const leadName = nameOf(plan.leadId);
       if (!leadName) return textReply(stream, prefix + NO_LEAD_TEXT);
-      return by(await this.#forward({ ...req, messages: nextMessages }, leadName, prefix, `\n\n— ${leadName}（负责人）`, stream, signal), [{ memberId: plan.leadId!, name: leadName }]);
+      return by(await this.#forward({ ...req, messages: withMemberPrompt(nextMessages, byId(plan.leadId)) }, leadName, prefix, `\n\n— ${leadName}（负责人）`, stream, signal), [{ memberId: plan.leadId!, name: leadName }]);
     }
 
     if (plan.targets.length === 0) return textReply(stream, prefix.trim());
     if (plan.targets.length === 1) {
       const name = nameOf(plan.targets[0]!)!;
-      return by(await this.#forward({ ...req, messages: nextMessages }, name, prefix, `\n\n— ${name}`, stream, signal, true), [{ memberId: plan.targets[0]!, name }]);
+      return by(await this.#forward({ ...req, messages: withMemberPrompt(nextMessages, byId(plan.targets[0]!)) }, name, prefix, `\n\n— ${name}`, stream, signal, true), [{ memberId: plan.targets[0]!, name }]);
     }
 
     // 多人点名：各自独立、并行回答，按点名顺序分段（P0；并排显示需要改 LobeHub 消息组件，见 H5）
@@ -329,7 +342,7 @@ export class ChatService {
         signal.addEventListener('abort', () => ctrl.abort(), { once: true });
         let code: ChatFailureCode = 'gateway_unreachable';
         try {
-          const res = await this.#upstream({ ...req, model: name, stream: false, messages: nextMessages }, ctrl.signal);
+          const res = await this.#upstream({ ...req, model: name, stream: false, messages: withMemberPrompt(nextMessages, byId(id)) }, ctrl.signal);
           if (!res.ok) {
             code = failureCodeOf(res.status);
             throw new Error(`upstream ${res.status}`);

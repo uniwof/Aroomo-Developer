@@ -82,10 +82,11 @@ function MemberRows({ list, onOpen }: { list: Member[]; onOpen: (m: Member) => v
     <>
           {list.map((m) => (
             <button key={m.id} type="button" className="row row-button" onClick={() => onOpen(m)}>
-              <Avatar name={m.name} size="sm" />
+              <Avatar name={m.name} size="sm" glyph={m.avatar} />
               <span className="row-text">
                 <span className="row-label">{m.name}</span>
                 <span className="row-hint">
+                  {m.role ? `${m.role} · ` : ''}
                   {statusText(m)}
                   {m.capabilityTags.length > 0 && ` · ${m.capabilityTags.join('、')}`}
                 </span>
@@ -179,7 +180,7 @@ export function MemberDetail({ member, onChat, onMention, onChanged }: { member:
     <div className="panel">
       {ask.node}
       <div className="profile">
-        <Avatar name={member.name} size="lg" />
+        <Avatar name={member.name} size="lg" glyph={member.avatar} />
         <div>
           <p className="profile-name">{member.name}</p>
           <p className="muted">{statusLine(member)}</p>
@@ -214,6 +215,20 @@ export function MemberDetail({ member, onChat, onMention, onChanged }: { member:
         <p role="alert" className="note note-error">
           {err}
         </p>
+      )}
+      {(member.role || member.systemPrompt) && (
+        <Group title="资料">
+          {member.role && (
+            <Field label="角色">
+              <span>{member.role}</span>
+            </Field>
+          )}
+          {member.systemPrompt && (
+            <Field label="系统提示词">
+              <span className="whitespace-pre-wrap">{member.systemPrompt}</span>
+            </Field>
+          )}
+        </Group>
       )}
       <Group title="能力">
         <Field label="能力标签">

@@ -15,13 +15,13 @@ export function Empty({ text, action }: { text: string; action?: ReactNode }) {
 }
 
 /** 弹窗底部：取消 + 主按钮 */
-export function DialogFoot({ onCancel, ok, busy }: { onCancel: () => void; ok: string; busy?: boolean }) {
+export function DialogFoot({ onCancel, ok, busy, disabled }: { onCancel: () => void; ok: string; busy?: boolean; disabled?: boolean }) {
   return (
     <div className="dlg-foot">
       <button type="button" className="btn btn-quiet" onClick={onCancel}>
         取消
       </button>
-      <button type="submit" className="btn btn-primary" disabled={busy}>
+      <button type="submit" className="btn btn-primary" disabled={busy || disabled}>
         {busy ? '正在保存…' : ok}
       </button>
     </div>

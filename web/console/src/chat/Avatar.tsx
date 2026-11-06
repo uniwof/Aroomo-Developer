@@ -58,12 +58,13 @@ export function Shape({ name }: { name: string }) {
   return <Figure tone={toneOf(name)} />;
 }
 
-export function Avatar({ name, kind = 'member', size = 'md', off = false }: { name: string; kind?: AvatarKind; size?: AvatarSize; off?: boolean }) {
+/** glyph：成员自己挑的头像（1–2 个字或表情，Poke §4）；有就用和「我」一样的文字头像显示，不加新样式 */
+export function Avatar({ name, kind = 'member', size = 'md', off = false, glyph }: { name: string; kind?: AvatarKind; size?: AvatarSize; off?: boolean; glyph?: string | null | undefined }) {
   const cls = `av av-${size}${off ? ' av-off' : ''}`;
-  if (kind === 'user')
+  if (kind === 'user' || (kind === 'member' && glyph))
     return (
       <span className={`${cls} av-user`} aria-hidden="true">
-        {Array.from(name.trim())[0] ?? '我'}
+        {kind === 'member' ? glyph : (Array.from(name.trim())[0] ?? '我')}
       </span>
     );
   if (kind === 'group')

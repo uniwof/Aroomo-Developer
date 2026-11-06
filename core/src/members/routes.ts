@@ -35,6 +35,9 @@ export function memberJson(m: Member, online?: boolean, activity?: MemberActivit
     pinned: m.pinned,
     sortOrder: m.sortOrder,
     status: m.status,
+    role: m.role ?? null,
+    systemPrompt: m.systemPrompt ?? null,
+    avatar: m.avatar ?? null,
     modelCaps: m.modelCaps ? { mode: m.modelCaps.mode, maxInputTokens: m.modelCaps.maxInputTokens, supportsTools: m.modelCaps.supportsTools } : null,
     leadEligible: lead.eligible,
     leadIneligibleReason: lead.reason,
@@ -55,6 +58,10 @@ const editable = {
   aliases: { type: 'array', maxItems: 50, items: { type: 'string', maxLength: 200 } },
   capabilityTags: { type: 'array', maxItems: 20, items: { type: 'string', enum: [...CAPABILITY_TAGS] } },
   enabled: { type: 'boolean' },
+  // Poke §4：角色、系统提示词、头像（null = 清掉；长度在服务里按「字」再校验一次）
+  role: { type: ['string', 'null'], maxLength: 200 },
+  systemPrompt: { type: ['string', 'null'], maxLength: 8000 },
+  avatar: { type: ['string', 'null'], maxLength: 32 },
 } as const;
 
 export interface MemberRouteHooks {

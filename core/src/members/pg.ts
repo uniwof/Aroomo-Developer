@@ -14,6 +14,9 @@ interface Row {
   sort_order: number;
   status: string;
   model_caps: ModelCaps | string | null;
+  role: string | null;
+  system_prompt: string | null;
+  avatar: string | null;
   deleted_at: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
@@ -29,6 +32,9 @@ const toMember = (r: Row): Member => ({
   sortOrder: Number(r.sort_order),
   status: (r.status === 'candidate' ? 'candidate' : 'active') as MemberStatus,
   modelCaps: typeof r.model_caps === 'string' ? (JSON.parse(r.model_caps) as ModelCaps) : (r.model_caps ?? null),
+  role: r.role ?? null,
+  systemPrompt: r.system_prompt ?? null,
+  avatar: r.avatar ?? null,
   deletedAt: toDateOrNull(r.deleted_at),
   createdAt: toDate(r.created_at),
   updatedAt: toDate(r.updated_at),
@@ -46,7 +52,7 @@ function mapUnique(err: unknown): never {
   throw err;
 }
 
-const COLS = 'id, name, aliases, capability_tags, enabled, pinned, sort_order, status, model_caps, deleted_at, created_at, updated_at';
+const COLS = 'id, name, aliases, capability_tags, enabled, pinned, sort_order, status, model_caps, deleted_at, created_at, updated_at, role, system_prompt, avatar';
 
 export class PgMemberStore implements MemberStore {
   /** 本用户范围的连接：每个事务开头设置 app.user_id（D206 RLS） */
@@ -79,8 +85,8 @@ export class PgMemberStore implements MemberStore {
   async insert(m: Member): Promise<void> {
     try {
       await this.db.query(
-        `INSERT INTO members (user_id, ${COLS}) VALUES ($13,$1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12)`,
-        [m.id, m.name, m.aliases, m.capabilityTags, m.enabled, m.pinned, m.sortOrder, m.status, capsJson(m.modelCaps), m.deletedAt, m.createdAt, m.updatedAt, this.userId],
+        `INSERT INTO members (user_id, ${COLS}) VALUES ($13,$1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$14,$15,$16)`,
+        [m.id, m.name, m.aliases, m.capabilityTags, m.enabled, m.pinned, m.sortOrder, m.status, capsJson(m.modelCaps), m.deletedAt, m.createdAt, m.updatedAt, this.userId, m.role ?? null, m.systemPrompt ?? null, m.avatar ?? null],
       );
     } catch (err) {
       mapUnique(err);
@@ -89,8 +95,8 @@ export class PgMemberStore implements MemberStore {
   async update(m: Member): Promise<void> {
     try {
       await this.db.query(
-        `UPDATE members SET name=$2, aliases=$3, capability_tags=$4, enabled=$5, pinned=$6, sort_order=$7, status=$8, model_caps=$9::jsonb, deleted_at=$10, updated_at=$11 WHERE id=$1 AND user_id=$12`,
-        [m.id, m.name, m.aliases, m.capabilityTags, m.enabled, m.pinned, m.sortOrder, m.status, capsJson(m.modelCaps), m.deletedAt, m.updatedAt, this.userId],
+        `UPDATE members SET name=$2, aliases=$3, capability_tags=$4, enabled=$5, pinned=$6, sort_order=$7, status=$8, model_caps=$9::jsonb, deleted_at=$10, updated_at=$11, role=$13, system_prompt=$14, avatar=$15 WHERE id=$1 AND user_id=$12`,
+        [m.id, m.name, m.aliases, m.capabilityTags, m.enabled, m.pinned, m.sortOrder, m.status, capsJson(m.modelCaps), m.deletedAt, m.updatedAt, this.userId, m.role ?? null, m.systemPrompt ?? null, m.avatar ?? null],
       );
     } catch (err) {
       mapUnique(err);

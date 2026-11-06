@@ -207,6 +207,10 @@ export interface Member {
   online?: boolean;
   /** 此刻状态（Poke §5，Core 只从真实信号推出）：没有这个字段 = 老 Core，照旧按 online 显示 */
   activity?: MemberActivity;
+  /** Poke §4（老 Core 没有这几个字段） */
+  role?: string | null;
+  systemPrompt?: string | null;
+  avatar?: string | null;
 }
 
 export interface MemberActivity {
