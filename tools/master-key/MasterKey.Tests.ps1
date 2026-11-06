@@ -33,6 +33,18 @@ try {
     $notReady = [pscustomobject]@{ DriveType = 'Removable'; IsReady = $false; RootDirectory = [pscustomobject]@{ FullName = 'D:\' } }
     Check '插了 U 盘 → 默认打开 U 盘' ((Get-AroomoKeyDir -Drives @($fixed, $notReady, $usb)) -eq 'E:\')
 
+    # 2b. 双击运行（有界面）且没插 U 盘：先停，不下载 age、不生成、不写文件
+    $script:downloaded = $false
+    function Invoke-WebRequest { $script:downloaded = $true }
+    $realKeyDir = ${function:Get-AroomoKeyDir}
+    function Get-AroomoKeyDir { & $realKeyDir -Drives @() }
+    $env:AROOMO_MK_NONINTERACTIVE = $null
+    $rc = Invoke-AroomoMasterKeyTool 6>$null
+    Check '有界面、没 U 盘 → 退出码 1' ($rc -eq 1)
+    Check '有界面、没 U 盘 → 没下载 age（还没开始生成）' (-not $script:downloaded)
+    Set-Item function:Get-AroomoKeyDir $realKeyDir
+    Remove-Item function:Invoke-WebRequest
+
     # 3. OneDrive 路径判定（$env:OneDrive / OneDriveConsumer / OneDriveCommercial，不分大小写）
     $env:OneDrive = $od; $env:OneDriveConsumer = $null; $env:OneDriveCommercial = $null
     Check 'OneDrive 下的桌面算' (Test-AroomoOneDrivePath (Join-Path $od 'Desktop\aroomo-master-key.txt'))
