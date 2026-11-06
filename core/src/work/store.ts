@@ -9,10 +9,15 @@ export interface ProjectPatch {
   status?: ProjectStatus;
   sources?: WorkSource[];
 }
-/** 时间线游标：上一页最后一条的（排序时间, id） */
+/** 时间线游标：上一页最后一条的（排序时间, 写入先后） */
 export interface Cursor {
   at: Date;
-  id: string;
+  seq: number;
+}
+/** 同步写入的结果：新加几条、几条从预发布转成已发布 */
+export interface AddResult {
+  added: number;
+  changed: number;
 }
 export type CreateResult = { ok: true; project: WorkProject } | { ok: false; reason: 'name_taken' | 'too_many' };
 
@@ -24,8 +29,12 @@ export interface WorkStore {
   updateProject(userId: string, id: string, patch: ProjectPatch, now: Date): Promise<WorkProject | null | 'name_taken'>;
   /** 占用同步时间：上次同步早于 notAfter 才写 now 并返回 null；否则返回上次同步时间（限频） */
   claimSync(userId: string, id: string, now: Date, notAfter: Date): Promise<Date | null>;
-  /** 按 (项目, 来源类型, 来源编号) 幂等插入；返回新加了几条 */
-  addVersions(userId: string, projectId: string, versions: VersionInput[], now: Date): Promise<number>;
+  /**
+   * 按 (项目, 来源类型, 来源编号) 幂等插入。versions 按来源给的先后（新在前），倒着插，最新的写入号最大。
+   * 已有的只做一件事：来源从预发布转成正式发布时把 source_state 改成 published（库层触发器只放行这一种改动）。
+   */
+  addVersions(userId: string, projectId: string, versions: VersionInput[], now: Date): Promise<AddResult>;
+  /** 时间线（新在前）。同一项目里已经有同名 release 的 tag 行不列（负责人 #323 必改 3），数据照留 */
   listVersions(userId: string, projectId: string, limit: number, after?: Cursor): Promise<WorkVersion[]>;
   getVersion(userId: string, id: string): Promise<WorkVersion | null>;
   /** 每个项目最新一条（排序同时间线） */
@@ -33,13 +42,17 @@ export interface WorkStore {
 }
 
 export const sortAt = (v: Pick<WorkVersion, 'sourceAt' | 'syncedAt'>): Date => v.sourceAt ?? v.syncedAt;
-/** 新在前：排序时间倒序，再按 id 倒序 */
-const newerFirst = (a: WorkVersion, b: WorkVersion) => sortAt(b).getTime() - sortAt(a).getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
-const before = (v: WorkVersion, c: Cursor) => sortAt(v).getTime() < c.at.getTime() || (sortAt(v).getTime() === c.at.getTime() && v.id < c.id);
+/** 新在前：排序时间倒序，再按写入先后倒序 */
+const newerFirst = (a: WorkVersion, b: WorkVersion) => sortAt(b).getTime() - sortAt(a).getTime() || b.seq - a.seq;
+const before = (v: WorkVersion, c: Cursor) => sortAt(v).getTime() < c.at.getTime() || (sortAt(v).getTime() === c.at.getTime() && v.seq < c.seq);
+/** 已经有同名 release 的 tag：时间线、最新里不列 */
+const shadowed = (all: WorkVersion[], v: WorkVersion) =>
+  v.sourceType === 'github_tag' && all.some((r) => r.projectId === v.projectId && r.sourceType === 'github_release' && r.label === v.label);
 
 export class MemoryWorkStore implements WorkStore {
   readonly #projects: (WorkProject & { deletedAt: Date | null })[] = [];
   readonly #versions: WorkVersion[] = [];
+  #seq = 0;
   #live(userId: string) {
     return this.#projects.filter((p) => p.userId === userId && !p.deletedAt);
   }
@@ -74,18 +87,25 @@ export class MemoryWorkStore implements WorkStore {
     p.lastSyncAt = now;
     return null;
   }
-  async addVersions(userId: string, projectId: string, versions: VersionInput[], now: Date): Promise<number> {
-    let n = 0;
-    for (const v of versions) {
-      if (this.#versions.some((x) => x.projectId === projectId && x.sourceType === v.sourceType && x.sourceRef === v.sourceRef)) continue;
-      this.#versions.push(structuredClone({ ...v, id: randomUUID(), userId, projectId, syncedAt: now }));
-      n++;
+  async addVersions(userId: string, projectId: string, versions: VersionInput[], now: Date): Promise<AddResult> {
+    const out = { added: 0, changed: 0 };
+    for (const v of [...versions].reverse()) {
+      const had = this.#versions.find((x) => x.projectId === projectId && x.sourceType === v.sourceType && x.sourceRef === v.sourceRef);
+      if (had) {
+        if (had.sourceState === 'prerelease' && v.sourceState === 'published') {
+          had.sourceState = 'published';
+          out.changed++;
+        }
+        continue;
+      }
+      this.#versions.push(structuredClone({ ...v, id: randomUUID(), userId, projectId, syncedAt: now, seq: ++this.#seq }));
+      out.added++;
     }
-    return n;
+    return out;
   }
   async listVersions(userId: string, projectId: string, limit: number, after?: Cursor): Promise<WorkVersion[]> {
     return this.#versions
-      .filter((v) => v.userId === userId && v.projectId === projectId && (!after || before(v, after)))
+      .filter((v) => v.userId === userId && v.projectId === projectId && !shadowed(this.#versions, v) && (!after || before(v, after)))
       .sort(newerFirst)
       .slice(0, limit)
       .map((v) => structuredClone(v));
@@ -96,7 +116,7 @@ export class MemoryWorkStore implements WorkStore {
   }
   async latestByProject(userId: string): Promise<Map<string, WorkVersion>> {
     const out = new Map<string, WorkVersion>();
-    for (const v of this.#versions.filter((x) => x.userId === userId).sort(newerFirst)) if (!out.has(v.projectId)) out.set(v.projectId, structuredClone(v));
+    for (const v of this.#versions.filter((x) => x.userId === userId && !shadowed(this.#versions, x)).sort(newerFirst)) if (!out.has(v.projectId)) out.set(v.projectId, structuredClone(v));
     return out;
   }
 }
@@ -128,10 +148,14 @@ interface VersionRow {
   source_state: WorkVersion['sourceState'];
   source_at: Date | string | null;
   synced_at: Date | string;
+  seq: string | number;
 }
 const d = (v: Date | string | null): Date | null => (v === null ? null : new Date(v));
 const P_COLS = 'id, user_id, name, status, sources, last_sync_at, created_at, updated_at';
-const V_COLS = 'id, user_id, project_id, source_type, source_ref, label, title, actor, artifacts, source_state, source_at, synced_at';
+const V_COLS = 'id, user_id, project_id, source_type, source_ref, label, title, actor, artifacts, source_state, source_at, synced_at, seq';
+/** 已经有同名 release 的 tag 行不列（负责人 #323 必改 3）；v 是外层 work_versions 的别名 */
+const NOT_SHADOWED = `NOT (v.source_type = 'github_tag' AND EXISTS (
+  SELECT 1 FROM work_versions r WHERE r.user_id = v.user_id AND r.project_id = v.project_id AND r.source_type = 'github_release' AND r.label = v.label))`;
 const toProject = (r: ProjectRow): WorkProject => ({
   id: r.id,
   userId: r.user_id,
@@ -155,6 +179,7 @@ const toVersion = (r: VersionRow): WorkVersion => ({
   sourceState: r.source_state,
   sourceAt: d(r.source_at),
   syncedAt: new Date(r.synced_at),
+  seq: Number(r.seq),
 });
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUniqueViolation = (e: unknown) => (e as { code?: string })?.code === '23505';
@@ -218,19 +243,29 @@ export class PgWorkStore implements WorkStore {
       return null;
     });
   }
-  async addVersions(userId: string, projectId: string, versions: VersionInput[], now: Date): Promise<number> {
-    if (versions.length === 0) return 0;
+  async addVersions(userId: string, projectId: string, versions: VersionInput[], now: Date): Promise<AddResult> {
+    if (versions.length === 0) return { added: 0, changed: 0 };
     return userScoped(this.db, userId).tx(async (q) => {
-      let n = 0;
-      for (const v of versions) {
+      const out = { added: 0, changed: 0 };
+      for (const v of [...versions].reverse()) {
         const { rows } = await q.query<{ id: string }>(
           `INSERT INTO work_versions (id, user_id, project_id, source_type, source_ref, label, title, actor, artifacts, source_state, source_at, synced_at)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (project_id, source_type, source_ref) DO NOTHING RETURNING id`,
           [randomUUID(), userId, projectId, v.sourceType, v.sourceRef, v.label, v.title, v.actor ? JSON.stringify(v.actor) : null, JSON.stringify(v.artifacts), v.sourceState, v.sourceAt, now],
         );
-        n += rows.length;
+        if (rows.length) {
+          out.added++;
+          continue;
+        }
+        if (v.sourceState !== 'published') continue;
+        const up = await q.query<{ id: string }>(
+          `UPDATE work_versions SET source_state = 'published'
+            WHERE user_id = $1 AND project_id = $2 AND source_type = $3 AND source_ref = $4 AND source_state = 'prerelease' RETURNING id`,
+          [userId, projectId, v.sourceType, v.sourceRef],
+        );
+        out.changed += up.rows.length;
       }
-      return n;
+      return out;
     });
   }
   async listVersions(userId: string, projectId: string, limit: number, after?: Cursor): Promise<WorkVersion[]> {
@@ -238,12 +273,12 @@ export class PgWorkStore implements WorkStore {
     const params: unknown[] = [userId, projectId, limit];
     let cond = '';
     if (after) {
-      params.push(after.at, after.id);
-      cond = 'AND (coalesce(source_at, synced_at), id) < ($4, $5::uuid)';
+      params.push(after.at, after.seq);
+      cond = 'AND (coalesce(v.source_at, v.synced_at), v.seq) < ($4, $5::bigint)';
     }
     const { rows } = await userScoped(this.db, userId).query<VersionRow>(
-      `SELECT ${V_COLS} FROM work_versions WHERE user_id = $1 AND project_id = $2 ${cond}
-        ORDER BY coalesce(source_at, synced_at) DESC, id DESC LIMIT $3`,
+      `SELECT ${V_COLS} FROM work_versions v WHERE v.user_id = $1 AND v.project_id = $2 AND ${NOT_SHADOWED} ${cond}
+        ORDER BY coalesce(v.source_at, v.synced_at) DESC, v.seq DESC LIMIT $3`,
       params,
     );
     return rows.map(toVersion);
@@ -255,8 +290,8 @@ export class PgWorkStore implements WorkStore {
   }
   async latestByProject(userId: string): Promise<Map<string, WorkVersion>> {
     const { rows } = await userScoped(this.db, userId).query<VersionRow>(
-      `SELECT DISTINCT ON (project_id) ${V_COLS} FROM work_versions WHERE user_id = $1
-        ORDER BY project_id, coalesce(source_at, synced_at) DESC, id DESC`,
+      `SELECT DISTINCT ON (v.project_id) ${V_COLS} FROM work_versions v WHERE v.user_id = $1 AND ${NOT_SHADOWED}
+        ORDER BY v.project_id, coalesce(v.source_at, v.synced_at) DESC, v.seq DESC`,
       [userId],
     );
     return new Map(rows.map((r) => [r.project_id, toVersion(r)]));

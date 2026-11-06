@@ -41,13 +41,21 @@ CREATE TABLE work_versions (
   -- 来源给的时间（release 的 published_at）；tag 没有时间 = NULL，不拿提交时间冒充
   source_at    timestamptz,
   synced_at    timestamptz NOT NULL,
+  -- 写入先后（负责人 #323 必改 1）：同一次同步按 GitHub 给的先后倒着插，最新的号最大；时间相同（tag 没有时间）时按它排，不按随机 uuid
+  seq          bigint      GENERATED ALWAYS AS IDENTITY,
   UNIQUE (project_id, source_type, source_ref),
   FOREIGN KEY (project_id, user_id) REFERENCES work_projects (id, user_id)
 );
-CREATE INDEX work_versions_timeline_idx ON work_versions (user_id, project_id, (coalesce(source_at, synced_at)) DESC, id DESC);
--- 不可变快照：内容写入后不能改（来源后来改了也不覆盖，下一次同步只加新版本）
+CREATE INDEX work_versions_timeline_idx ON work_versions (user_id, project_id, (coalesce(source_at, synced_at)) DESC, seq DESC);
+-- 不可变快照：内容写入后不能改（来源后来改了也不覆盖，下一次同步只加新版本）。
+-- 唯一例外（负责人 #323 必改 2）：GitHub 把预发布转成正式发布时，source_state 只许 prerelease → published，别的列一个都不能动，也不能往回改
 CREATE FUNCTION work_versions_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+  IF OLD.source_state = 'prerelease' AND NEW.source_state = 'published'
+     AND (NEW.id, NEW.user_id, NEW.project_id, NEW.source_type, NEW.source_ref, NEW.label, NEW.title, NEW.actor, NEW.artifacts, NEW.source_at, NEW.synced_at, NEW.seq)
+         IS NOT DISTINCT FROM (OLD.id, OLD.user_id, OLD.project_id, OLD.source_type, OLD.source_ref, OLD.label, OLD.title, OLD.actor, OLD.artifacts, OLD.source_at, OLD.synced_at, OLD.seq) THEN
+    RETURN NEW;
+  END IF;
   RAISE EXCEPTION 'work_versions 是不可变快照，不能修改';
 END $$;
 CREATE TRIGGER work_versions_no_update BEFORE UPDATE ON work_versions FOR EACH ROW EXECUTE FUNCTION work_versions_immutable();

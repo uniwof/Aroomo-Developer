@@ -7,10 +7,12 @@ import { badRequest, conflict, HttpError, notFound } from '../http/errors.js';
 import { fetchGithubVersions, validRepo } from './github.js';
 import type { Cursor, ProjectPatch, WorkStore } from './store.js';
 import { sortAt } from './store.js';
-import { MAX_PROJECTS, MAX_SOURCES, PROJECT_STATUSES, SYNC_INTERVAL_MS, VERSION_PAGE, type ProjectStatus, type WorkProject, type WorkSource, type WorkVersion } from './types.js';
+import { MAX_PROJECTS, MAX_SOURCES, PROJECT_STATUSES, SYNC_INTERVAL_MS, SYNC_PER_HOUR, VERSION_PAGE, type ProjectStatus, type WorkProject, type WorkSource, type WorkVersion } from './types.js';
 
 export interface SyncResult {
   added: number;
+  /** 已有的版本里，来源从预发布转成正式发布的条数 */
+  changed: number;
   unchanged: number;
   failed: { source: string; reason: string; retryAt?: string }[];
 }
@@ -34,19 +36,21 @@ export function normalizeSources(raw: unknown): WorkSource[] {
   return out;
 }
 
-const encodeCursor = (v: WorkVersion) => Buffer.from(`${sortAt(v).toISOString()}|${v.id}`).toString('base64url');
+const encodeCursor = (v: WorkVersion) => Buffer.from(`${sortAt(v).toISOString()}|${v.seq}`).toString('base64url');
 function decodeCursor(raw: string | undefined): Cursor | undefined {
   if (!raw) return undefined;
   // 只认自己发出去的样子：规范 base64url、正好两段（负责人 #323 建议）
   const parts = Buffer.from(raw, 'base64url').toString().split('|');
-  const [iso, id] = parts;
+  const [iso, seq] = parts;
   const at = new Date(iso ?? '');
-  if (parts.length !== 2 || Buffer.from(raw, 'base64url').toString('base64url') !== raw || !id || Number.isNaN(at.getTime()) || !/^[0-9a-f-]{36}$/i.test(id)) throw badRequest('翻页参数不对');
-  return { at, id };
+  if (parts.length !== 2 || Buffer.from(raw, 'base64url').toString('base64url') !== raw || !seq || Number.isNaN(at.getTime()) || !/^\d{1,15}$/.test(seq)) throw badRequest('翻页参数不对');
+  return { at, seq: Number(seq) };
 }
 
 export class WorkService {
   readonly #running = new Set<string>();
+  /** 每个账号最近一小时的同步时间（负责人 #323 建议）。shortcut: 只记在进程里，重启清零；真要跨进程再落库 */
+  readonly #recent = new Map<string, number[]>();
   constructor(
     private readonly store: WorkStore,
     private readonly now: () => Date,
@@ -93,25 +97,34 @@ export class WorkService {
     const key = `${userId}:${id}`;
     if (this.#running.has(key)) throw conflict('这个项目正在同步，等它做完', 'SYNC_RUNNING');
     const now = this.now();
+    const hourAgo = now.getTime() - 60 * 60 * 1000;
+    const recent = (this.#recent.get(userId) ?? []).filter((t) => t > hourAgo);
+    if (recent.length >= SYNC_PER_HOUR) {
+      const wait = Math.max(1, Math.ceil((recent[0]! - hourAgo) / 1000));
+      throw new HttpError(429, 'SYNC_HOURLY_LIMIT', `每小时最多同步 ${SYNC_PER_HOUR} 次，${Math.ceil(wait / 60)} 分钟后再试`, { retryAfterSeconds: wait });
+    }
     const last = await this.store.claimSync(userId, id, now, new Date(now.getTime() - SYNC_INTERVAL_MS));
     if (last) {
       const wait = Math.max(1, Math.ceil((last.getTime() + SYNC_INTERVAL_MS - now.getTime()) / 1000));
       throw new HttpError(429, 'SYNC_TOO_SOON', `刚同步过，${Math.ceil(wait / 60)} 分钟后再试`, { retryAfterSeconds: wait });
     }
+    recent.push(now.getTime());
+    this.#recent.set(userId, recent);
     this.#running.add(key);
     try {
-      const out: SyncResult = { added: 0, unchanged: 0, failed: [] };
+      const out: SyncResult = { added: 0, changed: 0, unchanged: 0, failed: [] };
       for (const s of project.sources) {
         const r = await fetchGithubVersions(this.fetchImpl, s.repo);
         if (!r.ok) {
           out.failed.push({ source: s.repo, reason: r.reason, ...(r.retryAt ? { retryAt: r.retryAt.toISOString() } : {}) });
           continue;
         }
-        const added = await this.store.addVersions(userId, id, r.versions, now);
+        const { added, changed } = await this.store.addVersions(userId, id, r.versions, now);
         out.added += added;
-        out.unchanged += r.versions.length - added;
+        out.changed += changed;
+        out.unchanged += r.versions.length - added - changed;
       }
-      await audit('work.sync', { type: 'work_project', id }, out.failed.length ? 'failed' : 'ok', `added=${out.added} unchanged=${out.unchanged} failed=${out.failed.length}`);
+      await audit('work.sync', { type: 'work_project', id }, out.failed.length ? 'failed' : 'ok', `added=${out.added} changed=${out.changed} unchanged=${out.unchanged} failed=${out.failed.length}`);
       return out;
     } finally {
       this.#running.delete(key);

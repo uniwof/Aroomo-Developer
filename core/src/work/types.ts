@@ -54,6 +54,10 @@ export interface WorkVersion extends VersionInput {
   userId: string;
   projectId: string;
   syncedAt: Date;
+  /** 写入先后（库里自增）：排序时间相同时按它，新的大 */
+  seq: number;
 }
 
 export const VERSION_PAGE = 30;
+/** 每个账号每小时最多同步几次（负责人 #323 建议：一次同步最多 5 来源 × 6 页 = 30 次请求，不带令牌每小时 60 次按出口 IP 算） */
+export const SYNC_PER_HOUR = 3;
