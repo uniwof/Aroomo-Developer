@@ -10,17 +10,18 @@
  * - savedChats      会话存库：对话列表 / 消息从 Core 的 /api/conversations 读，发消息时由 Core 存；Core 拿不到时退回本机
  * - assistants      会话栏「助手」列表、新建助手、助手详情（固定会话 + 运行记录 + 立即运行 + 暂停继续）——等 /api/assistants
  *
- * integrate/stage2（2026-11-05）：Core 助手接口已并进这条分支，除 quickReplies（Core 还没有成员反问的数据块）外全部打开。
- * 只在这条分支打开；进 spike / dev 之前由负责人审（11-08）。
+ * 阶段 1.5（2026-11-06，负责人裁定 B）：生产只给所有者用，阶段 2/3 她还没验收，这 6 项发布前改回 false
+ * （定时执行器在生产关着，露出助手会显示永远不会跑的「下次运行」）。Core 路由不动、只给所有者。
+ * 阶段 2/3 验收后，测一项开一项。
  */
 export const FLAGS = {
-  taskCards: true,
+  taskCards: false,
   quickReplies: false,
-  convFilter: true,
-  schedulePage: true,
-  assistantDraft: true,
-  assistants: true,
-  savedChats: true,
+  convFilter: false,
+  schedulePage: false,
+  assistantDraft: false,
+  assistants: false,
+  savedChats: false,
   skeletonShimmer: false,
 } as const;
 

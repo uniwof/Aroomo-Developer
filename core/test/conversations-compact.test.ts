@@ -12,7 +12,8 @@ import type { Member } from '../src/members/types.js';
 import { hashPassword } from '../src/users/password.js';
 import { assistantEnv, type AssistantEnv, LEAD } from './helpers/assistants.js';
 import type { CoreDeps } from '../src/deps.js';
-import { dbTargets } from './helpers/db.js';
+import { dbTargets, OWNER_TOKEN } from './helpers/db.js';
+import { loadConfig } from '../src/config.js';
 import { fakePw, twoAccountEnvs } from './helpers/two-accounts.js';
 
 type Json = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -221,7 +222,12 @@ describe('freeSummarizer：只用免费成员', () => {
   });
 });
 
-describe.each(twoAccountEnvs)('/api/chat/stream 长会话自动压缩 [$name]', (env) => {
+const compactCases = twoAccountEnvs.flatMap((env) => [
+  { ...env, on: true },
+  { ...env, name: `${env.name}，COMPACT_ENABLED 不写`, on: false },
+]);
+
+describe.each(compactCases)('/api/chat/stream 长会话自动压缩 [$name]', (env) => {
   let e: AssistantEnv;
   let cookie = '';
   const OWNER_ACCOUNT_ID = '4e000000-0000-4000-8000-00000000c019';
@@ -232,7 +238,7 @@ describe.each(twoAccountEnvs)('/api/chat/stream 长会话自动压缩 [$name]', 
       const t = now();
       await deps.users.insertUser({ id: OWNER_ACCOUNT_ID, email: 'owner-x19@example.test', displayName: '宝宝', role: 'admin', status: 'active', passwordHash: await hashPassword(pw), createdAt: t, updatedAt: t });
     };
-    e = await assistantEnv(env, { seed, extraEnv: { CORE_OWNER_ACCOUNT_ID: OWNER_ACCOUNT_ID, CORE_CHAT_TOKEN: 'placeholder-chat-token-0123456789abcdefgh' } });
+    e = await assistantEnv(env, { seed, extraEnv: { CORE_OWNER_ACCOUNT_ID: OWNER_ACCOUNT_ID, CORE_CHAT_TOKEN: 'placeholder-chat-token-0123456789abcdefgh', ...(env.on ? { COMPACT_ENABLED: 'true' } : {}) } });
     const at = e.clock.now();
     const r = await e.app.inject({ method: 'POST', url: '/auth/login', payload: { email: 'owner-x19@example.test', password: pw, cookie: true } });
     cookie = String(r.headers['set-cookie']).split(';')[0]!;
@@ -242,7 +248,7 @@ describe.each(twoAccountEnvs)('/api/chat/stream 长会话自动压缩 [$name]', 
   afterAll(async () => e.closeAll());
   const call = (method: 'GET' | 'POST', url: string, payload?: object) => e.app.inject({ method, url, headers: { cookie, 'x-aroomo-request': '1' }, ...(payload ? { payload } : {}) });
 
-  it('导入一段 3 万字的会话 → 下一句前用免费成员压缩：流里有 data-aroomo-compacted，会话里多一行灰字，原文一条不少', async () => {
+  it.runIf(env.on)('导入一段 3 万字的会话 → 下一句前用免费成员压缩：流里有 data-aroomo-compacted，会话里多一行灰字，原文一条不少', async () => {
     const id = '22222222-2222-4222-8222-0000000000c1';
     const base = e.clock.now().getTime() - 3_600_000;
     const messages = Array.from({ length: 30 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `${i}-${'长'.repeat(1000)}`, at: base + i * 1000 }));
@@ -263,5 +269,30 @@ describe.each(twoAccountEnvs)('/api/chat/stream 长会话自动压缩 [$name]', 
     expect(sys.summary.text).toBeUndefined(); // 摘要正文不出 Core
     // 搜索不会搜到灰字
     expect((await call('GET', `/api/search?q=${encodeURIComponent('整理成摘要')}`)).json().results).toEqual([]);
+  });
+  // 阶段 1.5 负责人裁定 B：COMPACT_ENABLED 不写 = 不压缩、不调摘要模型
+  it.runIf(!env.on)('COMPACT_ENABLED 不写：同一段 3 万字会话不压缩，只调一次模型（回复），没有灰字', async () => {
+    const id = '22222222-2222-4222-8222-0000000000c2';
+    const base = e.clock.now().getTime() - 3_600_000;
+    const messages = Array.from({ length: 30 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `${i}-${'长'.repeat(1000)}`, at: base + i * 1000 }));
+    const imp = await call('POST', '/api/conversations/import', { conversations: [{ id, title: '很长', messages }] });
+    expect(imp.json(), imp.body).toMatchObject({ imported: 1 });
+    e.gw.calls.length = 0;
+    const r = await call('POST', '/api/chat/stream', { conversationId: id, messages: [{ role: 'user', content: '接着说' }] });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.body).not.toContain('data-aroomo-compacted');
+    expect(e.gw.calls).toEqual([LEAD.name]); // 只有回复，没有摘要调用
+    const m = (await call('GET', `/api/conversations/${id}/messages?limit=200`)).json() as Json;
+    expect(m.messages.filter((x: Json) => x.role === 'system')).toEqual([]);
+    expect(m.messages).toHaveLength(32);
+  });
+});
+
+describe('总开关 COMPACT_ENABLED（阶段 1.5 负责人裁定 B）', () => {
+  const base = { CORE_LOG_LEVEL: 'silent', CORE_OWNER_TOKEN: OWNER_TOKEN };
+  it('不写 = 关；只有 true 才开', () => {
+    expect(loadConfig(base).compactEnabled).toBe(false);
+    expect(loadConfig({ ...base, COMPACT_ENABLED: 'yes' }).compactEnabled).toBe(false);
+    expect(loadConfig({ ...base, COMPACT_ENABLED: 'TRUE' }).compactEnabled).toBe(true);
   });
 });

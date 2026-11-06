@@ -40,6 +40,8 @@ export interface CoreConfig {
   jobs: boolean;
   /** 助手定时执行器总开关（ASSISTANT_SCHEDULER_ENABLED=true 才开；默认关，关着时「立即运行」照样能用） */
   assistantSchedulerEnabled: boolean;
+  /** X-19 长会话自动压缩开关（COMPACT_ENABLED=true 才开；默认关：不压缩、不调摘要模型。阶段 1.5 负责人裁定 B） */
+  compactEnabled: boolean;
   /** 操作员令牌 HMAC 用的服务端密钥；未设置时操作员令牌不可用 */
   tokenSecret: string | undefined;
   /** 保险箱信封加密的主密钥（32 字节 base64）；未设置时保险箱接口 503。只在服务器 .env */
@@ -199,6 +201,7 @@ export function loadConfig(env: Env = process.env): CoreConfig {
     chatToken,
     jobs: (str(env, 'CORE_JOBS') ?? 'on') !== 'off',
     assistantSchedulerEnabled: (str(env, 'ASSISTANT_SCHEDULER_ENABLED') ?? '').toLowerCase() === 'true',
+    compactEnabled: (str(env, 'COMPACT_ENABLED') ?? '').toLowerCase() === 'true',
     tokenSecret,
     vaultKey,
     cfAccessTeamDomain,
@@ -231,6 +234,7 @@ export function toSafeJSON(cfg: CoreConfig): Record<string, unknown> {
     cfAccessAud: cfg.cfAccessAud ? '(set)' : '(unset)',
     accessReauth: cfg.accessReauth,
     assistantSchedulerEnabled: cfg.assistantSchedulerEnabled,
+    compactEnabled: cfg.compactEnabled,
     accessReauthMaxAgeS: cfg.accessReauthMaxAgeS,
     pushEnabled: cfg.push !== null,
     vapidPrivateKey: cfg.push ? '(set)' : '(unset)',
