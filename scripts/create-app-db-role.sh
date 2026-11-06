@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 # D213 第 13 项 / 负责人阶段 3 硬条件：把 aroomo_core_app 变成独立可登录的应用角色，并把口令写进 deploy/.env。
 #
-#   scripts/create-app-db-role.sh            # 在服务器的仓库目录里跑（staging 或生产各一次；可重复跑）
+#   scripts/create-app-db-role.sh            # 生产：在服务器仓库目录（/opt/aroomo）里跑；可重复跑
+#   scripts/create-app-db-role.sh --staging  # staging：在 /opt/aroomo-staging 里跑（也可 AROOMO_STAGING=1）
+#     staging 和 deploy/staging/deploy-staging.sh 用同一组 compose 参数（-p aroomo-staging + staging 覆盖文件），
+#     否则项目名会变成 deploy、找不到 staging 的 postgres（2026-11-06 staging 实跑发现）。
+#   跑错地方直接退出、什么都不碰（负责人 #289 必改 1；staging 和生产在同一台服务器，compose 写了 name: aroomo）：
+#     只认两个目录：生产（$PROD_ROOT，默认 /opt/aroomo）不加 --staging；staging（$STAGING_ROOT，默认 /opt/aroomo-staging）必须加。
+#     别的目录一律退出（另检出一份去跑会改掉生产角色的口令、新口令却写进没人用的 .env；负责人 #289 第二轮）。
+#     新装在别的目录：显式设 PROD_ROOT=<那个仓库目录> 再跑。
+#   检出的版本不认 CORE_APP_DB_PASSWORD（#285 之前）也退出：旧版 core 看到 CORE_DB_APP_ROLE 会走 SET ROLE、起不来（必改 3）。
 #
 # 做的事（幂等）：
 #   1. 角色不存在就建；然后一律设成 LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB NOREPLICATION NOINHERIT。
@@ -13,8 +21,32 @@
 # 表权限不在这里授：Core 每次启动由表所有者执行 grantAppRole（core/src/db/app-role.ts）。
 set -euo pipefail
 
+staging="${AROOMO_STAGING:-0}"
+case "${1:-}" in
+  "") ;;
+  --staging) staging=1 ;;
+  *) echo "用法：$0 [--staging]" >&2; exit 2 ;;
+esac
+
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 env_file="$here/../deploy/.env"
+root="$(cd "$here/.." && pwd -P)"
+stg_root="$(realpath -m "${STAGING_ROOT:-/opt/aroomo-staging}")"
+prod_root="$(realpath -m "${PROD_ROOT:-/opt/aroomo}")"
+if [[ "$root" == "$stg_root" ]]; then
+  [[ "$staging" == "1" ]] || { echo "这里是 staging 目录（$root），要加 --staging；不加会进生产的 postgres。什么都没改。" >&2; exit 2; }
+elif [[ "$root" == "$prod_root" ]]; then
+  [[ "$staging" != "1" ]] || { echo "这里是生产目录（$root），不能加 --staging（或环境里有 AROOMO_STAGING=1）。什么都没改。" >&2; exit 2; }
+else
+  echo "这里（$root）既不是生产目录（$prod_root）也不是 staging 目录（$stg_root），什么都没改。新装在别的目录：设 PROD_ROOT=$root 再跑。" >&2; exit 2
+fi
+if ! grep -q 'CORE_APP_DB_PASSWORD' "$root/core/src/config.ts" 2>/dev/null; then
+  echo "这里检出的版本还不认 CORE_APP_DB_PASSWORD（#285 之前）：先部署含 #285 的版本、跑稳了再跑本脚本（docs/ops/RLS.md）。什么都没改。" >&2; exit 2
+fi
+# staging：和 deploy/staging/deploy-staging.sh 的 dc() 同一组参数（scripts/test-create-app-db-role.sh 核对两边一致）
+deploy="$(cd "$here/../deploy" && pwd)"
+stg=(-p aroomo-staging --project-directory "$deploy" --env-file "$deploy/.env" -f "$deploy/docker-compose.yml" -f "$deploy/staging/compose.staging.yml")
+dc() { if [[ "$staging" == "1" ]]; then docker compose "${stg[@]}" "$@"; else "$here/compose.sh" "$@"; fi; }
 role=aroomo_core_app
 owner=aroomo_core
 db=aroomo_core
@@ -30,7 +62,7 @@ else
 fi
 [[ "$pw" =~ ^[0-9a-f]{64}$ ]] || { echo ".env 里的 CORE_APP_DB_PASSWORD 不是 64 位十六进制，先删掉那一行再跑" >&2; exit 1; }
 
-# shellcheck disable=SC2016 # $POSTGRES_USER 要在容器里展开
+# shellcheck disable=SC2016 # $POSTGRES_USER 要在容器里展开；compose 没给 postgres 容器设它（只有 POSTGRES_PASSWORD/DB），空了就用镜像默认的 postgres
 # 口令只经 stdin：\set 不回显；ON_ERROR_STOP 任何一步失败就整体退出
 {
   printf '\\set pw %s\n' "$pw"
@@ -55,7 +87,7 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '$role' AND (rolsuper OR rolbypassrls)) THEN RAISE EXCEPTION '$role 是超级用户或可绕过 RLS'; END IF;
 END \$\$;
 SQL
-} | "$here/compose.sh" exec -T postgres sh -c 'psql -X -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d '"$db"
+} | dc exec -T postgres sh -c 'psql -X -q -v ON_ERROR_STOP=1 -U "${POSTGRES_USER:-postgres}" -d '"$db"
 
 cp -p "$env_file" "$env_file.bak.$(date +%Y%m%d%H%M%S)"
 tmp="$(mktemp "$env_file.XXXXXX")"
@@ -64,4 +96,9 @@ printf 'CORE_DB_APP_ROLE=%s\nCORE_APP_DB_PASSWORD=%s\n' "$role" "$pw" >> "$tmp"
 chmod 600 "$tmp"
 mv "$tmp" "$env_file"
 echo "完成：$role 可登录、不是所有者的成员；.env 已写入 CORE_DB_APP_ROLE 和 CORE_APP_DB_PASSWORD（已备份旧 .env）。"
-echo "下一步：scripts/compose.sh up -d --force-recreate core，看日志 appDatabaseUrl=(set) 且没有「拒绝启动」。"
+if [[ "$staging" == "1" ]]; then
+  next="docker compose ${stg[*]} up -d --no-deps --force-recreate core"
+else
+  next="scripts/compose.sh up -d --no-deps --force-recreate core（当前版本有 .release/compose-extra 叠加文件时要带上同一组 -f，见 docs/ops/RLS.md 第 3 步）"
+fi
+echo "下一步：$next，看日志 appDatabaseUrl=(set) 且没有「拒绝启动」。"

@@ -425,6 +425,12 @@ jobs:
           scripts/test-release.sh | tee /tmp/test-release.log
           if grep -q '^FAIL' /tmp/test-release.log; then exit 1; fi
           if ! grep -qx '全部通过' /tmp/test-release.log; then echo "没有「全部通过」"; exit 1; fi
+      - name: create-app-db-role.sh（假 docker / psql；生产与 --staging 两种调用）
+        run: |
+          set -o pipefail
+          scripts/test-create-app-db-role.sh | tee /tmp/test-approle.log
+          if grep -q '^FAIL' /tmp/test-approle.log; then exit 1; fi
+          if ! grep -qx '全部通过' /tmp/test-approle.log; then echo "没有「全部通过」"; exit 1; fi
       - name: release-precheck.sh（真 PostgreSQL + 假备份命令）
         env:
           PGHOST: localhost
