@@ -12,7 +12,7 @@
 #   `docker network connect --alias aroomo-staging-shell aroomo_aroomo <staging shell 容器>`
 #   把 staging Shell 单独接进生产网络（只有这一个别名，不带服务名 shell，避免和生产 Shell 抢 DNS）。
 #   Tunnel aroomo-app：staging.pcmanai.com → http://aroomo-staging-shell:3000（Cloudflare Access 只允许所有者邮箱）。
-# - 内存：4 GB 机器上生产已用约 2 GB。staging 只起 postgres、redis、rustfs、core、lobe、shell，
+# - 内存：4 GB 机器上生产已用约 2 GB。staging 只起 postgres、redis、rustfs、core、shell（lobe 已停，D259），
 #   不起 litellm（约 0.6–0.8 GB，装不下）→ staging 里不能真正对话，登录/控制台/各页面可用。
 #   每个容器都有 mem_limit，并且全部放进 systemd 切片 aroomo-staging.slice（总上限见 aroomo-staging.slice），
 #   staging 再怎么涨也挤不掉生产。
@@ -86,9 +86,8 @@ services:
       # 绝不能用 lobe / core 这种在生产网络里也存在的名字。
       LOBE_UPSTREAM: http://aroomo-staging-lobe:3210
       CORE_UPSTREAM: http://aroomo-staging-core:8080
+    # LobeHub 已停（D259）：shell 只等 core，`up shell` 不再把 lobe 拉起来
     depends_on: !override
-      lobe:
-        condition: service_started
       core:
         condition: service_started
 

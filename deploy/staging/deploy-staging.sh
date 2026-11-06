@@ -20,7 +20,8 @@ PROD_NETWORK="${STAGING_PROD_NETWORK:-aroomo_aroomo}"
 BRANCH="${STAGING_BRANCH:-dev}"
 SHELL_ALIAS=aroomo-staging-shell
 PROJECT=aroomo-staging
-SERVICES=(postgres redis rustfs rustfs-init core lobe shell)
+# LobeHub 已停（所有者 2026-11-05；负责人 2026-11-07 阶段 4 裁定 D259）：不再起 lobe，容器和数据（pg-data 里的 lobechat 库、rustfs 的 lobe 桶）都留着
+SERVICES=(postgres redis rustfs rustfs-init core shell)
 HEALTH_TIMEOUT_S="${STAGING_HEALTH_TIMEOUT_S:-420}"
 MIN_AVAILABLE_MB="${STAGING_MIN_AVAILABLE_MB:-350}"
 
@@ -86,14 +87,14 @@ wait_healthy() {
   local deadline=$(( $(date +%s) + HEALTH_TIMEOUT_S )) s ok
   while :; do
     ok=1
-    for s in core lobe shell; do
+    for s in core shell; do
       local id st
       id="$(dc ps -q "$s" 2>/dev/null || true)"
       st="$( [ -n "$id" ] && docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$id" 2>/dev/null || echo missing)"
       [ "$st" = healthy ] || ok=0
     done
     [ "$ok" = 1 ] && return 0
-    [ "$(date +%s)" -ge "$deadline" ] && { for s in core lobe shell; do echo "  $s: $(dc ps --format '{{.Status}}' "$s" 2>/dev/null)"; done; return 1; }
+    [ "$(date +%s)" -ge "$deadline" ] && { for s in core shell; do echo "  $s: $(dc ps --format '{{.Status}}' "$s" 2>/dev/null)"; done; return 1; }
     sleep 5
   done
 }
