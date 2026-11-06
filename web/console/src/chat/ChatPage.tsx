@@ -32,6 +32,7 @@ import './chat.css';
 const LibraryView = lazy(() => import('./views').then((m) => ({ default: m.LibraryView })));
 const ToolsView = lazy(() => import('./views').then((m) => ({ default: m.ToolsView })));
 const ApiView = lazy(() => import('./views').then((m) => ({ default: m.ApiView })));
+const Cockpit = lazy(() => import('./cockpit').then((m) => ({ default: m.Cockpit })));
 const AddMemberDialog = lazy(() => import('./views').then((m) => ({ default: m.AddMemberDialog })));
 const Inbox = lazy(() => import('@/pages/Inbox').then((m) => ({ default: m.Inbox })));
 const Audit = lazy(() => import('@/pages/Audit').then((m) => ({ default: m.Audit })));
@@ -48,6 +49,7 @@ function Later({ children }: { children: ReactNode }) {
 }
 
 const TITLES: Record<Exclude<View['kind'], 'chat' | 'member' | 'assistant'>, string> = {
+  console: '驾驶舱',
   schedule: '全部计划',
   me: '我',
   members: '成员',
@@ -583,6 +585,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
       (
         [
           ['/chat', '对话', { kind: 'chat' }],
+          ['/console', '驾驶舱', { kind: 'console' }],
           ['/team', '成员', { kind: 'members' }],
           ['/hub', '资源库', { kind: 'library' }],
           ['/hub/tools', '工具', { kind: 'tools' }],
@@ -910,6 +913,15 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
             />
           )}
           {view.kind === 'capmap' && <CapabilityPanel />}
+          {view.kind === 'console' && (
+            <Cockpit
+              members={allMembers}
+              membersFailed={membersFailed}
+              onGo={(to) => setView({ kind: to })}
+              onOpenMember={(id) => setView({ kind: 'member', id })}
+              onOpenConversation={(id) => void openConversation(id)}
+            />
+          )}
           {view.kind === 'assistant' && <AssistantDetail key={view.id} id={view.id} members={members} onChanged={reloadAssistants} onInbox={() => setView({ kind: 'inbox' })} />}
           {view.kind === 'schedule' && <ScheduleView list={assistants} error={assistantsError} members={members} onOpen={(id) => setView({ kind: 'assistant', id })} onChanged={reloadAssistants} />}
           {view.kind === 'group-new' && (

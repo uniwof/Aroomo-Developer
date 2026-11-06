@@ -3,12 +3,14 @@
  * 地址都在 /console 下：/chat、/team（成员）、/hub（资源库、工具、API）、/inbox、/settings[/分组]、/settings/audit、/settings/executors。
  * 成员详情用 /team?member=<id>，不占 /team/:id（规范：成员详情不能和别的路由撞，也不是进对话）。
  * 助手（只给所有者、开关打开时）：详情 /assistants?assistant=<id>，全部计划 /assistants/schedule。
- * /console（驾驶舱）、/work（项目与版本）Core 还没有对应数据接口，暂不做页面，落到对话。
+ * /console（驾驶舱）：只用现有接口（成员、收件箱计数、能力地图、审计），见 cockpit.tsx。
+ * /work（项目与版本，规范 §7）：需 Core API——Core 没有项目 / 交付物 / 不可变版本的数据，不做假页面，落到对话（docs/api/design-poke-data-v1.md）。
  */
 import type { SettingsSection } from './panels';
 
 export type View =
   | { kind: 'chat' }
+  | { kind: 'console' }
   | { kind: 'members' }
   | { kind: 'member'; id: string }
   | { kind: 'capmap' }
@@ -33,6 +35,8 @@ export function pathOf(v: View): string {
   switch (v.kind) {
     case 'chat':
       return '/chat';
+    case 'console':
+      return '/console';
     case 'members':
       return '/team';
     case 'member':
@@ -93,6 +97,7 @@ export function viewOf(pathname: string, search: string): View {
     const id = q.get('member');
     return id ? { kind: 'member', id } : { kind: 'members' };
   }
+  if (p === '/console') return { kind: 'console' };
   if (p === '/hub/capabilities' || p === '/team/capabilities') return { kind: 'capmap' };
   if (p === '/chat/new-group') return { kind: 'group-new' };
   if (p === '/hub') return { kind: 'library' };
