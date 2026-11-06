@@ -83,7 +83,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      - run: npm run build 2>&1 | tee build.log
+      # pipefail：tee 不能吞掉构建失败（这个 job 默认 shell 是 bash -e，不带 pipefail）
+      - run: set -o pipefail; npm run build 2>&1 | tee build.log
       - name: 对话页包体积 ≤150 KB gz（#281）
         run: node scripts/check-chat-size.mjs build.log
 
