@@ -108,11 +108,7 @@ for (const [label, viewport, isMobile] of [
     ['/console/me', '我'],
   ]) {
     const name = `${label} 32px 字号无左右滚动 ${p}`;
-    const opened = await page.goto(base + p, { waitUntil: 'networkidle' }).then(
-      // 304（缓存没变）也算打开了；没有响应或 4xx/5xx 算打不开
-      (r) => (r && r.status() < 400 ? true : `HTTP ${r?.status() ?? '无响应'}`),
-      (e) => String(e).slice(0, 120),
-    );
+    const opened = await page.goto(base + p, { waitUntil: 'networkidle' }).then((r) => r?.ok() ?? false, (e) => String(e).slice(0, 120));
     if (opened !== true) {
       check(name, false, `打不开：${opened}`);
       continue;
