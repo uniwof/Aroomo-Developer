@@ -32,7 +32,7 @@ export type View =
   | { kind: 'assistant'; id: string }
   | { kind: 'schedule' };
 
-const SECTIONS: readonly string[] = ['profile', 'prefs', 'safety', 'general', 'family', 'lead', 'budget', 'external', 'shortcuts'];
+const SECTIONS: readonly string[] = ['profile', 'prefs', 'safety', 'general', 'family', 'lead', 'push', 'budget', 'external', 'shortcuts'];
 
 export function pathOf(v: View): string {
   switch (v.kind) {
