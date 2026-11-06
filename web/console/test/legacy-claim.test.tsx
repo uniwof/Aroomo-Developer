@@ -49,7 +49,8 @@ const BTN = '这些都是我的，放进我的账号';
 const local = (id: string, title: string, at = 2): Conversation => ({ id, title, model: 'aroomo', messages: [{ role: 'user', text: `${title}的问题`, at: 1 }, { role: 'assistant', text: '回答' }], updatedAt: at });
 const putLegacy = () => localStorage.setItem(LEGACY, JSON.stringify([local(OLD1, '以前问的体检', 5), local(OLD2, '以前的买菜单', 4)]));
 
-type Me = { kind: 'user'; role: 'admin' | 'user'; id: string } | { kind: 'owner' } | null;
+/** ownerAccount：Core 的所有者映射（#295）；不写就是 false，跟真 Core 一样（负责人 #298 建议） */
+type Me = { kind: 'user'; role: 'admin' | 'user'; id: string; ownerAccount?: boolean } | { kind: 'owner' } | null;
 /** me：/api/auth/me 回谁（null = 500）；gate：给了就等它放行再回 me */
 function stubCore(me: Me, gate?: Promise<void>) {
   const calls: Array<{ url: string; method: string; body: unknown }> = [];
@@ -64,7 +65,7 @@ function stubCore(me: Me, gate?: Promise<void>) {
       if (url === '/api/auth/me') {
         if (gate) await gate;
         if (!me) return json({ error: { code: 'X', message: '坏了' } }, 500);
-        return me.kind === 'owner' ? json({ kind: 'owner', id: 'owner' }) : json({ kind: 'user', user: { id: me.id, email: 'x@example.test', displayName: '', role: me.role } });
+        return me.kind === 'owner' ? json({ kind: 'owner', id: 'owner' }) : json({ kind: 'user', ownerAccount: me.ownerAccount ?? false, user: { id: me.id, email: 'x@example.test', displayName: '', role: me.role } });
       }
       if (url === '/api/conversations/import') {
         const cs = (body as { conversations: unknown[] }).conversations;
@@ -126,10 +127,12 @@ describe('#290 认领以前的共用会话', () => {
     expect(loadConversations(OWNER)[0]!.messages.map((m) => m.text)).toContain('她账号里说的');
   });
 
-  it('Core 说谁是所有者：admin 账号和主人令牌是；家人（role=user）不是', async () => {
+  it('Core 说谁是所有者（#295 看所有者映射 ownerAccount）：映射到的账号和主人令牌是；第二个 admin、家人、旧 Core 没回这个字段都不是', async () => {
     const f = (b: unknown) => vi.fn(async () => json(b)) as unknown as typeof fetch;
-    expect(await fetchAccount(f({ kind: 'user', user: { id: OWNER, role: 'admin' } }))).toEqual({ id: OWNER, owner: true });
-    expect(await fetchAccount(f({ kind: 'user', user: { id: KID, role: 'user' } }))).toEqual({ id: KID, owner: false });
+    expect(await fetchAccount(f({ kind: 'user', ownerAccount: true, user: { id: OWNER, role: 'admin' } }))).toEqual({ id: OWNER, owner: true });
+    expect(await fetchAccount(f({ kind: 'user', ownerAccount: false, user: { id: 'u-admin-2', role: 'admin' } }))).toEqual({ id: 'u-admin-2', owner: false });
+    expect(await fetchAccount(f({ kind: 'user', user: { id: OWNER, role: 'admin' } }))).toEqual({ id: OWNER, owner: false });
+    expect(await fetchAccount(f({ kind: 'user', ownerAccount: false, user: { id: KID, role: 'user' } }))).toEqual({ id: KID, owner: false });
     expect(await fetchAccount(f({ kind: 'owner', id: 'owner' }))).toEqual({ id: 'owner', owner: true });
   });
 
@@ -137,7 +140,7 @@ describe('#290 认领以前的共用会话', () => {
     putLegacy();
     saveConversations([local(MINE, '我的', 9)], OWNER);
     const before = localStorage.getItem(LEGACY);
-    stubCore({ kind: 'user', role: 'admin', id: OWNER });
+    stubCore({ kind: 'user', role: 'admin', id: OWNER, ownerAccount: true });
     renderPage();
     const btn = await screen.findByRole('button', { name: BTN });
     expect(screen.getByText(/这台浏览器里有 2 段以前的会话/)).toBeInTheDocument();
@@ -161,7 +164,7 @@ describe('#290 认领以前的共用会话', () => {
   it('认领过的：再打开不再显示提示和按钮', async () => {
     putLegacy();
     claimLegacy(OWNER);
-    stubCore({ kind: 'user', role: 'admin', id: OWNER });
+    stubCore({ kind: 'user', role: 'admin', id: OWNER, ownerAccount: true });
     renderPage();
     const list = await screen.findByRole('list', { name: '会话列表' });
     await waitFor(() => expect(list).toHaveTextContent('以前的买菜单'));
@@ -181,8 +184,19 @@ describe('#290 认领以前的共用会话', () => {
     expect(loadConversations(KID)).toEqual([]);
   });
 
+  it('#295：第二个管理员（Core 没映射成所有者）看不到按钮和标题', async () => {
+    putLegacy();
+    sessionStorage.setItem('aroomo.console.user', JSON.stringify({ id: 'u-admin-2', email: 'a2@example.test', displayName: '', role: 'admin' }));
+    stubCore({ kind: 'user', role: 'admin', id: 'u-admin-2', ownerAccount: false });
+    renderPage();
+    await tick(150);
+    expect(screen.queryByRole('button', { name: BTN })).toBeNull();
+    expect(screen.queryByRole('list', { name: '以前的会话' })).toBeNull();
+    expect(loadConversations('u-admin-2')).toEqual([]);
+  });
+
   it('没有以前的会话：不显示按钮', async () => {
-    stubCore({ kind: 'user', role: 'admin', id: OWNER });
+    stubCore({ kind: 'user', role: 'admin', id: OWNER, ownerAccount: true });
     renderPage();
     await screen.findByRole('list', { name: '会话列表' });
     await tick();
@@ -206,7 +220,7 @@ describe('#290 认领以前的共用会话', () => {
     const ids = (k: string | null) => (loadConversations(k).map((c) => c.id).sort() as string[]).join(',');
     const mineBefore = ids(OWNER);
     const before = localStorage.getItem(LEGACY);
-    stubCore({ kind: 'user', role: 'admin', id: OWNER });
+    stubCore({ kind: 'user', role: 'admin', id: OWNER, ownerAccount: true });
     renderPage();
     fireEvent.click(await screen.findByRole('button', { name: BTN }));
     const note = await screen.findByText('放不下了：你账号里的会话太多。原来那份还在，没有丢。请告诉 Hark。');
@@ -221,7 +235,7 @@ describe('#290 认领以前的共用会话', () => {
   it('存库打开时：认领过来的照常导入 Core', async () => {
     flags.savedChats = true;
     putLegacy();
-    const calls = stubCore({ kind: 'user', role: 'admin', id: OWNER });
+    const calls = stubCore({ kind: 'user', role: 'admin', id: OWNER, ownerAccount: true });
     renderPage();
     fireEvent.click(await screen.findByRole('button', { name: BTN }));
     await waitFor(() => expect(importedIds(calls).sort()).toEqual([OLD1, OLD2].sort()));
@@ -245,7 +259,7 @@ describe('#292 问到账号之前先不保存本机会话', () => {
     const before = localStorage.getItem(LEGACY);
     let open = () => {};
     const gate = new Promise<void>((r) => (open = r));
-    stubCore({ kind: 'user', role: 'admin', id: OWNER }, gate);
+    stubCore({ kind: 'user', role: 'admin', id: OWNER, ownerAccount: true }, gate);
     renderPage();
     await screen.findByRole('list', { name: '会话列表' });
     fireEvent.click(screen.getAllByRole('button', { name: '新建对话' })[0]!);
@@ -269,7 +283,7 @@ describe('#292 问到账号之前先不保存本机会话', () => {
     putLegacy();
     let open = () => {};
     const gate = new Promise<void>((r) => (open = r));
-    stubCore({ kind: 'user', role: 'admin', id: OWNER }, gate);
+    stubCore({ kind: 'user', role: 'admin', id: OWNER, ownerAccount: true }, gate);
     renderPage();
     await screen.findByRole('list', { name: '会话列表' });
     fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '接着问体检' } });
@@ -289,7 +303,7 @@ describe('#292 问到账号之前先不保存本机会话', () => {
     claimLegacy(OWNER);
     let open = () => {};
     const gate = new Promise<void>((r) => (open = r));
-    stubCore({ kind: 'user', role: 'admin', id: OWNER }, gate);
+    stubCore({ kind: 'user', role: 'admin', id: OWNER, ownerAccount: true }, gate);
     renderPage();
     await screen.findByRole('list', { name: '会话列表' });
     fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '接着问体检' } });
@@ -308,7 +322,7 @@ describe('#292 问到账号之前先不保存本机会话', () => {
   it('Core 还没回是谁：不往共用那份写；回了以后写进她自己那份', async () => {
     let open = () => {};
     const gate = new Promise<void>((r) => (open = r));
-    stubCore({ kind: 'user', role: 'admin', id: OWNER }, gate);
+    stubCore({ kind: 'user', role: 'admin', id: OWNER, ownerAccount: true }, gate);
     renderPage();
     await screen.findByRole('list', { name: '会话列表' });
     await tick();

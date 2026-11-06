@@ -83,7 +83,8 @@ export function registerUserRoutes(app: FastifyInstance, svc: UsersService, audi
   // ---- 本人 ----
   app.get('/api/auth/me', { ...userGuard() }, async (req) => {
     const p = req.principal!;
-    if (p.type === 'user') return { kind: 'user', user: await svc.me(p.userId) };
+    // #295：ownerAccount = 认证钩子按 CORE_OWNER_ACCOUNT_ID 映射过的所有者账号（只有 Cookie 会话会映射）；只加字段，向后兼容
+    if (p.type === 'user') return { kind: 'user', ownerAccount: p.ownerAccount === true, user: await svc.me(p.userId) };
     return { kind: p.type, id: p.id };
   });
 

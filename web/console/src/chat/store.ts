@@ -355,22 +355,19 @@ export function saveConversations(list: Conversation[], account: string | null =
   }
 }
 
-/** #290：所有者认领过旧的共用那份（按账号记一笔；共用那份不删） */
+/**
+ * #290：所有者认领过旧的共用那份（按账号记一笔；共用那份不删）。
+ * 负责人 #298 必改：记号记下认领时共用那份的样子（段数、消息数、最晚的 updatedAt）；之后共用那份变了
+ * （哪条路写进去的都一样：Core 晚回、超时……）就当没认领过，提示和按钮重新出来。旧格式记号（'1'）也当没认领，再点一次按 id 去重。
+ */
 const claimedKey = (account: string) => `${LEGACY_KEY}.claimed:u:${account}`;
+const legacyStamp = (legacy: Conversation[]) =>
+  `v2:${legacy.length}:${legacy.reduce((n, c) => n + c.messages.length, 0)}:${legacy.reduce((t, c) => Math.max(t, c.updatedAt), 0)}`;
 export function legacyClaimed(account: string, storage: Storage | undefined = globalThis.localStorage): boolean {
   try {
-    return storage?.getItem(claimedKey(account)) === '1';
+    return storage?.getItem(claimedKey(account)) === legacyStamp(loadConversations(null, storage).filter((c) => c.messages.length > 0));
   } catch {
     return false;
-  }
-}
-
-/** 共用那份里又有了她没认领的新内容（负责人 #294 第二轮）：清掉「已认领」，提示和按钮重新出来 */
-export function clearLegacyClaimed(account: string, storage: Storage | undefined = globalThis.localStorage): void {
-  try {
-    storage?.removeItem(claimedKey(account));
-  } catch {
-    /* 隐私模式：不提示也不丢，下次再说 */
   }
 }
 
@@ -405,7 +402,7 @@ export function claimLegacy(account: string, storage: Storage = globalThis.local
   }
   const saved = new Map(loadConversations(account, storage).map((c) => [c.id, c]));
   if (!legacy.every((c) => saved.has(c.id) && !newer(c, saved.get(c.id)!))) throw new Error('not saved');
-  storage.setItem(claimedKey(account), '1');
+  storage.setItem(claimedKey(account), legacyStamp(legacy));
   return add.length;
 }
 
