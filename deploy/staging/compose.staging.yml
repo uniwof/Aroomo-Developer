@@ -58,6 +58,8 @@ services:
         ipv4_address: 172.29.78.2
 
   lobe:
+    # LobeHub 已停（D259）：只有点名 --profile lobe 才起；不写服务名的 `docker compose up -d` 也不会把它拉起来抢生产内存
+    profiles: [lobe]
     mem_limit: 768m
     cgroup_parent: aroomo-staging.slice
     depends_on: !override

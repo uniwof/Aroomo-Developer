@@ -119,8 +119,8 @@ sudo systemctl enable --now aroomo-staging-deploy.timer
 - 现在：`aroomo-staging-lobe-1`（lobehub/lobehub:2.2.20）是停止状态，没有挂卷；它的数据在 staging 的 `aroomo-staging_pg-data`（lobechat 库）
   和 `aroomo-staging_rustfs-data`（lobe 桶）里，**都留着**，12-05 前后由所有者定删不删。
 - `aroomo-staging-lobehub-placeholder`（nginx）占着 `aroomo-staging-lobe` 这个别名，Shell 的 `LOBE_UPSTREAM` 指过去不会报解析错误。
-- 持久停用：`deploy-staging.sh` 的 `SERVICES` 和健康检查里去掉了 lobe，`compose.staging.yml` 里 shell 只依赖 core，自动部署不会再把 lobe 拉起来。
+- 持久停用：`compose.staging.yml` 里 lobe 加了 `profiles: [lobe]`，不点名 `--profile lobe` 就不会起（手动 `docker compose up -d` 不写服务名也一样）；`deploy-staging.sh` 的 `SERVICES` 和健康检查里也去掉了 lobe，shell 只依赖 core。CI 的 `scripts/check-compose.sh` 检查 staging 不带 profile 时服务里没有 lobe。
 - 在这一改动合进 dev 之前，服务器上的兜底是 systemd drop-in
   `/etc/systemd/system/aroomo-staging-deploy.service.d/lobehub-stopped.conf`（每次部署结束 `docker stop aroomo-staging-lobe-1`）。
   合入并部署过一次、确认 lobe 没再启动后，这个 drop-in 可以删（`sudo rm` 该文件 + `sudo systemctl daemon-reload`）。
-- 回退（重新启用）：把 lobe 加回 `SERVICES` 和健康检查、shell 的 depends_on 加回 lobe，删 drop-in，然后 `deploy-staging.sh --force`。
+- 回退（重新启用）：临时起一次用 `docker compose ... --profile lobe up -d lobe`（命令同部署脚本里的 `dc`）；长期恢复要把 lobe 加回 `SERVICES` 和健康检查、shell 的 depends_on 加回 lobe、去掉 `profiles`，删 drop-in，再 `deploy-staging.sh --force`。
