@@ -102,3 +102,13 @@ sudo systemctl enable --now aroomo-staging-deploy.timer
 ## 验收记录
 
 - 2026-11-01：合并本说明的一次小文档 PR 作为验收提交，由服务器 timer 自动拉取部署（不手动触发），结果与耗时记录在工单 #170 评论。
+
+## chat-staging.pcmanai.com 已撤除（2026-11-05）
+
+- 曾经为原生聊天（#250）临时开过 `chat-staging.pcmanai.com`：生产 cloudflared → socat 小容器 `aroomo-staging-core-edge` → staging Core。
+  它只装在服务器上（草稿 PR #266 想把脚本收进仓库，未合并）。
+- 现在 staging 对话走 Shell：`https://staging.pcmanai.com` 登录后，`POST /api/chat/stream` 由 staging Shell 按白名单转给 staging Core（D256），
+  不再需要单独的域名和转发容器。所有者 2026-11-05 22:24 批准撤除。
+- 已撤除：tunnel `aroomo-app` 的 `chat-staging.pcmanai.com` 路由、该 DNS 记录、Access 应用「Aroomo staging」里的这个域名（应用和策略保留）、
+  服务器上的 `aroomo-staging-core-edge` 容器（已断开生产网络）、`aroomo-staging-core-edge.{service,timer}` 和 `/usr/local/bin/aroomo-staging-core-edge.sh`。
+- 备份与恢复步骤：服务器 `/opt/aroomo-archive/core-edge-removal-20261105T142732Z/README.md`（含撤除前的 tunnel 配置、Access 应用、DNS 记录导出，无密钥）。
