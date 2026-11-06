@@ -1,10 +1,18 @@
 /** 收件箱 API（前缀 /api/inbox，Issue #7）。 */
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { guard, scopeOf } from '../auth/plugin.js';
-import { actorKey, principalCan } from '../auth/tokens.js';
+import { actorKey, type Principal, principalCan } from '../auth/tokens.js';
 import { CONFIRM_KINDS } from '../confirm/confirm.js';
 import type { CreateInboxInput, InboxService } from './service.js';
-import { actionKind, INBOX_GROUPS, type InboxGroup, type InboxItem, type InboxStatus, URGENCIES } from './types.js';
+import { actionKind, IMPACT_LINE_MAX, IMPACT_MAX, INBOX_GROUPS, type InboxActor, type InboxGroup, type InboxItem, type InboxStatus, NOTE_MAX, URGENCIES } from './types.js';
+
+/** HTTP 发卡的发起者 = 调用者令牌（不收请求体里的，免得冒充） */
+export function actorOf(p: Principal): InboxActor {
+  if (p.type === 'owner') return { type: 'owner', id: 'owner', name: '所有者' };
+  if (p.type === 'client') return { type: 'client', id: actorKey(p), name: '外部客户端' };
+  if (p.type === 'user') return { type: 'user', id: actorKey(p), name: '账号' };
+  return { type: 'operator', id: actorKey(p), name: '操作员' };
+}
 
 /** 控制台按类型过滤：confirm = 带重要确认动作的卡；takeover = 执行员接管卡；brief = 简报组。 */
 export const INBOX_TYPES = ['confirm', 'takeover', 'brief'] as const;
@@ -76,13 +84,14 @@ export function registerInboxRoutes(app: FastifyInstance, svc: InboxService): vo
               properties: { type: { type: 'string', maxLength: 64 }, id: { type: 'string', maxLength: 200 } },
             },
             actions: { type: 'array', maxItems: 5, items: actionSchema },
+            impact: { type: 'array', maxItems: IMPACT_MAX, items: { type: 'string', maxLength: IMPACT_LINE_MAX } },
           },
         },
       },
     },
     async (req, reply) => {
       const owner = inboxUser(req);
-      const out = await svc.createInboxItem({ ...req.body, ...(owner ? { userId: owner } : {}) }, req.audit);
+      const out = await svc.createInboxItem({ ...req.body, actor: actorOf(req.principal!), ...(owner ? { userId: owner } : {}) }, req.audit);
       return reply.status(out.created ? 201 : 200).send({ item: inboxJson(out.item), created: out.created });
     },
   );
@@ -117,7 +126,7 @@ export function registerInboxRoutes(app: FastifyInstance, svc: InboxService): vo
 
   app.get('/api/inbox/unread-count', { ...guard('inbox:read', { user: true }) }, async (req) => svc.unreadCount(inboxUser(req)));
 
-  app.post<{ Params: { id: string; actionId: string }; Body: { confirmToken?: string } | undefined }>(
+  app.post<{ Params: { id: string; actionId: string }; Body: { confirmToken?: string; reason?: string } | undefined }>(
     '/api/inbox/:id/actions/:actionId',
     {
       ...guard('inbox:act'),
@@ -130,7 +139,7 @@ export function registerInboxRoutes(app: FastifyInstance, svc: InboxService): vo
         body: {
           type: ['object', 'null'],
           additionalProperties: false,
-          properties: { confirmToken: { type: 'string', minLength: 1, maxLength: 128 } },
+          properties: { confirmToken: { type: 'string', minLength: 1, maxLength: 128 }, reason: { type: 'string', maxLength: NOTE_MAX * 2 } },
         },
       },
     },
@@ -146,18 +155,22 @@ export function registerInboxRoutes(app: FastifyInstance, svc: InboxService): vo
           canConfirmImportant: principalCan(p, 'confirm:important'),
         },
         req.audit,
+        req.body?.reason,
       );
       return { item: inboxJson(item) };
     },
   );
 
-  app.post<{ Params: { id: string } }>(
+  app.post<{ Params: { id: string }; Body: { reason?: string } | undefined }>(
     '/api/inbox/:id/dismiss',
     {
       ...guard('inbox:act'),
-      schema: { params: { type: 'object', required: ['id'], properties: { id: UUID } } },
+      schema: {
+        params: { type: 'object', required: ['id'], properties: { id: UUID } },
+        body: { type: ['object', 'null'], additionalProperties: false, properties: { reason: { type: 'string', maxLength: NOTE_MAX * 2 } } },
+      },
     },
-    async (req) => ({ item: inboxJson(await svc.dismiss(scopeOf(req), req.params.id, req.audit)) }),
+    async (req) => ({ item: inboxJson(await svc.dismiss(scopeOf(req), req.params.id, req.audit, req.body?.reason)) }),
   );
 
   app.post<{ Body: { ids: string[] } }>(

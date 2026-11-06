@@ -28,6 +28,9 @@ export interface CreateMemberInput {
   aliases?: string[];
   capabilityTags?: CapabilityTag[];
   enabled?: boolean;
+  role?: string | null;
+  systemPrompt?: string | null;
+  avatar?: string | null;
   /** 只供内部调用（加 Key 自动发现 → 候选）；HTTP 接口不接受这个字段，用户手动添加的成员直接在职 */
   status?: MemberStatus;
 }
@@ -37,6 +40,10 @@ export interface UpdateMemberInput {
   aliases?: string[];
   capabilityTags?: CapabilityTag[];
   enabled?: boolean;
+  /** null 或空串 = 清掉 */
+  role?: string | null;
+  systemPrompt?: string | null;
+  avatar?: string | null;
 }
 
 export function compareMembers(a: Member, b: Member): number {
@@ -104,6 +111,9 @@ export class MembersService {
         sortOrder: maxOrder + 1,
         status: input.status ?? 'active',
         modelCaps: null,
+        role: normalizeText(input.role, 60, '角色', 'INVALID_ROLE'),
+        systemPrompt: normalizeText(input.systemPrompt, 4000, '系统提示词', 'INVALID_SYSTEM_PROMPT'),
+        avatar: normalizeAvatar(input.avatar),
         deletedAt: null,
         createdAt: now,
         updatedAt: now,
@@ -120,7 +130,17 @@ export class MembersService {
       const aliases = patch.aliases !== undefined ? normalizeAliases(patch.aliases, name) : m.aliases;
       const tags = patch.capabilityTags !== undefined ? normalizeTags(patch.capabilityTags) : m.capabilityTags;
       this.#checkAliasConflicts(id, name, aliases, await this.store.listAll());
-      const next: Member = { ...m, name, aliases, capabilityTags: tags, enabled: patch.enabled ?? m.enabled, updatedAt: this.now() };
+      const next: Member = {
+        ...m,
+        name,
+        aliases,
+        capabilityTags: tags,
+        enabled: patch.enabled ?? m.enabled,
+        ...(patch.role !== undefined ? { role: normalizeText(patch.role, 60, '角色', 'INVALID_ROLE') } : {}),
+        ...(patch.systemPrompt !== undefined ? { systemPrompt: normalizeText(patch.systemPrompt, 4000, '系统提示词', 'INVALID_SYSTEM_PROMPT') } : {}),
+        ...(patch.avatar !== undefined ? { avatar: normalizeAvatar(patch.avatar) } : {}),
+        updatedAt: this.now(),
+      };
       await this.#write(() => this.store.update(next));
       return next;
     });
@@ -266,6 +286,25 @@ export class MembersService {
       throw err;
     }
   }
+}
+
+/** 可选文字：去首尾空白；空 = null；超长报 400（只在入口校验一次） */
+function normalizeText(raw: string | null | undefined, max: number, label: string, code: string): string | null {
+  if (raw == null) return null;
+  const t = raw.trim();
+  if (!t) return null;
+  if (t.length > max) throw badRequest(`${label}最长 ${max} 个字`, code);
+  return t;
+}
+
+/** 头像：1–2 个「字」（按字形簇数，一个 emoji 算一个）；空 = null（用名字首字） */
+function normalizeAvatar(raw: string | null | undefined): string | null {
+  if (raw == null) return null;
+  const t = raw.trim();
+  if (!t) return null;
+  const n = [...new Intl.Segmenter('zh', { granularity: 'grapheme' }).segment(t)].length;
+  if (n > 2 || t.length > 16) throw badRequest('头像只能是 1–2 个字或一个表情', 'INVALID_AVATAR');
+  return t;
 }
 
 function normalizeName(raw: string): string {

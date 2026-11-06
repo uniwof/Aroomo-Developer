@@ -464,7 +464,7 @@ export class AssistantRunner implements RunLauncher {
       if (a.notify) {
         const t = notificationText(a.name, summary);
         await this.d.inbox.createInboxItem(
-          { group: 'brief', kind: 'assistant.run.done', urgency: 'low', title: `${a.name} 运行完成`, summary: t.body, related: { type: 'assistant_run', id: runId }, ...inboxUser(userId) },
+          { group: 'brief', kind: 'assistant.run.done', urgency: 'low', title: `${a.name} 运行完成`, summary: t.body, related: { type: 'assistant_run', id: runId }, actor: { type: 'assistant', id: a.id, name: a.name }, ...inboxUser(userId) },
           this.d.audit,
         );
       }
@@ -520,6 +520,8 @@ export class AssistantRunner implements RunLauncher {
           { id: 'approve', label: '同意', confirm: { kind: 'payment', consequences: [`这次运行会调用付费模型：${names}。`, '会用掉付费额度。'] } },
           { id: 'reject', label: '拒绝' },
         ],
+        actor: { type: 'assistant', id: a.id, name: a.name },
+        impact: [`付费模型：${names}`, '这次运行的付费额度'],
         ...inboxUser(a.userId),
       },
       this.d.audit,
@@ -539,7 +541,7 @@ export class AssistantRunner implements RunLauncher {
       .postAsAssistant(a.userId, a.id, a.conversationId, { role: 'system', memberId: null, runId: run.id, content: `这次运行失败：${RUN_FAILURE_TEXT[code]}` })
       .catch(() => undefined);
     await this.d.inbox.createInboxItem(
-      { group: 'decision', kind: 'assistant.run.failed', urgency: 'normal', title: `${a.name} 运行失败`, summary: RUN_FAILURE_TEXT[code], related: { type: 'assistant_run', id: run.id }, ...inboxUser(a.userId) },
+      { group: 'decision', kind: 'assistant.run.failed', urgency: 'normal', title: `${a.name} 运行失败`, summary: RUN_FAILURE_TEXT[code], related: { type: 'assistant_run', id: run.id }, actor: { type: 'assistant', id: a.id, name: a.name }, ...inboxUser(a.userId) },
       this.d.audit,
     );
     await this.d.audit('assistant.run', { type: 'assistant_run', id: run.id }, 'failed', `assistant=${a.id} trigger=${run.trigger} code=${code}`);

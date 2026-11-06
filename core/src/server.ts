@@ -329,6 +329,7 @@ export function buildServer(
     }
     return svc;
   };
+  const usage = new UsageService(deps.settings, deps.now);
   registerMemberRoutes(
     app,
     members,
@@ -346,6 +347,14 @@ export function buildServer(
       (await deps.keys.list(scope === "owner" ? undefined : scope))
         .filter((k) => k.status === "active")
         .map((k) => k.modelName),
+    // Poke §5 成员状态：本账号在跑的助手步骤 + 今天的用量计数（账号用户的用量不分开记 → counters 为 null）
+    async (scope) => {
+      const working = new Map((await deps.assistants.workingMembers(scope)).map((w) => [w.memberId, w.since] as const));
+      if (scope !== "owner") return { working, counters: null, limits: {} };
+      const t = await usage.today();
+      return { working, counters: t.counters, limits: t.limits };
+    },
+    deps.now,
   );
   const lead = new LeadService(deps.settings, deps.members, deps.now);
   const security = new SecurityService(deps.settings, deps.now);
@@ -363,7 +372,6 @@ export function buildServer(
     return svc;
   };
   registerSettingsRoutes(app, lead, security, leadForUser);
-  const usage = new UsageService(deps.settings, deps.now);
   registerUsageRoutes(app, usage, (u) => (u === "owner" ? deps.members : deps.members.forUser(u)));
   // 对话入口（提议 H5）：LobeHub → Core /v1（D31 点名 / 交给负责人）→ LiteLLM
   const chatService = new ChatService({

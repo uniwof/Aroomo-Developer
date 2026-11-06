@@ -5,7 +5,7 @@
  */
 import { useState, type ReactNode } from 'react';
 import { Bell, BellRing, ArrowLeft, ChevronRight, Home, Keyboard, Monitor, Moon, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Sun, UserRound, Users, X } from 'lucide-react';
-import { api, isFamily, type Member } from '@/lib/api';
+import { activityLabel, api, isFamily, type Member } from '@/lib/api';
 import { useAsk } from '@/components/Dialog';
 import { useUsage } from '@/lib/usage';
 import { UsageLine } from '@/pages/Members';
@@ -61,9 +61,20 @@ export function NavRow({ icon, label, value, onClick }: { icon?: ReactNode; labe
 }
 
 function statusText(m: Member): string {
+  if (m.activity) return activityLabel(m.activity);
   if (!m.enabled) return '已停用';
   if (m.status === 'candidate') return '候选';
   return (m.online ?? m.status === 'active') ? '在线' : '离线';
+}
+
+/** 详情里的一行：状态 + 依据 + 从几点起（Poke §5 的提示信息，直接写出来，读屏能读到） */
+function statusLine(m: Member): string {
+  const a = m.activity;
+  if (!a || a.state === 'unknown') return statusText(m);
+  const t = a.since ? new Date(a.since) : null;
+  const p = (n: number) => String(n).padStart(2, '0');
+  const since = t && !Number.isNaN(t.getTime()) ? ` · ${p(t.getHours())}:${p(t.getMinutes())} 起` : '';
+  return `${activityLabel(a)}${a.reason ? ` · ${a.reason}` : ''}${since}`;
 }
 
 function MemberRows({ list, onOpen }: { list: Member[]; onOpen: (m: Member) => void }) {
@@ -71,10 +82,11 @@ function MemberRows({ list, onOpen }: { list: Member[]; onOpen: (m: Member) => v
     <>
           {list.map((m) => (
             <button key={m.id} type="button" className="row row-button" onClick={() => onOpen(m)}>
-              <Avatar name={m.name} size="sm" />
+              <Avatar name={m.name} size="sm" glyph={m.avatar} />
               <span className="row-text">
                 <span className="row-label">{m.name}</span>
                 <span className="row-hint">
+                  {m.role ? `${m.role} · ` : ''}
                   {statusText(m)}
                   {m.capabilityTags.length > 0 && ` · ${m.capabilityTags.join('、')}`}
                 </span>
@@ -168,10 +180,10 @@ export function MemberDetail({ member, onChat, onMention, onChanged }: { member:
     <div className="panel">
       {ask.node}
       <div className="profile">
-        <Avatar name={member.name} size="lg" />
+        <Avatar name={member.name} size="lg" glyph={member.avatar} />
         <div>
           <p className="profile-name">{member.name}</p>
-          <p className="muted">{statusText(member)}</p>
+          <p className="muted">{statusLine(member)}</p>
         </div>
       </div>
       <div className="panel-actions">
@@ -203,6 +215,20 @@ export function MemberDetail({ member, onChat, onMention, onChanged }: { member:
         <p role="alert" className="note note-error">
           {err}
         </p>
+      )}
+      {(member.role || member.systemPrompt) && (
+        <Group title="资料">
+          {member.role && (
+            <Field label="角色">
+              <span>{member.role}</span>
+            </Field>
+          )}
+          {member.systemPrompt && (
+            <Field label="系统提示词">
+              <span className="whitespace-pre-wrap">{member.systemPrompt}</span>
+            </Field>
+          )}
+        </Group>
       )}
       <Group title="能力">
         <Field label="能力标签">

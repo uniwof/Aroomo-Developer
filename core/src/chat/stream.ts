@@ -352,6 +352,8 @@ export function registerChatStreamRoute(app: FastifyInstance, chat: ChatService,
             model: { type: 'string', maxLength: 120 },
             conversationId: { type: 'string', pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' },
             retry: { type: 'boolean' },
+            // 群聊挑的成员名单（审计 C9）；会话已存库时以库里的为准，这个字段不看
+            group: { type: 'array', maxItems: 20, items: { type: 'string', minLength: 1, maxLength: 64 } },
           },
         },
       },
@@ -364,7 +366,8 @@ export function registerChatStreamRoute(app: FastifyInstance, chat: ChatService,
       // 会话存库：先确认是本账号的聊天会话（别人的 / 助手的 / 不存在的一律 404，同一句话），再占频率名额
       const convs = opts.conversations;
       const convId = convs && typeof req.body.conversationId === 'string' ? req.body.conversationId : null;
-      if (convs && convId) await convs.get(scope, convId);
+      const stored = convs && convId ? await convs.get(scope, convId) : null;
+      const group = stored ? stored.groupNames : Array.isArray(req.body.group) ? (req.body.group as string[]) : [];
       const acquired = limiter.acquire(scope);
       if (!acquired) {
         await req.audit('auth.denied', { type: 'rate', id: '/api/chat/stream' }, 'denied', '对话请求太频繁');
@@ -413,7 +416,7 @@ export function registerChatStreamRoute(app: FastifyInstance, chat: ChatService,
             truncated = p?.truncated === true;
             if (ctrl.signal.aborted) throw new Error('client gone');
           }
-          const out = await chat.complete({ model, stream: true, messages: send }, ctrl.signal, scope === 'owner' ? undefined : opts.ctxFor(scope));
+          const out = await chat.complete({ model, stream: true, messages: send }, ctrl.signal, scope === 'owner' ? undefined : opts.ctxFor(scope), group.length ? { group } : {});
           if (out.failure) {
             // 整条回复都失败：不发那段提示文字，改发 error（只有固定的一句话 + 失败码）。/v1 不走这里，行为不变
             await out.stream?.cancel().catch(() => undefined);

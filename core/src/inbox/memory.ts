@@ -34,7 +34,7 @@ export class MemoryInboxStore implements InboxStore {
   async resolveIfOpen(
     userId: string,
     id: string,
-    next: { status: Exclude<InboxStatus, 'open'>; resolvedAt: Date; resolvedAction?: string },
+    next: { status: Exclude<InboxStatus, 'open'>; resolvedAt: Date; resolvedAction?: string; resolvedNote?: string },
   ): Promise<InboxItem | null> {
     // 同步完成「检查 + 修改」，中间没有 await，单线程下天然原子
     const r = this.#rows.get(id);
@@ -42,6 +42,7 @@ export class MemoryInboxStore implements InboxStore {
     r.status = next.status;
     r.resolvedAt = new Date(next.resolvedAt);
     if (next.resolvedAction !== undefined) r.resolvedAction = next.resolvedAction;
+    if (next.resolvedNote !== undefined) r.resolvedNote = next.resolvedNote;
     return clone(r);
   }
 }

@@ -82,6 +82,18 @@ export function withRules(messages: ChatMessage[], rules: string | null): ChatMe
   return [{ role: 'system', content: `【Aroomo 规矩】请遵守下面的规矩：\n${r.slice(0, RULES_MAX)}` }, ...messages];
 }
 
+/**
+ * 这位成员自己的系统提示词（Poke §4 New Member 的 system prompt）：放在开头那几条系统消息（规矩、客户端的）之后。
+ * 没填 = 原样返回。只在交给这位成员的那一次调用里加，不进日志。
+ */
+export function withMemberPrompt(messages: ChatMessage[], m: Pick<Member, 'systemPrompt'> | undefined): ChatMessage[] {
+  const p = m?.systemPrompt?.trim();
+  if (!p) return messages;
+  let i = 0;
+  while (i < messages.length && messages[i]!.role === 'system') i++;
+  return [...messages.slice(0, i), { role: 'system', content: p }, ...messages.slice(i)];
+}
+
 export const NO_LEAD_TEXT =
   '还没有合格的负责人（要能文字对话、上下文 ≥32k、支持工具调用）。可以用「@成员名」直接点名，或在「成员」里让一个合格的模型入职。';
 
@@ -272,9 +284,12 @@ export class ChatService {
     }
   }
 
-  /** 按调用者的上下文（成员名前缀映射/成员列表）处理一次对话；不传 ctx = 用全局依赖 */
-  async complete(req: Json, signal: AbortSignal, ctx?: ChatUserCtx): Promise<ChatResult> {
-    if (ctx) return new ChatService({ ...this.d, ...ctx, fetchImpl: this.#fetch }).complete(req, signal);
+  /**
+   * 按调用者的上下文（成员名前缀映射/成员列表）处理一次对话；不传 ctx = 用全局依赖。
+   * opts.group：群聊挑的成员名单（审计 C9）。有名单时只交给名单里的人：没 @ = 名单里的人各自回答；@ 名单外的人 = 一行提示。
+   */
+  async complete(req: Json, signal: AbortSignal, ctx?: ChatUserCtx, opts: { group?: string[] } = {}): Promise<ChatResult> {
+    if (ctx) return new ChatService({ ...this.d, ...ctx, fetchImpl: this.#fetch }).complete(req, signal, undefined, opts);
     const stream = req.stream === true;
     const messages = (Array.isArray(req.messages) ? req.messages : []) as ChatMessage[];
     const decorated = req.model === CHAT_MODEL || req.model === AUTO_MODEL;
@@ -282,42 +297,65 @@ export class ChatService {
     const routable: RoutableMember[] = members.map((m) => ({ id: m.id, name: m.name, aliases: m.aliases, enabled: m.enabled }));
     const leadState = await this.d.lead.get();
     const nameOf = (id: string | null) => members.find((m) => m.id === id)?.name ?? null;
+    const byId = (id: string | null) => members.find((m) => m.id === id);
 
     if (!members.length) {
       return textReply(stream, '还没有可用的成员。请先打开「成员 → Key 与接入」填入一个 Key，再在「成员」里点「入职」，就能对话了。');
+    }
+
+    // 群聊名单（审计 C9）先于所有路由算好：直接点名、系统任务、@ 解析都只能落到名单里的人（负责人审查 #275 必改）
+    let inGroup: Member[] | null = null;
+    if (opts.group?.length) {
+      const want = new Set(opts.group.map((g) => g.trim().toLowerCase()));
+      inGroup = members.filter((m) => [m.name, ...m.aliases].some((n) => want.has(n.toLowerCase())));
+      if (!inGroup.length) return textReply(stream, '这个群里挑的成员都不在职了，请新建对话重新挑。');
     }
 
     // 成员别名 aroomo/<成员>：LobeHub 群组里该成员智能体的发言，直接由该成员回答（不解析 @、不加署名）
     if (typeof req.model === 'string' && req.model.startsWith(MEMBER_MODEL_PREFIX) && req.model !== AUTO_MODEL) {
       const target = resolveMemberModel(req.model, members);
       if (!target) return textReply(stream, `没有这位在职成员（${req.model}）。请在「成员」里确认名字，或改用 aroomo/auto 交给负责人。`);
-      return by(await this.#forward({ ...req, messages: withRules(messages, await this.#rules()) }, target.name, '', '', stream, signal), [{ memberId: target.id, name: target.name }]);
+      if (inGroup && !inGroup.some((m) => m.id === target.id)) return textReply(stream, `${target.name} 不在这个群里`);
+      return by(await this.#forward({ ...req, messages: withMemberPrompt(withRules(messages, await this.#rules()), target) }, target.name, '', '', stream, signal), [{ memberId: target.id, name: target.name }]);
     }
 
     // 系统任务（起标题、翻译等）：交给负责人，不解析 @、不加提示和署名。
     // 还没有合格负责人时，用第一个在职成员做这类内部小任务（不以「负责人」身份出现在对话里）。
     const last = lastUserText(messages);
     if (!decorated || !last) {
-      const sys = members.find((m) => m.id === leadState.effectiveLeadId) ?? members[0]!;
+      const pool = inGroup ?? members;
+      const sys = pool.find((m) => m.id === leadState.effectiveLeadId) ?? pool[0]!;
       return by(await this.#forward(req, sys.name, '', '', stream, signal), [{ memberId: sys.id, name: sys.name }]);
     }
 
     const protect = this.d.security ? (await this.d.security.get()).sensitiveProtect : true;
     const sensitive = protect && looksSensitive(last.text);
-    const plan = route(last.text, { members: routable, leadId: leadState.effectiveLeadId, sensitive });
+    let plan = route(last.text, { members: routable, leadId: leadState.effectiveLeadId, sensitive });
+    if (inGroup) {
+      const ids = new Set(inGroup.map((m) => m.id));
+      if (plan.mode === 'delegate') plan = { mode: 'mention', targets: inGroup.map((m) => m.id), body: plan.body, hints: plan.hints };
+      else {
+        const outside = plan.targets.filter((id) => !ids.has(id));
+        plan = {
+          ...plan,
+          targets: plan.targets.filter((id) => ids.has(id)),
+          hints: [...plan.hints, ...outside.map((id): Hint => ({ kind: 'hint', text: `${nameOf(id)} 不在这个群里`, memberId: id, actions: [] }))],
+        };
+      }
+    }
     const prefix = plan.hints.length ? `${hintText(plan.hints)}\n\n` : '';
     const nextMessages = withRules(replaceUserText(messages, last.index, plan.body), await this.#rules());
 
     if (plan.mode === 'delegate') {
       const leadName = nameOf(plan.leadId);
       if (!leadName) return textReply(stream, prefix + NO_LEAD_TEXT);
-      return by(await this.#forward({ ...req, messages: nextMessages }, leadName, prefix, `\n\n— ${leadName}（负责人）`, stream, signal), [{ memberId: plan.leadId!, name: leadName }]);
+      return by(await this.#forward({ ...req, messages: withMemberPrompt(nextMessages, byId(plan.leadId)) }, leadName, prefix, `\n\n— ${leadName}（负责人）`, stream, signal), [{ memberId: plan.leadId!, name: leadName }]);
     }
 
     if (plan.targets.length === 0) return textReply(stream, prefix.trim());
     if (plan.targets.length === 1) {
       const name = nameOf(plan.targets[0]!)!;
-      return by(await this.#forward({ ...req, messages: nextMessages }, name, prefix, `\n\n— ${name}`, stream, signal, true), [{ memberId: plan.targets[0]!, name }]);
+      return by(await this.#forward({ ...req, messages: withMemberPrompt(nextMessages, byId(plan.targets[0]!)) }, name, prefix, `\n\n— ${name}`, stream, signal, true), [{ memberId: plan.targets[0]!, name }]);
     }
 
     // 多人点名：各自独立、并行回答，按点名顺序分段（P0；并排显示需要改 LobeHub 消息组件，见 H5）
@@ -329,7 +367,7 @@ export class ChatService {
         signal.addEventListener('abort', () => ctrl.abort(), { once: true });
         let code: ChatFailureCode = 'gateway_unreachable';
         try {
-          const res = await this.#upstream({ ...req, model: name, stream: false, messages: nextMessages }, ctrl.signal);
+          const res = await this.#upstream({ ...req, model: name, stream: false, messages: withMemberPrompt(nextMessages, byId(id)) }, ctrl.signal);
           if (!res.ok) {
             code = failureCodeOf(res.status);
             throw new Error(`upstream ${res.status}`);

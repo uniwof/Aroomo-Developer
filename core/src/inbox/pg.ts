@@ -7,6 +7,7 @@ const OWNER = 'owner';
 import {
   INBOX_GROUPS,
   type InboxAction,
+  type InboxActor,
   type InboxGroup,
   type InboxItem,
   type InboxListFilter,
@@ -30,9 +31,12 @@ interface Row {
   resolved_at: Date | string | null;
   resolved_action: string | null;
   user_id: string | null;
+  actor: InboxActor | string | null;
+  impact: string[] | null;
+  resolved_note: string | null;
 }
 
-const COLS = 'id, grp, kind, urgency, title, summary, related_type, related_id, actions, status, created_at, resolved_at, resolved_action, user_id';
+const COLS = 'id, grp, kind, urgency, title, summary, related_type, related_id, actions, status, created_at, resolved_at, resolved_action, user_id, actor, impact, resolved_note';
 
 function toItem(r: Row): InboxItem {
   const resolvedAt = toDateOrNull(r.resolved_at);
@@ -45,10 +49,13 @@ function toItem(r: Row): InboxItem {
     summary: r.summary,
     ...(r.related_type !== null && r.related_id !== null ? { related: { type: r.related_type, id: r.related_id } } : {}),
     actions: typeof r.actions === 'string' ? (JSON.parse(r.actions) as InboxAction[]) : r.actions,
+    ...(r.actor ? { actor: typeof r.actor === 'string' ? (JSON.parse(r.actor) as InboxActor) : r.actor } : {}),
+    impact: r.impact ?? [],
     status: r.status,
     createdAt: toDate(r.created_at),
     ...(resolvedAt ? { resolvedAt } : {}),
     ...(r.resolved_action !== null ? { resolvedAction: r.resolved_action } : {}),
+    ...(r.resolved_note !== null ? { resolvedNote: r.resolved_note } : {}),
     ...(r.user_id !== null && r.user_id !== OWNER ? { userId: r.user_id } : {}),
   };
 }
@@ -74,11 +81,13 @@ export class PgInboxStore implements InboxStore {
       item.status,
       item.createdAt,
       item.userId ?? OWNER,
+      item.actor ? JSON.stringify(item.actor) : null,
+      item.impact ?? [],
     ];
     const scoped = userScoped(this.db, item.userId ?? OWNER);
     const ins = await scoped.query<Row>(
-      `INSERT INTO inbox_items (id, grp, kind, urgency, title, summary, related_type, related_id, actions, status, created_at, user_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12)
+      `INSERT INTO inbox_items (id, grp, kind, urgency, title, summary, related_type, related_id, actions, status, created_at, user_id, actor, impact)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13::jsonb,$14)
        ON CONFLICT (coalesce(user_id, ''), kind, related_type, related_id) WHERE status = 'open' AND related_type IS NOT NULL DO NOTHING
        RETURNING ${COLS}`,
       params,
@@ -130,12 +139,12 @@ export class PgInboxStore implements InboxStore {
   async resolveIfOpen(
     userId: string,
     id: string,
-    next: { status: Exclude<InboxStatus, 'open'>; resolvedAt: Date; resolvedAction?: string },
+    next: { status: Exclude<InboxStatus, 'open'>; resolvedAt: Date; resolvedAction?: string; resolvedNote?: string },
   ): Promise<InboxItem | null> {
     const { rows } = await userScoped(this.db, userId).query<Row>(
-      `UPDATE inbox_items SET status = $2, resolved_at = $3, resolved_action = $4
+      `UPDATE inbox_items SET status = $2, resolved_at = $3, resolved_action = $4, resolved_note = $6
         WHERE id = $1 AND status = 'open' AND user_id = $5 RETURNING ${COLS}`,
-      [id, next.status, next.resolvedAt, next.resolvedAction ?? null, userId],
+      [id, next.status, next.resolvedAt, next.resolvedAction ?? null, userId, next.resolvedNote ?? null],
     );
     return rows[0] ? toItem(rows[0]) : null;
   }

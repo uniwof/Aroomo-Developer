@@ -20,8 +20,18 @@ interface Action {
   label: string;
   confirm?: { kind: string; consequences?: string[] };
 }
+/** 发起者（Core 填，Poke §8 Actor） */
+interface Actor {
+  type: string;
+  id?: string;
+  name: string;
+}
 interface Item {
   id: string;
+  actor?: Actor;
+  /** 影响范围，每条一句；老 Core / 没写 = 空 */
+  impact?: string[];
+  resolvedNote?: string;
   group: 'decision' | 'candidate' | 'brief';
   kind?: string;
   title: string;
@@ -41,6 +51,19 @@ export function conversationLink(i: Pick<Item, 'related'>): { conversationId: st
   if (i.related?.type !== 'conversation') return null;
   const m = CONV_LINK.exec(i.related.id);
   return m ? { conversationId: m[1]!, ...(m[2] ? { messageId: m[2] } : {}) } : null;
+}
+
+const KIND_TEXT: Record<string, string> = { irreversible: '不可撤销', payment: '会花钱', credential: '涉及凭据' };
+
+/** 风险（Poke §8 Risk Level）：只按 Core 给的确认级别和紧急度说，后果列在后面当依据 */
+export function riskText(i: Pick<Item, 'actions' | 'urgency'>): string {
+  const important = (i.actions ?? []).filter((a) => a.confirm && a.confirm.kind !== 'normal');
+  if (important.length) {
+    const kinds = [...new Set(important.map((a) => KIND_TEXT[a.confirm!.kind] ?? '重要'))].join('、');
+    const why = important.flatMap((a) => a.confirm!.consequences ?? []);
+    return `高（${kinds}）${why.length ? `：${why.join(' ')}` : ''}`;
+  }
+  return i.urgency === 'urgent' ? '紧急' : '普通';
 }
 
 /** 要你点一下才算处理完的条目 */
@@ -85,16 +108,22 @@ export function Inbox({ onBack, onOpenConversation }: { onBack?: () => void; onO
   }, []);
   useEffect(load, [load]);
 
-  async function act(item: Item, a: Action, confirmToken?: string) {
+  async function act(item: Item, a: Action, confirmToken?: string, reason?: string) {
     if (busyId && !confirmToken) return;
-    if (!confirmToken && isReject(a) && !(await ask.confirm({ title: `${a.label}「${item.title}」？`, desc: '关掉这个窗口不会做任何决定。', ok: a.label, danger: true }))) return;
+    // 拒绝：先确认，可写理由（Poke §8：待定 → 拒绝确认 → 已拒绝）；关掉 / 取消不做决定
+    if (!confirmToken && isReject(a)) {
+      const r = await ask.prompt({ title: `${a.label}「${item.title}」？`, desc: '关掉这个窗口不会做任何决定。', label: '理由（可不填）', ok: a.label, optional: true, maxLength: 500, danger: true });
+      if (r === null) return;
+      reason = r.trim() || undefined;
+    }
     setBusyId(item.id);
     setMsg(`正在处理：${a.label}「${item.title}」…`);
     try {
-      await api('POST', `/api/inbox/${item.id}/actions/${a.id}`, confirmToken ? { confirmToken } : {});
+      const r = await api<{ item?: Item }>('POST', `/api/inbox/${item.id}/actions/${a.id}`, { ...(confirmToken ? { confirmToken } : {}), ...(reason ? { reason } : {}) });
       setPending(null);
-      // 只在 Core 回了成功之后才说完成，不提前打勾
-      setMsg(`已处理：${a.label}「${item.title}」`);
+      // 只在 Core 回了成功之后才说完成，不提前打勾；理由按 Core 存下的说
+      const note = r?.item?.resolvedNote;
+      setMsg(`已处理：${a.label}「${item.title}」${note ? `（理由：${note}）` : ''}`);
       load();
       inboxChanged();
     } catch (e) {
@@ -192,7 +221,10 @@ export function Inbox({ onBack, onOpenConversation }: { onBack?: () => void; onO
                     {i.urgency === 'urgent' ? '【紧急】' : ''}
                     {i.title}
                   </p>
+                  {needsYou(i) && <p className="row-hint">发起：{i.actor?.name ?? '未注明'}</p>}
+                  {needsYou(i) && <p className="row-hint">风险：{riskText(i)}</p>}
                   {i.summary && <p className="row-hint whitespace-pre-wrap">{i.summary}</p>}
+                  {needsYou(i) && <p className="row-hint">影响范围：{(i.impact ?? []).length ? i.impact!.join('；') : '未注明'}</p>}
                   <p className="row-hint">{formatTime(i.createdAt)}</p>
                   <div className="row-actions">
                     {(i.actions ?? []).map((a) => (

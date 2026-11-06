@@ -503,7 +503,8 @@ export function Thread({ conversation, onMessages, insert, onInserted, hidden = 
         };
         // 该压缩却没压成：这条回复上面一行灰字（只在界面上，不存库、不存本机）
         const onTruncated = (text: string) => update({ streamNote: text });
-        const opts = conversationId ? { conversationId, retry: savedUser.current.has(lastUser.id), onAccepted: () => savedUser.current.add(lastUser.id), onCompacted, onTruncated } : {};
+        const group = convRef.current.group?.length ? { group: convRef.current.group } : {};
+        const opts = conversationId ? { conversationId, retry: savedUser.current.has(lastUser.id), onAccepted: () => savedUser.current.add(lastUser.id), onCompacted, onTruncated, ...group } : group;
         const onTool = (t: ChatTool) => setMessages((l) => l.map((m) => (m.id === reply.id ? { ...m, tools: upsertTool(m.tools, t) } : m)));
         for await (const text of streamChat(turns, convRef.current.model, ac.signal, fetchImpl, (draft) => update({ draft }), opts, onTool)) update({ text });
         update({ state: 'done' });

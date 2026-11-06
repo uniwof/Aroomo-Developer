@@ -34,6 +34,12 @@ export interface Member {
   sortOrder: number;
   status: MemberStatus;
   modelCaps: ModelCaps | null;
+  /** 角色（一句话，≤60 字）；Poke §4。没填 = null / 不写 */
+  role?: string | null;
+  /** 这位成员的系统提示词（≤4000 字）：对话转发前拼在规矩后面。不进日志、不进审计 */
+  systemPrompt?: string | null;
+  /** 头像：1–2 个字符（emoji 或字），没有上传 */
+  avatar?: string | null;
   deletedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;

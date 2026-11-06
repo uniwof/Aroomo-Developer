@@ -332,6 +332,20 @@ export class PgAssistantStore implements AssistantStore {
     }));
   }
 
+  async workingMembers(userId: string): Promise<Array<{ memberId: string; runId: string; since: Date }>> {
+    const { rows } = await this.#u(userId).query<{ member_id: string; run_id: string; created_at: Ts }>(
+      `SELECT DISTINCT ON (s.member_id) s.member_id, s.run_id, s.created_at
+         FROM (SELECT DISTINCT ON (st.run_id, st.step_no) st.run_id, st.member_id, st.status, st.created_at
+                 FROM run_steps st JOIN assistant_runs r ON r.id = st.run_id AND r.user_id = st.user_id
+                WHERE st.user_id = $1 AND r.status = 'running'
+                ORDER BY st.run_id, st.step_no, st.seq DESC) s
+        WHERE s.status = 'running' AND s.member_id IS NOT NULL
+        ORDER BY s.member_id, s.created_at`,
+      [userId],
+    );
+    return rows.map((r) => ({ memberId: r.member_id, runId: r.run_id, since: toDate(r.created_at) }));
+  }
+
   async appendMessage(userId: string, m: ConversationMessage): Promise<void> {
     await insertMessageQ(this.#u(userId), userId, m);
   }

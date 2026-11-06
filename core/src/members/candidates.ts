@@ -62,6 +62,8 @@ export class CandidateFlow {
           { id: 'onboard', label: '入职' },
           { id: 'reject', label: '不要' },
         ],
+        actor: { type: 'system', name: '加 Key 自动发现' },
+        impact: [`成员：${m.name}`],
       },
       audit,
     );

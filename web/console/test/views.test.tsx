@@ -42,18 +42,18 @@ describe('API 页（落地文档第 10 章）', () => {
 });
 
 describe('添加成员弹窗（落地文档 8.2）', () => {
-  it('名字必填、标签在框上方；带出的名字已填好；提交调 POST /api/members', async () => {
+  it('基础模型必填、标签在框上方；带出的名字已填好；提交调 POST /api/members', async () => {
     const calls: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (u: string, init?: RequestInit) => (calls.push(`${init?.method} ${u} ${init?.body}`), ok({ member: member('x', 'gpt-oss-20b') }, 201))));
     const onAdded = vi.fn();
     const onClose = vi.fn();
     render(<AddMemberDialog open preset="gpt-oss-20b" onClose={onClose} onAdded={onAdded} />);
     const dlg = screen.getByRole('dialog', { name: '添加成员' });
-    expect(within(dlg).getByLabelText(/^名字（必填）/)).toHaveValue('gpt-oss-20b');
+    expect(within(dlg).getByLabelText(/^基础模型（必填）/)).toHaveValue('gpt-oss-20b');
     fireEvent.click(within(dlg).getByRole('checkbox', { name: '写代码' }));
     fireEvent.click(within(dlg).getByRole('button', { name: '添加' }));
     await waitFor(() => expect(onAdded).toHaveBeenCalled());
-    expect(calls[0]).toBe('POST /api/members {"name":"gpt-oss-20b","capabilityTags":["code"]}');
+    expect(calls.filter((c) => c.startsWith('POST'))).toEqual(['POST /api/members {"name":"gpt-oss-20b","capabilityTags":["code"]}']);
     expect(onClose).toHaveBeenCalled();
   });
 });

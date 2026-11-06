@@ -105,23 +105,40 @@ const TAGS: [string, string][] = [
 ];
 
 /**
- * 添加成员：名字（= 模型名，Core 按名字配 Key）+ 擅长什么。
- * 一句话介绍、角色说明、模型下拉、岗位、家人可用：Core 成员接口还没有这些字段，先不放（已列入缺的接口）。
+ * 添加成员（Poke §4 New Member）：基础模型（= 成员名字，Core 按它配 Key；PRODUCT §9.1 成员 = 模型）、角色、系统提示词、头像、擅长。
+ * 基础模型可从能力地图里的模型挑，也能手填。必填没填时「添加」按钮不能点；提交中锁住；失败时填的内容都还在。
  */
 export function AddMemberDialog({ open, preset, onClose, onAdded, onExplore }: { open: boolean; preset?: string; onClose: () => void; onAdded: (m: Member) => void; onExplore?: () => void }) {
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
-  useEffect(() => setMsg(''), [open]);
+  const [name, setName] = useState(preset ?? '');
+  const [models, setModels] = useState<string[]>([]);
+  useEffect(() => {
+    setMsg('');
+    setName(preset ?? '');
+  }, [open, preset]);
+  useEffect(() => {
+    if (!open) return;
+    // 只是给输入框的建议；读不到就手填（不影响添加）
+    api<{ items?: { name: string }[] }>('GET', '/api/capabilities')
+      .then((r) => setModels([...new Set((r.items ?? []).map((i) => i.name))]))
+      .catch(() => setModels([]));
+  }, [open]);
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (busy) return;
     const d = new FormData(e.currentTarget);
-    const name = String(d.get('name') ?? '').trim();
-    if (!name) return setMsg('请填名字');
+    const n = name.trim();
+    if (!n) return setMsg('请填基础模型');
     const capabilityTags = d.getAll('tag').map(String);
+    const opt = (k: string) => {
+      const v = String(d.get(k) ?? '').trim();
+      return v ? { [k]: v } : {};
+    };
     setBusy(true);
     setMsg('');
     try {
-      const r = await api<{ member: Member }>('POST', '/api/members', { name, ...(capabilityTags.length ? { capabilityTags } : {}) });
+      const r = await api<{ member: Member }>('POST', '/api/members', { name: n, ...opt('role'), ...opt('systemPrompt'), ...opt('avatar'), ...(capabilityTags.length ? { capabilityTags } : {}) });
       onAdded(r.member);
       onClose();
     } catch (err) {
@@ -139,10 +156,42 @@ export function AddMemberDialog({ open, preset, onClose, onAdded, onExplore }: {
           </button>
         )}
         <label className="form-field">
-          <span className="form-label">名字（必填）</span>
-          <input name="name" required maxLength={200} defaultValue={preset ?? ''} aria-describedby="add-member-name-hint" aria-invalid={msg === '请填名字' || undefined} />
+          <span className="form-label">基础模型（必填）</span>
+          <input
+            name="name"
+            required
+            maxLength={200}
+            list="add-member-models"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            aria-describedby="add-member-name-hint"
+            aria-invalid={msg === '请填基础模型' || undefined}
+          />
+          <datalist id="add-member-models">
+            {models.map((m) => (
+              <option key={m} value={m} />
+            ))}
+          </datalist>
           <span id="add-member-name-hint" className="note">
-            模型名，如 gpt-oss-20b
+            模型名，如 gpt-oss-20b；也是 TA 在 Aroomo 里的名字
+          </span>
+        </label>
+        <label className="form-field">
+          <span className="form-label">角色（可不填）</span>
+          <input name="role" maxLength={60} placeholder="如：研究员" />
+        </label>
+        <label className="form-field">
+          <span className="form-label">系统提示词（可不填）</span>
+          <textarea name="systemPrompt" rows={3} maxLength={4000} aria-describedby="add-member-prompt-hint" />
+          <span id="add-member-prompt-hint" className="note">
+            TA 每次回答前都会先看这段话
+          </span>
+        </label>
+        <label className="form-field">
+          <span className="form-label">头像（可不填）</span>
+          <input name="avatar" maxLength={16} aria-describedby="add-member-avatar-hint" />
+          <span id="add-member-avatar-hint" className="note">
+            1–2 个字或一个表情；不填就用默认图形
           </span>
         </label>
         <fieldset className="form-field form-fieldset">
@@ -161,7 +210,7 @@ export function AddMemberDialog({ open, preset, onClose, onAdded, onExplore }: {
             {msg}
           </p>
         )}
-        <DialogFoot onCancel={onClose} ok="添加" busy={busy} />
+        <DialogFoot onCancel={onClose} ok="添加" busy={busy} disabled={!name.trim()} />
       </form>
     </Dialog>
   );
