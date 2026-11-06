@@ -128,13 +128,15 @@ export function currentUser(): { id: string; email: string; displayName: string;
 }
 
 /**
- * 当前账号 id，以 Core 为准（GET /api/auth/me）。只认账号登录（kind=user）；Core 问不到、或不是账号登录，返回 null。
+ * 当前账号 id，以 Core 为准（GET /api/auth/me）。账号登录（kind=user）返回账号 id；
+ * 从 Shell 打开时 /aroomo/api 带的是主人令牌（kind=owner，Shell 只把它给所有者），返回 'owner'；问不到或别的返回 null。
  * 用在：本机会话导入 Core 前确认「这份本机会话是谁的」（#287），页面里记的那份可能过期，不能当证据。
  */
 export async function fetchAccountId(fetchImpl: typeof fetch = fetch): Promise<string | null> {
   try {
     const r = await api<{ kind?: unknown; user?: { id?: unknown } }>('GET', '/api/auth/me', undefined, fetchImpl);
-    return r.kind === 'user' && typeof r.user?.id === 'string' && r.user.id ? r.user.id : null;
+    if (r.kind === 'user' && typeof r.user?.id === 'string' && r.user.id) return r.user.id;
+    return r.kind === 'owner' ? 'owner' : null;
   } catch {
     return null;
   }

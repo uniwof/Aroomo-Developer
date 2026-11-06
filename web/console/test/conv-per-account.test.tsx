@@ -135,6 +135,34 @@ describe('#287 本机会话按账号分开', () => {
     expect(JSON.parse(localStorage.getItem('aroomo.chat.v1')!)).toHaveLength(1);
   });
 
+  it('本机模式：已登录但这个标签页没记 id（新标签页 / 从 Shell 进来）：问 Core，读她自己那份，不读共用那份（#288 必改 1）', async () => {
+    flags.savedChats = false;
+    saveConversations([local(MINE, '我的')], OWNER);
+    localStorage.setItem('aroomo.chat.v1', JSON.stringify([local(OLD, '以前的')]));
+    stubCore(OWNER);
+    renderPage();
+    const list = await screen.findByRole('list', { name: '会话列表' });
+    await waitFor(() => expect(list).toHaveTextContent('我的'));
+    expect(list).not.toHaveTextContent('以前的');
+  });
+
+  it('本机模式：一开始不知道账号、读了共用那份，问到账号后她自己那份里不能出现共用那份的会话（#288 必改 2）', async () => {
+    flags.savedChats = false;
+    localStorage.setItem('aroomo.chat.v1', JSON.stringify([local(OLD, '以前的')]));
+    stubCore(OWNER);
+    renderPage();
+    await screen.findByText('这台浏览器里有 1 段以前的会话，分不清是哪个账号存的，没有导入，也没有删。');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(loadConversations(OWNER).map((c) => c.id)).not.toContain(OLD);
+    expect(loadConversations().map((c) => c.id)).toEqual([OLD]);
+  });
+
+  it('从 Shell 打开：Core 回的是主人令牌（kind=owner），当作所有者那份，不回到共用那份', async () => {
+    const f = vi.fn(async () => json({ kind: 'owner', id: 'owner' }));
+    const { fetchAccountId } = await import('@/lib/api');
+    expect(await fetchAccountId(f as unknown as typeof fetch)).toBe('owner');
+  });
+
   it('登录时记下账号 id', async () => {
     const f = vi.fn(async () => json({ user: { id: OWNER, email: 'o@example.test', role: 'owner' } }));
     await login('o@example.test', 'pw', f as unknown as typeof fetch);

@@ -162,6 +162,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   const [acct, setAcct] = useState<string | null>(() => currentUser()?.id || null);
   const acctRef = useRef(acct);
   acctRef.current = acct;
+  /** 列表里的本机会话是哪个账号那份的：和 acct 不一样时不写本机（负责人 #288 必改 2：账号刚问到时不能把共用那份存进她的账号） */
+  const listAcct = useRef(acct);
   const [list, setList] = useState<Conversation[]>(() => {
     // 存库模式下家人账号不读本机（家人的会话不导入 Core）
     const l = saved && isFamily() ? [] : loadConversations(acct);
@@ -259,6 +261,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         const switched = !!me && me !== acctRef.current;
         if (me) {
           confirmed.current = me;
+          listAcct.current = me;
           setAcct(me);
           setLocalLeft(localPending(me));
         }
@@ -276,6 +279,24 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
       alive = false;
     };
   }, [saved, adopt, fallBack]);
+  // 本机模式（负责人 #288 必改 1）：账号也以 Core 为准；标签页里没记、或记的不一样，换成这个账号自己那份。问不到才用页面记的 / 共用那份
+  useEffect(() => {
+    if (saved) return;
+    let alive = true;
+    void fetchAccountId().then((me) => {
+      if (!alive || !me || me === acctRef.current) return;
+      // 先换列表、再换账号（同一次更新）：保存只在列表和账号对得上时才写
+      const mine = loadConversations(me);
+      const next = mine.length ? mine : [newConversation()];
+      listAcct.current = me;
+      setList(next);
+      setCurrentId(next[0]!.id);
+      setAcct(me);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [saved]);
   useEffect(() => {
     if (remote !== true) return;
     const t = setInterval(() => {
@@ -379,7 +400,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
 
   // 本机模式才写本机；存库模式下本机那份（导入前的）原样留着，不覆盖
   useEffect(() => {
-    if (remote === false) saveConversations(list.filter((c) => c.messages.length > 0 && !c.remote), acct);
+    if (remote === false && listAcct.current === acct) saveConversations(list.filter((c) => c.messages.length > 0 && !c.remote), acct);
   }, [list, remote, acct]);
   /** #287：旧的共用那份里有几段（知道账号时才数）：看不出是谁存的，不导入、不删、不进列表，只说一句 */
   const legacyLeft = useMemo(() => (acct ? loadConversations(null).filter((c) => c.messages.length > 0).length : 0), [acct]);
