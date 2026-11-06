@@ -26,6 +26,14 @@ describe('每个开关都被核对，或写明为什么不查', () => {
   it('ASSISTANTS 也查：关着时助手接口代码不能进对话页包', () => {
     expect(Object.keys(MARKERS)).toContain('ASSISTANTS');
   });
+  it('TASK_CARDS、QUICK_REPLIES 也查（#329）：以后谁把它们直接 import 进对话页又没加开关，当场抓到', () => {
+    for (const k of ['TASK_CARDS', 'QUICK_REPLIES']) {
+      expect([k, k in MARKERS, k in NO_MARKER]).toEqual([k, true, false]);
+    }
+    const off = { ...readFlags(), TASK_CARDS: false, QUICK_REPLIES: false };
+    expect(findLeaks('<p>花多少：{c.cost}</p>', off)).toHaveLength(1);
+    expect(findLeaks('"我自己写…"', off)).toHaveLength(1);
+  });
 });
 
 describe('标志文字的匹配', () => {
