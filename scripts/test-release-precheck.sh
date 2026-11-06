@@ -212,6 +212,24 @@ cp "$work"/core/migrations/00[01]*.sql "$work"/core/migrations/002[0-4]*.sql "$a
 printf -- '-- CREATE TABLE conversations (\nselect 1;\n' >"$alt/0025_conversations.sql"
 OUT="$(RELEASE_MIGRATIONS_DIR="$alt" "$pre" --no-backup 2>&1)" && rc=0 || rc=$?
 [ "$rc" = 1 ] && out_has -q 'conversations 不存在' && ok "注释里的 CREATE TABLE 不算新建" || { bad "注释里的 CREATE TABLE 却放行了（退出码 $rc）"; echo "$OUT" | sed 's/^/     /'; }
+# #278：去注释要处理 /* */ 块注释（单行、跨行）和行尾 -- 注释；真实的 CREATE TABLE（IF NOT EXISTS、public.、带引号）照旧认
+mig25() { # mig25 <说明> <期望：made|not> <0025 文件内容>
+  printf '%s' "$3" >"$alt/0025_conversations.sql"
+  OUT="$(RELEASE_MIGRATIONS_DIR="$alt" "$pre" --no-backup 2>&1)" || true
+  if [ "$2" = made ]; then
+    out_has -qF 'conversations(0025)' && ok "$1" || { bad "$1（没认出建表）"; echo "$OUT" | sed 's/^/     /'; }
+  else
+    out_has -q 'conversations 不存在' && ! out_has -qF 'conversations(0025)' && ok "$1" || { bad "$1（注释里的建表被当真）"; echo "$OUT" | sed 's/^/     /'; }
+  fi
+}
+mig25 "单行块注释里的 CREATE TABLE 不算" not $'/* CREATE TABLE conversations (id int) */\nselect 1;\n'
+mig25 "跨行块注释里的 CREATE TABLE 不算" not $'/*\n  旧写法：\nCREATE TABLE conversations (\n  id int\n);\n*/\nselect 1;\n'
+mig25 "块注释从行尾开始、跨到下一行的 CREATE TABLE 不算" not $'select 1; /* 以后再做\nCREATE TABLE conversations (id int);\n*/\n'
+mig25 "行尾 -- 注释去掉后，下一行的 CREATE TABLE 不受影响（-- 里的 /* 不开块注释）" made $'select 1; -- 注意 /* 不是块注释\nCREATE TABLE conversations (id int);\n'
+mig25 "块注释结束后同一行的 CREATE TABLE 照旧认" made $'/* 会话表 */ CREATE TABLE conversations (\n  id int -- 主键\n);\n'
+mig25 "CREATE TABLE IF NOT EXISTS public.\"conversations\" 照旧认" made $'-- 会话\nCREATE TABLE IF NOT EXISTS public."conversations" (\n  id int\n);\n'
+mig25 "小写 create table 带行尾注释照旧认" made $'create table conversations ( -- 会话\n  id int\n);\n'
+printf -- '-- CREATE TABLE conversations (\nselect 1;\n' >"$alt/0025_conversations.sql"
 # 表不存在、待执行迁移里也没人建它 → 失败（只放行 conversations 一类，别的照旧）
 adm "alter table vault_secrets rename to vs_hidden" >/dev/null
 run "vault_secrets 不存在且没有待执行迁移新建它 → 失败（其余 6 张照样放行）" 1 --no-backup
@@ -220,6 +238,28 @@ adm "alter table vs_hidden rename to vault_secrets" >/dev/null
 for t in conversations conversation_messages assistants assistant_members assistant_runs run_steps; do
   adm "alter table ${t}_hidden rename to $t" >/dev/null
 done
+# #277（检查 8）：数据库里已执行的迁移，在目标版本的迁移目录里必须都有同名文件（库比代码新 / 迁移文件丢了 → 拦下）
+run "已执行的迁移在目标版本里都有文件 → 通过" 0 --no-backup
+has "检查 8"; has "都有对应文件"
+adm "insert into core_schema_migrations (version) values ('0099_from_newer_release.sql')" >/dev/null
+run "库里记着 0099 已执行、目标版本没有这个文件 → 失败" 1 --no-backup
+has "0099_from_newer_release.sql"
+adm "delete from core_schema_migrations where version = '0099_from_newer_release.sql'" >/dev/null
+old="$work/old-mig"; mkdir -p "$old"; cp "$work"/core/migrations/*.sql "$old/"; rm "$old"/0010_*.sql
+OUT="$(RELEASE_MIGRATIONS_DIR="$old" "$pre" --no-backup 2>&1)" && rc=0 || rc=$?
+[ "$rc" = 1 ] && out_has -q '检查 8.*0010_' && ok "目标版本少了已执行的 0010（改名 / 删了）→ 失败并列出文件名" || { bad "少了 0010 却没拦（退出码 $rc）"; echo "$OUT" | sed 's/^/     /'; }
+adm "insert into core_schema_migrations (version) values ('manual-hotfix')" >/dev/null
+run "不像迁移文件名的记录（不符合 NNNN_name.sql）不核对" 0 --no-backup
+adm "delete from core_schema_migrations where version = 'manual-hotfix'" >/dev/null
+adm "alter table core_schema_migrations rename to csm_hidden" >/dev/null
+run "读不出迁移记录 → 检查 8 失败（不当成没有记录）" 1 --no-backup
+out_has -q '失败  检查 8' && ok "检查 8 读不出时报失败" || { bad "检查 8 读不出时没报失败"; echo "$OUT" | sed 's/^/     /'; }
+adm "alter table csm_hidden rename to core_schema_migrations" >/dev/null
+mv "$work/core/migrations" "$work/mig.bak"
+run "找不到迁移目录 → 检查 8 失败" 1 --no-backup
+out_has -q '失败  检查 8' && ok "检查 8 找不到目录时报失败" || { bad "检查 8 找不到目录时没报失败"; echo "$OUT" | sed 's/^/     /'; }
+mv "$work/mig.bak" "$work/core/migrations"
+run "恢复后通过" 0 --no-backup
 # 检查 1：查询出错不能当成 0（权限被收回时 count 出错）
 # 用 PGOPTIONS 在连接时切到只读角色（超级用户可直接 set role，不需要给这个角色设密码）
 adm "create role precheck_ro nologin" >/dev/null 2>&1 || true
