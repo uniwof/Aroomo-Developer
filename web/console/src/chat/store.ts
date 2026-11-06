@@ -355,6 +355,38 @@ export function saveConversations(list: Conversation[], account: string | null =
   }
 }
 
+/** #290：所有者认领过旧的共用那份（按账号记一笔；共用那份不删） */
+const claimedKey = (account: string) => `${LEGACY_KEY}.claimed:u:${account}`;
+export function legacyClaimed(account: string, storage: Storage | undefined = globalThis.localStorage): boolean {
+  try {
+    return storage?.getItem(claimedKey(account)) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * #290：把旧的共用那份（有消息的）复制进这个账号自己那份，按 id 去重（点两次不重复）。共用那份不删、不改。
+ * 写完读回核对每一段都在，才记「已认领」；存不下（超过上限、存满）就抛错，什么都不记。返回新复制了几段。
+ * 账号必须是 Core 确认过的所有者（调用方负责）。
+ */
+export function claimLegacy(account: string, storage: Storage = globalThis.localStorage): number {
+  if (!ACCOUNT_RE.test(account)) throw new Error('bad account');
+  const legacy = loadConversations(null, storage).filter((c) => c.messages.length > 0);
+  const mine = loadConversations(account, storage);
+  const have = new Set(mine.map((c) => c.id));
+  const add = legacy.filter((c) => !have.has(c.id));
+  if (add.length) {
+    const merged = [...mine, ...add].sort((a, b) => b.updatedAt - a.updatedAt);
+    if (merged.length > MAX_CONVERSATIONS) throw new Error('too many');
+    storage.setItem(chatKey(account), JSON.stringify(merged));
+  }
+  const saved = new Set(loadConversations(account, storage).map((c) => c.id));
+  if (!legacy.every((c) => saved.has(c.id))) throw new Error('not saved');
+  storage.setItem(claimedKey(account), '1');
+  return add.length;
+}
+
 export function newConversation(opts: Partial<Pick<Conversation, 'title' | 'model' | 'group'>> = {}): Conversation {
   const id = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `c${Date.now()}${Math.random().toString(16).slice(2)}`;
   return { id, title: opts.title ?? '新对话', model: opts.model ?? 'aroomo', ...(opts.group ? { group: opts.group } : {}), messages: [], updatedAt: Date.now() };

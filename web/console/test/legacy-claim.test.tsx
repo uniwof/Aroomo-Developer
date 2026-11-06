@@ -113,7 +113,7 @@ describe('#290 认领以前的共用会话', () => {
     expect(loadConversations(OWNER).map((c) => c.id)).toEqual([MINE]);
     expect(screen.getByRole('list', { name: '会话列表' })).not.toHaveTextContent('以前的买菜单');
     fireEvent.click(btn);
-    expect(await screen.findByRole('status')).toHaveTextContent('放进你的账号了：2 段会话');
+    expect((await screen.findByText(/放进你的账号了：2 段会话/)).getAttribute('role')).toBe('status');
     await waitFor(() => expect(screen.getByRole('list', { name: '会话列表' })).toHaveTextContent('以前的买菜单'));
     await tick();
     expect(loadConversations(OWNER).map((c) => c.id).sort()).toEqual([MINE, OLD1, OLD2].sort());
