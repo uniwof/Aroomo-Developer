@@ -112,13 +112,18 @@ describe('#290 认领以前的共用会话', () => {
     expect(loadConversations(OWNER)).toHaveLength(3);
   });
 
-  it('store：同一个 id，共用那份更新（updatedAt 更大）就替换她那份里的这段；不更新就不动', () => {
+  it('store：同一个 id，共用那份更新（更晚、只是多说了几句）就替换她那份里的这段；不更新、或两边分叉就不动', () => {
     saveConversations([local(OLD1, '以前问的体检', 1)], OWNER);
-    localStorage.setItem(LEGACY, JSON.stringify([{ ...local(OLD1, '以前问的体检', 9), messages: [...local(OLD1, 'x').messages, { role: 'user', text: '后来又问的' }] }]));
+    localStorage.setItem(LEGACY, JSON.stringify([{ ...local(OLD1, '以前问的体检', 9), messages: [...local(OLD1, '以前问的体检').messages, { role: 'user', text: '后来又问的' }] }]));
     expect(claimLegacy(OWNER)).toBe(1);
     expect(loadConversations(OWNER)[0]!.messages.map((m) => m.text)).toContain('后来又问的');
     expect(claimLegacy(OWNER)).toBe(0);
     expect(loadConversations(OWNER)).toHaveLength(1);
+    // 两边各自接着说过（分叉）：不替换，她那份一句不丢
+    saveConversations([{ ...local(OLD1, '以前问的体检', 20), messages: [...local(OLD1, '以前问的体检').messages, { role: 'user', text: '她账号里说的' }] }], OWNER);
+    localStorage.setItem(LEGACY, JSON.stringify([{ ...local(OLD1, '以前问的体检', 30), messages: [...local(OLD1, '以前问的体检').messages, { role: 'user', text: '别处说的' }, { role: 'assistant', text: '好' }] }]));
+    expect(claimLegacy(OWNER)).toBe(0);
+    expect(loadConversations(OWNER)[0]!.messages.map((m) => m.text)).toContain('她账号里说的');
   });
 
   it('Core 说谁是所有者：admin 账号和主人令牌是；家人（role=user）不是', async () => {

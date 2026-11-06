@@ -20,7 +20,7 @@ import { Thread, type DraftActions } from './Thread';
 import { SIDE_UI, Sidebar, type SideUi } from './Sidebar';
 import { BackButton, ExternalPanel, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type GoTarget } from './panels';
 import { applyDisplay } from '@/lib/display';
-import { ClaimFullError, claimLegacy, legacyClaimed, listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
+import { ClaimFullError, claimLegacy, clearLegacyClaimed, legacyClaimed, listTimeLabel, loadConversations, loadPrefs, newConversation, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
 import { useAsk } from '@/components/Dialog';
 import { FLAGS } from '@/lib/flags';
 import { useAssistants, type AssistantInput } from '@/lib/assistants';
@@ -302,6 +302,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         if (touched.length) {
           const t = new Map(touched.map((c) => [c.id, c]));
           saveConversations(loadConversations(was).map((c) => t.get(c.id) ?? c), was);
+          // 存回的是共用那份：她认领过也要重新提示，不然这句在她账号里看不见（负责人 #294 第二轮）
+          if (!was) clearLegacyClaimed(me);
         }
         const keep = new Set(carry.map((c) => c.id));
         const mine = [...carry, ...loadConversations(me).filter((c) => !keep.has(c.id))];
@@ -456,11 +458,12 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
       void importNow();
       return;
     }
-    const mine = loadConversations(me);
+    // 新复制的加进来，被替换的那段换成新的（不然保存会用列表里旧的盖回去）
+    const mine = new Map(loadConversations(me).map((c) => [c.id, c]));
     setList((prev) => {
       const have = new Set(prev.map((c) => c.id));
-      const add = mine.filter((c) => !have.has(c.id));
-      return add.length ? [...prev, ...add].sort((a, b) => b.updatedAt - a.updatedAt) : prev;
+      const next = [...prev.map((c) => (c.remote ? c : (mine.get(c.id) ?? c))), ...[...mine.values()].filter((c) => !have.has(c.id))];
+      return next.sort((a, b) => b.updatedAt - a.updatedAt);
     });
   };
   // 打开存库的会话：消息还没取就取；有未读就标已读

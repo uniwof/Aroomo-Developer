@@ -365,22 +365,37 @@ export function legacyClaimed(account: string, storage: Storage | undefined = gl
   }
 }
 
+/** 共用那份里又有了她没认领的新内容（负责人 #294 第二轮）：清掉「已认领」，提示和按钮重新出来 */
+export function clearLegacyClaimed(account: string, storage: Storage | undefined = globalThis.localStorage): void {
+  try {
+    storage?.removeItem(claimedKey(account));
+  } catch {
+    /* 隐私模式：不提示也不丢，下次再说 */
+  }
+}
+
 /** #290：放不下（超过上限或浏览器存满）：再点也没用，界面要换一句话（负责人 #294 必改 2） */
 export class ClaimFullError extends Error {}
 
 /**
- * #290：把旧的共用那份（有消息的）复制进这个账号自己那份，按 id 去重（点两次不重复）。共用那份不删、不改。
- * 写完读回核对每一段都在，才记「已认领」；存不下（超过上限、存满）就抛错，什么都不记。返回新复制了几段。
+ * #290：把旧的共用那份（有消息的）复制进这个账号自己那份，按 id 去重（点两次不重复）；同一个 id 共用那份更新就替换。共用那份不删、不改。
+ * 写完读回核对每一段都在（且不比共用那份旧），才记「已认领」；存不下（超过上限、存满）就抛错，什么都不记。返回复制或替换了几段。
  * 账号必须是 Core 确认过的所有者（调用方负责）。
  */
 export function claimLegacy(account: string, storage: Storage = globalThis.localStorage): number {
   if (!ACCOUNT_RE.test(account)) throw new Error('bad account');
   const legacy = loadConversations(null, storage).filter((c) => c.messages.length > 0);
   const mine = loadConversations(account, storage);
-  const have = new Set(mine.map((c) => c.id));
-  const add = legacy.filter((c) => !have.has(c.id));
+  const byId = new Map(mine.map((c) => [c.id, c]));
+  // 没有的复制；同一个 id 共用那份更新（更晚、消息更多：她在共用那份里接着说过，负责人 #294 第二轮）就替换她那份里的这段。
+  // 只在她那份是共用那份的开头时替换（共用那份只是多说了几句）；两边各自接着说过（分叉）不替换，她那份一句不丢。
+  // shortcut: 分叉时共用那份多出来的话留在共用那份、不进她账号；很少见，以后要的话改成按消息合并
+  const newer = (a: Conversation, b: Conversation) =>
+    a.updatedAt > b.updatedAt && a.messages.length > b.messages.length && b.messages.every((m, i) => a.messages[i]!.role === m.role && a.messages[i]!.text === m.text);
+  const add = legacy.filter((c) => !byId.has(c.id) || newer(c, byId.get(c.id)!));
   if (add.length) {
-    const merged = [...mine, ...add].sort((a, b) => b.updatedAt - a.updatedAt);
+    for (const c of add) byId.set(c.id, c);
+    const merged = [...byId.values()].sort((a, b) => b.updatedAt - a.updatedAt);
     if (merged.length > MAX_CONVERSATIONS) throw new ClaimFullError('too many');
     try {
       storage.setItem(chatKey(account), JSON.stringify(merged));
@@ -388,8 +403,8 @@ export function claimLegacy(account: string, storage: Storage = globalThis.local
       throw e instanceof DOMException && (e.name === 'QuotaExceededError' || e.code === 22) ? new ClaimFullError('quota') : e;
     }
   }
-  const saved = new Set(loadConversations(account, storage).map((c) => c.id));
-  if (!legacy.every((c) => saved.has(c.id))) throw new Error('not saved');
+  const saved = new Map(loadConversations(account, storage).map((c) => [c.id, c]));
+  if (!legacy.every((c) => saved.has(c.id) && !newer(c, saved.get(c.id)!))) throw new Error('not saved');
   storage.setItem(claimedKey(account), '1');
   return add.length;
 }
