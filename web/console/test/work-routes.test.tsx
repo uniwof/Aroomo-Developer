@@ -5,6 +5,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { OWNER_ONLY, pathOf, viewOf } from '@/chat/routes';
 
+vi.mock('@/lib/work-flag', () => ({ WORK: true }));
 vi.mock('@/lib/flags', () => ({
   FLAGS: { taskCards: false, quickReplies: false, convFilter: false, schedulePage: false, assistantDraft: false, assistants: false, savedChats: false, skeletonShimmer: false, work: true },
 }));

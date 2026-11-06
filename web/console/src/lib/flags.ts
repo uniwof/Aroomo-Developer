@@ -10,10 +10,14 @@
  * - savedChats      会话存库：对话列表 / 消息从 Core 的 /api/conversations 读，发消息时由 Core 存；Core 拿不到时退回本机
  * - assistants      会话栏「助手」列表、新建助手、助手详情（固定会话 + 运行记录 + 立即运行 + 暂停继续）——等 /api/assistants
  *
+ * - work            /work 项目与版本（docs/api/design-work-v1.md，切片 1 只读 + GitHub 同步）——只给所有者，所有者验收后再开
+ *
  * 阶段 1.5（2026-11-06，负责人裁定 B）：生产只给所有者用，阶段 2/3 她还没验收，这 6 项发布前改回 false
  * （定时执行器在生产关着，露出助手会显示永远不会跑的「下次运行」）。Core 路由不动、只给所有者。
  * 阶段 2/3 验收后，测一项开一项。
  */
+import { WORK } from './work-flag';
+
 export const FLAGS = {
   taskCards: false,
   quickReplies: false,
@@ -23,6 +27,7 @@ export const FLAGS = {
   assistants: false,
   savedChats: false,
   skeletonShimmer: false,
+  work: WORK,
 } as const;
 
 export type FlagName = keyof typeof FLAGS;

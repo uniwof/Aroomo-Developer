@@ -4,9 +4,11 @@
  * 成员详情用 /team?member=<id>，不占 /team/:id（规范：成员详情不能和别的路由撞，也不是进对话）。
  * 助手（只给所有者、开关打开时）：详情 /assistants?assistant=<id>，全部计划 /assistants/schedule。
  * /console（驾驶舱）：只用现有接口（成员、收件箱计数、能力地图、审计），见 cockpit.tsx。
- * /work（项目与版本，规范 §7）：需 Core API——Core 没有项目 / 交付物 / 不可变版本的数据，不做假页面，落到对话（docs/api/design-poke-data-v1.md）。
+ * /work（项目与版本，规范 §7，docs/api/design-work-v1.md）：/work 项目列表、/work/<项目> 版本时间线、/work/<项目>?v=<版本> 版本详情；只给所有者。
+ *   开关 FLAGS.work（= WORK 常量）关着时这些地址落到对话，解析代码随开关一起被摇掉（对话页包 ≤150 KB）。
  */
 import type { SettingsSection } from './panels';
+import { WORK } from '@/lib/work-flag';
 
 export type View =
   | { kind: 'chat' }
@@ -30,7 +32,9 @@ export type View =
   | { kind: 'me' }
   /** 助手详情（固定会话 + 运行记录）、X-02 全部计划；只给所有者 */
   | { kind: 'assistant'; id: string }
-  | { kind: 'schedule' };
+  | { kind: 'schedule' }
+  /** /work：project 有值 = 时间线，再加 version = 版本详情 */
+  | { kind: 'work'; project?: string; version?: string };
 
 const SECTIONS: readonly string[] = ['profile', 'prefs', 'safety', 'general', 'family', 'lead', 'push', 'budget', 'external', 'shortcuts'];
 
@@ -72,6 +76,8 @@ export function pathOf(v: View): string {
       return `/assistants?assistant=${encodeURIComponent(v.id)}`;
     case 'schedule':
       return '/assistants/schedule';
+    case 'work':
+      return WORK ? workPath(v) : '/chat';
   }
 }
 
@@ -95,9 +101,26 @@ export function legacyPath(pathname: string, search: string): string | null {
   return null;
 }
 
+function workPath(v: { project?: string; version?: string }): string {
+  if (!v.project) return '/work';
+  return `/work/${encodeURIComponent(v.project)}` + (v.version ? `?v=${encodeURIComponent(v.version)}` : '');
+}
+
 export function viewOf(pathname: string, search: string): View {
   const p = pathname.replace(/\/+$/, '') || '/';
   const q = new URLSearchParams(search);
+  if (WORK) {
+    const w = /^\/work(?:\/([^/]+))?$/.exec(p);
+    if (w) {
+      const v = q.get('v');
+      if (!w[1]) return { kind: 'work' };
+      try {
+        return { kind: 'work', project: decodeURIComponent(w[1]), ...(v ? { version: v } : {}) };
+      } catch {
+        /* 坏的 %xx：当对话处理 */
+      }
+    }
+  }
   if (p === '/team') {
     const id = q.get('member');
     if (id) return { kind: 'member', id };
@@ -127,4 +150,4 @@ export function viewOf(pathname: string, search: string): View {
 }
 
 /** 只给所有者的面板（家人账号打开这些地址落到对话） */
-export const OWNER_ONLY: readonly View['kind'][] = ['library', 'tools', 'keys', 'mcp', 'audit', 'executors', 'assistant', 'schedule'];
+export const OWNER_ONLY: readonly View['kind'][] = ['library', 'tools', 'keys', 'mcp', 'audit', 'executors', 'assistant', 'schedule', 'work'];

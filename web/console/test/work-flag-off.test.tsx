@@ -7,6 +7,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { ChatPage } from '@/chat/ChatPage';
 import { viewOf } from '@/chat/routes';
 import { FLAGS } from '@/lib/flags';
+import { WORK } from '@/lib/work-flag';
 
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } });
 let urls: string[];
@@ -32,6 +33,7 @@ afterEach(() => {
 describe('/work 开关关着', () => {
   it('开关默认 false', () => {
     expect(FLAGS.work).toBe(false);
+    expect(WORK).toBe(false);
   });
   it('/work 地址当对话处理', () => {
     expect(viewOf('/work', '')).toEqual({ kind: 'chat' });
