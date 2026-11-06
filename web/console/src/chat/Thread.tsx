@@ -423,11 +423,13 @@ export interface ThreadProps {
   persist?: (firstUserText: string) => Promise<string | null>;
   /** X-04b：打开后滚到这条消息并给焦点（收件箱「打开对话」） */
   focusMessageId?: string;
+  /** #291：草稿存在哪个账号名下（同本机会话的账号）；null = 不知道是谁，用共用那份 */
+  draftAccount?: string | null;
   /** 一轮对话结束：成功给 null，接口回了错误状态给 HTTP 状态（别的失败给 undefined） */
   onResult?: (status: number | null | undefined) => void;
 }
 
-export function Thread({ conversation, onMessages, insert, onInserted, hidden = false, routes = [], members = [], fetchImpl, speechRate = DEFAULT_RATE, speechOnline = false, onAllowOnlineSpeech, memberName, onRunning, intro, notice, onResult, draftActions, persist, focusMessageId }: ThreadProps) {
+export function Thread({ conversation, onMessages, insert, onInserted, hidden = false, routes = [], members = [], fetchImpl, speechRate = DEFAULT_RATE, speechOnline = false, onAllowOnlineSpeech, memberName, onRunning, intro, notice, onResult, draftActions, persist, focusMessageId, draftAccount = null }: ThreadProps) {
   const resultCb = useRef(onResult);
   resultCb.current = onResult;
   const convRef = useRef(conversation);
@@ -593,23 +595,31 @@ export function Thread({ conversation, onMessages, insert, onInserted, hidden = 
   // 还没发过消息的新会话不进会话列表（刷新后 id 会变），草稿先记在固定的「新对话」名下；发过消息后记在会话 id 名下。
   const hasMessages = useRef(messages.length > 0);
   hasMessages.current = messages.length > 0;
+  // #291：账号刚问到（draftAccount 变了）时，输入框里如果还是刚才从别的那份（如共用那份）读进来、她没改过的草稿，
+  // 换成这个账号自己那份（没有就清空），不把别人的草稿存进她的账号（负责人 #299 必改）；她自己打的字留着。
+  const fromDraft = useRef<string | null>(null);
   useEffect(() => {
     const key = () => (hasMessages.current ? conversation.id : newDraftKey(convRef.current));
     const c = runtime.thread.composer;
-    const draft = loadDraft(key());
-    if (draft && !c.getState().text) c.setText(draft);
+    const draft = loadDraft(key(), draftAccount);
+    const now = c.getState().text;
+    if (!now || now === fromDraft.current) {
+      if (draft !== now) c.setText(draft);
+      fromDraft.current = draft || null;
+    }
     let last = c.getState().text;
     let lastKey = key();
     return c.subscribe(() => {
       const t = c.getState().text;
       const k = key();
       if (t === last && k === lastKey) return;
-      if (k !== lastKey) saveDraft(lastKey, ''); // 新对话发出第一句后，「新对话」名下的草稿清掉
+      if (t !== fromDraft.current) fromDraft.current = null;
+      if (k !== lastKey) saveDraft(lastKey, '', draftAccount); // 新对话发出第一句后，「新对话」名下的草稿清掉
       last = t;
       lastKey = k;
-      saveDraft(k, t);
+      saveDraft(k, t, draftAccount);
     });
-  }, [runtime, conversation.id]);
+  }, [runtime, conversation.id, draftAccount]);
 
   // X-04b：收件箱「打开对话」→ 滚到那条消息，给焦点框（读屏从这条开始读）
   useEffect(() => {

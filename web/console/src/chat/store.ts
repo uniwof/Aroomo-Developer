@@ -451,30 +451,32 @@ export function savePrefs(p: ChatPrefs, storage: Storage | undefined = globalThi
 // ---- 草稿：每个会话一份，没发出去的话不丢（切会话、刷新、重新登录后还在） ----
 
 const DRAFT_KEY = 'aroomo.chat.drafts.v1';
+/** #291：草稿也按账号分开（同 chatKey）；不知道是哪个账号用旧的共用那份。旧的共用草稿不搬、不删 */
+const draftKey = (account: string | null) => (account && ACCOUNT_RE.test(account) ? `${DRAFT_KEY}:u:${account}` : DRAFT_KEY);
 
-function readDrafts(storage: Storage | undefined): Record<string, string> {
+function readDrafts(storage: Storage | undefined, account: string | null): Record<string, string> {
   try {
-    const j = JSON.parse(storage?.getItem(DRAFT_KEY) ?? '{}') as unknown;
+    const j = JSON.parse(storage?.getItem(draftKey(account)) ?? '{}') as unknown;
     return j && typeof j === 'object' && !Array.isArray(j) ? (j as Record<string, string>) : {};
   } catch {
     return {};
   }
 }
 
-export function loadDraft(id: string, storage: Storage | undefined = globalThis.localStorage): string {
-  const v = readDrafts(storage)[id];
+export function loadDraft(id: string, account: string | null = null, storage: Storage | undefined = globalThis.localStorage): string {
+  const v = readDrafts(storage, account)[id];
   return typeof v === 'string' ? v : '';
 }
 
-export function saveDraft(id: string, text: string, storage: Storage | undefined = globalThis.localStorage): void {
+export function saveDraft(id: string, text: string, account: string | null = null, storage: Storage | undefined = globalThis.localStorage): void {
   try {
-    const all = readDrafts(storage);
+    const all = readDrafts(storage, account);
     if (text.trim()) all[id] = text.slice(0, 32000);
     else delete all[id];
     const keys = Object.keys(all);
     // 最多留 50 份，删掉最早的
     for (const k of keys.slice(0, Math.max(0, keys.length - 50))) delete all[k];
-    storage?.setItem(DRAFT_KEY, JSON.stringify(all));
+    storage?.setItem(draftKey(account), JSON.stringify(all));
   } catch {
     /* 忽略 */
   }
