@@ -133,6 +133,14 @@ for (const [label, viewport, isMobile] of [
       continue;
     }
     await page.waitForTimeout(1000);
+    if (p === '/console/chat' && !(await page.evaluate(() => document.body.innerText.includes('a'.repeat(100))))) {
+      // 从 Shell 登录时标签页里没记账号：页面先开一个空白新话题，问到是谁以后长会话进列表但不抢当前话题（#291 的设计）。
+      // 照她会做的那样从会话列表点进去；点不到就照样往下查，长数据看不到会判失败
+      const list = page.getByRole('list', { name: '会话列表' });
+      if (!(await list.isVisible())) await page.getByRole('button', { name: '返回对话列表' }).click({ timeout: 5000 }).catch(() => {});
+      await list.getByRole('button', { name: /^很长的会话标题/ }).first().click({ timeout: 5000 }).catch(() => {});
+      await page.waitForTimeout(1000);
+    }
     const m = await page.evaluate(() => {
       const d = document.documentElement;
       const inner = [...document.querySelectorAll('body *')]
