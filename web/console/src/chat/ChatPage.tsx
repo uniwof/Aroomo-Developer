@@ -19,7 +19,7 @@ import { useInboxCount } from '@/lib/inbox';
 import { Thread, newDraftKey, type DraftActions } from './Thread';
 import { OFFLINE_NOTE, ONLINE_AGAIN, useOnline } from './online';
 import { SIDE_UI, Sidebar, type SideUi } from './Sidebar';
-import { BackButton, ExternalPanel, GroupNewPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type GoTarget } from './panels';
+import { BackButton, ExternalPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type GoTarget } from './panels';
 import { applyDisplay } from '@/lib/display';
 import { ClaimFullError, claimLegacy, legacyClaimed, listTimeLabel, loadConversations, loadDraft, loadPrefs, newConversation, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
 import { useAsk } from '@/components/Dialog';
@@ -42,6 +42,7 @@ const Executors = lazy(() => import('@/pages/Executors').then((m) => ({ default:
 const AssistantDetail = lazy(() => import('./pages/assistants/AssistantPages').then((m) => ({ default: m.AssistantDetail })));
 const NewAssistantDialog = lazy(() => import('./pages/assistants/AssistantPages').then((m) => ({ default: m.NewAssistantDialog })));
 const ScheduleView = lazy(() => import('./pages/assistants/AssistantPages').then((m) => ({ default: m.ScheduleView })));
+const GroupNewPanel = lazy(() => import('./group-new').then((m) => ({ default: m.GroupNewPanel })));
 const CapabilityPanel = lazy(() => import('./capability-panel').then((m) => ({ default: m.CapabilityPanel })));
 
 /** 懒加载面板下载时：一句静态文字（不转圈，无动画） */
