@@ -8,7 +8,7 @@ import { Bell, BellRing, ArrowLeft, ChevronRight, Home, Keyboard, Monitor, Moon,
 import { activityLabel, api, isFamily, type Member } from '@/lib/api';
 import { useAsk } from '@/components/Dialog';
 import { useUsage } from '@/lib/usage';
-import { UsageLine } from '@/pages/Members';
+import { UsageLine } from '@/components/UsageLine';
 import { BudgetSection, Field, Group, LeadSection, McpSection, SecuritySection } from '@/pages/Settings';
 import { FamilySection, GeneralSection, PasswordRow, ProfileSection, SignOutGroup } from './settings-sections';
 import { PushSection } from './push-section';
