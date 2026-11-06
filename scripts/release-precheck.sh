@@ -28,6 +28,9 @@
 #         Aroomo 自己的 aroomo_aroomo-mcp 网络（上次部署建的）不算冲突。
 # 检查 6  设了 CORE_OWNER_ACCOUNT_ID（方案 A）时：必须是 UUID、SHELL_AUTH=core-session，且 users 表里这个 id 的邮箱
 #         就是 SHELL_OWNER_EMAIL（不分大小写）、角色 admin、状态 active。没设则通过。不打印邮箱和 id。
+# 检查 8  （#277）core_schema_migrations 里已执行的迁移（符合 NNNN_name.sql）在目标版本迁移目录里都要有同名文件；
+#         缺了就失败并列出文件名（要上线的版本比数据库旧、标签打错、迁移文件被改名或删了）。迁移目录或迁移记录
+#         读不出来也失败（失败即关闭）。没有跳过开关：真要回退走单独的回退流程并人工确认。
 # 检查 7  core/src/third_party/ekko 收费上线前必须为空（借自 Ekko Studio，BSL 1.1 只许非商用；所有者 2026-11-05 13:00）。
 #         平时只打一行信息提醒（自用发布可以带着）；加 --paid-launch 时非空即失败。
 # 备份    调用现有备份流程（scripts/backup.sh，主密钥公钥加密，异地 R2）做一次，核对：状态 ok、已上传异地、
@@ -126,11 +129,13 @@ fi
 mig_dir="${RELEASE_MIGRATIONS_DIR:-$here/../core/migrations}"
 pending_migs=()
 pending_note=""
+applied_ok=0
 if [ ! -d "$mig_dir" ]; then
   pending_note="；找不到目标版本的迁移目录，不按待执行迁移放行"
 elif ! applied_migs="$(sql "select version from core_schema_migrations")"; then
   pending_note="；读不出迁移记录 core_schema_migrations，不按待执行迁移放行"
 else
+  applied_ok=1
   for f in "$mig_dir"/*.sql; do
     [ -f "$f" ] || continue
     b="$(basename "$f")"
@@ -139,12 +144,30 @@ else
   done
   [ "${#pending_migs[@]}" -gt 0 ] || pending_note="；没有待执行的迁移会新建它"
 fi
-# created_by_pending <表> → 打印新建它的待执行迁移文件名（去掉 -- 注释行后找 CREATE TABLE）
+# strip_sql_comments <文件> → 去掉 /* */ 块注释（单行、跨行，换成一个空格）和 -- 到行尾的注释（#278）。
+# 按出现先后处理：-- 里的 /* 不开块注释，块注释里的 -- 不算行注释。只用 awk，不加依赖。
+# shortcut: 不识别字符串字面量（'a -- b'、'/*' 会被当注释切掉），也不支持嵌套块注释；只用来判断有没有 CREATE TABLE，
+#           切多了只会让检查 1 少放行（失败即关闭）。迁移里真出现这种写法时再换成真正的 SQL 词法分析。
+strip_sql_comments() {
+  awk '{
+    line = $0; out = ""
+    while (line != "") {
+      if (inblk) { p = index(line, "*/"); if (p == 0) { line = ""; break }; line = substr(line, p + 2); inblk = 0; out = out " "; continue }
+      b = index(line, "/*"); d = index(line, "--")
+      if (b == 0 && d == 0) { out = out line; break }
+      if (d > 0 && (b == 0 || d < b)) { out = out substr(line, 1, d - 1); break }
+      out = out substr(line, 1, b - 1); line = substr(line, b + 2); inblk = 1
+    }
+    print out
+  }' "$1"
+}
+# created_by_pending <表> → 打印新建它的待执行迁移文件名（去掉注释后找 CREATE TABLE）
 created_by_pending() {
-  local t="$1" f re
+  local t="$1" f re body
   re="^[[:space:]]*create[[:space:]]+table[[:space:]]+(if[[:space:]]+not[[:space:]]+exists[[:space:]]+)?(public\.)?\"?$t\"?([[:space:](]|$)"
   for f in "${pending_migs[@]}"; do
-    if grep -v '^[[:space:]]*--' "$mig_dir/$f" | grep -qiE "$re"; then printf '%s' "$f"; return 0; fi
+    body="$(strip_sql_comments "$mig_dir/$f")" || continue   # 读不出来就不算新建（失败即关闭）
+    if grep -qiE "$re" <<<"$body"; then printf '%s' "$f"; return 0; fi
   done
   return 1
 }
@@ -362,6 +385,26 @@ elif [ "$paid_launch" = 1 ]; then
   fail "检查 7 core/src/third_party/ekko 还有 $borrowed_n 个借用文件（Ekko Studio，BSL 1.1 只许非商用）：收费上线前必须按 BORROWED.md 剥离清空"
 else
   say "信息  检查 7 core/src/third_party/ekko 有 $borrowed_n 个借用文件（BSL 1.1）：自用发布可以；收费上线前必须清空（--paid-launch 会拦）"
+fi
+
+# ---------------------------------------------------------------------------
+# 检查 8（#277）：已执行的迁移在目标版本里都要有文件。库比代码新（回退到旧标签、标签打错、迁移文件改名或删了）就拦下。
+if [ ! -d "$mig_dir" ]; then
+  fail "检查 8 找不到目标版本的迁移目录，无法核对已执行的迁移有没有对应文件"
+elif [ "$applied_ok" != 1 ]; then
+  fail "检查 8 读不出迁移记录 core_schema_migrations，无法核对已执行的迁移有没有对应文件"
+else
+  missing_migs=""; applied_n=0
+  while IFS= read -r v; do
+    [[ "$v" =~ ^[0-9]{4}_[a-z0-9_]+\.sql$ ]] || continue   # 与 core/src/db/migrate.ts 的 FILE_RE 一致
+    applied_n=$((applied_n + 1))
+    [ -f "$mig_dir/$v" ] || missing_migs="$missing_migs $v"
+  done <<<"$applied_migs"
+  if [ -n "$missing_migs" ]; then
+    fail "检查 8 数据库里已执行、目标版本迁移目录里却没有的迁移：${missing_migs# }（要上线的版本比数据库旧、标签打错，或迁移文件被改名/删了；真要回退请走回退流程并人工确认）"
+  else
+    pass "检查 8 已执行的 $applied_n 个迁移在目标版本里都有对应文件"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
