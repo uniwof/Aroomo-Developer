@@ -62,6 +62,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# 控制台静态文件：compose 把 web/console/dist 挂进 shell 的 /app/console；没构建时 /console 是 404（F-144 的 32px 检查要真打开控制台）
+step="构建控制台"
+"$root/scripts/build-console.sh"
 step="构建并启动"
 dc up -d --build --quiet-pull postgres redis rustfs rustfs-init litellm core lobe shell fake-llm
 
