@@ -15,3 +15,6 @@ assistants
 assistant_members
 assistant_runs
 run_steps
+# /work 项目与版本（迁移 0033，docs/api/design-work-v1.md）
+work_projects
+work_versions

@@ -36,6 +36,8 @@ export const CAPABILITIES = [
   'assistants:write',
   /** X-08 推送提醒：订阅 / 取消 / 发一条试试。第一版只给所有者范围，不进操作员白名单 */
   'push:manage',
+  /** /work 项目与版本（docs/api/design-work-v1.md）：第一版只给所有者范围，不进操作员白名单 */
+  'work:manage',
 
   // —— D62 禁止项（操作员永远不能拥有）——
   /** 读取 Key 明文（Core 本身没有这样的接口；能力名占位，保证将来也不能授予操作员） */

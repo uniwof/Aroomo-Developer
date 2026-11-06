@@ -17,7 +17,7 @@ const ROLE_RE = /^[a-z_][a-z0-9_]{0,62}$/;
  * 外键 ON DELETE CASCADE 照样能删到它们：级联由数据库以表所有者身份执行，不检查调用者的 DELETE 权限。
  * 还没建的表（迁移在后面的分支里）跳过。负责人 11-05 第二批必改 3。
  */
-export const APPEND_ONLY_TABLES = ['audit_log', 'conversation_messages', 'run_steps'] as const;
+export const APPEND_ONLY_TABLES = ['audit_log', 'conversation_messages', 'run_steps', 'work_versions'] as const;
 
 /** 以表所有者身份执行：给应用角色授当前 schema 全部表 / 序列的 DML 权限，并覆盖以后新建的表。 */
 export async function grantAppRole(owner: Queryable, role: string): Promise<void> {
