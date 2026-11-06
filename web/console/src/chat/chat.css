@@ -1274,6 +1274,12 @@
   padding-bottom: calc(1 * var(--k));
   flex: none;
 }
+/* F-020 断网提示：输入框上方一行静态字，正文字号、正文颜色（看得清），不加动画 */
+.note.offline-note {
+  font-size: 1rem;
+  color: var(--fg);
+  padding-bottom: calc(0.5 * var(--k));
+}
 .composer {
   display: flex;
   flex-direction: column;
