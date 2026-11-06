@@ -3,7 +3,7 @@
  * 参照 sumus：侧栏底部「Members」、顶部齿轮打开的内容都在主区域原地显示，不开第二层抽屉；
  * 面板内容一律是分组列表（iOS / sumus 式），不用标签页。最终位置等负责人的 sumus→Aroomo 逐屏映射方案再定。
  */
-import { useState, type ReactNode } from 'react';
+import { lazy, Suspense, useState, type ReactNode } from 'react';
 import { Bell, BellRing, ArrowLeft, ChevronRight, Home, Keyboard, Monitor, Moon, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Sun, UserRound, Users, X } from 'lucide-react';
 import { activityLabel, api, isFamily, type Member } from '@/lib/api';
 import { useAsk } from '@/components/Dialog';
@@ -11,8 +11,7 @@ import { useUsage } from '@/lib/usage';
 import { UsageLine } from '@/components/UsageLine';
 import { BudgetSection, Field, Group, LeadSection, McpSection, SecuritySection } from '@/pages/Settings';
 import { FamilySection, GeneralSection, PasswordRow, ProfileSection, SignOutGroup } from './settings-sections';
-import { PushSection } from './push-section';
-import { ClientTokens } from '@/components/ClientTokens';
+import { ClientTokensLazy } from '@/components/ClientTokensLazy';
 import { Dialog } from '@/components/Dialog';
 import { Avatar } from './Avatar';
 import { Empty, errText } from './ui';
@@ -21,6 +20,9 @@ import { SPEECH_RATES, speechSupported } from './speech';
 import { type ChatPrefs } from './store';
 import { FONT_DEFAULT, FONT_MAX, FONT_MIN, clampFont } from '@/lib/display';
 import type { Theme } from '@/lib/display';
+
+// #281：设置 › 通知点开才下载（对话页包 ≤150 KB gz）；下载时一句静态文字，不转圈
+const PushSection = lazy(() => import('./push-section').then((m) => ({ default: m.PushSection })));
 
 /**
  * 全站唯一一种返回键（Poke ③ / 自审 C13）：「← 上一层名字」，桌面、手机、对话页、面板、设置都用它。
@@ -484,7 +486,11 @@ export function SettingsSectionBody({ section, prefs, setPrefs, onGo, members = 
       )}
       {section === 'general' && <GeneralSection members={members} onUsage={() => onGo('keys')} />}
       {section === 'family' && <FamilySection />}
-      {section === 'push' && <PushSection />}
+      {section === 'push' && (
+        <Suspense fallback={<p role="status" className="note panel-loading">正在加载…</p>}>
+          <PushSection />
+        </Suspense>
+      )}
       {section === 'budget' && (
         <div className="group">
           <BudgetSection />
@@ -503,7 +509,7 @@ function ExternalGroup() {
     <div className="group">
       <McpSection />
       <div className="row row-stack">
-        <ClientTokens />
+        <ClientTokensLazy />
       </div>
     </div>
   );
