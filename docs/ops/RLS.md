@@ -34,7 +34,10 @@ migrate() 把整次迁移（所有未执行的文件）放在同一个事务里�
 3. `scripts/compose.sh up -d --force-recreate core`，日志里 `appDatabaseUrl: "(set)"`、没有「拒绝启动」，`/healthz` 通。
 4. 核对：`docker compose exec postgres psql -U "$POSTGRES_USER" -d aroomo_core -c "SELECT usename FROM pg_stat_activity WHERE datname='aroomo_core'"` 里业务连接是 `aroomo_core_app`。
 5. 确认无误后 `.env` 加 `CORE_DB_REQUIRE_APP_ROLE=true` 再重建 core：以后谁把口令删了、或退回旧做法，Core 直接拒绝启动，不会悄悄降级。
-- 回滚：去掉 `CORE_DB_REQUIRE_APP_ROLE` 和 `CORE_APP_DB_PASSWORD` 两行，重建 core，回到旧做法（FORCE RLS 下隔离照样在，只是注入时能被关掉）。角色留着不用删。
+- 回滚（负责人 #285 必改 1）：**`CORE_DB_REQUIRE_APP_ROLE`、`CORE_APP_DB_PASSWORD`、`CORE_DB_APP_ROLE` 三行都删掉**，重建 core，回到生产现在的样子（所有者连接，FORCE RLS 照样生效，只是注入时能被关掉）。角色留着不用删。
+  - 不要只删两行留着 `CORE_DB_APP_ROLE`：那是旧的 SET ROLE 做法，要求 `aroomo_core` 是 `aroomo_core_app` 的成员。生产从来没建过这层关系，脚本建的新角色也不会加，留着这一行 Core 切不过去角色、拒绝启动。
+  - 某个环境确实要退回 SET ROLE：先核 `SELECT pg_has_role('aroomo_core', 'aroomo_core_app', 'MEMBER');`，是 true 才能留 `CORE_DB_APP_ROLE` 那一行。
+  - staging 打开后先按这里演练一次回退，再切回来（负责人 #285）。
 - 新装：`deploy/postgres/20-aroomo-dbs.sh` 只建了 NOLOGIN 的 `aroomo_core_app`，首次启动后同样跑一次第 2 步。
 - 带 needs-leader-review 且负责人未审的 RLS PR 不上生产（D202/D209）。**生产什么时候打开由所有者 / 负责人定**，本脚本不会自己动生产。
 
@@ -42,4 +45,5 @@ migrate() 把整次迁移（所有未执行的文件）放在同一个事务里�
 - 审计日志红线：每次启动授权后接着 `REVOKE UPDATE, DELETE ON audit_log`、`REVOKE INSERT, UPDATE, DELETE ON core_schema_migrations`、收回 TRUNCATE 和只追加表的 DELETE（`core/src/db/app-role.ts`），应用角色只能追加审计。
 - 新迁移建的表自动带上应用角色的 DML 权限（`ALTER DEFAULT PRIVILEGES`），不用每个迁移里写 GRANT；建 RLS 表必须 ENABLE + FORCE，漏了 FORCE 启动自检就拒绝启动。
 - pg-boss（若启用）用表所有者连接，但只用自己的 schema，不碰业务表。
+- 已知限制：Core 容器里还放着所有者的连接串（`CORE_DATABASE_URL`，迁移和 pg-boss 要用）。所以独立登录挡住的是 SQL 注入关掉 RLS，挡不住有人拿到容器的执行权限。
 - 这里不需要新迁移：角色是整个数据库集群的对象，迁移用的 `aroomo_core` 没有建角色的权限；表权限每次启动幂等地授，没有可回退的表结构变化。

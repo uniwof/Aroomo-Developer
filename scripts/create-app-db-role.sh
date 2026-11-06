@@ -7,7 +7,7 @@
 #   1. 角色不存在就建；然后一律设成 LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB NOREPLICATION NOINHERIT。
 #   2. 收回它在任何角色里的成员身份（尤其是表所有者 aroomo_core），这样会话里 SET ROLE / RESET ROLE 都回不到所有者。
 #   3. 口令：.env 里已有 CORE_APP_DB_PASSWORD 就沿用，没有就在本机生成（openssl，64 位十六进制）。口令只经 stdin 进 psql，
-#      不出现在命令行、日志、终端输出里。
+#      不出现在命令行、终端输出里；带口令那句之前本会话关掉语句日志，出错也不进数据库日志。
 #   4. 先备份 .env（.env.bak.<时间>），再写入 CORE_DB_APP_ROLE=aroomo_core_app、CORE_APP_DB_PASSWORD=…，权限 600。
 # 不做的事：不重建 core、不写 CORE_DB_REQUIRE_APP_ROLE（见 docs/ops/RLS.md，按步骤手动打开）。
 # 表权限不在这里授：Core 每次启动由表所有者执行 grantAppRole（core/src/db/app-role.ts）。
@@ -36,6 +36,9 @@ fi
   printf '\\set pw %s\n' "$pw"
   cat <<SQL
 SELECT 'CREATE ROLE $role' WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '$role') \\gexec
+-- D199-1：下一句带口令，出错时 PostgreSQL 默认把整条语句写进日志（docker logs）。本会话关掉语句日志再执行（负责人 #285 必改 2）
+SET log_statement = 'none';
+SET log_min_error_statement = 'panic';
 ALTER ROLE $role LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB NOREPLICATION NOINHERIT PASSWORD :'pw';
 -- 收回它在任何角色里的成员身份（旧做法里是 aroomo_core 属于它，方向相反，不受影响）
 SELECT format('REVOKE %I FROM %I', r.rolname, '$role')

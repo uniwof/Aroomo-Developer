@@ -50,7 +50,7 @@
 5. **staging 实测（阶段 1 验收第 4 条）**：备份 → 建角色、写 `.env`、重建 core → 日志里自检通过 → 用所有者账号和小号在浏览器各走一遍，互相看不到成员、用量、会话 → 截图 + 测试日志附进阶段 1 送审包。
 
 ## 5. 上线与回退
-- staging：先 `scripts/backup.sh`；迁移可逆（每个文件附回退 SQL：`NO FORCE` + `DISABLE` + 删策略 + 删列）；回退 = 去掉 `CORE_APP_DB_PASSWORD`/`CORE_DB_REQUIRE_APP_ROLE` 重建 core，再按需跑回退 SQL。
+- staging：先 `scripts/backup.sh`；迁移可逆（每个文件附回退 SQL：`NO FORCE` + `DISABLE` + 删策略 + 删列）；回退 = 去掉 `CORE_APP_DB_PASSWORD`/`CORE_DB_REQUIRE_APP_ROLE`/`CORE_DB_APP_ROLE` 三行重建 core（见 docs/ops/RLS.md），再按需跑回退 SQL。
 - 生产（阶段 3，所有者确认后）：先备份、先查 `user_id=''/NULL` 行数为 0、`core_settings` 回填条数与前缀键数一致，再启用；异常退回上一标签并恢复快照，LobeHub 照常可用。
 
 ## 6. 已定（负责人 11-05 22:22 同意）
