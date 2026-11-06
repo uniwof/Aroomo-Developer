@@ -155,6 +155,23 @@ export class MemoryAssistantStore implements AssistantStore {
     return this.#steps.filter((s) => s.runId === runId && s.userId === userId).map(clone);
   }
 
+  async workingMembers(userId: string): Promise<Array<{ memberId: string; runId: string; since: Date }>> {
+    const latest = new Map<string, RunStepEvent>();
+    for (const s of this.#steps) {
+      if (s.userId !== userId || this.#runs.get(s.runId)?.status !== 'running') continue;
+      const k = `${s.runId}:${s.stepNo}`;
+      const prev = latest.get(k);
+      if (!prev || prev.seq < s.seq) latest.set(k, s);
+    }
+    const out = new Map<string, { memberId: string; runId: string; since: Date }>();
+    for (const s of latest.values()) {
+      if (s.status !== 'running' || !s.memberId) continue;
+      const prev = out.get(s.memberId);
+      if (!prev || s.createdAt < prev.since) out.set(s.memberId, { memberId: s.memberId, runId: s.runId, since: new Date(s.createdAt) });
+    }
+    return [...out.values()];
+  }
+
   async appendMessage(userId: string, m: ConversationMessage): Promise<void> {
     const c = this.#convs.get(m.conversationId);
     if (!c || c.userId !== userId || m.userId !== userId) throw new Error('foreign key violation');

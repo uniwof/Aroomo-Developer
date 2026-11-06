@@ -8,16 +8,25 @@ import { confirmCtx, guard, scopeOf } from '../auth/plugin.js';
 import type { CreateMemberInput, MembersService, UpdateMemberInput } from './service.js';
 import { CAPABILITY_TAGS, type Member } from './types.js';
 import { leadEligibility } from './caps.js';
+import { memberActivity, type MemberActivity } from './activity.js';
+
+/** 成员状态要用的信号（按范围取一次，列表里每位共用）；counters 为 null = 这个范围不统计用量 */
+export interface ActivitySource {
+  working: Map<string, Date>;
+  counters: Record<string, { requests: number; lastLimitedAt?: string }> | null;
+  limits: Record<string, number>;
+}
 
 /** 在线 = 在职、启用、没删除，并且有一把状态正常的 Key 对着它（圆环头像彩色 / 黑白，D7）。keyNames 是正常 Key 的模型名（小写）。 */
 export function isOnline(m: Member, keyNames: ReadonlySet<string>): boolean {
   return m.status === 'active' && m.enabled && !m.deletedAt && keyNames.has(m.name.trim().toLowerCase());
 }
 
-export function memberJson(m: Member, online?: boolean) {
+export function memberJson(m: Member, online?: boolean, activity?: MemberActivity) {
   const lead = leadEligibility(m);
   return {
     ...(online === undefined ? {} : { online }),
+    ...(activity ? { activity } : {}),
     id: m.id,
     name: m.name,
     aliases: m.aliases,
@@ -63,6 +72,9 @@ export function registerMemberRoutes(
   forUser?: (userId: string) => MembersService,
   /** 某个范围（'owner' 或账号 id）下状态正常的 Key 的模型名；传了列表才带 online */
   keyNames?: (scope: string) => Promise<string[]>,
+  /** 某个范围下成员状态的信号（Poke §5）；传了（且有 keyNames）列表才带 activity */
+  activity?: (scope: string) => Promise<ActivitySource>,
+  now: () => Date = () => new Date(),
 ): void {
   const U = { user: true } as const;
   /** 按调用者选服务：所有者 / 操作员 = 所有者数据；账号 = 本人数据 */
@@ -80,7 +92,16 @@ export function registerMemberRoutes(
       const list = await svcOf(req).list({ deleted: req.query.deleted === true });
       if (!keyNames) return { members: list.map((m) => memberJson(m)) };
       const names = new Set((await keyNames(scopeOf(req))).map((n) => n.trim().toLowerCase()));
-      return { members: list.map((m) => memberJson(m, isOnline(m, names))) };
+      if (!activity) return { members: list.map((m) => memberJson(m, isOnline(m, names))) };
+      const src = await activity(scopeOf(req));
+      const at = now();
+      return {
+        members: list.map((m) => {
+          const online = isOnline(m, names);
+          const c = src.counters ? (src.counters[m.name] ?? { requests: 0 }) : null;
+          return memberJson(m, online, memberActivity(m, { online, workingSince: src.working.get(m.id) ?? null, today: c, limit: src.limits[m.id] ?? null, now: at }));
+        }),
+      };
     },
   );
 

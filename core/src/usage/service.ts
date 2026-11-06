@@ -16,6 +16,8 @@ export interface Counter {
   limited: number;
   /** 供应商返回过用量时累计的 token 数；没返回过 = 没有这个字段（显示「未知」） */
   tokens?: number;
+  /** 今天最后一次被供应商限流（429）的时间（ISO）；Poke §5「冷却」只看它，不猜何时恢复 */
+  lastLimitedAt?: string;
 }
 type Day = Record<string, Counter>;
 
@@ -56,7 +58,10 @@ export class UsageService {
         const c = day[member] ?? { requests: 0, errors: 0, limited: 0 };
         c.requests += 1;
         if (outcome === 'error') c.errors += 1;
-        if (outcome === 'limited') c.limited += 1;
+        if (outcome === 'limited') {
+          c.limited += 1;
+          c.lastLimitedAt = this.now().toISOString();
+        }
         day[member] = c;
         await this.settings.set(key, day, this.now());
       })
@@ -97,6 +102,12 @@ export class UsageService {
     await this.settings.set(LIMITS_KEY, all, this.now());
     await audit('usage.limit', { type: 'member', id: member.id }, 'ok', dailyLimit === null ? 'cleared' : String(dailyLimit));
     return { memberId: member.id, dailyLimit };
+  }
+
+  /** 今天的计数（按成员名）和上限（按成员 id）：给成员状态推导用（members/activity.ts）。只读，不含内容。 */
+  async today(): Promise<{ counters: Record<string, Counter>; limits: Record<string, number> }> {
+    await this.flush();
+    return { counters: (await this.settings.get<Day>(keyOf(dayKey(this.now())))) ?? {}, limits: await this.limits() };
   }
 
   /** 今天 + 近 7 天合计；每位在职成员一行。tracked=false 表示这个范围不统计（账号用户的次数目前不分开记） */

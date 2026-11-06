@@ -205,4 +205,19 @@ export interface Member {
   leadEligible: boolean;
   /** 后台线补上后才有（PROGRESS「控制台需要的 API」）；没有时按 enabled 显示 */
   online?: boolean;
+  /** 此刻状态（Poke §5，Core 只从真实信号推出）：没有这个字段 = 老 Core，照旧按 online 显示 */
+  activity?: MemberActivity;
+}
+
+export interface MemberActivity {
+  state: 'working' | 'cooldown' | 'depleted' | 'ready' | 'unknown';
+  reason?: string;
+  since?: string;
+}
+
+const ACTIVITY_LABEL: Record<MemberActivity['state'], string> = { working: '工作中', cooldown: '冷却', depleted: '耗尽', ready: '就绪', unknown: '状态未知' };
+
+/** 状态的字（只说状态，不给数字）；未知时带上原因（已停用、候选、没有 Key…），不冒充「就绪」 */
+export function activityLabel(a: MemberActivity): string {
+  return a.state === 'unknown' && a.reason ? `状态未知：${a.reason}` : ACTIVITY_LABEL[a.state];
 }

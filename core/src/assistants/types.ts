@@ -172,6 +172,11 @@ export interface AssistantStore {
 
   appendStep(userId: string, e: Omit<RunStepEvent, 'seq'>): Promise<RunStepEvent>;
   listSteps(userId: string, runId: string): Promise<RunStepEvent[]>;
+  /**
+   * 本账号此刻在干活的成员（Poke §5「工作中」）：运行状态 running，且某一步最新事件是 running、带 member_id。
+   * 每位成员一条，since = 那一步开始的时间（多条取最早）。只读本账号的行。
+   */
+  workingMembers(userId: string): Promise<Array<{ memberId: string; runId: string; since: Date }>>;
 
   appendMessage(userId: string, m: ConversationMessage): Promise<void>;
   listMessages(userId: string, conversationId: string, limit: number, afterSeq?: number): Promise<ConversationMessage[]>;
