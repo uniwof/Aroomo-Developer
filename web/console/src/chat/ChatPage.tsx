@@ -9,7 +9,7 @@
  */
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Archive, ArrowRight, BookOpen, ChevronDown, ChevronRight, CircleAlert, Download, Ellipsis, KeyRound, Menu, MessagesSquare, Pencil, Plus, Settings, SquarePen, Trash2, Users, Wrench, X } from 'lucide-react';
-import { api, currentUser, isFamily, viaShell, type Member } from '@/lib/api';
+import { api, currentUser, fetchAccountId, isFamily, viaShell, type Member } from '@/lib/api';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { OWNER_ONLY, legacyPath, pathOf, viewOf, type View } from './routes';
 import { useUsage } from '@/lib/usage';
@@ -155,9 +155,16 @@ function useLayout(): { side: boolean; rail: boolean } {
 
 export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   const saved = FLAGS.savedChats;
+  /**
+   * #287：本机会话按账号分开存。先用登录时记下的账号 id；存库模式下以 Core（/api/auth/me）说的为准。
+   * null = 不知道是谁（如从 Shell 打开、旧的登录记录）：照旧用共用的那份，永不导入。
+   */
+  const [acct, setAcct] = useState<string | null>(() => currentUser()?.id || null);
+  const acctRef = useRef(acct);
+  acctRef.current = acct;
   const [list, setList] = useState<Conversation[]>(() => {
-    // 存库模式下家人账号不读本机：同一台浏览器上的本机会话是所有者的
-    const l = saved && isFamily() ? [] : loadConversations();
+    // 存库模式下家人账号不读本机（家人的会话不导入 Core）
+    const l = saved && isFamily() ? [] : loadConversations(acct);
     return l.length ? l : [newConversation()];
   });
   const [currentId, setCurrentId] = useState(() => list[0]!.id);
@@ -213,18 +220,22 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   const [localLeft, setLocalLeft] = useState(0);
   const [importing, setImporting] = useState(false);
   const [importNote, setImportNote] = useState<{ ok: boolean; text: string } | null>(null);
+  /** Core 确认过的账号（只有它的本机会话能导入）；null = 没确认，不导入 */
+  const confirmed = useRef<string | null>(null);
   const importNow = async () => {
-    const n = localPending(loadConversations());
+    const me = confirmed.current;
+    if (!me) return;
+    const n = localPending(me);
     setImporting(true);
     setImportNote(null);
     try {
-      await importLocalOnce(loadConversations());
+      await importLocalOnce(me);
     } catch {
       setImportNote({ ok: false, text: '没导进去，本机那份还在。过一会儿再点一次。' });
       setImporting(false);
       return;
     }
-    setLocalLeft(localPending(loadConversations()));
+    setLocalLeft(localPending(me));
     setImportNote({ ok: true, text: `导入好了 ${n} 段会话。` });
     setImporting(false);
     // 导完重取列表，导入的会话马上出现；取不到也没关系，定时刷新会带上
@@ -237,14 +248,22 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     let alive = true;
     void (async () => {
       try {
-        // 所有者：本机旧会话导入一次（本机那份不删）；导入失败不挡着打开，下次再试
-        if (!isFamily()) await importLocalOnce(loadConversations()).catch(() => 0);
+        // 所有者：她自己存的本机会话导入一次（本机那份不删）；导入失败不挡着打开，下次再试。
+        // #287：账号以 Core 说的为准，问不到就不导；家人的、旧的共用那份都不导
+        const me = isFamily() ? null : await fetchAccountId();
+        if (me) await importLocalOnce(me).catch(() => 0);
         const fresh = await fetchConversations();
         if (!alive || settled.current) return;
         settled.current = true;
-        if (!isFamily()) setLocalLeft(localPending(loadConversations()));
+        // 页面记的账号和 Core 的不一样（或原来不知道）：之前读进来的本机会话不是这个账号的，不留
+        const switched = !!me && me !== acctRef.current;
+        if (me) {
+          confirmed.current = me;
+          setAcct(me);
+          setLocalLeft(localPending(me));
+        }
         setList((prev) => {
-          const next = adopt(prev, fresh);
+          const next = adopt(switched ? prev.filter((c) => c.remote) : prev, fresh);
           if (!next.some((c) => c.id === currentRef.current)) setCurrentId(next[0]!.id);
           return next;
         });
@@ -360,8 +379,10 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
 
   // 本机模式才写本机；存库模式下本机那份（导入前的）原样留着，不覆盖
   useEffect(() => {
-    if (remote === false) saveConversations(list.filter((c) => c.messages.length > 0 && !c.remote));
-  }, [list, remote]);
+    if (remote === false) saveConversations(list.filter((c) => c.messages.length > 0 && !c.remote), acct);
+  }, [list, remote, acct]);
+  /** #287：旧的共用那份里有几段（知道账号时才数）：看不出是谁存的，不导入、不删、不进列表，只说一句 */
+  const legacyLeft = useMemo(() => (acct ? loadConversations(null).filter((c) => c.messages.length > 0).length : 0), [acct]);
   // 打开存库的会话：消息还没取就取；有未读就标已读
   const needLoad = !!current.remote && !current.remote.loaded;
   useEffect(() => {
@@ -645,11 +666,12 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
       onOpen={(k) => goto({ kind: k })}
       usage={usage}
       {...(remote === true ? { filterable: true, runningId, onOpenMessage: (id: string, msg: string) => void openConversation(id, msg) } : {})}
-      {...(remote === true && (localLeft > 0 || importNote)
+      {...((remote === true && (localLeft > 0 || importNote)) || legacyLeft > 0
         ? {
             notice: (
               <div className="conv-import">
-                {localLeft > 0 && (
+                {legacyLeft > 0 && <p className="note">这台浏览器里有 {legacyLeft} 段以前的会话，分不清是哪个账号存的，没有导入，也没有删。</p>}
+                {remote === true && localLeft > 0 && (
                   <>
                     <p className="note">这台浏览器里还有 {localLeft} 段会话没存到 Aroomo。</p>
                     <button type="button" className="btn btn-outline hit" disabled={importing} onClick={() => void importNow()}>
@@ -657,7 +679,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
                     </button>
                   </>
                 )}
-                {importNote && (
+                {remote === true && importNote && (
                   <p className="note" role={importNote.ok ? 'status' : 'alert'}>
                     {importNote.text}
                   </p>

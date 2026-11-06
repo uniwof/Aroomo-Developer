@@ -7,7 +7,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { MemoryRouter } from 'react-router-dom';
 import { ChatPage, LIST_WAIT_MS } from '@/chat/ChatPage';
 import { conversationLink } from '@/pages/Inbox';
-import { IMPORTED_KEY, importLocalOnce, isUuid, mergeRemote } from '@/chat/saved';
+import { importedKey, importLocalOnce, isUuid, mergeRemote } from '@/chat/saved';
 import { loadConversations, saveConversations, streamChat, type Conversation } from '@/chat/store';
 // 这组测试测的是阶段 2/3 开关打开后的行为（以后验收、打开时用）。阶段 1.5 发布默认全关，关着的样子见 release-15-flags-off.test.tsx
 vi.mock('@/lib/flags', () => ({ FLAGS: { taskCards: true, quickReplies: false, convFilter: true, schedulePage: true, assistantDraft: true, assistants: true, savedChats: true, skeletonShimmer: false } }));
@@ -53,7 +53,11 @@ interface Call {
   body: unknown;
 }
 
-function stubCore(opts: { fail?: boolean; listGate?: Promise<void>; extra?: ReturnType<typeof row>[] } = {}) {
+/** #287：本机会话按账号分开，导入要 Core 确认是谁（/api/auth/me） */
+const OWNER = 'u-owner-1';
+const asOwner = () => sessionStorage.setItem('aroomo.console.user', JSON.stringify({ id: OWNER, email: 'o@example.test', displayName: '', role: 'owner' }));
+
+function stubCore(opts: { fail?: boolean; listGate?: Promise<void>; extra?: ReturnType<typeof row>[]; me?: string } = {}) {
   const calls: Call[] = [];
   vi.stubGlobal(
     'fetch',
@@ -63,6 +67,7 @@ function stubCore(opts: { fail?: boolean; listGate?: Promise<void>; extra?: Retu
       calls.push({ url, method, body });
       if (url === '/api/members') return json({ members: [] });
       if (url === '/api/assistants') return json({ assistants: [] });
+      if (url === '/api/auth/me' && opts.me) return json({ kind: 'user', user: { id: opts.me, email: 'o@example.test', role: 'owner' } });
       if (url.startsWith('/api/conversations') && opts.fail) return json({ error: { code: 'X', message: '坏了' } }, 503);
       if (url === '/api/conversations/import') return json({ imported: body.conversations.length, skipped: 0, ids: {} });
       if (url.startsWith('/api/conversations?') && opts.listGate) await opts.listGate;
@@ -97,23 +102,27 @@ const renderPage = (fetchImpl?: typeof fetch) =>
 const local: Conversation = { id: LOCAL, title: '本机的旧会话', model: 'aroomo', messages: [{ role: 'user', text: '旧问题', at: 1 }, { role: 'assistant', text: '旧回答' }], updatedAt: 2 };
 
 describe('会话存库（对话页）', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+  });
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
   });
 
-  it('所有者：本机旧会话导入一次（本机那份留着）；列表来自 Core；对话也有「全部 / 未读 / 进行中」', async () => {
-    saveConversations([local]);
-    const calls = stubCore();
+  it('所有者：她自己的本机会话导入一次（本机那份留着）；列表来自 Core；对话也有「全部 / 未读 / 进行中」', async () => {
+    asOwner();
+    saveConversations([local], OWNER);
+    const calls = stubCore({ me: OWNER });
     renderPage();
     const list = await screen.findByRole('list', { name: '会话列表' });
     // 打开页面时停在最近的会话上（它算已读）；别的未读会话有小点
     await within(list).findByRole('button', { name: /读书笔记.*有新回复/ });
     const imp = calls.find((c) => c.url === '/api/conversations/import')!;
     expect((imp.body as { conversations: Array<{ id: string; messages: unknown[] }> }).conversations).toMatchObject([{ id: LOCAL, messages: [{ role: 'user', content: '旧问题', at: 1 }, { role: 'assistant', content: '旧回答' }] }]);
-    expect(JSON.parse(localStorage.getItem(IMPORTED_KEY)!)).toEqual([LOCAL]);
-    expect(loadConversations().map((c) => c.id)).toEqual([LOCAL]);
+    expect(JSON.parse(localStorage.getItem(importedKey(OWNER))!)).toEqual([LOCAL]);
+    expect(loadConversations(OWNER).map((c) => c.id)).toEqual([LOCAL]);
     // 「买菜清单」进行中：静态小标，排最前
     const names = within(list).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? '');
     expect(names[0]).toMatch(/^买菜清单，进行中/);
@@ -125,9 +134,10 @@ describe('会话存库（对话页）', () => {
   });
 
   it('点开存库的会话：取消息、标已读；第二次打开页面不再导入', async () => {
-    saveConversations([local]);
-    localStorage.setItem(IMPORTED_KEY, JSON.stringify([LOCAL]));
-    const calls = stubCore();
+    asOwner();
+    saveConversations([local], OWNER);
+    localStorage.setItem(importedKey(OWNER), JSON.stringify([LOCAL]));
+    const calls = stubCore({ me: OWNER });
     renderPage();
     const list = await screen.findByRole('list', { name: '会话列表' });
     fireEvent.click(await within(list).findByRole('button', { name: /^读书笔记/ }));
@@ -249,7 +259,6 @@ describe('会话存库（对话页）', () => {
 
   it('列表没到时在本机旧会话里接着说：列表到了用 Core 那份，但新说的话留着并带上 conversationId', async () => {
     saveConversations([local]);
-    localStorage.setItem(IMPORTED_KEY, JSON.stringify([LOCAL]));
     let open!: () => void;
     // 这个旧会话之前已经导入过，Core 里有同一个 id
     const calls = stubCore({ listGate: new Promise<void>((r) => (open = r)), extra: [row(LOCAL, '本机的旧会话', { updatedAt: '2026-11-05T07:00:00.000Z' })] });
@@ -320,8 +329,12 @@ describe('会话存库（零件）', () => {
       const m = new Map<string, string>();
       return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v) } as unknown as Storage;
     };
-    await importLocalOnce([old], mem());
-    await importLocalOnce([old], mem());
+    const first = mem();
+    saveConversations([old], OWNER, first);
+    await importLocalOnce(OWNER, first);
+    const second = mem();
+    saveConversations([old], OWNER, second);
+    await importLocalOnce(OWNER, second);
     expect(sent).toHaveLength(2);
     expect(isUuid(sent[0]!)).toBe(true);
     expect(sent[1]).toBe(sent[0]);

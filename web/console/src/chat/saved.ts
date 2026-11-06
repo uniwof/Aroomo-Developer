@@ -1,10 +1,11 @@
 /**
  * 会话存库（#250 integrate/stage2，开关 FLAGS.savedChats）：对话列表和消息从 Core 的 /api/conversations 读，
  * 发消息时 /api/chat/stream 带 conversationId，由 Core 只追加地存（X-21）。
- * 所有者第一次打开时把浏览器本机的旧会话导入一次（本机那份不删）；家人账号不导入（同一台浏览器上的本机会话是所有者的）。
+ * 所有者第一次打开时把浏览器本机的旧会话导入一次（本机那份不删）；家人账号不导入。
+ * #287：只导当前账号自己存的那份（本机会话按账号分键，store.chatKey）；旧的共用键看不出是谁的，永不导入。
  */
 import { api } from '@/lib/api';
-import { asDraft, asTools, type ChatTurn, type Conversation } from './store';
+import { asDraft, asTools, loadConversations, type ChatTurn, type Conversation } from './store';
 
 export interface ConvJson {
   id: string;
@@ -138,30 +139,33 @@ export const markRead = (id: string) => api('POST', `/api/conversations/${id}/re
 // ---- 一次性导入本机会话（只给所有者） ----
 
 export const IMPORTED_KEY = 'aroomo.chat.imported.v1';
+/** 导过的 id 也按账号分开记（#287） */
+export const importedKey = (account: string) => `${IMPORTED_KEY}:u:${account}`;
 const IMPORT_BATCH = 50;
 
-function importedIds(storage: Storage): Set<string> {
+function importedIds(account: string, storage: Storage): Set<string> {
   try {
-    const v = JSON.parse(storage.getItem(IMPORTED_KEY) ?? '[]') as unknown;
+    const v = JSON.parse(storage.getItem(importedKey(account)) ?? '[]') as unknown;
     return new Set(Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
   } catch {
     return new Set();
   }
 }
 
-/** 这台浏览器里还没导入过、有消息的本机会话有几段（「一键导入」那行显示用） */
-export function localPending(local: Conversation[], storage: Storage = localStorage): number {
-  const done = importedIds(storage);
-  return local.filter((c) => c.messages.length > 0 && !done.has(c.id)).length;
+/** 这个账号在这台浏览器里还没导入过、有消息的本机会话有几段（「一键导入」那行显示用） */
+export function localPending(account: string, storage: Storage = localStorage): number {
+  const done = importedIds(account, storage);
+  return loadConversations(account, storage).filter((c) => c.messages.length > 0 && !done.has(c.id)).length;
 }
 
 /**
- * 把还没导入过的本机会话交给 Core（按 id 幂等，导过的记在本机，不再发）。本机那份不删、不改。
+ * 把这个账号还没导入过的本机会话交给 Core（按 id 幂等，导过的记在本机，不再发）。本机那份不删、不改。
+ * 只读这个账号自己的那份（#287），所以要传 Core 确认过的账号 id，不接受外面给的会话列表。
  * 本机 id 不是 uuid 的（很旧的会话）按它算一个固定的 uuid。返回导入了几个；失败抛错，下次打开再试。
  */
-export async function importLocalOnce(local: Conversation[], storage: Storage = localStorage): Promise<number> {
-  const done = importedIds(storage);
-  const todo = local.filter((c) => c.messages.length > 0 && !done.has(c.id));
+export async function importLocalOnce(account: string, storage: Storage = localStorage): Promise<number> {
+  const done = importedIds(account, storage);
+  const todo = loadConversations(account, storage).filter((c) => c.messages.length > 0 && !done.has(c.id));
   let n = 0;
   for (let i = 0; i < todo.length; i += IMPORT_BATCH) {
     const batch = todo.slice(i, i + IMPORT_BATCH);
@@ -179,7 +183,7 @@ export async function importLocalOnce(local: Conversation[], storage: Storage = 
     n += r.imported;
     for (const c of batch) done.add(c.id);
     try {
-      storage.setItem(IMPORTED_KEY, JSON.stringify([...done]));
+      storage.setItem(importedKey(account), JSON.stringify([...done]));
     } catch {
       /* 存不了：下次再导一次，Core 按 id 跳过 */
     }
