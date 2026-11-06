@@ -116,10 +116,27 @@ export async function api<T>(method: string, path: string, body?: unknown, fetch
 const USER_KEY = 'aroomo.console.user';
 
 /** 登录时记下的名字和邮箱；没有就返回 null */
-export function currentUser(): { email: string; displayName: string; role: string } | null {
+export function currentUser(): { id: string; email: string; displayName: string; role: string } | null {
   try {
-    const j = JSON.parse(sessionStorage.getItem(USER_KEY) ?? 'null') as { email?: unknown; displayName?: unknown; role?: unknown } | null;
-    return j && typeof j.email === 'string' ? { email: j.email, displayName: typeof j.displayName === 'string' ? j.displayName : '', role: typeof j.role === 'string' ? j.role : '' } : null;
+    const j = JSON.parse(sessionStorage.getItem(USER_KEY) ?? 'null') as { id?: unknown; email?: unknown; displayName?: unknown; role?: unknown } | null;
+    return j && typeof j.email === 'string'
+      ? { id: typeof j.id === 'string' ? j.id : '', email: j.email, displayName: typeof j.displayName === 'string' ? j.displayName : '', role: typeof j.role === 'string' ? j.role : '' }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 当前账号 id，以 Core 为准（GET /api/auth/me）。账号登录（kind=user）返回账号 id；
+ * 从 Shell 打开时 /aroomo/api 带的是主人令牌（kind=owner，Shell 只把它给所有者），返回 'owner'；问不到或别的返回 null。
+ * 用在：本机会话导入 Core 前确认「这份本机会话是谁的」（#287），页面里记的那份可能过期，不能当证据。
+ */
+export async function fetchAccountId(fetchImpl: typeof fetch = fetch): Promise<string | null> {
+  try {
+    const r = await api<{ kind?: unknown; user?: { id?: unknown } }>('GET', '/api/auth/me', undefined, fetchImpl);
+    if (r.kind === 'user' && typeof r.user?.id === 'string' && r.user.id) return r.user.id;
+    return r.kind === 'owner' ? 'owner' : null;
   } catch {
     return null;
   }
@@ -140,8 +157,8 @@ export async function login(email: string, password: string, fetchImpl: typeof f
   }
   session.set(COOKIE_SESSION);
   try {
-    // 只记显示用的名字和邮箱（侧栏底部的账号行），不记令牌
-    sessionStorage.setItem(USER_KEY, JSON.stringify({ email: r.user.email, displayName: r.user.displayName ?? '', role: r.user.role }));
+    // 只记账号 id（本机会话按账号分开存，#287）、显示用的名字和邮箱（侧栏底部的账号行），不记令牌
+    sessionStorage.setItem(USER_KEY, JSON.stringify({ id: r.user.id, email: r.user.email, displayName: r.user.displayName ?? '', role: r.user.role }));
   } catch {
     /* 忽略 */
   }

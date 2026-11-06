@@ -314,12 +314,16 @@ export async function* streamChat(
 
 // ---- 本机存储 ----
 
-const KEY = 'aroomo.chat.v1';
+/** 旧的共用键（#287 之前所有账号共用一份，看不出是谁存的）：只在不知道是哪个账号时读写，永不导入 */
+export const LEGACY_KEY = 'aroomo.chat.v1';
 export const MAX_CONVERSATIONS = 200;
+const ACCOUNT_RE = /^[A-Za-z0-9_-]{1,64}$/;
+/** 本机会话的键：知道账号就按账号分开（#287），不知道就是旧的共用键 */
+export const chatKey = (account: string | null = null) => (account && ACCOUNT_RE.test(account) ? `${LEGACY_KEY}:u:${account}` : LEGACY_KEY);
 
-export function loadConversations(storage: Storage | undefined = globalThis.localStorage): Conversation[] {
+export function loadConversations(account: string | null = null, storage: Storage | undefined = globalThis.localStorage): Conversation[] {
   try {
-    const raw = storage?.getItem(KEY);
+    const raw = storage?.getItem(chatKey(account));
     if (!raw) return [];
     const list = JSON.parse(raw) as unknown;
     if (!Array.isArray(list)) return [];
@@ -343,9 +347,9 @@ export function loadConversations(storage: Storage | undefined = globalThis.loca
   }
 }
 
-export function saveConversations(list: Conversation[], storage: Storage | undefined = globalThis.localStorage): void {
+export function saveConversations(list: Conversation[], account: string | null = null, storage: Storage | undefined = globalThis.localStorage): void {
   try {
-    storage?.setItem(KEY, JSON.stringify(list.slice(0, MAX_CONVERSATIONS)));
+    storage?.setItem(chatKey(account), JSON.stringify(list.slice(0, MAX_CONVERSATIONS)));
   } catch {
     /* 存满了或隐私模式：这次不存 */
   }
