@@ -303,10 +303,19 @@ export class ChatService {
       return textReply(stream, '还没有可用的成员。请先打开「成员 → Key 与接入」填入一个 Key，再在「成员」里点「入职」，就能对话了。');
     }
 
+    // 群聊名单（审计 C9）先于所有路由算好：直接点名、系统任务、@ 解析都只能落到名单里的人（负责人审查 #275 必改）
+    let inGroup: Member[] | null = null;
+    if (opts.group?.length) {
+      const want = new Set(opts.group.map((g) => g.trim().toLowerCase()));
+      inGroup = members.filter((m) => [m.name, ...m.aliases].some((n) => want.has(n.toLowerCase())));
+      if (!inGroup.length) return textReply(stream, '这个群里挑的成员都不在职了，请新建对话重新挑。');
+    }
+
     // 成员别名 aroomo/<成员>：LobeHub 群组里该成员智能体的发言，直接由该成员回答（不解析 @、不加署名）
     if (typeof req.model === 'string' && req.model.startsWith(MEMBER_MODEL_PREFIX) && req.model !== AUTO_MODEL) {
       const target = resolveMemberModel(req.model, members);
       if (!target) return textReply(stream, `没有这位在职成员（${req.model}）。请在「成员」里确认名字，或改用 aroomo/auto 交给负责人。`);
+      if (inGroup && !inGroup.some((m) => m.id === target.id)) return textReply(stream, `${target.name} 不在这个群里`);
       return by(await this.#forward({ ...req, messages: withMemberPrompt(withRules(messages, await this.#rules()), target) }, target.name, '', '', stream, signal), [{ memberId: target.id, name: target.name }]);
     }
 
@@ -314,17 +323,15 @@ export class ChatService {
     // 还没有合格负责人时，用第一个在职成员做这类内部小任务（不以「负责人」身份出现在对话里）。
     const last = lastUserText(messages);
     if (!decorated || !last) {
-      const sys = members.find((m) => m.id === leadState.effectiveLeadId) ?? members[0]!;
+      const pool = inGroup ?? members;
+      const sys = pool.find((m) => m.id === leadState.effectiveLeadId) ?? pool[0]!;
       return by(await this.#forward(req, sys.name, '', '', stream, signal), [{ memberId: sys.id, name: sys.name }]);
     }
 
     const protect = this.d.security ? (await this.d.security.get()).sensitiveProtect : true;
     const sensitive = protect && looksSensitive(last.text);
     let plan = route(last.text, { members: routable, leadId: leadState.effectiveLeadId, sensitive });
-    if (opts.group?.length) {
-      const want = new Set(opts.group.map((g) => g.trim().toLowerCase()));
-      const inGroup = members.filter((m) => [m.name, ...m.aliases].some((n) => want.has(n.toLowerCase())));
-      if (!inGroup.length) return textReply(stream, '这个群里挑的成员都不在职了，请新建对话重新挑。');
+    if (inGroup) {
       const ids = new Set(inGroup.map((m) => m.id));
       if (plan.mode === 'delegate') plan = { mode: 'mention', targets: inGroup.map((m) => m.id), body: plan.body, hints: plan.hints };
       else {
