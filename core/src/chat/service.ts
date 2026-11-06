@@ -284,9 +284,12 @@ export class ChatService {
     }
   }
 
-  /** 按调用者的上下文（成员名前缀映射/成员列表）处理一次对话；不传 ctx = 用全局依赖 */
-  async complete(req: Json, signal: AbortSignal, ctx?: ChatUserCtx): Promise<ChatResult> {
-    if (ctx) return new ChatService({ ...this.d, ...ctx, fetchImpl: this.#fetch }).complete(req, signal);
+  /**
+   * 按调用者的上下文（成员名前缀映射/成员列表）处理一次对话；不传 ctx = 用全局依赖。
+   * opts.group：群聊挑的成员名单（审计 C9）。有名单时只交给名单里的人：没 @ = 名单里的人各自回答；@ 名单外的人 = 一行提示。
+   */
+  async complete(req: Json, signal: AbortSignal, ctx?: ChatUserCtx, opts: { group?: string[] } = {}): Promise<ChatResult> {
+    if (ctx) return new ChatService({ ...this.d, ...ctx, fetchImpl: this.#fetch }).complete(req, signal, undefined, opts);
     const stream = req.stream === true;
     const messages = (Array.isArray(req.messages) ? req.messages : []) as ChatMessage[];
     const decorated = req.model === CHAT_MODEL || req.model === AUTO_MODEL;
@@ -317,7 +320,22 @@ export class ChatService {
 
     const protect = this.d.security ? (await this.d.security.get()).sensitiveProtect : true;
     const sensitive = protect && looksSensitive(last.text);
-    const plan = route(last.text, { members: routable, leadId: leadState.effectiveLeadId, sensitive });
+    let plan = route(last.text, { members: routable, leadId: leadState.effectiveLeadId, sensitive });
+    if (opts.group?.length) {
+      const want = new Set(opts.group.map((g) => g.trim().toLowerCase()));
+      const inGroup = members.filter((m) => [m.name, ...m.aliases].some((n) => want.has(n.toLowerCase())));
+      if (!inGroup.length) return textReply(stream, '这个群里挑的成员都不在职了，请新建对话重新挑。');
+      const ids = new Set(inGroup.map((m) => m.id));
+      if (plan.mode === 'delegate') plan = { mode: 'mention', targets: inGroup.map((m) => m.id), body: plan.body, hints: plan.hints };
+      else {
+        const outside = plan.targets.filter((id) => !ids.has(id));
+        plan = {
+          ...plan,
+          targets: plan.targets.filter((id) => ids.has(id)),
+          hints: [...plan.hints, ...outside.map((id): Hint => ({ kind: 'hint', text: `${nameOf(id)} 不在这个群里`, memberId: id, actions: [] }))],
+        };
+      }
+    }
     const prefix = plan.hints.length ? `${hintText(plan.hints)}\n\n` : '';
     const nextMessages = withRules(replaceUserText(messages, last.index, plan.body), await this.#rules());
 

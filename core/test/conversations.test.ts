@@ -108,6 +108,26 @@ describe.each(twoAccountEnvs)('会话存库 /api/conversations [$name]', (env) =
     expect(m.messages[1].answeredBy).toEqual([{ memberId: WORKER.id, name: WORKER.name }]);
   });
 
+  it('审计 C9：群聊会话存的成员名单生效：没 @ 只交给群里的人；@ 群外的人只给一行提示、不调它；不存会话时认请求体的 group', async () => {
+    await owner()('POST', '/api/conversations', { id: uuid(92), model: 'aroomo', group: [WORKER.name] });
+    e.gw.calls.length = 0;
+    const r = await say(ownerCookie, { conversationId: uuid(92), messages: [{ role: 'user', content: '大家好' }] });
+    expect(r.statusCode).toBe(200);
+    expect(e.gw.calls).toEqual([WORKER.name]);
+    expect((await msgs(ownerCookie, uuid(92))).messages[1].answeredBy).toEqual([{ memberId: WORKER.id, name: WORKER.name }]);
+    e.gw.calls.length = 0;
+    const out = await say(ownerCookie, { conversationId: uuid(92), messages: [{ role: 'user', content: `@${LEAD.name} 你在吗` }] });
+    expect(out.body).toContain(`${LEAD.name} 不在这个群里`);
+    expect(e.gw.calls).toEqual([]);
+    // 请求体里的 group 在有会话时不看（以库里的为准）
+    e.gw.calls.length = 0;
+    await say(ownerCookie, { conversationId: uuid(92), group: [LEAD.name], messages: [{ role: 'user', content: '再说一次' }] });
+    expect(e.gw.calls).toEqual([WORKER.name]);
+    e.gw.calls.length = 0;
+    await say(ownerCookie, { group: [WORKER.name], messages: [{ role: 'user', content: '不存会话' }] });
+    expect(e.gw.calls).toEqual([WORKER.name]);
+  });
+
   it('X-15 草稿卡也落库：回复带 draft（id = 流里那张卡的 id），刷新后还能渲染', async () => {
     await owner()('POST', '/api/conversations', { id: uuid(3) });
     const r = await say(ownerCookie, { conversationId: uuid(3), model: 'aroomo', messages: [{ role: 'user', content: '每周一早上 9 点帮我找新的免费模型，筛好告诉我' }] });

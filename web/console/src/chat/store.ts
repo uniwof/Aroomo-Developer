@@ -125,6 +125,8 @@ export interface PersistOpts {
   onCompacted?: (c: { keep: number; text: string }) => void;
   /** Core 该压缩却没压成，这次只带了最近的内容：text = 灰字（只在流里，不存库） */
   onTruncated?: (text: string) => void;
+  /** 群聊挑的成员名单（审计 C9）：Core 只交给这几位；会话已存库时 Core 以库里的为准 */
+  group?: string[];
 }
 
 /** X-19：Core 发来的「刚压缩过」部件 */
@@ -254,6 +256,7 @@ export async function* streamChat(
         model,
         messages: capTurns(turns).map((t) => ({ role: t.role, content: t.text })),
         ...(persist.conversationId ? { conversationId: persist.conversationId, ...(persist.retry ? { retry: true } : {}) } : {}),
+        ...(persist.group?.length ? { group: persist.group } : {}),
       }),
       signal,
     });
