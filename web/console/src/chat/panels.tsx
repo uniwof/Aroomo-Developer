@@ -262,7 +262,8 @@ export function MemberDetail({ member, onChat, onMention, onChanged }: { member:
       </Group>
       {MemberTools && !isFamily() && (
         <LazyChunk>
-          <MemberTools member={member} />
+          {/* 换成员就重新挂载：不会在 B 的详情里先显示 A 的分配（Groq 小审建议 1） */}
+          <MemberTools key={member.id} member={member} />
         </LazyChunk>
       )}
       {row && (
