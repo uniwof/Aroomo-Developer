@@ -1,12 +1,21 @@
-/** /work 项目与版本 v1（docs/api/design-work-v1.md）。切片 1：项目 + GitHub 公开仓库的 release / tag。 */
+/** /work 项目与版本 v1（docs/api/design-work-v1.md）。切片 1：项目 + GitHub 公开仓库的 release / tag；切片 2：公共记忆版本、助手成功运行。 */
 export type ProjectStatus = 'active' | 'paused' | 'done';
 export const PROJECT_STATUSES: readonly ProjectStatus[] = ['active', 'paused', 'done'];
-/** 切片 1 只有 GitHub 公开仓库；切片 3 加公共记忆、助手 */
 export interface GithubSource {
   type: 'github';
   repo: string;
 }
-export type WorkSource = GithubSource;
+/** 本账号的一个公共记忆主题：每个版本（含当前版）是一个版本 */
+export interface MemorySource {
+  type: 'memory';
+  topic: string;
+}
+/** 本账号的一个助手：每次成功的运行是一个版本 */
+export interface AssistantSource {
+  type: 'assistant';
+  assistantId: string;
+}
+export type WorkSource = GithubSource | MemorySource | AssistantSource;
 export const MAX_SOURCES = 5;
 /** 一个账号最多几个项目。shortcut: 项目列表不分页（最多 200 个），真有人超过再给列表加游标 */
 export const MAX_PROJECTS = 200;
@@ -24,7 +33,7 @@ export interface WorkProject {
   updatedAt: Date;
 }
 
-export type SourceType = 'github_release' | 'github_tag';
+export type SourceType = 'github_release' | 'github_tag' | 'memory' | 'assistant_run';
 export type SourceState = 'published' | 'prerelease' | 'tagged' | 'none';
 export interface Artifact {
   type: 'page' | 'file';
@@ -33,10 +42,8 @@ export interface Artifact {
   url: string | null;
   size: number | null;
 }
-export interface Actor {
-  type: 'github';
-  name: string;
-}
+/** 产出者：GitHub 的作者，或产出这次运行的助手（名字是同步那一刻的）。公共记忆没有作者 = null */
+export type Actor = { type: 'github'; name: string } | { type: 'assistant'; name: string; id: string };
 
 /** 同步得到的一个版本（还没落库） */
 export interface VersionInput {

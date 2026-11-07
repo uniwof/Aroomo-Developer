@@ -275,8 +275,8 @@ export function buildServer(
   });
   inbox.onCreated((item) => push.notifyInbox(item));
   registerPushRoutes(app, push);
-  // /work 项目与版本（切片 1）：只给所有者；同步只请求 api.github.com
-  registerWorkRoutes(app, new WorkService(deps.work, deps.now, deps.workFetch ?? fetch));
+  // /work 项目与版本（切片 1 + 2）：只给所有者；同步只请求 api.github.com，公共记忆和助手按本账号读
+  registerWorkRoutes(app, new WorkService(deps.work, deps.now, deps.workFetch ?? fetch, { pubmem: deps.pubmem, assistants: deps.assistants }));
   const interruptBudget = new InterruptBudget((u) => scopedSettings(deps.settings, u), deps.now);
   const executorSvc = new ExecutorService(
     deps.executor,

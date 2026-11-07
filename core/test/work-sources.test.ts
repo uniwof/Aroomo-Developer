@@ -64,7 +64,7 @@ describe.each(twoAccountEnvs)('/work 切片 2：公共记忆、助手运行（$n
     const memberId = m.json().member.id as string;
     const now = t.clock.now();
     const a: Assistant = {
-      id: randomUUID(), userId, name, instructions: '每天整理一次进展', leadMemberId: memberId, members: [{ memberId, role: 'lead', position: 0 }],
+      id: randomUUID(), userId, name, instructions: '每天整理一次本周的进展并写成摘要', leadMemberId: memberId, members: [{ memberId, role: 'lead', position: 0 }],
       enabled: true, schedule: { kind: 'manual' }, timezone: 'Asia/Shanghai', catchUp: 'skip', maxRuntimeSec: 600, budgetLevel: 'low', notify: true,
       conversationId: randomUUID(), nextRunAt: null, pausedAt: null, idempotencyKey: null, idempotencyHash: null, createdAt: now, updatedAt: now,
     };
