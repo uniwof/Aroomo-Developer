@@ -1158,7 +1158,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           )}
           {view.kind === 'capmap' && <CapabilityPanel />}
           {WorkPage && view.kind === 'work' && (
-            <WorkPage key={pathOf(view)} {...view} onGo={(w) => setView({ kind: 'work', ...w })} />
+            <WorkPage key={pathOf(view)} {...view} onGo={(w) => setView({ kind: 'work', ...w })} onAssistant={(id) => setView({ kind: 'assistant', id })} />
           )}
           {view.kind === 'console' && (
             <Cockpit

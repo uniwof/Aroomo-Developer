@@ -1,8 +1,10 @@
 /**
- * /work 项目与版本（docs/api/design-work-v1.md 切片 1，开关 WORK，只给所有者）。点开才下载，不进对话页包。
+ * /work 项目与版本（docs/api/design-work-v1.md 切片 1 + 2，开关 WORK，只给所有者）。点开才下载，不进对话页包。
+ * 来源：GitHub 公开仓库、本账号的公共记忆主题（每个版本）、本账号的助手（每次成功运行）。
  * - 项目列表 /work：名字、状态、最新版本 + 来源状态、更新时间；按状态筛；空状态一句 +「添加项目」。
  * - 版本时间线 /work/<项目>：新在前；「同步」处理中锁住，结果读屏播报。
- * - 版本详情 /work/<项目>?v=<版本>：产物列表，链接新标签打开（读屏名字带「离开 Aroomo」）。
+ * - 版本详情 /work/<项目>?v=<版本>：GitHub 版本列产物，链接新标签打开（读屏名字带「离开 Aroomo」）；
+ *   公共记忆版本显示那一版正文（被清理了说一句）；助手版本显示这次运行的完整结果 +「打开助手」。
  * 只读 Core 的真实数据，没有就空着；GitHub 来源只显示来源状态，不显示审核按钮（切片 2 才有审核）。
  * 外观只用全站已有的类（.page、.group、.row、.btn、.note、.empty），不加样式、不加动画。
  * 跳过：参与者（列表接口切片 1 不给）、按项目改名/改状态/改来源（接口有，界面等她要再做）。
@@ -18,7 +20,7 @@ interface Project {
   id: string;
   name: string;
   status: ProjectStatus;
-  sources: { type: 'github'; repo: string }[];
+  sources: ({ type: 'github'; repo: string } | { type: 'memory'; topic: string } | { type: 'assistant'; assistantId: string })[];
   updatedAt: string;
   latest?: { id: string; label: string; sourceState: SourceState; sourceAt: string | null } | null;
 }
@@ -32,8 +34,9 @@ interface Version {
   id: string;
   label: string;
   title: string | null;
-  actor: { type: string; name: string } | null;
+  actor: { type: string; name: string; id?: string } | null;
   artifacts: Artifact[];
+  sourceType: 'github_release' | 'github_tag' | 'memory' | 'assistant_run';
   sourceState: SourceState;
   sourceAt: string | null;
   syncedAt: string;
@@ -45,9 +48,20 @@ interface SyncResult {
   unchanged: number;
   failed: { source: string; reason: string }[];
 }
+/** 版本详情里要打开的内容（Core 每次现读来源） */
+type Open = { kind: 'memory'; topic: string; version: number; body: string | null } | { kind: 'assistant'; assistantId: string; runId: string; summary: string | null };
 export interface WorkGo {
   project?: string;
   version?: string;
+}
+const isGithub = (v: Version) => v.sourceType === 'github_release' || v.sourceType === 'github_tag';
+/** 时间线副标题里的来源：GitHub 仓库、公共记忆主题照写，助手写个数（项目里只存助手 id） */
+function sourcesText(p: Project): string {
+  const repos = p.sources.flatMap((s) => (s.type === 'github' ? [`GitHub ${s.repo}`] : []));
+  const topics = p.sources.flatMap((s) => (s.type === 'memory' ? [`公共记忆 ${s.topic}`] : []));
+  const n = p.sources.filter((s) => s.type === 'assistant').length;
+  const all = [...repos, ...topics, ...(n ? [`${n} 个助手`] : [])];
+  return all.length ? `来源：${all.join('、')}` : '还没有来源';
 }
 
 const STATUS_LABEL: Record<ProjectStatus, string> = { active: '进行中', paused: '已暂停', done: '已完成' };
@@ -63,8 +77,8 @@ export function sizeText(n: number | null): string {
 const joinHint = (parts: (string | null | undefined | false)[]) => parts.filter(Boolean).join(' · ');
 const enc = encodeURIComponent;
 
-export function WorkPage({ project, version, onGo }: WorkGo & { onGo: (to: WorkGo) => void }) {
-  if (project && version) return <VersionDetail id={version} onGo={onGo} />;
+export function WorkPage({ project, version, onGo, onAssistant }: WorkGo & { onGo: (to: WorkGo) => void; onAssistant?: (id: string) => void }) {
+  if (project && version) return <VersionDetail id={version} onGo={onGo} onAssistant={onAssistant} />;
   if (project) return <Timeline id={project} onGo={onGo} />;
   return <ProjectList onGo={onGo} />;
 }
@@ -181,6 +195,15 @@ function ProjectList({ onGo }: { onGo: (to: WorkGo) => void }) {
 function AddProject({ onCancel, onAdded }: { onCancel: () => void; onAdded: (p: Project) => void }) {
   const [name, setName] = useState('');
   const [repo, setRepo] = useState('');
+  const [topic, setTopic] = useState('');
+  const [assistantId, setAssistantId] = useState('');
+  // 本账号的公共记忆主题和助手（真实列表；读不到就不显示那一栏）
+  const [topics, setTopics] = useState<{ topic: string; title: string }[]>([]);
+  const [assistants, setAssistants] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => {
+    api<{ topics: { topic: string; title: string }[] }>('GET', '/api/memory').then((r) => setTopics(Array.isArray(r?.topics) ? r.topics : []), () => undefined);
+    api<{ assistants: { id: string; name: string }[] }>('GET', '/api/assistants').then((r) => setAssistants(Array.isArray(r?.assistants) ? r.assistants : []), () => undefined);
+  }, []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const submit = async (e: FormEvent) => {
@@ -191,7 +214,12 @@ function AddProject({ onCancel, onAdded }: { onCancel: () => void; onAdded: (p: 
     setBusy(true);
     setError('');
     try {
-      const out = await api<{ project: Project }>('POST', '/api/work/projects', { name: n, ...(r ? { sources: [{ type: 'github', repo: r }] } : {}) });
+      const sources = [
+        ...(r ? [{ type: 'github', repo: r }] : []),
+        ...(topic ? [{ type: 'memory', topic }] : []),
+        ...(assistantId ? [{ type: 'assistant', assistantId }] : []),
+      ];
+      const out = await api<{ project: Project }>('POST', '/api/work/projects', { name: n, ...(sources.length ? { sources } : {}) });
       onAdded({ ...out.project, latest: null });
     } catch (err) {
       setError(errText(err, '没添加成，请稍后再试'));
@@ -209,6 +237,30 @@ function AddProject({ onCancel, onAdded }: { onCancel: () => void; onAdded: (p: 
         <span className="form-label">GitHub 公开仓库（可不填，写成 用户名/仓库名）</span>
         <input name="repo" maxLength={141} value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="octocat/hello-world" autoCapitalize="off" spellCheck={false} />
       </label>
+      {topics.length > 0 && (
+        <label className="form-field">
+          <span className="form-label">公共记忆主题（可不选，每个版本算一个版本）</span>
+          <select className="field-select" value={topic} onChange={(e) => setTopic(e.target.value)}>
+            <option value="">不选</option>
+            {topics.map((t) => (
+              <option key={t.topic} value={t.topic}>{`${t.title}（${t.topic}）`}</option>
+            ))}
+          </select>
+        </label>
+      )}
+      {assistants.length > 0 && (
+        <label className="form-field">
+          <span className="form-label">助手（可不选，每次成功运行算一个版本）</span>
+          <select className="field-select" value={assistantId} onChange={(e) => setAssistantId(e.target.value)}>
+            <option value="">不选</option>
+            {assistants.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       {error && (
         <p role="alert" className="note note-error">
           {error}
@@ -293,7 +345,7 @@ function Timeline({ id, onGo }: { id: string; onGo: (to: WorkGo) => void }) {
   };
 
   if (state === 'missing') return <Missing text={missing} onBack={() => onGo({})} />;
-  const repos = project?.sources.map((s) => s.repo) ?? [];
+  const hasSources = !!project?.sources.length;
 
   return (
     <section aria-labelledby="work-project-title" className="page">
@@ -301,7 +353,7 @@ function Timeline({ id, onGo }: { id: string; onGo: (to: WorkGo) => void }) {
         <h2 id="work-project-title" className="page-title">
           {project?.name ?? '项目'}
         </h2>
-        {project && <p className="page-sub">{joinHint([STATUS_LABEL[project.status], repos.length ? `来源：GitHub ${repos.join('、')}` : '还没有来源'])}</p>}
+        {project && <p className="page-sub">{joinHint([STATUS_LABEL[project.status], sourcesText(project)])}</p>}
       </div>
       {project && (
         <div className="panel-actions">
@@ -319,11 +371,11 @@ function Timeline({ id, onGo }: { id: string; onGo: (to: WorkGo) => void }) {
         </p>
       )}
       {state === 'failed' && <ErrorRetry text="版本没读到。" what="版本" onRetry={() => void load()} />}
-      {versions !== null && versions.length === 0 && <Empty text={repos.length ? '还没有版本。点「同步」从 GitHub 拿已发布的版本。' : '还没有版本。这个项目还没有来源。'} />}
+      {versions !== null && versions.length === 0 && <Empty text={hasSources ? '还没有版本。点「同步」从来源拿版本。' : '还没有版本。这个项目还没有来源。'} />}
       {versions !== null && versions.length > 0 && (
         <ul className="group" aria-label="版本">
           {versions.map((v) => {
-            const hint = joinHint([v.title, v.actor?.name, when(v.sourceAt), STATE_LABEL[v.sourceState], `${v.artifacts.length} 个产物`]);
+            const hint = joinHint([v.title, v.actor?.name !== v.label && v.actor?.name, when(v.sourceAt), STATE_LABEL[v.sourceState], isGithub(v) && `${v.artifacts.length} 个产物`]);
             return (
               <li key={v.id}>
                 <button type="button" className="row row-button" aria-label={`打开版本 ${v.label}：${hint}`} onClick={() => onGo({ project: id, version: v.id })}>
@@ -348,15 +400,18 @@ function Timeline({ id, onGo }: { id: string; onGo: (to: WorkGo) => void }) {
 
 // ---------------- 版本详情 ----------------
 
-function VersionDetail({ id, onGo }: { id: string; onGo: (to: WorkGo) => void }) {
+function VersionDetail({ id, onGo, onAssistant }: { id: string; onGo: (to: WorkGo) => void; onAssistant?: (id: string) => void }) {
   const [v, setV] = useState<Version | null>(null);
+  const [open, setOpen] = useState<Open | null>(null);
   const [state, setState] = useState<'' | 'failed' | 'missing'>('');
   const [missing, setMissing] = useState('');
   const load = useCallback(async () => {
     setState('');
     setV(null);
     try {
-      setV((await api<{ version: Version }>('GET', `/api/work/versions/${enc(id)}`)).version);
+      const r = await api<{ version: Version; open?: Open | null }>('GET', `/api/work/versions/${enc(id)}`);
+      setOpen(r.open ?? null);
+      setV(r.version);
     } catch (e) {
       if (e instanceof ApiError && e.status === 404) {
         setMissing(e.message);
@@ -394,7 +449,9 @@ function VersionDetail({ id, onGo }: { id: string; onGo: (to: WorkGo) => void })
         <h2 id="work-version-title" className="page-title">
           {v.title ? `${v.label} · ${v.title}` : v.label}
         </h2>
-        <p className="page-sub">来源状态由 GitHub 给出，这里只能看。</p>
+        <p className="page-sub">
+          {isGithub(v) ? '来源状态由 GitHub 给出，这里只能看。' : v.sourceType === 'memory' ? '公共记忆的这一版，这里只能看。' : '助手这次成功运行的结果，这里只能看。'}
+        </p>
       </div>
       <ul className="group" aria-label="版本信息">
         {meta
@@ -408,32 +465,55 @@ function VersionDetail({ id, onGo }: { id: string; onGo: (to: WorkGo) => void })
             </li>
           ))}
       </ul>
-      <section className="group-block" aria-labelledby="work-artifacts-title">
-        <h3 id="work-artifacts-title" className="group-title">
-          产物
-        </h3>
-        {v.artifacts.length === 0 ? (
-          <p className="note">这个版本没有产物。</p>
-        ) : (
-          <ul className="group" aria-label="产物">
-            {v.artifacts.map((a, i) => (
-              <li key={i} className="row">
-                <span className="row-text">
-                  <span className="row-label row-break">{a.title}</span>
-                  <span className="row-hint">{joinHint([a.type === 'page' ? '页面' : '文件', sizeText(a.size)])}</span>
-                </span>
-                {a.url ? (
-                  <a className="btn btn-outline" href={a.url} target="_blank" rel="noopener noreferrer" aria-label={`${a.title}：打开 GitHub，离开 Aroomo，在新标签页打开`}>
-                    打开 GitHub ↗
-                  </a>
-                ) : (
-                  <span className="row-value">链接不可用</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      {open?.kind === 'memory' && (
+        <section className="group-block" aria-labelledby="work-open-title">
+          <h3 id="work-open-title" className="group-title">
+            这一版的内容
+          </h3>
+          {open.body === null ? <p className="note">这个版本已被清理。</p> : <p className="note row-break chat-plain">{open.body}</p>}
+        </section>
+      )}
+      {open?.kind === 'assistant' && (
+        <section className="group-block" aria-labelledby="work-open-title">
+          <h3 id="work-open-title" className="group-title">
+            这次运行的结果
+          </h3>
+          {open.summary === null ? <p className="note">这次运行的记录已经删了。</p> : <p className="note row-break chat-plain">{open.summary}</p>}
+          {onAssistant && (
+            <button type="button" className="btn btn-outline" onClick={() => onAssistant(open.assistantId)}>
+              {`打开助手「${v.actor?.name ?? v.label}」`}
+            </button>
+          )}
+        </section>
+      )}
+      {isGithub(v) && (
+        <section className="group-block" aria-labelledby="work-artifacts-title">
+          <h3 id="work-artifacts-title" className="group-title">
+            产物
+          </h3>
+          {v.artifacts.length === 0 ? (
+            <p className="note">这个版本没有产物。</p>
+          ) : (
+            <ul className="group" aria-label="产物">
+              {v.artifacts.map((a, i) => (
+                <li key={i} className="row">
+                  <span className="row-text">
+                    <span className="row-label row-break">{a.title}</span>
+                    <span className="row-hint">{joinHint([a.type === 'page' ? '页面' : '文件', sizeText(a.size)])}</span>
+                  </span>
+                  {a.url ? (
+                    <a className="btn btn-outline" href={a.url} target="_blank" rel="noopener noreferrer" aria-label={`${a.title}：打开 GitHub，离开 Aroomo，在新标签页打开`}>
+                      打开 GitHub ↗
+                    </a>
+                  ) : (
+                    <span className="row-value">链接不可用</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
     </section>
   );
 }
