@@ -311,9 +311,11 @@ describe('迁移 0033 /work', () => {
     await expect(db.exec(`UPDATE work_versions SET source_state = 'prerelease' WHERE ${b2}`)).rejects.toThrow(/不可变/);
     await expect(db.exec(`UPDATE work_versions SET source_state = 'published' WHERE id = '00000000-0000-4000-8000-0000000000b3'`)).rejects.toThrow(/不可变/);
     expect((await db.query<{ source_state: string }>(`SELECT source_state FROM work_versions WHERE ${b2}`)).rows[0]!.source_state).toBe('published');
+    // 按倒序回退：先退 0034（切片 2 的来源类型），再退 0033
+    await db.exec(readFileSync(fileURLToPath(new URL('../migrations/down/0034_work_sources.down.sql', import.meta.url)), 'utf8'));
     await db.exec(readFileSync(fileURLToPath(new URL('../migrations/down/0033_work.down.sql', import.meta.url)), 'utf8'));
     expect(await has()).toBe(0);
-    expect(await migrate(db)).toEqual(['0033_work.sql']);
+    expect(await migrate(db)).toEqual(['0033_work.sql', '0034_work_sources.sql']);
     expect(await has()).toBe(2);
     await db.close();
   });

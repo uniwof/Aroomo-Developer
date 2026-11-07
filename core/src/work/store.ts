@@ -9,9 +9,9 @@ export interface ProjectPatch {
   status?: ProjectStatus;
   sources?: WorkSource[];
 }
-/** 时间线游标：上一页最后一条的（排序时间, 写入先后） */
+/** 时间线游标：上一页最后一条的（来源时间，tag 没有 = null, 写入先后） */
 export interface Cursor {
-  at: Date;
+  at: Date | null;
   seq: number;
 }
 /** 同步写入的结果：新加几条、几条从预发布转成已发布 */
@@ -41,10 +41,20 @@ export interface WorkStore {
   latestByProject(userId: string): Promise<Map<string, WorkVersion>>;
 }
 
-export const sortAt = (v: Pick<WorkVersion, 'sourceAt' | 'syncedAt'>): Date => v.sourceAt ?? v.syncedAt;
-/** 新在前：排序时间倒序，再按写入先后倒序 */
-const newerFirst = (a: WorkVersion, b: WorkVersion) => sortAt(b).getTime() - sortAt(a).getTime() || b.seq - a.seq;
-const before = (v: WorkVersion, c: Cursor) => sortAt(v).getTime() < c.at.getTime() || (sortAt(v).getTime() === c.at.getTime() && v.seq < c.seq);
+/**
+ * 时间线顺序（负责人 #323 小事）：只拿同一种时间比。有来源时间的按来源时间新在前；没有时间的（tag）排在它们后面，
+ * 按写入先后（= GitHub 给的先后）新在前。不再用 coalesce(source_at, synced_at)：那会拿 tag 的同步时间和别的版本的来源时间比。
+ * 和 PG 的 ORDER BY source_at DESC NULLS LAST, seq DESC 一致。
+ */
+const ms = (d: Date | null) => (d ? d.getTime() : null);
+const newerFirst = (a: WorkVersion, b: WorkVersion) => {
+  const x = ms(a.sourceAt);
+  const y = ms(b.sourceAt);
+  if (x !== y) return x === null ? 1 : y === null ? -1 : y - x;
+  return b.seq - a.seq;
+};
+/** v 排在游标那一条之后 */
+const before = (v: WorkVersion, c: Cursor) => newerFirst({ sourceAt: c.at, seq: c.seq } as WorkVersion, v) < 0;
 /** 已经有同名 release 的 tag：时间线、最新里不列 */
 const shadowed = (all: WorkVersion[], v: WorkVersion) =>
   v.sourceType === 'github_tag' && all.some((r) => r.projectId === v.projectId && r.sourceType === 'github_release' && r.label === v.label);
@@ -272,13 +282,16 @@ export class PgWorkStore implements WorkStore {
     if (!UUID.test(projectId)) return [];
     const params: unknown[] = [userId, projectId, limit];
     let cond = '';
-    if (after) {
+    if (after?.at) {
       params.push(after.at, after.seq);
-      cond = 'AND (coalesce(v.source_at, v.synced_at), v.seq) < ($4, $5::bigint)';
+      cond = 'AND (v.source_at IS NULL OR (v.source_at, v.seq) < ($4, $5::bigint))';
+    } else if (after) {
+      params.push(after.seq);
+      cond = 'AND v.source_at IS NULL AND v.seq < $4::bigint';
     }
     const { rows } = await userScoped(this.db, userId).query<VersionRow>(
       `SELECT ${V_COLS} FROM work_versions v WHERE v.user_id = $1 AND v.project_id = $2 AND ${NOT_SHADOWED} ${cond}
-        ORDER BY coalesce(v.source_at, v.synced_at) DESC, v.seq DESC LIMIT $3`,
+        ORDER BY v.source_at DESC NULLS LAST, v.seq DESC LIMIT $3`,
       params,
     );
     return rows.map(toVersion);
@@ -291,7 +304,7 @@ export class PgWorkStore implements WorkStore {
   async latestByProject(userId: string): Promise<Map<string, WorkVersion>> {
     const { rows } = await userScoped(this.db, userId).query<VersionRow>(
       `SELECT DISTINCT ON (v.project_id) ${V_COLS} FROM work_versions v WHERE v.user_id = $1 AND ${NOT_SHADOWED}
-        ORDER BY v.project_id, coalesce(v.source_at, v.synced_at) DESC, v.seq DESC`,
+        ORDER BY v.project_id, v.source_at DESC NULLS LAST, v.seq DESC`,
       [userId],
     );
     return new Map(rows.map((r) => [r.project_id, toVersion(r)]));

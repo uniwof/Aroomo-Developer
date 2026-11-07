@@ -1,5 +1,5 @@
 /**
- * /work 项目与版本接口（切片 1，docs/api/design-work-v1.md）。v1 只给所有者范围（所有者令牌 / 方案 A 的所有者账号）；
+ * /work 项目与版本接口（切片 1 + 2，docs/api/design-work-v1.md）。v1 只给所有者范围（所有者令牌 / 方案 A 的所有者账号）；
  * 家人账号 403；能力 work:manage 不进操作员白名单。权限在 preValidation 判，先 403 再校验请求体。
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
@@ -38,7 +38,17 @@ const versionJson = (v: WorkVersion) => ({
 });
 
 const idParam = { type: 'object', required: ['id'], properties: { id: { type: 'string', maxLength: 64 } } } as const;
-const sources = { type: 'array', maxItems: 5, items: { type: 'object', required: ['type', 'repo'], additionalProperties: false, properties: { type: { const: 'github' }, repo: { type: 'string', maxLength: 141 } } } } as const;
+// 三种形状（github: repo；memory: topic；assistant: assistantId）在服务层逐个核，多一个键也拒
+const sources = {
+  type: 'array',
+  maxItems: 5,
+  items: {
+    type: 'object',
+    required: ['type'],
+    additionalProperties: false,
+    properties: { type: { enum: ['github', 'memory', 'assistant'] }, repo: { type: 'string', maxLength: 141 }, topic: { type: 'string', maxLength: 64 }, assistantId: { type: 'string', maxLength: 64 } },
+  },
+} as const;
 const createBody = { type: 'object', required: ['name'], additionalProperties: false, properties: { name: { type: 'string', maxLength: 200 }, sources } } as const;
 const patchBody = {
   type: 'object',
@@ -86,7 +96,8 @@ export function registerWorkRoutes(app: FastifyInstance, svc: WorkService): void
     },
   );
 
-  app.get<{ Params: { id: string } }>('/api/work/versions/:id', { ...g, schema: { params: idParam } }, async (req) => ({
-    version: versionJson(await svc.version(scopeOf(req), req.params.id)),
-  }));
+  app.get<{ Params: { id: string } }>('/api/work/versions/:id', { ...g, schema: { params: idParam } }, async (req) => {
+    const { version, open } = await svc.version(scopeOf(req), req.params.id);
+    return { version: versionJson(version), open };
+  });
 }
