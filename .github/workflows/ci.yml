@@ -148,21 +148,8 @@ jobs:
       - run: docker build -t aroomo-core:ci core
       - run: docker build -t aroomo-backup:ci deploy/backup
       - run: docker build -t aroomo-shell:ci shell
-      - name: Trivy 镜像扫描（core、shell；HIGH/CRITICAL 有修复就失败；放行名单 .github/trivyignore.txt；#177）
-        env:
-          # 2026-03 Trivy 供应链事件后官方确认安全的版本（GHSA-69fq-xp46-6x23）；不用 trivy-action，直接下载官方二进制核对 SHA-256
-          TRIVY_VERSION: 0.69.3
-          TRIVY_SHA256: 1816b632dfe529869c740c0913e36bd1629cb7688bd5634f4a858c1d57c88b75
-        run: |
-          set -euo pipefail
-          curl -sSfL -o /tmp/trivy.tgz "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
-          echo "${TRIVY_SHA256}  /tmp/trivy.tgz" | sha256sum -c -
-          tar xzf /tmp/trivy.tgz -C /tmp trivy
-          # 只扫漏洞（--scanners vuln），不扫密钥，日志里不会打印任何密钥内容
-          for img in aroomo-core:ci aroomo-shell:ci; do
-            /tmp/trivy image --quiet --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
-              --ignorefile .github/trivyignore.txt --exit-code 1 --format table "$img"
-          done
+      - name: Trivy 镜像扫描（core、shell、backup；HIGH/CRITICAL 有修复就失败；放行名单 .github/trivyignore.txt；#177 #337）
+        run: scripts/ci/trivy-scan.sh aroomo-core:ci aroomo-shell:ci aroomo-backup:ci
       - name: shell 镜像冒烟测试
         run: |
           # 镜像里 NODE_ENV=production，SHELL_AUTH=off 会被拒绝启动（#245）；静态资源不需要登录
