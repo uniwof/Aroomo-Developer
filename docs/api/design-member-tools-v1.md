@@ -17,7 +17,7 @@
 | 可用 / 不可用 | 工具名此刻在不在网关清单里（HTTP 工具停用或删除、执行员适配器没了 → 不在 → 不可用）。不猜原因，只写「工具在资源库里已停用或删除」 |
 | 沙箱算力 | 已有 `GET /api/executors`（电脑助手：设备名、在线 = 90 秒内联系过、最后联系时间）。Aroomo 没有云端沙箱，不造；资源库加一行「算力（电脑助手）」进到已有的 /settings/executors 页 |
 
-## 表（迁移 0034_member_tools，带 down）
+## 表（迁移 0035_member_tools，带 down）
 `member_tools`：user_id text（非空串）、member_id text、tool text（1–64，形如 `^[a-z][a-z0-9_.-]{0,63}$`，网关工具名）、assigned_at timestamptz、PRIMARY KEY (user_id, member_id, tool)、FOREIGN KEY (user_id, member_id) → members ON DELETE CASCADE（成员彻底删除时一起删；软删除保留）。每位成员最多 50 个（服务层）。ENABLE + FORCE RLS，策略同 0033 模板（`app.user_id` 隔离 + `app.system_scope` 只读）；加进 `scripts/lib/rls-tables.txt`。不是只追加表（去掉分配要真删行；历史在审计里）。
 
 ## 接口（Core，挂在已有成员接口下）
@@ -40,6 +40,6 @@
 4. 家人账号给自己的成员分配（先问所有者）。
 
 ## 切片
-1. 迁移 0034 + 三个接口 + 成员详情「已分配的工具」+ 资源库算力入口，开关默认关。A+（迁移、RLS）。
+1. 迁移 0035 + 三个接口 + 成员详情「已分配的工具」+ 资源库算力入口，开关默认关。A+（迁移、RLS）。
 2. 工具页按工具看分配。
 3. 分配生效（接对话/助手的工具调用时一起做，单独设计）。

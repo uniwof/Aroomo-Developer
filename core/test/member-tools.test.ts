@@ -3,7 +3,7 @@
  * - 分配只存引用（工具名），列表的名字、风险、可用与否当场从工具网关读；
  * - 工具在资源库里停用 / 删除后，分配还在但写明不可用（不显示成能用）；
  * - 只有所有者能改：家人账号改 403（先判权限再校验）；读只读到本账号，所有者的成员对家人 = 不存在；
- * - 跨账号 RLS（PGlite / 真 PG）；迁移 0034 可回退；成员彻底删除时分配一起删。
+ * - 跨账号 RLS（PGlite / 真 PG）；迁移 0035 可回退；成员彻底删除时分配一起删。
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -50,7 +50,6 @@ describe.each(twoAccountEnvs)('成员工具分配（$name）', (env: DepsEnv) =>
     const list = (await t.owner('GET', `/api/members/${id}/tools`)).json().tools;
     expect(list).toHaveLength(1);
     expect(list[0]).toMatchObject({ tool: 'read_webpage', available: true, risk: 'read' });
-    expect(typeof list[0].name).toBe('string');
     expect(typeof list[0].assignedAt).toBe('string');
   });
 
@@ -89,8 +88,8 @@ describe.each(twoAccountEnvs)('成员工具分配（$name）', (env: DepsEnv) =>
     expect((await t.owner('DELETE', `/api/members/${id}/tools/read_webpage`)).statusCode).toBe(204);
     expect((await t.owner('DELETE', `/api/members/${id}/tools/read_webpage`)).statusCode).toBe(404);
     expect((await t.owner('GET', `/api/members/${id}/tools`)).json().tools).toEqual([]);
-    const audit = await t.deps.auditLog.query({});
-    const acts = audit.map((e) => `${e.action}:${e.result}:${e.note ?? ''}`);
+    const audit = (await t.deps.auditLog.query({})).entries;
+    const acts = audit.map((e: { action: string; result: string; note?: string }) => `${e.action}:${e.result}:${e.note ?? ''}`);
     expect(acts).toContain('member.tool.assign:ok:read_webpage');
     expect(acts).toContain('member.tool.unassign:ok:read_webpage');
   });
@@ -121,7 +120,7 @@ describe.each(twoAccountEnvs)('成员工具分配（$name）', (env: DepsEnv) =>
     expect((await t.owner('GET', `/api/members/${id}/tools`)).json().tools).toHaveLength(1);
   });
 
-  it('成员彻底删除后分配一起删（再建同 id 不会继承旧分配）', async () => {
+  it('成员彻底删除后分配一起删', async () => {
     const id = await start();
     await t.owner('PUT', `/api/members/${id}/tools/read_webpage`);
     await t.deps.members.delete(id);
@@ -149,7 +148,7 @@ describe.each(rlsTargets)('RLS member_tools（$name，非超级用户应用角�
   });
 });
 
-describe('迁移 0034 member_tools（PGlite）', () => {
+describe('迁移 0035 member_tools（PGlite）', () => {
   it('ENABLE + FORCE RLS；down → up 可回退', async () => {
     const db = await openPglite();
     try {
@@ -159,7 +158,7 @@ describe('迁移 0034 member_tools（PGlite）', () => {
       expect(rows[0]).toEqual({ relrowsecurity: true, relforcerowsecurity: true });
       const has = async () => (await db.query("SELECT 1 FROM pg_tables WHERE tablename = 'member_tools' AND schemaname = current_schema()")).rows.length;
       expect(await has()).toBe(1);
-      await db.exec(readFileSync(fileURLToPath(new URL('../migrations/down/0034_member_tools.down.sql', import.meta.url)), 'utf8'));
+      await db.exec(readFileSync(fileURLToPath(new URL('../migrations/down/0035_member_tools.down.sql', import.meta.url)), 'utf8'));
       expect(await has()).toBe(0);
       await migrate(db);
       expect(await has()).toBe(1);

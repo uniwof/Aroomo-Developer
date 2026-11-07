@@ -45,6 +45,10 @@ const TABLES: Record<string, (userIdSql: string) => string> = {
   work_versions: (u) =>
     `WITH p AS (INSERT INTO work_projects (id, user_id, name, created_at, updated_at) VALUES ('${randomUUID()}', ${u}, 'p-${randomUUID().slice(0, 8)}', ${NOW}, ${NOW}) RETURNING id, user_id)
      INSERT INTO work_versions (id, user_id, project_id, source_type, source_ref, label, source_state, synced_at) SELECT '${randomUUID()}', p.user_id, p.id, 'github_release', '1', 'v1', 'published', ${NOW} FROM p`,
+  // 成员工具分配（0035）：父行（成员）在同一条语句里先建
+  member_tools: (u) =>
+    `WITH m AS (INSERT INTO members (id, user_id, name, created_at, updated_at) VALUES ('m-${randomUUID().slice(0, 8)}', ${u}, 'x', ${NOW}, ${NOW}) RETURNING id, user_id)
+     INSERT INTO member_tools (user_id, member_id, tool, assigned_at) SELECT m.user_id, m.id, 'read_webpage', ${NOW} FROM m`,
   library_items: (u) =>
     `INSERT INTO library_items (id, user_id, kind, title, url, body, tags, source, created_at, updated_at) VALUES ('${randomUUID()}', ${u}, 'idea', 't', NULL, '', '', 'manual', ${NOW}, ${NOW})`,
 };

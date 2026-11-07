@@ -20,3 +20,5 @@ push_subscriptions
 # /work 项目与版本（迁移 0033，docs/api/design-work-v1.md）
 work_projects
 work_versions
+# 成员工具分配（迁移 0035，docs/api/design-member-tools-v1.md）
+member_tools

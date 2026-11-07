@@ -78,6 +78,7 @@ import { PushService } from "./push/service.js";
 import { registerPushRoutes } from "./push/routes.js";
 import { WorkService } from "./work/service.js";
 import { registerWorkRoutes } from "./work/routes.js";
+import { MemberToolService, registerMemberToolRoutes } from "./members/tools.js";
 import { assistantSchedulerJob, confirmExpiryJob } from "./scheduler/assistant-scheduler.js";
 
 export const VERSION = "0.0.1";
@@ -294,6 +295,8 @@ export function buildServer(
       (u, id) => vaultSvc.resolveForGateway(u, id),
     );
   registerGatewayRoutes(app, gatewayService);
+  // 成员工具分配（docs/api/design-member-tools-v1.md）：只存引用，状态当场从网关读；改只给所有者
+  registerMemberToolRoutes(app, new MemberToolService(deps.memberTools, deps.members, (u) => gatewayService.list(u), deps.now));
   registerTakeoverHandler(inbox, executorSvc);
   registerInterruptBudgetRoutes(app, interruptBudget, inbox);
   registerExecutorRoutes(app, executorSvc);
