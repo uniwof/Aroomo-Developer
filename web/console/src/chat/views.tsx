@@ -17,6 +17,8 @@ import { Avatar } from './Avatar';
 import { quotaState } from './Rail';
 import { DialogFoot, Empty, errText } from './ui';
 import { ErrorRetry } from '@/components/ErrorRetry';
+import { RISK_LABEL, toolName, type ToolRisk } from '@/lib/tools';
+import { MEMBER_TOOLS } from '@/lib/member-tools-flag';
 
 export { Empty } from './ui';
 // 测试和旧调用仍从 views 拿设置分组
@@ -288,8 +290,10 @@ const HUB_LINKS: readonly [HubTarget, string, string][] = [
   ['tools', '工具', '成员能用的工具和还差什么'],
   ['keys', 'API Key', '填 Key、看用量'],
   ['mcp', '外部接入（MCP）', '在别的 AI 软件里用你的 Aroomo'],
+  // Poke 第 9 项「沙箱算力」：Aroomo 没有云端沙箱，算力就是电脑助手（本机执行员），用已有的在线状态页，不造新数据
+  ...(MEMBER_TOOLS ? [['executors', '算力（电脑助手）', '电脑助手在不在线、最后一次联系'] as [HubTarget, string, string]] : []),
 ];
-export type HubTarget = 'capmap' | 'tools' | 'keys' | 'mcp';
+export type HubTarget = 'capmap' | 'tools' | 'keys' | 'mcp' | 'executors';
 
 export function LibraryView({ onAddMember, members = [], onOpenMember, onGo }: { onAddMember: (preset?: string) => void; members?: Member[]; onOpenMember?: (m: Member) => void; onGo?: (k: HubTarget) => void }) {
   const [caps, setCaps] = useState<CapItem[] | null>(null);
@@ -499,10 +503,8 @@ export function LibraryView({ onAddMember, members = [], onOpenMember, onGo }: {
 interface GatewayTool {
   name: string;
   description: string;
-  risk: 'read' | 'write' | 'spend' | 'danger';
+  risk: ToolRisk;
 }
-const RISK_LABEL: Record<GatewayTool['risk'], string> = { read: '只读', write: '会改东西', spend: '花钱前先问你', danger: '做之前先问你' };
-const TOOL_NAME: Record<string, string> = { read_webpage: '读网页', browser_task_create: '派浏览器任务', browser_task_status: '查浏览器任务', browser_task_cancel: '取消浏览器任务' };
 const usable = (s: string) => s === 'ready' || s === 'keyless';
 
 export function ToolsView({ onGo }: { onGo: (k: 'keys') => void }) {
@@ -545,7 +547,7 @@ export function ToolsView({ onGo }: { onGo: (k: 'keys') => void }) {
           {shownGw.map((t) => (
             <div key={t.name} className="row">
               <span className="row-text">
-                <span className="row-label">{TOOL_NAME[t.name] ?? t.name}</span>
+                <span className="row-label">{toolName(t.name)}</span>
                 <span className="row-hint">{t.description}</span>
               </span>
               <span className="row-value">{RISK_LABEL[t.risk]}</span>

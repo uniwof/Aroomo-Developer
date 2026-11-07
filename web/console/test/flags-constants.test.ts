@@ -11,7 +11,7 @@ describe('功能开关的写法', () => {
   it('flags.ts 只导出布尔常量，没有对象', () => {
     for (const [k, v] of Object.entries(F)) expect([k, typeof v]).toEqual([k, 'boolean']);
   });
-  it('构建核对脚本读到的开关和模块导出一致（含 work-flag.ts 的 WORK）', () => {
-    expect(readFlags()).toEqual({ ...F, WORK: false });
+  it('构建核对脚本读到的开关和模块导出一致（含 work-flag.ts 的 WORK、member-tools-flag.ts 的 MEMBER_TOOLS）', () => {
+    expect(readFlags()).toEqual({ ...F, WORK: false, MEMBER_TOOLS: false });
   });
 });
