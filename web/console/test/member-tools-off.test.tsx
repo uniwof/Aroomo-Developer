@@ -3,8 +3,8 @@
  * 开关 MEMBER_TOOLS 关着（仓库默认）：成员详情没有这一组、不请求 /api/members/:id/tools；资源库没有「算力」一行。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { cleanup, render, screen, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { ChatPage } from '@/chat/ChatPage';
 
 // 不 mock：用仓库里真的开关值（默认 false）
@@ -14,12 +14,6 @@ type Call = { method: string; url: string };
 let calls: Call[] = [];
 let assigned: { tool: string; description: string | null; risk: string | null; available: boolean; assignedAt: string }[] = [];
 let listStatus = 200;
-let where = '';
-function Probe() {
-  const l = useLocation();
-  where = l.pathname;
-  return null;
-}
 const json = (o: unknown, status = 200) => new Response(o === null ? null : JSON.stringify(o), { status, headers: { 'content-type': 'application/json' } });
 const AT = 'Sat 2026-11-07 10:00 AM CST (UTC+08:00)';
 const gw = [
@@ -65,7 +59,6 @@ const at = (path: string) =>
   render(
     <MemoryRouter initialEntries={[path]}>
       <ChatPage />
-      <Probe />
     </MemoryRouter>,
   );
 const main = () => screen.getByRole('main');
