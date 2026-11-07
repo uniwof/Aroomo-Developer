@@ -4,8 +4,9 @@ name: path-guard
 # - pull_request_target：跑的是 base（dev/main）那一版的本文件，不是 PR 里的；
 # - 只检出 base，运行 base 的 path-guard.py 和自测；PR 的 head 只 fetch 成一个 ref 用来算 diff、读它新增的 A+ 条目，
 #   不检出、不运行、不装依赖；不用任何密钥，令牌只读且不留在 git 配置里。
-# - workflow_dispatch（gemini-task 推送后补跑，GITHUB_TOKEN 建的 PR 不会触发 pull_request_target）：同样只检出 dev。
-#   派发在 Gemini 分支上，那个分支的本文件和 dev 一样：gemini-task 推送前用 dev 版闸门挡掉任何碰 .github/ 的补丁。
+# - workflow_dispatch：同样只检出 dev。**派发跑出来的检查只能拿来看，不算数**——规则集不认它（2026-11-07 #331 实测）。
+#   Gemini 的 PR（GITHUB_TOKEN 建的，不会触发 pull_request_target）要由 Hark 用自己的令牌给 PR 加/摘一次标签才触发、才算数。
+#   第一次 dev→main：main 上还是旧文件，由所有者临时从规则集拿掉「路径闸门」这一条，只合那一个 PR，马上加回去（负责人 2026-11-07）。
 on:
   pull_request_target:
     branches: [dev, main]
@@ -16,7 +17,7 @@ on:
         description: '要检查的分支（gemini-task 推送后用它补跑；GITHUB_TOKEN 建的 PR 不会自动触发 CI）'
         required: true
       base:
-        description: '和谁比 diff（dev 或 main）；脚本永远用 dev 版。dev→main 补跑：ref=dev，branch=dev，base=main'
+        description: '和谁比 diff（dev 或 main）；脚本永远用 dev 版。只拿来看，规则集不认派发跑出的检查'
         required: false
         default: dev
 permissions:
