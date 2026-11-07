@@ -1,7 +1,14 @@
 name: path-guard
 # 改动路径闸门（不调用模型）：A+ 必须带 needs-leader-review；Gemini 自动程序员只能改白名单。
+# #247（负责人 #187 补审必改）：闸门不能被 PR 自己改过的名单/脚本绕过。
+# - pull_request_target：跑的是 base（dev/main）那一版的本文件，不是 PR 里的；
+# - 只检出 base，运行 base 的 path-guard.py 和自测；PR 的 head 只 fetch 成一个 ref 用来算 diff、读它新增的 A+ 条目，
+#   不检出、不运行、不装依赖；不用任何密钥，令牌只读且不留在 git 配置里。
+# - workflow_dispatch：同样只检出 dev。**派发跑出来的检查只能拿来看，不算数**——规则集不认它（2026-11-07 #331 实测）。
+#   Gemini 的 PR（GITHUB_TOKEN 建的，不会触发 pull_request_target）要由 Hark 用自己的令牌给 PR 加/摘一次标签才触发、才算数。
+#   第一次 dev→main：main 上还是旧文件，由所有者临时从规则集拿掉「路径闸门」这一条，只合那一个 PR，马上加回去（负责人 2026-11-07）。
 on:
-  pull_request:
+  pull_request_target:
     branches: [dev, main]
     types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
   workflow_dispatch:
@@ -9,6 +16,10 @@ on:
       branch:
         description: '要检查的分支（gemini-task 推送后用它补跑；GITHUB_TOKEN 建的 PR 不会自动触发 CI）'
         required: true
+      base:
+        description: '和谁比 diff（dev 或 main）；脚本永远用 dev 版。只拿来看，规则集不认派发跑出的检查'
+        required: false
+        default: dev
 permissions:
   contents: read
 concurrency:
@@ -19,17 +30,27 @@ jobs:
     name: 路径闸门（A+ / 自动程序员白名单）
     runs-on: ubuntu-24.04
     steps:
+      # 派发时也一律检出 dev（受保护、审过的脚本）；输入 base 只决定 diff 跟谁比（负责人 #331 必改 2）
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || inputs.branch }}
-      - name: 闸门自测（改名/挪动、A+ 名单）
+          ref: ${{ github.event.pull_request.base.ref || 'dev' }}
+          persist-credentials: false
+      - name: 闸门自测（base 版）
         run: python3 -B scripts/ci/test_path_guard.py
-      - name: guard
+      - name: 取 head（只当数据，不检出）
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          BRANCH: ${{ inputs.branch }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -n "$PR" ]; then src="refs/pull/$PR/head"; else src="refs/heads/$BRANCH"; fi
+          git fetch -q --no-tags "$REPO_URL" "+$src:refs/guard/head"
+          git log -1 --format='head %H' refs/guard/head
+      - name: guard（base 版脚本）
         env:
           HEAD_REF: ${{ github.event.pull_request.head.ref || inputs.branch }}
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
-          BASE: ${{ github.event.pull_request.base.ref || 'dev' }}
-        run: |
-          git fetch -q origin "$BASE"
-          python3 scripts/ci/path-guard.py "origin/$BASE"
+          BASE: ${{ github.event.pull_request.base.ref || (inputs.base == 'main' && 'main') || 'dev' }}
+        run: python3 scripts/ci/path-guard.py "origin/$BASE" refs/guard/head
