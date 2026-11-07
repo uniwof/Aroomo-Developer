@@ -13,6 +13,7 @@ import { BudgetSection, Field, Group, LeadSection, McpSection, SecuritySection }
 import { FamilySection, GeneralSection, PasswordRow, ProfileSection, SignOutGroup } from './settings-sections';
 import { ClientTokensLazy } from '@/components/ClientTokensLazy';
 import { LazyChunk } from '@/components/LazyChunk';
+import { MEMBER_TOOLS } from '@/lib/member-tools-flag';
 import { Dialog } from '@/components/Dialog';
 import { Avatar } from './Avatar';
 import { Empty, errText } from './ui';
@@ -149,6 +150,9 @@ export function MembersPanel({ members, onOpen, onAdd, failed, onRetry }: { memb
   );
 }
 
+/** 成员工具分配（开关关着时整句被摇掉，对话页包不涨；开着时是单独的懒加载块） */
+const MemberTools = MEMBER_TOOLS ? lazy(() => import('./MemberTools')) : null;
+
 /**
  * 成员详情（切片 8）：启用 / 停用走 PATCH /api/members/:id {enabled}，入职走 POST /api/members/:id/onboard（只给所有者）。
  * 停用先确认；处理中锁住这几个按钮；结果只在 Core 回成功后播报，失败说清楚、按钮还能再点。
@@ -256,6 +260,11 @@ export function MemberDetail({ member, onChat, onMention, onChanged }: { member:
           <span>{member.leadEligible ? '能' : '不能'}</span>
         </Field>
       </Group>
+      {MemberTools && !isFamily() && (
+        <LazyChunk>
+          <MemberTools member={member} />
+        </LazyChunk>
+      )}
       {row && (
         <Group title="今天的用量">
           <div className="row">
