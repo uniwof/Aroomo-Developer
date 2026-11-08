@@ -37,10 +37,18 @@ commit() { git -C "$seed" add -A && git -C "$seed" commit -q -m "$1"; }
 mkdir -p "$seed/core/migrations"
 echo one >"$seed/a.txt"; echo "select 1;" >"$seed/core/migrations/0001_a.sql"; commit "第一版"; git -C "$seed" tag v0.1.0
 # v0.2.0 起带合并闸门和生产前检查（桩）：它们必须取自目标版本，状态由 \$RELEASE_ROOT 下的文件控制
-cat >"$seed/scripts/merge-gate.sh" <<'G'
-#!/usr/bin/env bash
-[ -f "${RELEASE_ROOT:?}/GATE_FAIL" ] && { echo "闸门桩：不通过"; exit 1; }
-exit 0
+mkdir -p "$seed/scripts/ci"
+cat >"$seed/scripts/ci/merge-gate.py" <<'G'
+# 闸门桩（#351 的 merge-gate.py 的替身）：记下收到的 REPO/TAG_SHA/TAG_NAME 和令牌是否到位（不记令牌本身）
+import os, sys
+root = os.environ["RELEASE_ROOT"]
+with open(os.path.join(root, "gate.env"), "w") as f:
+    f.write("REPO=%s\nTAG_SHA=%s\nTAG_NAME=%s\nTOKEN=%s\n" % (
+        os.environ.get("REPO", ""), os.environ.get("TAG_SHA", ""), os.environ.get("TAG_NAME", ""),
+        "set" if os.environ.get("GH_TOKEN") else "unset"))
+if os.path.exists(os.path.join(root, "GATE_FAIL")):
+    print("闸门桩：不通过（待审 PR #1）")
+    sys.exit(1)
 G
 cat >"$seed/scripts/release-precheck.sh" <<'G'
 #!/usr/bin/env bash
@@ -48,7 +56,7 @@ echo "$*" >>"${RELEASE_ROOT:?}/precheck.args"
 [ -f "$RELEASE_ROOT/PRECHECK_FAIL" ] && { echo "检查桩：不通过"; exit 1; }
 exit 0
 G
-chmod +x "$seed/scripts/merge-gate.sh" "$seed/scripts/release-precheck.sh"
+chmod +x "$seed/scripts/release-precheck.sh"
 echo two >"$seed/a.txt"; echo "select 2;" >"$seed/core/migrations/0002_b.sql"; commit "第二版"; git -C "$seed" tag v0.2.0
 touch "$seed/FAIL_UP"; echo "select 3;" >"$seed/core/migrations/0003_c.sql"; commit "坏版本（up 会失败）"; git -C "$seed" tag v0.3.0
 git -C "$seed" push -q "$origin" main --tags
@@ -64,7 +72,9 @@ mkdir -p "$root/deploy"
 echo local-secret >"$root/deploy/.lobehub-cli-key"
 
 export RELEASE_ROOT="$root" RELEASE_TEST_CALLS="$work/calls.log" RELEASE_SKIP_CONSOLE=1 RELEASE_HEALTH_POLL_S=0
-export RELEASE_HEALTH_TIMEOUT_S=2 RELEASE_REQUIRE_PRECHECK=1
+export RELEASE_HEALTH_TIMEOUT_S=2 RELEASE_REQUIRE_PRECHECK=1 RELEASE_REQUIRE_GATE=1
+# 假令牌：只用来断言它到了闸门、且没进日志/状态文件
+export GH_TOKEN="fake-gate-token-for-test-only"
 health="$work/health.sh"
 cat >"$health" <<'H'
 #!/usr/bin/env bash
@@ -143,12 +153,25 @@ echo "CORE_CHAT_TOKEN=abc" >>"$root/deploy/.env"
 touch "$root/GATE_FAIL"
 expect "合并闸门（目标版本里的）不过则拒绝" 1 "$rel" deploy v0.2.0 --confirm v0.2.0
 [ "$(git -C "$root" rev-parse HEAD)" = "$(git -C "$seed" rev-parse v0.1.0)" ] && ok "闸门不过时没有切走" || bad "闸门不过却切走了"
+grep -qx 'REPO=uniwof/Aroomo-Developer' "$root/gate.env" && grep -qx "TAG_SHA=$(git -C "$seed" rev-parse v0.2.0)" "$root/gate.env" \
+  && grep -qx 'TAG_NAME=v0.2.0' "$root/gate.env" && grep -qx 'TOKEN=set' "$root/gate.env" \
+  && ok "闸门收到仓库、标签提交、标签名和令牌" || bad "闸门收到的参数不对：$(cat "$root/gate.env")"
+expect "演练也跑闸门，不过则拒绝" 1 "$rel" deploy v0.2.0
+GH_TOKEN="" expect "没有 GH_TOKEN：拒绝（失败即关闭）" 1 "$rel" deploy v0.2.0 --confirm v0.2.0
+echo "$LAST_OUT" | grep -q 'GH_TOKEN' && ok "说明需要 GH_TOKEN" || bad "输出不对：$LAST_OUT"
+[ "$(git -C "$root" rev-parse HEAD)" = "$(git -C "$seed" rev-parse v0.1.0)" ] && ok "缺令牌时没有切走" || bad "缺令牌却切走了"
 expect "hotfix 跳过闸门" 0 "$rel" deploy v0.2.0 --confirm v0.2.0 --hotfix
 rm -f "$root/GATE_FAIL"
 [ "$(head_tag)" = v0.2.0 ] && ok "现在是 v0.2.0" || bad "hotfix 后检出：$(head_tag)"
 
 # 生产前检查：目标版本里没有 → 拒绝；有但失败 → 拒绝；演练带 --no-backup，真切换不带
-RELEASE_REQUIRE_PRECHECK=1 expect "目标版本（v0.1.0）没有 release-precheck.sh：拒绝部署" 1 "$rel" deploy v0.1.0 --confirm v0.1.0
+# 数据库只执行到 0001，让下面两条真正走到闸门/生产前检查（否则会先被迁移核对拒绝）
+printf '0001_a.sql\n' >"$applied"
+expect "目标版本（v0.1.0）没有 scripts/ci/merge-gate.py：拒绝部署" 1 "$rel" deploy v0.1.0 --confirm v0.1.0
+echo "$LAST_OUT" | grep -q 'merge-gate.py' && ok "说明缺合并闸门" || bad "输出不对：$LAST_OUT"
+RELEASE_REQUIRE_GATE=0 RELEASE_REQUIRE_PRECHECK=1 expect "目标版本（v0.1.0）没有 release-precheck.sh：拒绝部署" 1 "$rel" deploy v0.1.0 --confirm v0.1.0
+echo "$LAST_OUT" | grep -q 'release-precheck.sh' && ok "说明缺生产前检查" || bad "输出不对：$LAST_OUT"
+printf '0001_a.sql\n0002_b.sql\n' >"$applied"
 touch "$root/PRECHECK_FAIL"
 expect "生产前检查（目标版本里的）失败则不切换" 1 "$rel" deploy v0.3.0 --confirm v0.3.0
 [ "$(head_tag)" = v0.2.0 ] && ok "检查失败后仍是 v0.2.0" || bad "检查失败却切换了"
@@ -240,4 +263,5 @@ unset RELEASE_DOCKER
 [ "$(stat -c %a "$root/.release/compose.log")" = 600 ] && ok "compose.log 权限 600" || bad "compose.log 权限不对"
 
 if grep -rn 'AGE-SECRET-KEY\|CORE_CHAT_TOKEN=abc' "$root/.release" >/dev/null 2>&1; then bad "状态/日志里出现了密钥"; else ok "日志无密钥"; fi
+if grep -rnF "$GH_TOKEN" "$root/.release" "$root/gate.env" >/dev/null 2>&1; then bad "日志/闸门记录里出现了 GH_TOKEN"; else ok "日志无 GH_TOKEN"; fi
 [ "$fail" = 0 ] && echo "全部通过" || { echo "有失败"; exit 1; }

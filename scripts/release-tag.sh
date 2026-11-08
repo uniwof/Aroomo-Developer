@@ -9,6 +9,7 @@
 #   scripts/release-tag.sh rollback                      演练：显示将回到哪个版本
 #   scripts/release-tag.sh rollback --confirm <上一个版本>  真正回滚
 #   加 --hotfix：跳过合并闸门（#189），其他检查照旧。
+#   合并闸门需要环境里有只读 GH_TOKEN（不写 .env、不进日志）；目标版本没有 scripts/ci/merge-gate.py 就拒绝部署。
 #   加 --lobe-session-ok：回退目标写死 SHELL_AUTH: lobe-session 也照样切（只在确实要回旧登录、LobeHub 在跑时用）。
 #
 # 版本专属的 compose 叠加文件（docs/ops/RELEASE.md「回退到 v0.1.0」）：
@@ -33,6 +34,8 @@
 #   RELEASE_REQUIRE_PRECHECK（默认 1：目标版本缺 scripts/release-precheck.sh 就拒绝部署；只有测试设 0）
 #   RELEASE_DB_CMD（测试用：从 stdin 读一条 SQL、输出无表头结果的命令；默认走 compose exec postgres psql，只读）
 #   RELEASE_PRECHECK_DB（默认 aroomo_core）
+#   RELEASE_REQUIRE_GATE（默认 1：目标版本缺 scripts/ci/merge-gate.py 就拒绝部署；只有测试设 0）
+#   RELEASE_GATE_REPO（默认 uniwof/Aroomo-Developer）RELEASE_PYTHON（默认 python3）
 set -Eeuo pipefail
 
 ROOT="${RELEASE_ROOT:-/opt/aroomo}"
@@ -295,15 +298,22 @@ do_switch() {
   return 1
 }
 
-# 合并闸门（#189）：用目标版本里的 scripts/merge-gate.sh（hotfix 豁免）
+# 合并闸门（#189 / #351）：用目标版本里的 scripts/ci/merge-gate.py（hotfix 豁免）。
+# 仓库里有带 needs-leader-review 且无 leader-approved 的 PR → 非零退出 → 拒绝发布（演练也查，失败即关闭）。
+# GH_TOKEN 从调用者环境继承（只读、仅本仓库的令牌），不写文件、不打印、不传给别的命令。
+# 闸门只读：hotfix 在这里整段跳过，补审评论/标签由 CI 的 merge-gate 工作流在 v* 标签推送时做。
 run_gate() {
-  local hotfix="$1" gate="$2/scripts/merge-gate.sh"
-  if [ "$hotfix" = 1 ]; then log "hotfix：跳过合并闸门"; return 0; fi
-  if [ -x "$gate" ]; then
-    RELEASE_ROOT="$ROOT" "$gate" || die "合并闸门不通过"
-  else
-    log "提示：合并闸门（#189）尚未启用，已跳过（调用点：scripts/merge-gate.sh）"
+  local hotfix="$1" gate="$2/scripts/ci/merge-gate.py"
+  if [ "$hotfix" = 1 ]; then log "hotfix：跳过合并闸门（事后必须补审）"; return 0; fi
+  if [ ! -f "$gate" ]; then
+    [ "${RELEASE_REQUIRE_GATE:-1}" = 1 ] \
+      || { log "提示：目标版本没有合并闸门（#189），RELEASE_REQUIRE_GATE=0 已放行"; return 0; }
+    die "目标版本 $(short "$target") 里没有 scripts/ci/merge-gate.py（#189），不部署；紧急修复用 --hotfix"
   fi
+  [ -n "${GH_TOKEN:-}" ] || die "合并闸门要查 GitHub：需要主会话在环境里提供只读 GH_TOKEN（read -rs GH_TOKEN; export GH_TOKEN），不要写进 .env 或命令行；紧急修复用 --hotfix"
+  command -v "${RELEASE_PYTHON:-python3}" >/dev/null || die "服务器没有 python3，合并闸门跑不了，不部署"
+  REPO="${RELEASE_GATE_REPO:-uniwof/Aroomo-Developer}" TAG_SHA="$tcommit" TAG_NAME="$target" PR_NUMBER="" GITHUB_STEP_SUMMARY="" \
+    "${RELEASE_PYTHON:-python3}" -B "$gate" || die "合并闸门不通过（见上面列出的待审 PR），不部署"
 }
 
 # 生产前检查 + 部署前备份（#229）。dry 时只检查、不备份。脚本取自目标版本（只有新版本知道自己要跑哪些迁移）

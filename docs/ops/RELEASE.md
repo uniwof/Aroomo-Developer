@@ -13,6 +13,7 @@
 ## 命令（在服务器 `/opt/aroomo` 里）
 
 ```bash
+read -rs GH_TOKEN; export GH_TOKEN                   # 合并闸门要用：只读、仅本仓库的令牌；不写 .env、不写命令行
 scripts/release-tag.sh list                          # main 上的标签，标出 [当前] [上一个]
 scripts/release-tag.sh status                        # 当前 / 上一个版本 + 最近日志
 scripts/release-tag.sh deploy v0.1.0                 # 演练：检查 + 更新日志，不切换
@@ -36,7 +37,7 @@ scripts/release-tag.sh rollback --confirm v0.1.0 --lobe-session-ok  # 明确要�
 3. **工作区必须干净**：已跟踪的文件有手工改动就拒绝，只列文件名（不列内容）。切换不加 `--force`，不会悄悄丢掉服务器上的修改，也不会覆盖同名的未跟踪文件（git 拒绝就停下）。
 4. **`deploy/.env` 自检**（演练也做）：有 `CORE_CHAT_TOKEN`、`KEY_VAULTS_SECRET` 是合法密钥；不合格当场拒绝，不等到切换那一刻，更不会拖到回退时才失败。
 5. **数据库迁移不超前**：只读查 `core_schema_migrations`，和目标版本 `core/migrations/` 比对；数据库里有目标版本不认识的迁移就拒绝（部署旧版本、回滚都一样）。
-6. 合并闸门（#189）：存在 `scripts/merge-gate.sh` 时先跑（`--hotfix` 豁免）；还没有就只记一行提示。
+6. 合并闸门（#189 / #351）：跑目标版本里的 `scripts/ci/merge-gate.py`（传 `REPO`、`TAG_SHA`=标签提交、`TAG_NAME`；`GH_TOKEN` 从调用者环境继承，不写文件、不打印）。仓库里有带 `needs-leader-review` 且无 `leader-approved` 的 PR → 非零退出 → **拒绝发布**（演练也查）。**失败即关闭**：目标版本没有 `merge-gate.py`、环境里没有 `GH_TOKEN`、服务器没有 `python3`，都拒绝。`--hotfix` 整段跳过（事后必须补审；补审的评论和标签由 CI 的 merge-gate 工作流在 `v*` 标签推送时加，服务器这边只读）。
 7. 生产前检查 + 部署前备份（#229，见下节）：`scripts/release-precheck.sh` 必须存在且通过，缺了或不过都拒绝部署。演练时只检查、不备份。
    - 第 6、7 步**用目标版本里的脚本**：脚本从 `git archive <标签> scripts`（连同 `core/migrations`，precheck 检查 1 要看待执行的迁移）取出到临时目录再运行（`RELEASE_ROOT` 仍指向生产目录）。因为只有新版本知道自己要跑哪些迁移；也因为生产现在的版本里根本没有这些脚本。
 8. `git checkout <标签>`（不加 `--force`）→ 控制台有改动才重建 → `build core shell` → `up -d --remove-orphans` → 健康检查（core、lobe、shell 都 healthy，最长 7 分钟）。compose 的输出写进 `.release/compose.log`（权限 600，不含 `.env` 的值），出问题看这里。
@@ -74,6 +75,27 @@ scripts/release-tag.sh rollback --confirm v0.1.0 --lobe-session-ok  # 明确要�
 - 不 `git clean`、不 `git add -A`、不 `git stash -u`：服务器上有两个本地密钥文件 `deploy/.lobehub-cli-key`、`deploy/.r2-readonly.env`（已加进 `.gitignore`，但仍不能靠清理命令碰它们）。
 - 不打印 `deploy/.env` 的任何值；`.env` 缺 `CORE_CHAT_TOKEN` 或 `KEY_VAULTS_SECRET` 不是合法密钥时**拒绝并回退**，不自动生成或重写（生产里已有加密数据，换密钥会让它打不开）。
 - 不动 `main`；不动数据卷。
+
+## 回滚方案（一页）
+
+**触发条件**（满足任一，主会话决定回滚）：
+- 切换后健康检查没过（脚本已自动回退；只有「需要人工处理」时才走下面的人工步骤）。
+- 切换成功但：所有者登录不了；`/aroomo/auth/me` 匿名不再 302 到登录页；GlitchTip 新错误明显上升；核心功能（聊天、确认卡）不可用。
+- 发现这一版有可利用的越权、泄密或花钱问题。
+
+**一键回滚到上一个标签**（服务器 `/opt/aroomo`）：
+1. `scripts/release-tag.sh status` 看当前/上一个版本。
+2. `scripts/release-tag.sh rollback`（演练：打印回滚目标、做迁移核对和 Shell 登录方式核对）。
+3. 主会话确认后：`scripts/release-tag.sh rollback --confirm <演练里显示的版本>`。
+4. 核对：`status` 显示已回到上一个；匿名访问 `/aroomo/auth/me` 302 到 `/aroomo/login`；所有者能登录。
+
+**数据库注意点**：
+- 这一版**没执行新迁移**：直接 `rollback`，数据不动。
+- 这一版**执行了新迁移**：`rollback` 会拒绝（旧代码读不了新结构）。先用部署前备份恢复（备份名在 `.release/precheck.ok`，步骤见 [BACKUP.md](BACKUP.md)，要所有者的主密钥），或按 `core/migrations/down/` 人工退，**再** `rollback`。会丢掉上线后写进新表的数据。
+- 永远不要用 `deploy` 部署更旧的标签来回退（检查 8 会拦）。
+- 回到 v0.1.0 还要先配叠加文件、删应用角色那三行 `.env`（见下面「回退到 v0.1.0」）。
+
+**预计耗时**：只回代码 ≈ 5–10 分钟（重建 core/shell 镜像 + 健康检查最长 7 分钟）；要先恢复数据库 ≈ 30–60 分钟（取决于备份大小和所有者拿主密钥的时间）。
 
 ## 第一次从 dev 切到标签
 
@@ -149,7 +171,7 @@ v0.2.0 会执行迁移 0025–0030（会话、助手、运行、存库、推送�
 
 ## 测试
 
-`scripts/test-release.sh`：临时 git 仓库 + 假的 compose，不需要 docker。覆盖列标签、拒绝 dev 标签/分支/不存在的标签、演练不切换、写错确认不切换、切换成功、坏版本自动回退（迁移没执行）、**迁移已执行后不自动回退并写「需要人工处理」**、**数据库超前时 `rollback` 演练和确认都拒绝**、**已跟踪文件有改动时演练和确认都拒绝且改动原样保留**、一键回滚、`.env` 缺项在演练时就拒绝、闸门/生产前检查取自目标版本且失败或缺失时拒绝、读不出迁移记录时拒绝、本地密钥文件不被动、`compose.log` 权限 600、日志无密钥；precheck 拿到目标版本的 `core/migrations/`；回退目标写死 lobe-session 且没配叠加文件时 `deploy` 演练、`rollback` 演练和确认都拒绝，`--lobe-session-ok` 放行，叠加文件列了但不存在拒绝；配好后回滚带上叠加文件、只重建 core、`up --no-build`，没有叠加文件的版本照常走 `compose.sh`。
+`scripts/test-release.sh`：临时 git 仓库 + 假的 compose，不需要 docker。覆盖列标签、拒绝 dev 标签/分支/不存在的标签、演练不切换、写错确认不切换、切换成功、坏版本自动回退（迁移没执行）、**迁移已执行后不自动回退并写「需要人工处理」**、**数据库超前时 `rollback` 演练和确认都拒绝**、**已跟踪文件有改动时演练和确认都拒绝且改动原样保留**、一键回滚、`.env` 缺项在演练时就拒绝、闸门/生产前检查取自目标版本且失败或缺失时拒绝（闸门：收到仓库/标签提交/标签名/令牌、演练也拦、缺 `GH_TOKEN` 拒绝、目标版本缺 `scripts/ci/merge-gate.py` 拒绝、日志里没有令牌）、读不出迁移记录时拒绝、本地密钥文件不被动、`compose.log` 权限 600、日志无密钥；precheck 拿到目标版本的 `core/migrations/`；回退目标写死 lobe-session 且没配叠加文件时 `deploy` 演练、`rollback` 演练和确认都拒绝，`--lobe-session-ok` 放行，叠加文件列了但不存在拒绝；配好后回滚带上叠加文件、只重建 core、`up --no-build`，没有叠加文件的版本照常走 `compose.sh`。
 
 两个测试脚本都在 CI 的 `release-scripts` 任务里跑（precheck 的测试用 CI 的真 PostgreSQL 服务；输出里出现「跳过」或没有「全部通过」都算失败）。
 
