@@ -19,7 +19,9 @@ expect() { # expect <说明> <期望退出码> <命令...>
   LAST_OUT="$out"
 }
 
-origin="$work/origin.git"; seed="$work/seed"; root="$work/prod"
+# 远端路径以 uniwof/Aroomo-Developer.git 结尾：发布脚本会把远端的 owner/repo 和闸门写死的仓库核对（#352 N1）
+origin="$work/gh/uniwof/Aroomo-Developer.git"; seed="$work/seed"; root="$work/prod"
+mkdir -p "$(dirname "$origin")"
 git init -q --bare -b main "$origin"
 git init -q -b main "$seed"
 mkdir -p "$seed/scripts" "$seed/deploy"
@@ -28,6 +30,7 @@ cat >"$seed/scripts/compose.sh" <<'STUB'
 # 假 compose：记录调用；工作树里有 FAIL_UP 文件就让 up 失败
 cd "$(dirname "$0")/.."
 echo "$(git rev-parse --short HEAD) $*" >>"${RELEASE_TEST_CALLS:?}"
+[ -z "${GH_TOKEN:-}" ] || echo "compose.sh 拿到了 GH_TOKEN" >>"$RELEASE_TEST_CALLS.leak"
 if [ "${1:-}" = up ] && [ -f FAIL_UP ]; then exit 1; fi
 exit 0
 STUB
@@ -37,18 +40,28 @@ commit() { git -C "$seed" add -A && git -C "$seed" commit -q -m "$1"; }
 mkdir -p "$seed/core/migrations"
 echo one >"$seed/a.txt"; echo "select 1;" >"$seed/core/migrations/0001_a.sql"; commit "第一版"; git -C "$seed" tag v0.1.0
 # v0.2.0 起带合并闸门和生产前检查（桩）：它们必须取自目标版本，状态由 \$RELEASE_ROOT 下的文件控制
-cat >"$seed/scripts/merge-gate.sh" <<'G'
-#!/usr/bin/env bash
-[ -f "${RELEASE_ROOT:?}/GATE_FAIL" ] && { echo "闸门桩：不通过"; exit 1; }
-exit 0
+mkdir -p "$seed/scripts/ci"
+cat >"$seed/scripts/ci/merge-gate.py" <<'G'
+# 闸门桩（#351 的 merge-gate.py 的替身）：记下收到的 REPO/TAG_SHA/TAG_NAME、令牌是否到位（不记令牌本身）、是否只读
+import os, sys
+root = os.environ["RELEASE_ROOT"]
+with open(os.path.join(root, "gate.env"), "w") as f:
+    f.write("REPO=%s\nTAG_SHA=%s\nTAG_NAME=%s\nTOKEN=%s\nREADONLY=%s\n" % (
+        os.environ.get("REPO", ""), os.environ.get("TAG_SHA", ""), os.environ.get("TAG_NAME", ""),
+        {"": "unset", "stdin-gate-token-for-test-only": "stdin"}.get(os.environ.get("GH_TOKEN", ""), "other"),
+        os.environ.get("MERGE_GATE_READONLY", "")))
+if os.path.exists(os.path.join(root, "GATE_FAIL")):
+    print("闸门桩：不通过（待审 PR #1）")
+    sys.exit(1)
 G
 cat >"$seed/scripts/release-precheck.sh" <<'G'
 #!/usr/bin/env bash
 echo "$*" >>"${RELEASE_ROOT:?}/precheck.args"
+[ -z "${GH_TOKEN:-}" ] || echo "precheck 拿到了 GH_TOKEN" >>"${RELEASE_TEST_CALLS:?}.leak"
 [ -f "$RELEASE_ROOT/PRECHECK_FAIL" ] && { echo "检查桩：不通过"; exit 1; }
 exit 0
 G
-chmod +x "$seed/scripts/merge-gate.sh" "$seed/scripts/release-precheck.sh"
+chmod +x "$seed/scripts/release-precheck.sh"
 echo two >"$seed/a.txt"; echo "select 2;" >"$seed/core/migrations/0002_b.sql"; commit "第二版"; git -C "$seed" tag v0.2.0
 touch "$seed/FAIL_UP"; echo "select 3;" >"$seed/core/migrations/0003_c.sql"; commit "坏版本（up 会失败）"; git -C "$seed" tag v0.3.0
 git -C "$seed" push -q "$origin" main --tags
@@ -64,7 +77,10 @@ mkdir -p "$root/deploy"
 echo local-secret >"$root/deploy/.lobehub-cli-key"
 
 export RELEASE_ROOT="$root" RELEASE_TEST_CALLS="$work/calls.log" RELEASE_SKIP_CONSOLE=1 RELEASE_HEALTH_POLL_S=0
-export RELEASE_HEALTH_TIMEOUT_S=2 RELEASE_REQUIRE_PRECHECK=1
+export RELEASE_HEALTH_TIMEOUT_S=2 RELEASE_REQUIRE_PRECHECK=1 RELEASE_REQUIRE_GATE=1
+# 假令牌：环境里故意 export 一个（脚本必须清掉、谁都不许拿到）；闸门的令牌从标准输入给（#352 M1）
+export GH_TOKEN="fake-env-token-for-test-only"
+GATE_TOKEN="stdin-gate-token-for-test-only"
 health="$work/health.sh"
 cat >"$health" <<'H'
 #!/usr/bin/env bash
@@ -81,7 +97,9 @@ case "\$q" in *to_regclass*) echo core_schema_migrations ;; *) cat "$applied" ;;
 D
 chmod +x "$dbcmd"; export RELEASE_DB_CMD="$dbcmd"
 : >"$RELEASE_TEST_CALLS"
-rel="$here/release-tag.sh"
+relbin="$here/release-tag.sh"
+rel_() { printf '%s\n' "$GATE_TOKEN" | "$relbin" "$@"; }   # 令牌走标准输入
+rel=rel_
 head_tag() { git -C "$root" describe --tags --exact-match HEAD 2>/dev/null || echo none; }
 
 expect "list 只列 main 上的标签" 0 "$rel" list
@@ -116,8 +134,13 @@ expect "确认回滚也拒绝（迁移超前）" 1 "$rel" rollback --confirm "$(
 [ "$(head_tag)" = v0.2.0 ] && ok "拒绝后仍是 v0.2.0" || bad "拒绝后检出变了：$(head_tag)"
 
 printf '0001_a.sql\n' >"$applied"   # 假设 v0.2.0 没有真正执行过 0002
-expect "回滚演练" 0 "$rel" rollback
-expect "一键回滚到上一个（v0.1.0 之前的记录是 v0.1.0 的提交）" 0 "$rel" rollback --confirm "$(cat "$root/.release/previous")"
+# 回滚不受闸门限制（#352 M5）：闸门会失败、没有令牌（GitHub 不可用 / 令牌过期）时照样能紧急回滚
+touch "$root/GATE_FAIL"; rm -f "$root/gate.env"
+rel_notok() { "$relbin" "$@" </dev/null; }
+expect "回滚演练（闸门会失败、无令牌）" 0 rel_notok rollback
+expect "一键回滚到上一个（闸门会失败、无令牌也成功；v0.1.0 之前的记录是 v0.1.0 的提交）" 0 rel_notok rollback --confirm "$(cat "$root/.release/previous")"
+[ ! -e "$root/gate.env" ] && ok "回滚没有跑闸门" || bad "回滚跑了闸门"
+rm -f "$root/GATE_FAIL"
 [ "$(git -C "$root" rev-parse HEAD)" = "$(git -C "$seed" rev-parse v0.1.0)" ] && ok "回滚后是 v0.1.0 的提交" || bad "回滚后检出不对"
 [ "$(cat "$root/.release/previous")" = v0.2.0 ] && ok "回滚后 previous=v0.2.0（可再切回）" || bad "previous 状态不对"
 printf '0001_a.sql\n0002_b.sql\n' >"$applied"
@@ -143,12 +166,51 @@ echo "CORE_CHAT_TOKEN=abc" >>"$root/deploy/.env"
 touch "$root/GATE_FAIL"
 expect "合并闸门（目标版本里的）不过则拒绝" 1 "$rel" deploy v0.2.0 --confirm v0.2.0
 [ "$(git -C "$root" rev-parse HEAD)" = "$(git -C "$seed" rev-parse v0.1.0)" ] && ok "闸门不过时没有切走" || bad "闸门不过却切走了"
-expect "hotfix 跳过闸门" 0 "$rel" deploy v0.2.0 --confirm v0.2.0 --hotfix
-rm -f "$root/GATE_FAIL"
-[ "$(head_tag)" = v0.2.0 ] && ok "现在是 v0.2.0" || bad "hotfix 后检出：$(head_tag)"
+grep -qx 'REPO=uniwof/Aroomo-Developer' "$root/gate.env" && grep -qx "TAG_SHA=$(git -C "$seed" rev-parse v0.2.0)" "$root/gate.env" \
+  && grep -qx 'TAG_NAME=v0.2.0' "$root/gate.env" && grep -qx 'TOKEN=stdin' "$root/gate.env" \
+  && grep -qx 'READONLY=1' "$root/gate.env" \
+  && ok "闸门收到仓库、标签提交、标签名、标准输入读的令牌（不是环境里的），且固定只读" || bad "闸门收到的参数不对：$(cat "$root/gate.env")"
+expect "演练也跑闸门，不过则拒绝" 1 "$rel" deploy v0.2.0
+GATE_TOKEN="" expect "标准输入没给令牌：拒绝（环境里 export 的不算，失败即关闭）" 1 "$rel" deploy v0.2.0 --confirm v0.2.0
+echo "$LAST_OUT" | grep -q '没读到只读令牌' && ok "说明没读到令牌" || bad "输出不对：$LAST_OUT"
+[ "$(git -C "$root" rev-parse HEAD)" = "$(git -C "$seed" rev-parse v0.1.0)" ] && ok "缺令牌时没有切走" || bad "缺令牌却切走了"
+# 本地 --hotfix 不再跳过闸门（#352 M3）：豁免只认 GitHub 上 PR 的 hotfix 标签（merge-gate.py 判定）
+expect "本地 --hotfix 被拒绝，不跳过闸门" 1 "$rel" deploy v0.2.0 --confirm v0.2.0 --hotfix
+echo "$LAST_OUT" | grep -q 'hotfix 标签' && ok "说明豁免只认 GitHub 上的 hotfix 标签" || bad "输出不对：$LAST_OUT"
+[ "$(git -C "$root" rev-parse HEAD)" = "$(git -C "$seed" rev-parse v0.1.0)" ] && ok "--hotfix 时没有切走" || bad "--hotfix 却切走了"
+# 闸门的解释器和仓库不能用环境变量换（#352 N1）：设了 RELEASE_PYTHON=true、RELEASE_GATE_REPO 指向别的仓库，闸门照样跑、照样拒绝
+rm -f "$root/gate.env"
+RELEASE_PYTHON=true RELEASE_GATE_REPO=someone/no-pending-prs expect "设 RELEASE_PYTHON/RELEASE_GATE_REPO 也绕不过闸门" 1 "$rel" deploy v0.2.0 --confirm v0.2.0
+grep -qx 'REPO=uniwof/Aroomo-Developer' "$root/gate.env" 2>/dev/null && ok "闸门照样由 python3 跑、收到的仍是写死的仓库" || bad "闸门没跑或仓库不对：$(cat "$root/gate.env" 2>/dev/null)"
+[ "$(git -C "$root" rev-parse HEAD)" = "$(git -C "$seed" rev-parse v0.1.0)" ] && ok "设了这两个变量也没有切走" || bad "设了变量却切走了"
+# 远端地址的 owner/repo 和写死的仓库不一致：拒绝，闸门都不跑（闸门本可通过，确认是核对挡住的）
+mkdir -p "$work/gh/someone"; ln -s "$origin" "$work/gh/someone/Other.git"
+git -C "$root" remote set-url origin "$work/gh/someone/Other.git"
+rm -f "$root/GATE_FAIL" "$root/gate.env"
+expect "远端仓库和闸门写死的仓库不一致：拒绝部署" 1 "$rel" deploy v0.2.0 --confirm v0.2.0
+echo "$LAST_OUT" | grep -q 'someone/Other.*不一致' && ok "说明远端仓库不一致" || bad "输出不对：$LAST_OUT"
+[ ! -e "$root/gate.env" ] && ok "不一致时闸门没跑" || bad "不一致却跑了闸门"
+[ "$(git -C "$root" rev-parse HEAD)" = "$(git -C "$seed" rev-parse v0.1.0)" ] && ok "不一致时没有切走" || bad "不一致却切走了"
+git -C "$root" remote set-url origin "$origin"; touch "$root/GATE_FAIL"
 
 # 生产前检查：目标版本里没有 → 拒绝；有但失败 → 拒绝；演练带 --no-backup，真切换不带
-RELEASE_REQUIRE_PRECHECK=1 expect "目标版本（v0.1.0）没有 release-precheck.sh：拒绝部署" 1 "$rel" deploy v0.1.0 --confirm v0.1.0
+# 数据库只执行到 0001，让下面两条真正走到闸门/生产前检查（否则会先被迁移核对拒绝）
+printf '0001_a.sql\n' >"$applied"
+expect "目标版本（v0.1.0）没有 scripts/ci/merge-gate.py：拒绝部署" 1 "$rel" deploy v0.1.0 --confirm v0.1.0
+echo "$LAST_OUT" | grep -q 'merge-gate.py' && ok "说明缺合并闸门" || bad "输出不对：$LAST_OUT"
+RELEASE_REQUIRE_GATE=0 RELEASE_REQUIRE_PRECHECK=1 expect "目标版本（v0.1.0）没有 release-precheck.sh：拒绝部署" 1 "$rel" deploy v0.1.0 --confirm v0.1.0
+echo "$LAST_OUT" | grep -q 'release-precheck.sh' && ok "说明缺生产前检查" || bad "输出不对：$LAST_OUT"
+printf '0001_a.sql\n0002_b.sql\n' >"$applied"
+
+rm -f "$root/GATE_FAIL"
+expect "闸门通过后切到 v0.2.0" 0 "$rel" deploy v0.2.0 --confirm v0.2.0
+[ "$(head_tag)" = v0.2.0 ] && ok "现在是 v0.2.0" || bad "检出：$(head_tag)"
+
+# 部署比当前已部署标签旧的版本：演练、确认都拒绝，提示改用 rollback（#352 M4）
+expect "deploy 比当前（v0.2.0）旧的 v0.1.0：演练就拒绝" 1 "$rel" deploy v0.1.0
+echo "$LAST_OUT" | grep -q '比当前已部署的 v0.2.0 旧' && echo "$LAST_OUT" | grep -q 'rollback' && ok "说明比当前旧、改用 rollback" || bad "输出不对：$LAST_OUT"
+expect "deploy 比当前旧的 v0.1.0：确认也拒绝" 1 "$rel" deploy v0.1.0 --confirm v0.1.0
+[ "$(head_tag)" = v0.2.0 ] && ok "拒绝后仍是 v0.2.0" || bad "检出变了：$(head_tag)"
 touch "$root/PRECHECK_FAIL"
 expect "生产前检查（目标版本里的）失败则不切换" 1 "$rel" deploy v0.3.0 --confirm v0.3.0
 [ "$(head_tag)" = v0.2.0 ] && ok "检查失败后仍是 v0.2.0" || bad "检查失败却切换了"
@@ -192,6 +254,7 @@ printf 'services:\n  shell:\n    environment:\n      SHELL_AUTH: lobe-session\n'
 cat >"$seed/scripts/release-precheck.sh" <<'G'
 #!/usr/bin/env bash
 ls "$(dirname "$0")/../core/migrations" >"${RELEASE_ROOT:?}/precheck.migs" 2>&1 || true
+[ -z "${GH_TOKEN:-}" ] || echo "precheck(v0.4.0) 拿到了 GH_TOKEN" >>"${RELEASE_TEST_CALLS:?}.leak"
 exit 0
 G
 commit "Shell 写死 lobe-session"; git -C "$seed" tag v0.4.0
@@ -215,7 +278,8 @@ mkdir -p "$work/overrides"; printf 'services:\n  shell:\n    image: aroomo-shell
 expect "配好叠加文件后演练通过" 0 "$rel" deploy v0.5.0
 echo "$LAST_OUT" | grep -q "会叠加：$ovr" && ok "演练写明回退时会叠加哪个文件" || bad "输出不对：$LAST_OUT"
 docker_calls="$work/docker.calls"; : >"$docker_calls"
-printf '#!/usr/bin/env bash\necho "$*" >>"%s"\nexit 0\n' "$docker_calls" >"$work/docker.sh"; chmod +x "$work/docker.sh"
+# shellcheck disable=SC2016  # 桩脚本里的 $* / ${GH_TOKEN} 就是字面量
+printf '#!/usr/bin/env bash\necho "$*" >>"%s"\n[ -z "${GH_TOKEN:-}" ] || echo "docker 拿到了 GH_TOKEN" >>"%s.leak"\nexit 0\n' "$docker_calls" "$RELEASE_TEST_CALLS" >"$work/docker.sh"; chmod +x "$work/docker.sh"
 export RELEASE_DOCKER="$work/docker.sh"
 expect "切到 v0.5.0" 0 "$rel" deploy v0.5.0 --confirm v0.5.0
 [ ! -s "$docker_calls" ] && ok "没有叠加文件的版本照常走 compose.sh" || bad "v0.5.0 却直接调了 docker：$(cat "$docker_calls")"
@@ -240,4 +304,8 @@ unset RELEASE_DOCKER
 [ "$(stat -c %a "$root/.release/compose.log")" = 600 ] && ok "compose.log 权限 600" || bad "compose.log 权限不对"
 
 if grep -rn 'AGE-SECRET-KEY\|CORE_CHAT_TOKEN=abc' "$root/.release" >/dev/null 2>&1; then bad "状态/日志里出现了密钥"; else ok "日志无密钥"; fi
+if grep -rnF -e "$GH_TOKEN" -e "$GATE_TOKEN" "$root/.release" "$root/gate.env" >/dev/null 2>&1; then bad "日志/闸门记录里出现了令牌"; else ok "日志无令牌"; fi
+# 令牌只给闸门（#352 M1）：precheck、compose.sh、docker 桩执行时环境里都没有 GH_TOKEN（它们确实跑过）
+[ -s "$root/precheck.args" ] && [ -s "$RELEASE_TEST_CALLS" ] && [ -s "$docker_calls" ] || bad "precheck/compose/docker 桩没跑过，下面的断言没意义"
+if [ -s "$RELEASE_TEST_CALLS.leak" ]; then bad "令牌传到了闸门以外：$(sort -u "$RELEASE_TEST_CALLS.leak")"; else ok "precheck、compose、docker 都拿不到 GH_TOKEN"; fi
 [ "$fail" = 0 ] && echo "全部通过" || { echo "有失败"; exit 1; }

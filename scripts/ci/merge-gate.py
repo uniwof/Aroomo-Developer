@@ -8,6 +8,10 @@ leader-approved）即放行。「needs-leader-review 且无 leader-approved」�
 豁免：被检查的那个 PR（向 main 的 PR，或 v* 标签所指提交所属的 PR）带 hotfix 标签 → 通过，
 但在该 PR 下评论「紧急修复豁免：事后必须补审」并给它加 needs-leader-review，用来跟踪补审。
 
+只读模式（MERGE_GATE_READONLY=1 或 --readonly；生产服务器上的 release-tag.sh 固定开启，负责人 #352 M2）：
+绝不发写请求（gh() 遇到写请求直接报错，不联网）。hotfix 判定照旧放行该 PR，但不写跟踪评论/标签——
+补审跟踪由 CI 的 merge-gate 工作流（非只读）在 v* 标签推送时写。
+
 被检查的 PR 自己不算进拦截名单（否则 dev→main 的 PR 一带标签就永远拦住自己）；它该不该合由
 负责人/所有者在该 PR 上把关（D252：dev→main 只由所有者合）。
 
@@ -17,14 +21,17 @@ leader-approved）即放行。「needs-leader-review 且无 leader-approved」�
 用法：
   merge-gate.py            CI 内判定；环境变量 GH_TOKEN、REPO、PR_NUMBER（向 main 的 PR）、
                            TAG_SHA（v* 标签指向的提交）、TAG_NAME（可选，只用于日志）
+  merge-gate.py --readonly 同上，但只读（不评论、不加标签）；等同 MERGE_GATE_READONLY=1
   merge-gate.py --selftest 自测，不联网（CI 每次先跑一遍）
 """
+import io
 import json
 import os
 import sys
 import unittest
 import urllib.error
 import urllib.request
+from unittest import mock
 
 BLOCK_LABEL = "needs-leader-review"
 OK_LABEL = "leader-approved"
@@ -34,7 +41,13 @@ MARK = "<!-- merge-gate:hotfix-exempt -->"
 API = "https://api.github.com/repos/"
 
 
+def readonly():
+    return os.environ.get("MERGE_GATE_READONLY") == "1"
+
+
 def gh(path, body=None, method=None):
+    if readonly() and (body is not None or (method or "GET") != "GET"):
+        raise RuntimeError("合并闸门只读模式：拒绝写请求 " + path)
     req = urllib.request.Request(
         API + os.environ["REPO"] + path,
         json.dumps(body).encode() if body is not None else None,
@@ -80,7 +93,7 @@ def fetch_current_prs():
         raise
 
 
-def evaluate(labelled_prs, current_prs):
+def evaluate(labelled_prs, current_prs, ro=False):
     """纯逻辑，便于自测。返回 (blocking, exempt, errors, notes)。"""
     current_numbers = {p["number"] for p in current_prs}
     blocking = sorted(p["number"] for p in labelled_prs
@@ -90,7 +103,8 @@ def evaluate(labelled_prs, current_prs):
     errors, notes = [], []
     if exempt:
         notes.append("紧急修复豁免（hotfix）：PR " + ", ".join(f"#{p['number']}" for p in exempt)
-                     + " 放行，已加 needs-leader-review 跟踪补审。"
+                     + (" 放行（只读模式：不写跟踪评论/标签，补审跟踪由 CI 的 merge-gate 工作流写）。" if ro
+                        else " 放行，已加 needs-leader-review 跟踪补审。")
                      + (f"仍有待审 PR：{', '.join('#%d' % n for n in blocking)}。" if blocking else ""))
     elif blocking:
         errors.append("还有待负责人复审的 PR（needs-leader-review 且无 leader-approved）："
@@ -110,9 +124,11 @@ def mark_exempt(pr):
 
 def main():
     current = fetch_current_prs()
-    blocking, exempt, errors, notes = evaluate(fetch_labelled_prs(), current)
-    for pr in exempt:
-        mark_exempt(pr)
+    ro = readonly()
+    blocking, exempt, errors, notes = evaluate(fetch_labelled_prs(), current, ro)
+    if not ro:
+        for pr in exempt:
+            mark_exempt(pr)
 
     what = os.environ.get("TAG_NAME") or (f"PR #{current[0]['number']}" if current else "main")
     lines = [f"### 合并闸门：{'失败' if errors else '通过'}",
@@ -182,12 +198,61 @@ class MergeGateTest(unittest.TestCase):
         self.assertEqual([p["number"] for p in exempt], [12])
         self.assertEqual(errors, [])
 
+    def run_main(self, ro, current_labels):
+        """对 gh 打桩跑 main()：返回 (退出码, 写请求次数)。待审 PR #5；标签提交所属 PR #11。"""
+        writes = []
+
+        def fake_gh(path, body=None, method=None):
+            if body is not None or (method or "GET") != "GET":
+                writes.append(path)
+                return {}
+            if path.startswith("/issues?labels="):
+                return [{"number": 5, "labels": [{"name": BLOCK_LABEL}], "pull_request": {}}]
+            if path.startswith("/commits/"):
+                return [{"number": 11, "labels": [{"name": l} for l in current_labels]}]
+            if path.endswith("/comments?per_page=100"):
+                return []
+            raise AssertionError("没想到的请求 " + path)
+
+        env = {"REPO": "o/r", "GH_TOKEN": "x", "TAG_SHA": "abc", "TAG_NAME": "v0.0.1",
+               "PR_NUMBER": "", "GITHUB_STEP_SUMMARY": ""}
+        if ro:
+            env["MERGE_GATE_READONLY"] = "1"
+        with mock.patch.dict(os.environ, env, clear=True), \
+             mock.patch.object(sys.modules[__name__], "gh", fake_gh), \
+             mock.patch("sys.stdout", io.StringIO()):
+            with self.assertRaises(SystemExit) as cm:
+                main()
+        return cm.exception.code, len(writes)
+
+    def test_readonly_hotfix_passes_without_writes(self):
+        # 只读：hotfix 照样放行，但写请求 = 0
+        self.assertEqual(self.run_main(True, [HOTFIX_LABEL]), (0, 0))
+
+    def test_readonly_blocking_still_fails_without_writes(self):
+        self.assertEqual(self.run_main(True, []), (1, 0))
+
+    def test_non_readonly_hotfix_still_tracks(self):
+        # 非只读（CI 工作流）行为不变：评论 + 加标签 = 2 次写
+        self.assertEqual(self.run_main(False, [HOTFIX_LABEL]), (0, 2))
+
+    def test_readonly_gh_refuses_writes_before_network(self):
+        with mock.patch.dict(os.environ, {"MERGE_GATE_READONLY": "1"}, clear=True), \
+             mock.patch("urllib.request.urlopen") as urlopen:
+            with self.assertRaises(RuntimeError):
+                gh("/issues/1/comments", {"body": "x"})
+            with self.assertRaises(RuntimeError):
+                gh("/issues/1/labels/x", method="DELETE")
+            urlopen.assert_not_called()
+
     def test_labels_of_parses_github_shape(self):
         self.assertEqual(labels_of({"labels": [{"name": "a"}, {"name": "b"}]}), {"a", "b"})
         self.assertEqual(labels_of({}), set())
 
 
 if __name__ == "__main__":
+    if "--readonly" in sys.argv[1:]:
+        os.environ["MERGE_GATE_READONLY"] = "1"
     if "--selftest" in sys.argv[1:]:
         sys.argv = sys.argv[:1]
         res = unittest.main(exit=False, verbosity=2).result
