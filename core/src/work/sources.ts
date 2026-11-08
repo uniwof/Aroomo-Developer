@@ -1,6 +1,9 @@
 /**
  * /work 切片 2：Aroomo 自己的两种版本来源（只读本账号，经各自 store 的 user_id 范围 + RLS）。
- * - 公共记忆：主题的每个版本（含当前版）。来源编号 = 主题@版本号@写入时间，删了再建的同名主题从第 1 版重新数，也不会被当成「已有」。
+ * - 公共记忆：主题的每个版本（含当前版）。来源编号 = 主题@版本号@主题建立时间（毫秒）。
+ *   负责人 #342 必改 2：不用「那一版的写入时间」——当前版读 updatedAt、历史版读 createdAt，同一版从当前变成历史时
+ *   编号一旦对不上就会生出删不掉的重复快照。主题建立时间写新版、回滚都不变，只有删了再建才变：
+ *   所以同一版本编号永远不变，删了再建的同名主题从第 1 版重新数，也不会被当成「已有」。
  *   没有作者，actor = null。旧版本超过 KEEP_VERSIONS 会被清理：快照留着，详情说「已清理」。
  * - 助手：每次成功（succeeded）的运行。标签 = 助手名字，标题 = 结果摘要第一行，时间 = 完成时间，产出者 = 这个助手。
  * 只用真实数据：拿不到的空着，不编。
@@ -25,10 +28,11 @@ export const RUNS_PER_SYNC = 100;
 const MEMORY_GONE = '找不到这个公共记忆主题（可能已经删了）';
 const ASSISTANT_GONE = '找不到这个助手（可能已经删了）';
 
-const memRef = (topic: string, version: number, at: Date) => `${topic}@${version}@${at.getTime()}`;
-function parseMemRef(ref: string): { topic: string; version: number; at: number } | null {
+/** born = 主题建立时间（MemoryEntry.createdAt），版本从当前变成历史时不变 */
+const memRef = (topic: string, version: number, born: Date) => `${topic}@${version}@${born.getTime()}`;
+function parseMemRef(ref: string): { topic: string; version: number; born: number } | null {
   const m = /^([a-z0-9][a-z0-9._-]{0,63})@(\d{1,9})@(\d{1,15})$/.exec(ref);
-  return m ? { topic: m[1]!, version: Number(m[2]), at: Number(m[3]) } : null;
+  return m ? { topic: m[1]!, version: Number(m[2]), born: Number(m[3]) } : null;
 }
 
 export async function memoryVersions(r: SourceReaders, userId: string, topic: string): Promise<FetchResult> {
@@ -38,7 +42,7 @@ export async function memoryVersions(r: SourceReaders, userId: string, topic: st
   all.sort((a, b) => b.version - a.version);
   const versions: VersionInput[] = all.map((v) => ({
     sourceType: 'memory',
-    sourceRef: memRef(topic, v.version, v.at),
+    sourceRef: memRef(topic, v.version, cur.createdAt),
     label: `第 ${v.version} 版`,
     title: v.title.slice(0, 300),
     actor: null,
@@ -82,8 +86,10 @@ export async function openTarget(r: SourceReaders, userId: string, v: WorkVersio
     if (!ref) return null;
     const out = { kind: 'memory' as const, topic: ref.topic, version: ref.version };
     const cur = await r.pubmem.get(userId, ref.topic);
-    if (cur && cur.version === ref.version && cur.updatedAt.getTime() === ref.at) return { ...out, body: cur.body };
-    const old = cur ? (await r.pubmem.versions(userId, ref.topic)).find((h) => h.version === ref.version && h.createdAt.getTime() === ref.at) : undefined;
+    // 主题删了、或删了再建（建立时间变了）：这一版已不在
+    if (!cur || cur.createdAt.getTime() !== ref.born) return { ...out, body: null };
+    if (cur.version === ref.version) return { ...out, body: cur.body };
+    const old = (await r.pubmem.versions(userId, ref.topic)).find((h) => h.version === ref.version);
     return { ...out, body: old?.body ?? null };
   }
   if (v.sourceType === 'assistant_run' && v.actor?.type === 'assistant') {

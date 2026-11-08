@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Assistant, AssistantRun } from '../src/assistants/types.js';
+import { RUNS_PER_SYNC } from '../src/work/sources.js';
 import { migrate } from '../src/db/migrate.js';
 import { openPglite } from './helpers/db.js';
 import { twoAccountEnvs, twoAccounts, type DepsEnv, type TwoAccounts } from './helpers/two-accounts.js';
@@ -175,6 +176,74 @@ describe.each(twoAccountEnvs)('/work 切片 2：公共记忆、助手运行（$n
     expect((await t.xiao('POST', '/api/work/projects', { name: 'x', sources: [{ type: 'memory', topic: 'xiao-only' }] })).statusCode).toBe(403);
   });
 
+  it('负责人 #342 必改 4：别人的主题 / 助手和不存在的完全一样（状态码、错误码、消息都相同），建项目和改来源都是', async () => {
+    await start();
+    const p = await project('探测', []);
+    const attempt = async (sources: unknown[]) => {
+      const c = await t.owner('POST', '/api/work/projects', { name: '探测新建', sources });
+      const u = await t.owner('PATCH', `/api/work/projects/${p.id}`, { sources });
+      return [c, u].map((r) => ({ status: r.statusCode, body: r.json() as { error: { code: string; message: string } } }));
+    };
+    // 同一个主题名：小号有它时 vs 谁都没有它时（删掉之后），回答必须一字不差
+    await t.deps.pubmem.put(t.xiaoId, 'probe-topic', '小号的', '小号的秘密', t.clock.now());
+    const otherTopic = await attempt([{ type: 'memory', topic: 'probe-topic' }]);
+    expect(await t.deps.pubmem.delete(t.xiaoId, 'probe-topic')).toBe(true);
+    const noTopic = await attempt([{ type: 'memory', topic: 'probe-topic' }]);
+    expect(otherTopic).toEqual(noTopic);
+    expect(noTopic[0]).toMatchObject({ status: 400, body: { error: { code: 'BAD_SOURCE' } } });
+    // 助手：小号的助手 id（在 / 删了之后）和随便一个不存在的 id，回答一字不差
+    const xa = await seedAssistant(t.xiaoId, '小号助手');
+    const otherAssistant = await attempt([{ type: 'assistant', assistantId: xa.id }]);
+    const noAssistant = await attempt([{ type: 'assistant', assistantId: randomUUID() }]);
+    expect(await t.deps.assistants.deleteAssistant(t.xiaoId, xa.id)).toBeTruthy();
+    const deletedAssistant = await attempt([{ type: 'assistant', assistantId: xa.id }]);
+    expect(otherAssistant).toEqual(noAssistant);
+    expect(deletedAssistant).toEqual(noAssistant);
+    expect(noAssistant[0]).toMatchObject({ status: 400, body: { error: { code: 'BAD_SOURCE' } } });
+    expect(JSON.stringify([otherTopic, otherAssistant])).not.toContain('小号');
+  });
+
+  it('负责人 #342 必改 2：写新版本、回滚之后再同步，每次 added 恰好 = 1（同一版从当前变成历史不换编号，不生重复快照）', async () => {
+    await start();
+    await putMemory('plan', '计划', '一');
+    await putMemory('plan', '计划', '二');
+    const p = await project('计划', [{ type: 'memory', topic: 'plan' }]);
+    expect(await sync(p.id)).toEqual({ added: 2, changed: 0, unchanged: 0, failed: [] });
+    await putMemory('plan', '计划', '三'); // 第 2 版从当前变成历史
+    expect(await sync(p.id)).toEqual({ added: 1, changed: 0, unchanged: 2, failed: [] });
+    const rb = await t.owner('POST', '/api/memory/plan/rollback', { version: 1 }); // 回滚 = 用第 1 版内容写出第 4 版
+    expect(rb.statusCode, rb.body).toBe(200);
+    t.clock.advance(MIN);
+    expect(await sync(p.id)).toEqual({ added: 1, changed: 0, unchanged: 3, failed: [] });
+    const { versions } = await timeline(p.id);
+    expect(versions.map((v) => v.label)).toEqual(['第 4 版', '第 3 版', '第 2 版', '第 1 版']);
+    const bodies = [];
+    for (const v of versions) bodies.push((await t.owner('GET', `/api/work/versions/${v.id}`)).json().open.body);
+    expect(bodies).toEqual(['一', '三', '二', '一']);
+  });
+
+  it('负责人 #342 必改 3：只看最近 100 次运行——listRuns 新在前、取到的是最近 100 次，时间线顺序从新到旧', async () => {
+    await start();
+    const a = await seedAssistant('owner', '长跑助手');
+    for (let i = 1; i <= 105; i++) await addRun(a, 'succeeded', `第 ${i} 次`);
+    // 钉住契约：listRuns 按请求时间新在前，limit 截的是最新的
+    const listed = await t.deps.assistants.listRuns('owner', a.id, RUNS_PER_SYNC);
+    expect(listed.map((r) => r.summary)).toEqual(Array.from({ length: 100 }, (_, i) => `第 ${105 - i} 次`));
+    const p = await project('长跑', [{ type: 'assistant', assistantId: a.id }]);
+    expect(await sync(p.id)).toEqual({ added: 100, changed: 0, unchanged: 0, failed: [] });
+    const titles: (string | null)[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await timeline(p.id, cursor);
+      titles.push(...page.versions.map((v) => v.title));
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+    expect(titles).toEqual(Array.from({ length: 100 }, (_, i) => `第 ${105 - i} 次`));
+    // 再跑一次新的：再同步只加这一条（第 6 次从窗口掉出去，快照留着）
+    await addRun(a, 'succeeded', '第 106 次');
+    expect(await sync(p.id)).toEqual({ added: 1, changed: 0, unchanged: 99, failed: [] });
+  });
+
   it('负责人 #323 小事：有来源时间的按来源时间排（不拿 tag 的同步时间比）；没时间的 tag 排后面、按 GitHub 先后；翻页跨过两段不丢不重；「最新」是有时间的最新一条', async () => {
     await start();
     // 先同步只有 tag 的仓库（tag 没有时间）
@@ -216,29 +285,78 @@ describe.each(twoAccountEnvs)('/work 切片 2：公共记忆、助手运行（$n
 });
 
 describe('迁移 0034 /work 来源', () => {
-  it('up 后收 memory / assistant_run；down 先删这两类行再退回只收 GitHub；再 up 可重复', async () => {
+  /**
+   * 负责人 #342 必改 1：按生产迁移身份跑——和 aroomo_core 一样「是表所有者、不是超级用户、没有 BYPASSRLS」，会话里不设 app.user_id。
+   * PGlite 默认连接是超级用户（会绕过 RLS，测不出问题）：这里建一个这样的角色，把 public 下全部表交给它，再 SET ROLE 过去跑迁移和回退。
+   */
+  const asMigrationOwner = async (db: Awaited<ReturnType<typeof openPglite>>) => {
+    await db.exec(`CREATE ROLE aroomo_core_mig_test NOLOGIN NOSUPERUSER NOBYPASSRLS; GRANT CREATE, USAGE ON SCHEMA public TO aroomo_core_mig_test`);
+    const { rows } = await db.query<{ t: string }>(`SELECT tablename AS t FROM pg_tables WHERE schemaname = 'public'`);
+    for (const { t } of rows) await db.exec(`ALTER TABLE public.${t} OWNER TO aroomo_core_mig_test`);
+    await db.exec('SET ROLE aroomo_core_mig_test');
+    const { rows: me } = await db.query<{ su: boolean; br: boolean }>(`SELECT rolsuper AS su, rolbypassrls AS br FROM pg_roles WHERE rolname = current_user`);
+    expect(me[0]).toEqual({ su: false, br: false });
+  };
+  const DOWN = () => readFileSync(fileURLToPath(new URL('../migrations/down/0034_work_sources.down.sql', import.meta.url)), 'utf8');
+
+  it('生产迁移身份（表所有者、非超级用户、不设 app.user_id）：down 真的删掉 memory / assistant_run 行、FORCE RLS 恢复；再 up 可重复', async () => {
     const db = await openPglite();
     try {
       const PID = randomUUID();
-      const ins = (type: string) =>
-        db.query(`INSERT INTO work_versions (id, user_id, project_id, source_type, source_ref, label, source_state, synced_at) VALUES ($1, 'owner', $2, $3, $4, 'x', 'none', now())`, [
+      // 行由各账号自己写进来（app.user_id 只在写入时设，跑回退前清掉）
+      const ins = (user: string, type: string) =>
+        db.query(`INSERT INTO work_versions (id, user_id, project_id, source_type, source_ref, label, source_state, synced_at) VALUES ($1, $2, $3, $4, $5, 'x', 'none', now())`, [
           randomUUID(),
+          user,
           PID,
           type,
           randomUUID(),
         ]);
+      await asMigrationOwner(db);
       await db.query(`SELECT set_config('app.user_id', 'owner', false)`);
       await db.query(`INSERT INTO work_projects (id, user_id, name, created_at, updated_at) VALUES ($1, 'owner', 'p', now(), now())`, [PID]);
-      await ins('memory');
-      await ins('assistant_run');
-      await ins('github_tag');
-      await expect(ins('other')).rejects.toThrow();
-      await db.exec(readFileSync(fileURLToPath(new URL('../migrations/down/0034_work_sources.down.sql', import.meta.url)), 'utf8'));
+      await ins('owner', 'memory');
+      await ins('owner', 'assistant_run');
+      await ins('owner', 'github_tag');
+      await expect(ins('owner', 'other')).rejects.toThrow();
+      await db.query(`SELECT set_config('app.user_id', '', false)`);
+      // 先证明前提：这个身份下 FORCE 生效，不设 app.user_id 什么都看不到、旧写法的 DELETE 一行都删不掉
+      expect((await db.query(`SELECT 1 FROM work_versions`)).rows).toHaveLength(0);
+      await db.exec('BEGIN');
+      await db.exec(`DELETE FROM work_versions WHERE source_type IN ('memory', 'assistant_run')`);
+      await db.exec('ALTER TABLE work_versions DROP CONSTRAINT work_versions_source_type_check');
+      await expect(db.exec(`ALTER TABLE work_versions ADD CONSTRAINT work_versions_source_type_check CHECK (source_type IN ('github_release', 'github_tag'))`)).rejects.toThrow(/violated/);
+      await db.exec('ROLLBACK');
+
+      await db.exec(DOWN());
+      const { rows: force } = await db.query<{ f: boolean }>(`SELECT relforcerowsecurity AS f FROM pg_class WHERE oid = 'work_versions'::regclass`);
+      expect(force[0]?.f).toBe(true);
+      expect((await db.query(`SELECT 1 FROM core_schema_migrations WHERE version = '0034_work_sources.sql'`)).rows).toHaveLength(0);
+      await db.query(`SELECT set_config('app.user_id', 'owner', false)`);
       const { rows } = await db.query<{ source_type: string }>(`SELECT source_type FROM work_versions`);
       expect(rows.map((r) => r.source_type)).toEqual(['github_tag']);
-      await expect(ins('memory')).rejects.toThrow();
+      await expect(ins('owner', 'memory')).rejects.toThrow();
       expect(await migrate(db)).toEqual(['0034_work_sources.sql']);
-      await ins('memory');
+      await ins('owner', 'memory');
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('down 中途失败整体回滚：FORCE RLS 不会被留在关着', async () => {
+    const db = await openPglite();
+    try {
+      await asMigrationOwner(db);
+      // 让 down 在 NO FORCE / 删除 / 改 CHECK 之后、COMMIT 之前出错
+      const broken = DOWN().replace(/^DROP INDEX IF EXISTS work_versions_timeline_idx;$/m, 'SELECT 1 / 0;');
+      expect(broken).toContain('SELECT 1 / 0;');
+      await expect(db.exec(broken)).rejects.toThrow();
+      await db.exec('ROLLBACK').catch(() => undefined);
+      const { rows } = await db.query<{ f: boolean; c: string }>(
+        `SELECT relforcerowsecurity AS f, pg_get_constraintdef(k.oid) AS c FROM pg_class r JOIN pg_constraint k ON k.conrelid = r.oid AND k.conname = 'work_versions_source_type_check' WHERE r.oid = 'work_versions'::regclass`,
+      );
+      expect(rows[0]?.f).toBe(true);
+      expect(rows[0]?.c).toContain('memory');
     } finally {
       await db.close();
     }
