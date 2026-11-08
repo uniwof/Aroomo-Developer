@@ -11,9 +11,11 @@ const COPIES: [string, string] = ['../../assets/brand/preparing.html', '../../in
 
 function pageScript(file: string): string {
   const html = readFileSync(file, 'utf8');
-  const m = /<script>([\s\S]*?)<\/script>/.exec(html);
-  if (!m?.[1]) throw new Error(`no <script> in ${file}`);
-  return m[1];
+  // 页面只有一个内联 <script>，按固定标记截取（只读自家文件，不做 HTML 过滤）
+  const start = html.indexOf('<script>');
+  const end = html.indexOf('</script>', start);
+  if (start < 0 || end < 0) throw new Error(`no <script> in ${file}`);
+  return html.slice(start + '<script>'.length, end);
 }
 
 async function run(file: string, search: string): Promise<{ fetched: string[]; replaced: string[] }> {
