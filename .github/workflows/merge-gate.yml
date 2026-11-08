@@ -20,10 +20,6 @@ concurrency:
   cancel-in-progress: true
 jobs:
   gate:
-    # 向 dev 的 PR：加/摘标签不重复跑自测
-    if: >-
-      github.event_name == 'push' || github.base_ref == 'main' ||
-      (github.event.action != 'labeled' && github.event.action != 'unlabeled')
     name: 合并闸门（待负责人复审时不许进 main / 发生产标签）
     runs-on: ubuntu-24.04
     timeout-minutes: 5
