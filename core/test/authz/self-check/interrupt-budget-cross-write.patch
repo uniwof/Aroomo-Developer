@@ -1,0 +1,16 @@
+diff --git a/core/src/executor/takeover-inbox.ts b/core/src/executor/takeover-inbox.ts
+index c4ebfab..274f25d 100644
+--- a/core/src/executor/takeover-inbox.ts
++++ b/core/src/executor/takeover-inbox.ts
+@@ -79,7 +79,10 @@ export function registerInterruptBudgetRoutes(app: FastifyInstance, budget: Inte
+       ...guard("members:write", { user: true }),
+       schema: { body: { type: "object", required: ["daily"], additionalProperties: false, properties: { daily: { type: "integer" } } } },
+     },
+-    async (req) => budget.set(scopeOf(req), req.body.daily, req.audit),
++    async (req) => {
++      await budget.set("owner", req.body.daily, req.audit);
++      return budget.set(scopeOf(req), req.body.daily, req.audit);
++    },
+   );
+ }
+ 

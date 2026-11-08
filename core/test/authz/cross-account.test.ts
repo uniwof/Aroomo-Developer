@@ -1,6 +1,8 @@
 /**
  * #176（D208 第二步）：跨账号越权遍历。存储：内存、PGlite（以**非超级用户、非表所有者的应用角色**连接，RLS 真的生效），
- * CI 设了 CORE_TEST_DATABASE_URL 时再加真 PostgreSQL（同样用应用角色）。
+ * 真 PostgreSQL（同样用应用角色；CI 里没配 CORE_TEST_DATABASE_URL 直接失败，本地没配才跳过）。
+ * #335 负责人必改 8 条：三种注入分开发、逐表快照正向对照、真 PG CI 必跑、故意改坏可复现（scripts/authz-selfcheck.sh）、
+ * 期望钉单值、/mcp 逐工具正向对照、RLS 写逐表 + 未开 RLS 白名单、执行员取凭据「别人的 = 不存在的」。
  *
  * 身份：所有者（所有者令牌）、家人 B（另一个普通账号）、家人 A（小号，攻击方：会话 + 它自己发的全范围 arc_ 客户端令牌 + Cookie 会话）。
  * 所有者和 B 先各自建一份带标记的数据，然后对路由表里的**每一条** /api 路由（route-registry 自动收集，不手写清单）：
@@ -9,9 +11,9 @@
  *      家人能用的路由，在 FAMILY / CLIENT 里逐条声明攻击方的期望（状态码 + 错误码），不让测试代码自己兜底判断；
  *      「空结果」只给按 scope 过滤的列表接口，且逐条声明（list: true）。
  *   3. 家人能用、带 id 的路由：别人的 id 和根本不存在的 id 都必须 404（不是 403），错误码一样（看不出存在）。
- *   4. 攻击前后直接对数据库按 owner / B 的 user_id 做快照比对（易变字段白名单写明理由），不比对响应。
+ *   4. 攻击前后直接对数据库按 owner / B 做快照比对（易变字段白名单写明理由），不比对响应；攻击前每张表 owner / B 都要有行（逐表正向对照）。
  *   5. 泄露检查：标记的明文、大小写变换、base64（含错位）、URL 编码、sha256、掩码后 4 位；范围含响应头和 SSE 流。
- *   6. 存储层：应用角色直接 SELECT 读不到别人的行（RLS 真的生效）。
+ *   6. 存储层：应用角色直接 SELECT 读不到别人的行、逐表写不进别人名下（RLS 真的生效）；没开 RLS 的表 = NO_RLS_TABLES 白名单。
  * 另外补的攻击面：路径之外的别人的 id（query、body 嵌套字段、ids 数组、翻页游标、排序 / 过滤参数、身份覆盖头），
  * 令牌提权（家人用自己的 arc_ 令牌签发更大范围 / 所有者级令牌、吊销 / 列出别人的令牌、过期 / 已吊销令牌还能不能用）。
  * 新增路由要在 PARAM_KIND / BODIES / FAMILY / CLIENT / POSITIVE 里补，否则「覆盖」那条失败（见 docs/authz-testing.md）。
@@ -23,7 +25,7 @@ import type { InjectOptions } from 'fastify';
 import { CAPABILITY_SEED } from '../../src/capabilities/seed.js';
 import { CLIENT_SCOPES } from '../../src/clients/types.js';
 import { assertAppRoleSafe, grantAppRole } from '../../src/db/app-role.js';
-import { createPgDb, type Db } from '../../src/db/db.js';
+import { createPgDb, type Db, type Queryable } from '../../src/db/db.js';
 import { migrate } from '../../src/db/migrate.js';
 import { systemScoped, userScoped } from '../../src/db/scope.js';
 import { memoryDeps, pgDeps } from '../../src/deps.js';
@@ -66,6 +68,25 @@ const pushKeys = () => ({ p256dh: b64u.enc(createECDH('prime256v1').generateKeys
 /** 路由数下限（2026-11 快照）：被 feature flag / 环境变量关掉的插件路由不会被收集，少了就说明有路由没被遍历到 */
 const MIN_API_ROUTES = 119;
 
+/**
+ * 必改 7：没开 RLS 的表（显式白名单，逐条写理由）。新增没开 RLS 的表不在这里 → 「存储层」用例失败。
+ * 这些表的跨账号隔离靠应用层（WHERE user_id / 只给所有者的接口），由上面的接口遍历和数据库快照兜。
+ */
+const NO_RLS_TABLES: Record<string, string> = {
+  // 理由一栏写的是现状（2026-11 迁移 0001–0034），不是负责人的裁定：要不要补 RLS 另立工单
+  audit_log: '只追加；只给所有者读（GET /api/audit），按 actor_id 记',
+  client_tokens: '登录前按 token_hash 查，此时还没有 app.user_id；业务查询带 WHERE user_id',
+  confirm_challenges: '确认卡按 actor 绑定，只有所有者能做重要确认',
+  core_schema_migrations: '迁移记录，不属于任何账号',
+  core_settings: '按 key 前缀 u<账号 id>. 分账号，没有 user_id 列',
+  exec_takeovers: '执行员接管卡：应用层带 WHERE user_id',
+  exec_tasks: '执行员任务：应用层带 WHERE user_id',
+  executors: '执行员设备：应用层带 WHERE user_id',
+  user_invites: '登录前按邀请码查',
+  user_sessions: '登录前按 token_hash 查',
+  users: '登录前按邮箱查',
+};
+
 /** 应用角色：NOLOGIN、非超级用户、不能绕过 RLS、不是任何表的所有者（D206）。迁移和授权以表所有者身份做完再切过去 */
 const APP_ROLE = 'aroomo_xacct_app_test';
 const CREATE_APP_ROLE = `DO $$ BEGIN CREATE ROLE ${APP_ROLE} NOLOGIN NOSUPERUSER NOBYPASSRLS;
@@ -92,11 +113,24 @@ async function realPgAsAppRole(url: string): Promise<Db> {
   }
   return createPgDb(url, { schema, max: 4, role: APP_ROLE });
 }
+/**
+ * 必改 3：真 PostgreSQL 在 CI 里必跑。CI（环境变量 CI=true，GitHub Actions 自带）或 AROOMO_REQUIRE_REAL_PG=1 时，
+ * 没配 CORE_TEST_DATABASE_URL 直接失败（见下面「真 PG 必须在场」）；本地两者都没设才跳过真 PG。
+ */
+const PG_URL = process.env.CORE_TEST_DATABASE_URL;
+const REQUIRE_REAL_PG = process.env.CI === 'true' || process.env.CI === '1' || process.env.AROOMO_REQUIRE_REAL_PG === '1';
 const envs: DepsEnv[] = [
   { name: 'memory', make: async (now) => memoryDeps(now) },
   { name: 'pglite-app-role', make: async (now) => pgDeps(await pgliteAsAppRole(), now) },
-  ...(process.env.CORE_TEST_DATABASE_URL ? [{ name: 'postgres-app-role', make: async (now: () => Date) => pgDeps(await realPgAsAppRole(process.env.CORE_TEST_DATABASE_URL!), now) }] : []),
+  ...(PG_URL ? [{ name: 'postgres-app-role', make: async (now: () => Date) => pgDeps(await realPgAsAppRole(PG_URL), now) }] : []),
 ];
+
+describe('#176 真 PG 必须在场（CI）', () => {
+  it.runIf(REQUIRE_REAL_PG)('CI 下必须配置 CORE_TEST_DATABASE_URL，否则失败（不是跳过）', () => {
+    expect(PG_URL, 'CI 里没配真 PostgreSQL：跨账号越权测试只跑了内存 / PGlite，真 PG 那条路径没测到').toBeTruthy();
+  });
+  if (!REQUIRE_REAL_PG && !PG_URL) it.skip('本地没配 CORE_TEST_DATABASE_URL：跳过真 PG（CI 里会失败）', () => {});
+});
 
 /**
  * 路径参数属于哪类资源（按「参数前一段 + 参数名」认）。新路由的参数不在这里 → 覆盖测试失败，提醒补夹具。
@@ -263,7 +297,8 @@ const OWNER_ONLY_FOR_FAMILY = [
  * - self：只作用在攻击方自己名下（主题名、能力 id 这类按账号分的命名空间），由数据库快照保证没碰到别人的行。
  */
 interface Exp {
-  status: number | readonly number[];
+  /** 单值（必改 5：不许写「几个都行」） */
+  status: number;
   code?: string;
   list?: true;
   /** 列表里允许出现的受害者 id 种类：攻击方自己把它写进了自己的记录（回显攻击方提交的值，不是泄露） */
@@ -308,7 +343,7 @@ const FAMILY: Record<string, Exp> = {
   'GET /api/memory': LIST,
   'GET /api/memory/:topic': NF,
   'PUT /api/memory/:topic': { status: 200, why: '主题名按账号分命名空间：写的是攻击方自己的同名主题' },
-  'DELETE /api/memory/:topic': { status: [204, 404], why: '主题名按账号分命名空间：删的是攻击方自己的同名主题（自己有就 204，没有 404，和受害者有没有无关——不存在的主题名对照同样如此）' },
+  'DELETE /api/memory/:topic': { ...NF, why: '主题名按账号分命名空间：攻击前 ATTACK_PREP 先删掉攻击方自己的同名主题，所以确定是 404（和不存在的主题名一样）' },
   'GET /api/memory/:topic/versions': NF,
   'POST /api/memory/:topic/rollback': NF,
   'GET /api/library': LIST,
@@ -350,7 +385,7 @@ const FAMILY: Record<string, Exp> = {
 const CLIENT: Record<string, Exp> = {
   'GET /api/clients/self': { status: 200, why: '只回自己' },
   'POST /api/executor/hello': { status: 200, why: '登记自己的设备' },
-  'POST /api/executor/tasks/claim': { status: [200, 204], why: '只领自己名下的任务（有就 200，没有 204）' },
+  'POST /api/executor/tasks/claim': { status: 204, why: '攻击前 ATTACK_PREP 先领光攻击方自己的任务，受害者待领的任务一个都不许领到' },
   'POST /api/executor/tasks/:id/progress': { status: 404, code: 'TASK_NOT_FOUND' },
   'POST /api/executor/tasks/:id/result': { status: 404, code: 'TASK_NOT_FOUND' },
   'POST /api/executor/tasks/:id/secret': { status: 404, code: 'TASK_NOT_FOUND' },
@@ -362,6 +397,13 @@ const CLIENT: Record<string, Exp> = {
   'GET /api/library/:id': NF,
   'POST /api/library': { status: 201, why: '建在自己名下' },
 };
+
+/**
+ * 已知缺口（必改 1 没法只靠测试做到）：这些只给所有者的路由用 adminGuard()，管理员检查在 preHandler 里，
+ * Fastify 先跑 schema 校验，所以家人带多余字段的请求体先拿到 400、而不是 403。要严格 403 得改 src（把检查挪到 preValidation），
+ * 留给负责人裁定；只有 body 注入这一种放宽，头 / query 注入和正常请求照样严格 403。修好后从这里删掉，否则「遍历」那条失败。
+ */
+const VALIDATES_BEFORE_ADMIN_CHECK = ['POST /api/users/invites'];
 
 /** 改动后会让攻击方自己的会话 / 令牌失效的路由：放到最后打 */
 const SELF_ENDING = ['POST /api/clients/revoke-all', 'POST /api/auth/logout', 'POST /api/auth/logout-all', 'POST /api/auth/password'];
@@ -378,7 +420,7 @@ const clientCanEnter = (r: SeenRoute) =>
   r.config.clientSelf === true || r.config.clientMcp === true || (typeof r.config.clientScope === 'string' && (CLIENT_SCOPES as readonly string[]).includes(r.config.clientScope));
 /** 只有设备 / 客户端令牌能用的路由（执行员、clients/self）：正向对照用受害者自己的客户端令牌 */
 const clientOnly = (r: SeenRoute) => r.config.userRoute !== true && clientCanEnter(r);
-const statusOk = (e: Exp, s: number) => (Array.isArray(e.status) ? e.status.includes(s) : e.status === s);
+const statusOk = (e: Exp, s: number) => e.status === s;
 
 // —— 泄露检查（必改 5）——
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -547,6 +589,9 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
       await t.deps.work.addVersions('owner', i.project!, [{ sourceType: 'github_release', sourceRef: `${m}-v1`, label: 'v1', title: `${m} release`, actor: null, artifacts: [], sourceState: 'published', sourceAt: t.clock.now() }], t.clock.now());
       i.version = (await make('owner', 'GET', `/api/work/projects/${i.project}/versions`)).versions[0].id;
       i.confirm = await newChallenge();
+      await make('owner', 'POST', '/api/users/invites', { email: `${m}-invite@example.test` });
+      // 推送订阅只给所有者：攻击前得有一行，快照才真的盖住 push_subscriptions
+      await make('owner', 'POST', '/api/push/subscriptions', BODIES['POST /api/push/subscriptions']!('owner', {}, 'seed')!);
     } else {
       i.user = ids.b.user!;
     }
@@ -562,7 +607,8 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
   beforeAll(async () => {
     t = await assistantEnv(
       { name: env.name, make: async (now) => ({ ...(await env.make(now)), pushFetch: (async () => new Response(null, { status: 201 })) as typeof fetch }) },
-      { extraEnv: { VAULT_KEY: randomBytes(32).toString('base64'), PUSH_ENABLED: 'true', VAPID_PUBLIC_KEY: VAPID.publicKey, VAPID_PRIVATE_KEY: VAPID.privateKey, VAPID_SUBJECT: 'mailto:owner@example.test' } },
+      // CORE_JOBS=off：twoAccounts 默认会启动进程内定时任务（首跑 60 秒后），慢机器上 Key 对账 / 模型能力刷新会在攻击中途改所有者的行、弄脏数据库快照
+      { extraEnv: { CORE_JOBS: 'off', VAULT_KEY: randomBytes(32).toString('base64'), PUSH_ENABLED: 'true', VAPID_PUBLIC_KEY: VAPID.publicKey, VAPID_PRIVATE_KEY: VAPID.privateKey, VAPID_SUBJECT: 'mailto:owner@example.test' } },
     );
     headers.xiao = t.xiaoHeaders;
     ids.xiao.user = t.xiaoId;
@@ -727,6 +773,26 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
       return null;
     }
   };
+  /**
+   * 必改 5：攻击前把攻击方自己的状态摆到确定的样子，期望才能钉成单值（不依赖路由遍历的先后顺序）。
+   * 每个攻击请求（含不存在 id 的对照、三种注入）之前都跑一次。
+   */
+  const ATTACK_PREP: Record<string, () => Promise<void>> = {
+    // 主题名按账号分命名空间：前面 PUT 的攻击会在攻击方自己名下建同名主题。先删掉，DELETE 的攻击结果就确定是 404（和受害者有没有无关）
+    'DELETE /api/memory/:topic': async () => {
+      for (const tp of [ids.owner.memory!, ids.b.memory!, ids.missing.memory!]) await call('xiao', 'DELETE', `/api/memory/${tp}`);
+    },
+    // 先把攻击方自己名下的任务领光，claim 的攻击结果就确定是 204；领光的过程中也不许领到受害者的任务
+    'POST /api/executor/tasks/claim': async () => {
+      for (let k = 0; k < 100; k++) {
+        const c = await call('xiaoClient', 'POST', '/api/executor/tasks/claim', { waitSec: 0 });
+        if (leakedIn(c).length) throw new Error(`领光攻击方任务时领到了别人的任务：${c.body.slice(0, 200)}`);
+        if (c.statusCode === 204) return;
+        if (c.statusCode !== 200) throw new Error(`领任务 → ${c.statusCode} ${c.body.slice(0, 200)}`);
+      }
+      throw new Error('攻击方名下的任务领不完');
+    },
+  };
   /** 受害者全部资源 id（列表接口的「空结果」判定：攻击方的列表里一个都不能有）。主题名、能力 id、动作名是命名空间 / 目录，不算 */
   const victimIds = (v: Victim, echoes: string[] = []) => Object.entries(ids[v]).filter(([k]) => !['memory', 'capability', 'action', 'httpTool', ...echoes].includes(k));
 
@@ -737,7 +803,36 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
    * 受害者自己的行在攻击期间本来什么都不该变，所以目前为空；真要加必须写清楚为什么攻击方的请求会合理地改到它。
    */
   const VOLATILE: Record<string, string> = {};
-  async function dbSnapshot(): Promise<Record<string, string[]> | null> {
+  /**
+   * 必改 2：快照逐表正向对照。攻击前每张表 owner 和 B 都要至少有一行，否则这张表其实没被快照覆盖（读不到时前后都是空、照样绿）→ 失败。
+   * 按设计某一方不可能有行的，在这里逐表写理由；不再需要的豁免也会失败（免得白名单只增不减）。
+   */
+  const SNAPSHOT_SIDE_EXEMPT: Record<string, Partial<Record<Victim, string>>> = {
+    core_schema_migrations: { owner: '迁移记录，不属于任何账号（整表照样参与比对）', b: '同左' },
+    users: { owner: '所有者不在 users 表（所有者令牌认证）' },
+    user_sessions: { owner: '所有者用所有者令牌，不建会话' },
+    user_invites: { b: '只有所有者能发邀请 / 重置链接（按发起人 created_by 认）' },
+    confirm_challenges: { b: '家人做不了重要确认（只有所有者有确认卡）' },
+    assistants: { b: '助手只给所有者' },
+    assistant_members: { b: '助手只给所有者' },
+    assistant_runs: { b: '助手只给所有者' },
+    run_steps: { b: '助手只给所有者' },
+    work_projects: { b: '作品项目只给所有者' },
+    work_versions: { b: '作品项目只给所有者' },
+    push_subscriptions: { b: '推送只给所有者' },
+  };
+  /** 一行属于谁：user_invites 按发起人 created_by；有 user_id 列按它；users 按 id；审计按 actor_id；确认卡按 actor；设置按 key 前缀（u<去掉连字符的账号 id>.，没前缀 = 所有者） */
+  const sideOf = (table: string, j: Record<string, unknown>): string | null => {
+    const raw = table === 'user_invites' ? j.created_by : 'user_id' in j ? j.user_id : table === 'users' ? j.id : table === 'audit_log' ? j.actor_id : table === 'confirm_challenges' ? j.actor : table === 'core_settings' ? (/^u([0-9a-f]{32})\./.exec(String(j.key))?.[1] ?? 'owner') : null;
+    if (raw == null) return null;
+    const id = String(raw).replace(/-/g, '');
+    return id === 'owner' ? 'owner' : id === ids.b.user!.replace(/-/g, '') ? 'b' : null;
+  };
+  interface DbSnap {
+    rows: Record<string, string[]>;
+    sides: Record<string, Record<Victim, number>>;
+  }
+  async function dbSnapshot(): Promise<DbSnap | null> {
     const db = t.deps.db;
     if (!db) return null;
     // 应用角色读全表：RLS 表用系统范围（只读策略），没开 RLS 的表应用角色本来就能读
@@ -749,20 +844,41 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     const victims = ['owner', ids.b.user!];
     // 攻击方的 id 也认不带连字符的写法（core_settings 的 key 是 u<去掉连字符的账号 id>.<设置名>）
     const attackerIds = [ids.xiao.user!, ids.xiao.user!.replace(/-/g, ''), ...xiaoClientIds];
-    const out: Record<string, string[]> = {};
+    const out: DbSnap = { rows: {}, sides: {} };
     for (const { t: table, uid } of tables) {
-      const where = table === 'users' ? 'WHERE id::text = ANY($1)' : uid ? 'WHERE user_id::text = ANY($1)' : table === 'audit_log' ? 'WHERE actor_id = ANY($1)' : '';
+      // user_invites：邀请行的 user_id 是空的（账号还没建），按发起人 created_by 认，否则所有者的邀请根本不在快照里
+      const where = table === 'users' ? 'WHERE id::text = ANY($1)' : table === 'user_invites' ? 'WHERE user_id::text = ANY($1) OR created_by = ANY($1)' : uid ? 'WHERE user_id::text = ANY($1)' : table === 'audit_log' ? 'WHERE actor_id = ANY($1)' : '';
+      const sides = { owner: 0, b: 0 };
       const rows = (await sys.query<{ j: Record<string, unknown> }>(`SELECT to_jsonb(x) AS j FROM ${table} x ${where}`, where ? [victims] : [])).rows.map((r) => {
         const j = typeof r.j === 'string' ? (JSON.parse(r.j) as Record<string, unknown>) : r.j;
+        const side = sideOf(table, j);
+        if (side) sides[side as Victim]++;
         for (const col of Object.keys(j)) if (`${table}.${col}` in VOLATILE) delete j[col];
         return JSON.stringify(j);
       });
       // 没有 user_id 列的表（确认卡、设置…）：除了明确属于攻击方的行，全部纳入
-      out[table] = rows.filter((s) => uid || where || !attackerIds.some((a) => s.includes(a))).sort();
+      out.rows[table] = rows.filter((s) => uid || where || !attackerIds.some((a) => s.includes(a))).sort();
+      out.sides[table] = sides;
     }
     return out;
   }
-  /** 内存存储没有表可查：退回到受害者用自己的身份把全部读接口读一遍（只在 memory 环境用） */
+  /** 逐表正向对照的问题清单（空 = 每张表 owner / B 都有行，或写了豁免理由） */
+  const sideGaps = (snap: DbSnap): string[] => [
+    ...Object.entries(snap.sides).flatMap(([table, n]) =>
+      (['owner', 'b'] as const).flatMap((v) => {
+        const exempt = SNAPSHOT_SIDE_EXEMPT[table]?.[v];
+        if (n[v] === 0 && !exempt) return [`${table}：攻击前 ${v} 一行都没有（这张表没被快照真正覆盖；补 seed，或在 SNAPSHOT_SIDE_EXEMPT 写理由）`];
+        if (n[v] > 0 && exempt) return [`${table}：${v} 有 ${n[v]} 行，SNAPSHOT_SIDE_EXEMPT 里的豁免已不需要，删掉`];
+        return [];
+      }),
+    ),
+    ...Object.keys(SNAPSHOT_SIDE_EXEMPT).filter((tb) => !(tb in snap.sides)).map((tb) => `SNAPSHOT_SIDE_EXEMPT 里的 ${tb} 表已不存在`),
+  ];
+  /**
+   * 内存存储没有表可查：退回到受害者用自己的身份把全部读接口读一遍（只在 memory 环境用）。
+   * 已知局限：这不是数据库快照。越权写只要不在任何读接口里回显（或回显被别的字段盖住），内存存储就抓不到；
+   * 所以「越权写」的自证（self-check/interrupt-budget-cross-write.patch）只要求 pglite-app-role / postgres-app-role 被快照抓到。
+   */
   async function apiSnapshot(): Promise<Record<string, string[]>> {
     const out: Record<string, string[]> = {};
     for (const v of ['owner', 'b'] as const) {
@@ -773,7 +889,7 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     }
     return out;
   }
-  const snapshot = async () => (await dbSnapshot()) ?? apiSnapshot();
+  const snapshot = async (): Promise<Record<string, string[]>> => (await dbSnapshot())?.rows ?? apiSnapshot();
   const diff = (a: Record<string, string[]>, b: Record<string, string[]>): string[] =>
     [...new Set([...Object.keys(a), ...Object.keys(b)])].flatMap((k) => {
       const x = a[k] ?? [];
@@ -793,6 +909,7 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     expect(all.filter((r) => r.method !== 'GET' && !(key(r) in BODIES)).map(key), '新改动类路由要在 BODIES 里给一份能过校验的请求体').toEqual([]);
     expect(Object.keys(BODIES).filter((k) => !all.some((r) => key(r) === k)), 'BODIES 里有已经不存在的路由').toEqual([]);
     for (const k of OWNER_ONLY_FOR_FAMILY) expect(all.some((r) => key(r) === k), k).toBe(true);
+    for (const k of VALIDATES_BEFORE_ADMIN_CHECK) expect(OWNER_ONLY_FOR_FAMILY, `VALIDATES_BEFORE_ADMIN_CHECK 里的 ${k} 要是只给所有者的路由`).toContain(k);
     // 家人能用的路由（含不带参数的 GET 列表接口——批量泄露的主入口）都要逐条声明攻击期望
     expect(all.filter((r) => !isOwnerOnly(r) && !(key(r) in FAMILY)).map(key), '家人能用的路由要在 FAMILY 里声明攻击方的期望').toEqual([]);
     expect(Object.keys(FAMILY).filter((k) => !all.some((r) => key(r) === k && !isOwnerOnly(r))), 'FAMILY 里有不存在 / 只给所有者的路由').toEqual([]);
@@ -840,17 +957,21 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
       ['POST', '/v1/chat/completions', { messages: [{ role: 'user', content: 'x' }] }],
       ['POST', '/v1/responses', { input: 'x' }],
     ] as const;
-    for (const [method, url, payload] of [...V1, ['POST', '/internal/route-preview', {}]] as const) {
+    // 必改 5：家人会话令牌打 /v1 一律 503 CHAT_NOT_CONFIGURED——测试里没配所有者对话令牌（CORE_CHAT_TOKEN），
+    // 入口在鉴权之前就关了，鉴权根本没走到；所以这里只能证明「进不去」，会话令牌的鉴权分支由配了 CORE_CHAT_TOKEN 的 chat 测试负责
+    for (const [method, url, payload] of V1) {
       const res = await call('xiao', method, url, payload);
-      // 503 = 这个入口在测试里没配置所有者对话令牌（CORE_CHAT_TOKEN），会话令牌照样进不去
-      expect([401, 403, 503], `xiao ${method} ${url} → ${res.statusCode}`).toContain(res.statusCode);
+      expect([res.statusCode, errCode(res)], `xiao ${method} ${url}`).toEqual([503, 'CHAT_NOT_CONFIGURED']);
       expect(leakedIn(res)).toEqual([]);
     }
-    expect((await call('xiaoClient', 'POST', '/internal/route-preview', {})).statusCode).toBe(403);
-    // 设计如此：带 models:chat 的客户端令牌能用 /v1，按令牌主人的成员 / 负责人走（chat/routes.ts callerCtx）。要求：只看得到自己的
+    for (const w of ['xiao', 'xiaoClient'] as const) {
+      const res = await call(w, 'POST', '/internal/route-preview', {});
+      expect([res.statusCode, errCode(res)], `${w} /internal/route-preview`).toEqual([403, 'FORBIDDEN']);
+    }
+    // 设计如此：带 models:chat 的客户端令牌能用 /v1，按令牌主人的成员 / 负责人走（chat/routes.ts callerCtx）。要求：200 且只看得到自己的
     for (const [method, url, payload] of V1) {
       const res = await call('xiaoClient', method, url, payload);
-      expect(res.statusCode, `xiaoClient ${method} ${url} → ${res.body.slice(0, 200)}`).toBeLessThan(500);
+      expect(res.statusCode, `xiaoClient ${method} ${url} → ${res.body.slice(0, 200)}`).toBe(200);
       expect(leakedIn(res), `xiaoClient ${method} ${url}`).toEqual([]);
     }
     // 正向对照：所有者自己的令牌看得到自己的成员（检查器在这个接口上认得出标记）
@@ -868,8 +989,8 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     const other = await call('xiao', 'DELETE', `/api/vault/${ids.owner.vault}`, { confirmToken: token });
     expect(other.statusCode, other.body).toBe(404);
     const mine = await call('xiao', 'DELETE', `/api/vault/${own}`, { confirmToken: token });
-    expect([403, 428], `小号用所有者的确认令牌删自己的条目 → ${mine.statusCode}`).toContain(mine.statusCode);
-    expect(mine.statusCode).not.toBe(204);
+    // 必改 5：家人删保险箱条目要所有者本人确认，拿所有者的令牌来也一样是 403（不会走到 428 让它自己再确认一次）
+    expect([mine.statusCode, errCode(mine)], `小号用所有者的确认令牌删自己的条目 → ${mine.body}`).toEqual([403, 'FORBIDDEN']);
     for (const r of [other, mine]) expect(leakedIn(r)).toEqual([]);
     expect(JSON.stringify((await call('owner', 'GET', '/api/vault')).json())).toContain(ids.owner.vault);
     expect(JSON.stringify((await call('xiao', 'GET', '/api/vault')).json())).toContain(own);
@@ -878,8 +999,11 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     expect((await call('xiao', 'POST', ch.stepUrl, { step: 1 })).statusCode).toBe(403);
   });
 
-  it('任务里声明别人的保险箱 id：小号自己的执行员领到任务也取不到别人的凭据', async () => {
-    const tid = (await make('xiao', 'POST', '/api/tasks', { kind: 'login', site: `https://${MARK.xiao}.example.test`, secrets: [{ secretId: ids.owner.vault!, field: 'password' }, { secretId: ids.b.vault!, field: 'password' }] })).task.id as string;
+  it('任务里声明别人的保险箱 id：小号自己的执行员领到任务也取不到别人的凭据；声明了的「别人的」和「不存在的」一样 404', async () => {
+    const own = (await make('xiao', 'POST', '/api/vault', { name: 'xiaoexec', kind: 'password', value: `${MARK.xiao}-exec` })).secret.id as string;
+    const MISSING_2 = '00000000-0000-4000-8000-0000000000fe';
+    // 声明：自己的、所有者的、不存在的（必改 8：不存在的也要声明，才和「别人的」走同一个分支）；B 的不声明
+    const tid = (await make('xiao', 'POST', '/api/tasks', { kind: 'login', site: `https://${MARK.xiao}.example.test`, secrets: [own, ids.owner.vault!, MISSING_UUID].map((secretId) => ({ secretId, field: 'value' })) })).task.id as string;
     let claimed: string | undefined;
     for (let n = 0; n < 20 && claimed !== tid; n++) {
       const c = await call('xiaoClient', 'POST', '/api/executor/tasks/claim', { waitSec: 0 });
@@ -888,12 +1012,70 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
       if (!claimed) break;
     }
     expect(claimed).toBe(tid);
-    for (const secretId of [ids.owner.vault!, ids.b.vault!, MISSING_UUID]) {
-      const res = await call('xiaoClient', 'POST', `/api/executor/tasks/${tid}/secret`, { secretId, field: 'password' });
-      // 别人的条目和不存在的条目一样：声明过的 → 保险箱里找不到；没声明的 → 没声明
-      expect(res.statusCode, `${secretId} → ${res.body}`).toBe(secretId === MISSING_UUID ? 422 : 404);
-      expect(leakedIn(res)).toEqual([]);
+    const get = (secretId: string) => call('xiaoClient', 'POST', `/api/executor/tasks/${tid}/secret`, { secretId, field: 'value' });
+    // 正向对照：自己声明的自己的条目取得到（证明这条路真能取出值，404 不是因为别的原因）
+    const mine = await get(own);
+    expect(mine.statusCode, mine.body).toBe(200);
+    expect(mine.body).toContain(`${MARK.xiao}-exec`);
+    const result = async (secretId: string) => {
+      const r = await get(secretId);
+      expect(leakedIn(r), secretId).toEqual([]);
+      return [r.statusCode, errCode(r)];
+    };
+    // 声明过的：别人的 = 保险箱里不存在的，一样 404 SECRET_NOT_FOUND
+    expect(await result(ids.owner.vault!), '声明了所有者的条目').toEqual([404, 'SECRET_NOT_FOUND']);
+    expect(await result(MISSING_UUID), '声明了不存在的条目').toEqual([404, 'SECRET_NOT_FOUND']);
+    // 没声明的：别人的 = 不存在的，一样 422 SECRET_NOT_DECLARED（不先查保险箱，看不出存在）
+    expect(await result(ids.b.vault!), '没声明 B 的条目').toEqual([422, 'SECRET_NOT_DECLARED']);
+    expect(await result(MISSING_2), '没声明的不存在条目').toEqual([422, 'SECRET_NOT_DECLARED']);
+  });
+
+  /**
+   * 必改 6：/mcp 逐工具正向对照表（和 /api 的 POSITIVE 同理）：tools/list 里的每个工具都要在这里登记，
+   * 由主人（所有者 / B）用自己的客户端令牌、自己的 id 调用，必须成功（不是 isError）；
+   * mark = 结果里认得出主人自己的标记（证明「攻击方没看到」不是因为工具本来就什么都不回）。
+   */
+  interface McpPos {
+    args: (v: Victim) => Promise<Json> | Json;
+    expect: 'mark' | 'ok' | 'reached';
+    /** 带了资源 id（别人的 id 打进来必须 isError） */
+    takesId?: true;
+    why?: string;
+  }
+  const MCP_DENIED = '工具不存在或当前客户端不可用';
+  const MCP_POSITIVE: Record<string, McpPos> = {
+    list_tools: { args: () => ({}), expect: 'ok', why: '工具目录，不含个人数据' },
+    // shortcut: 测试不联网，call_tool 只证明主人过了 /mcp 的放行检查、真的进了工具网关（127.0.0.1 被网关自己的 SSRF 防护拦下）；要证明完整成功得给 GatewayService 注入 fetch（要改 src），暂不做
+    call_tool: { args: () => ({ tool: 'read_webpage', args: { url: 'https://127.0.0.1/' } }), expect: 'reached', why: '不联网，见上' },
+    create_task: { args: (v) => ({ kind: 'checkin', site: `https://${MARK[v]}.example.test` }), expect: 'ok' },
+    get_task: { args: (v) => ({ id: ids[v].task }), expect: 'mark', takesId: true },
+    list_tasks: { args: () => ({}), expect: 'mark' },
+    cancel_task: { args: async (v) => ({ id: (await make(v, 'POST', '/api/tasks', { kind: 'browse', site: `https://${MARK[v]}.example.test` })).task.id }), expect: 'ok', takesId: true },
+    search_library: { args: (v) => ({ query: MARK[v] }), expect: 'mark' },
+    get_library_item: { args: (v) => ({ id: ids[v].library }), expect: 'mark', takesId: true },
+    submit_resource: { args: (v) => ({ title: `${MARK[v]} mcp`, note: 'x' }), expect: 'ok' },
+    list_memory_topics: { args: () => ({}), expect: 'mark' },
+    get_memory: { args: (v) => ({ topic: ids[v].memory }), expect: 'mark', takesId: true },
+  };
+  const mcpCall = (who: Who, name: string, args: object) => call(who, 'POST', '/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } });
+  const mcpText = (r: Inject): { isError: boolean; text: string } => {
+    const res = (r.json() as Json).result as { isError?: boolean; content?: { text?: string }[] } | undefined;
+    return { isError: res?.isError === true, text: (res?.content ?? []).map((c) => c.text ?? '').join('\n') };
+  };
+
+  it('/mcp：逐工具正向对照——每个工具由主人用自己的令牌、自己的 id 调用都成功', async () => {
+    const listed = ((await call('xiaoClient', 'POST', '/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/list' })).json().result.tools as { name: string }[]).map((x) => x.name).sort();
+    expect(listed, 'tools/list 里的工具要和 MCP_POSITIVE 一一对应（新工具要登记正向对照）').toEqual(Object.keys(MCP_POSITIVE).sort());
+    const bad: string[] = [];
+    for (const [name, spec] of Object.entries(MCP_POSITIVE)) {
+      for (const v of ['owner', 'b'] as const) {
+        const r = await mcpCall(clientOf(v), name, await spec.args(v));
+        const { isError, text } = mcpText(r);
+        const ok = r.statusCode === 200 && (spec.expect === 'reached' ? text !== '' && text !== MCP_DENIED : !isError) && (spec.expect !== 'mark' || leakedIn(r).includes(v));
+        if (!ok) bad.push(`${name} [${v}] → ${r.statusCode} ${r.body.slice(0, 200)}`);
+      }
     }
+    expect(bad, '主人用自己的 id 调自己的 MCP 工具没成功').toEqual([]);
   });
 
   it('/mcp：小号的全范围客户端令牌，tools/list 里每个工具带别人的 id 调一遍，都拿不到别人的数据', async () => {
@@ -913,13 +1095,12 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
           const res = await rpc('tools/call', { name: tool.name, arguments: args });
           if (res.statusCode >= 500) bad.push(`${tool.name} [${victim}] → ${res.statusCode}`);
           if (leakedIn(res).length) bad.push(`${tool.name} [${victim}] 泄露：${res.body.slice(0, 200)}`);
+          // 带资源 id 的工具：别人的 id 必须报错（正向对照里主人自己调是成功的）
+          if (MCP_POSITIVE[tool.name]?.takesId && res.statusCode === 200 && !mcpText(res).isError) bad.push(`${tool.name} [${victim}] 带别人的 id 调用成功了：${res.body.slice(0, 200)}`);
         }
       }
     }
     expect(bad).toEqual([]);
-    // 正向对照：所有者自己用 MCP 能取到自己的
-    const ownRes = await call('ownerClient', 'POST', '/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_library_item', arguments: { id: ids.owner.library } } });
-    expect(leakedIn(ownRes)).toContain('owner');
   });
 
   it('令牌提权：家人用自己的会话 / arc_ 令牌签发更大范围或所有者级令牌、列出 / 吊销别人的令牌都不行；过期 / 已吊销的令牌不能用', async () => {
@@ -1012,17 +1193,68 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     // 正向对照：所有者自己的范围里确实有行（不是因为表是空的才读不到）
     expect(ownerRows).toBeGreaterThan(10);
     expect(await count(userScoped(db, 'owner'), 'vault_secrets')).toBeGreaterThan(0);
-    // 写：以小号身份改 / 删别人的行影响 0 行；往别人名下插入被 WITH CHECK 拒绝
+    // 必改 7：没开 RLS 的表必须正好等于这份白名单（新增没开 RLS 的表 → 失败，要么开 RLS，要么在这里写理由）
+    const allTables = (await db.query<{ t: string }>(`SELECT c.relname AS t FROM pg_class c WHERE c.relnamespace = current_schema()::regnamespace AND c.relkind = 'r' ORDER BY 1`)).rows.map((r) => r.t);
+    expect(allTables.filter((x) => !rlsTables.includes(x)).sort(), '没开 RLS 的表和 NO_RLS_TABLES 白名单不一致').toEqual(Object.keys(NO_RLS_TABLES).sort());
+    // 必改 7：写操作逐表测。每张 RLS 表：小号身份 UPDATE / DELETE 别人的行影响 0 行；往 owner / B 名下 INSERT 被 RLS（WITH CHECK）拒。
+    // 每条都在事务里做完就回滚：万一 RLS 失效也不会真把数据删掉、影响后面的用例
+    const ROLLBACK = new Error('rollback');
+    const inTx = async <T,>(q: Db, fn: (x: Queryable) => Promise<T>): Promise<T> => {
+      let out: T | undefined;
+      await q.tx(async (x) => { out = await fn(x); throw ROLLBACK; }).catch((e) => { if (e !== ROLLBACK) throw e; });
+      return out as T;
+    };
     const xiao = userScoped(db, ids.xiao.user!);
-    expect((await xiao.query(`UPDATE vault_secrets SET name = 'pwned' WHERE id = $1 RETURNING id`, [ids.owner.vault])).rows).toEqual([]);
-    expect((await xiao.query(`DELETE FROM library_items WHERE id = $1 RETURNING id`, [ids.b.library])).rows).toEqual([]);
-    await expect(xiao.query(`INSERT INTO library_items (id, user_id, kind, title, body, created_at, updated_at) VALUES ($1, 'owner', 'idea', 'x', 'x', now(), now())`, [randomUUID()])).rejects.toThrow();
+    const sys = systemScoped(db);
+    const writeBad: string[] = [];
+    for (const table of rlsTables) {
+      const cols = (await db.query<{ c: string }>(
+        `SELECT a.attname AS c FROM pg_attribute a WHERE a.attrelid = (current_schema() || '.' || $1)::regclass AND a.attnum > 0 AND NOT a.attisdropped AND a.attgenerated = '' AND a.attidentity <> 'a' ORDER BY a.attnum`, [table],
+      )).rows.map((r) => r.c);
+      // 正向对照：主人自己的范围里，同一个 WHERE 确实选得到行（不是因为表里没数据 / WHERE 写错才 0 行）
+      const own = (await count(userScoped(db, 'owner'), table)) + (await count(userScoped(db, ids.b.user!), table));
+      if (own === 0) writeBad.push(`${table}：正向对照失败，owner / B 自己的范围里一行都没有（写测试没测到）`);
+      // 小号身份：影响 0 行。「permission denied for table」= 应用角色压根没有这种写权限（只追加的表不给 DELETE），比 RLS 更早拦下，算过；
+      // 别的报错算失败——RLS 生效时别人的行根本不可见，行级触发器（如 conversation_messages 只追加）不会被触发
+      const hits = async (sql: string): Promise<string | null> => {
+        try {
+          const n = (await inTx(xiao, (x) => x.query(sql, [victims]))).rows.length;
+          return n ? `影响了 ${n} 行` : null;
+        } catch (e) {
+          const m = (e as Error).message;
+          return /permission denied for table/i.test(m) ? null : `报错（说明看得见别人的行）：${m.slice(0, 100)}`;
+        }
+      };
+      for (const [what, sql] of [
+        ['UPDATE 别人的行', `UPDATE ${table} SET user_id = user_id WHERE user_id::text = ANY($1) RETURNING 1`],
+        ['把别人的行改到自己名下', `UPDATE ${table} SET user_id = '${ids.xiao.user!}' WHERE user_id::text = ANY($1) RETURNING 1`],
+        ['DELETE 别人的行', `DELETE FROM ${table} WHERE user_id::text = ANY($1) RETURNING 1`],
+      ] as const) {
+        const h = await hits(sql);
+        if (h) writeBad.push(`${table}：小号 ${what} ${h}`);
+      }
+      // INSERT：拿一行受害者的真实数据当模板（系统范围只读），换掉 id，以小号身份插到 owner / B 名下
+      const tpl = (await sys.query<{ j: Record<string, unknown> }>(`SELECT to_jsonb(x) AS j FROM ${table} x WHERE user_id::text = ANY($1) LIMIT 1`, [victims])).rows[0]?.j;
+      if (!tpl) continue; // 上面的正向对照已经报了
+      const j = typeof tpl === 'string' ? (JSON.parse(tpl) as Record<string, unknown>) : tpl;
+      for (const target of victims) {
+        const row = { ...j, user_id: target, ...(typeof j.id === 'string' ? { id: /^[0-9a-f-]{36}$/.test(j.id) ? randomUUID() : `${j.id}x176` } : {}) };
+        const list = cols.join(', ');
+        const err = await inTx(xiao, (x) => x.query(`INSERT INTO ${table} (${list}) SELECT ${list} FROM jsonb_populate_record(NULL::${table}, $1::jsonb)`, [JSON.stringify(row)])).then(() => null, (e: Error) => e);
+        if (!err) writeBad.push(`${table}：小号往 ${target} 名下 INSERT 成功了`);
+        else if (!/row-level security/i.test(err.message)) writeBad.push(`${table}：往 ${target} 名下 INSERT 失败，但不是被 RLS 拒的（${err.message.slice(0, 120)}）——没测到 WITH CHECK`);
+      }
+    }
+    expect(writeBad, 'RLS 写操作逐表').toEqual([]);
+    await expect(xiao.query(`INSERT INTO library_items (id, user_id, kind, title, body, created_at, updated_at) VALUES ($1, 'owner', 'idea', 'x', 'x', now(), now())`, [randomUUID()])).rejects.toThrow(/row-level security/i);
     expect(await count(userScoped(db, 'owner'), 'vault_secrets')).toBeGreaterThan(0);
   });
 
   it('遍历全部路由（改参 + 重放 + query / body / 头里的别人的 id）：严格按声明的状态码，看不出存在，不泄露，数据库里受害者的行一行不变', async () => {
     await t.app.assistants.runner.idle();
-    const before = await snapshot();
+    const snap0 = await dbSnapshot();
+    if (snap0) expect(sideGaps(snap0), '数据库快照逐表正向对照（必改 2）').toEqual([]);
+    const before = snap0?.rows ?? (await apiSnapshot());
     // 快照本身要真的含有受害者的数据，否则「没变」说明不了什么
     const flat = Object.values(before).flat().join('\n');
     expect(flat).toContain(MARK.owner);
@@ -1034,8 +1266,9 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     const leaks: string[] = [];
     const oracle: string[] = [];
     const listLeak: string[] = [];
+    const knownGapHit = new Set<string>();
     const check = (label: string, res: Inject, exp: Exp) => {
-      if (!statusOk(exp, res.statusCode) || (exp.code !== undefined && errCode(res) !== exp.code)) wrong.push(`${label} → ${res.statusCode} ${errCode(res)}，应为 ${JSON.stringify(exp.status)} ${exp.code ?? ''} ${res.body.slice(0, 120)}`);
+      if (!statusOk(exp, res.statusCode) || (exp.code !== undefined && errCode(res) !== exp.code)) wrong.push(`${label} → ${res.statusCode} ${errCode(res)}，应为 ${exp.status} ${exp.code ?? ''} ${res.body.slice(0, 120)}`);
       const l = leakedIn(res);
       if (l.length) leaks.push(`${label} 泄露 ${l.join(',')}：${res.body.slice(0, 200)}`);
     };
@@ -1046,11 +1279,13 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
       const exp = expFor(r, attacker);
       const label = `${key(r)} [${attacker}→${victim}]`;
       const n = nonce();
+      await ATTACK_PREP[key(r)]?.();
       const res = await attack(r, victim, attacker, n);
       check(label, res, exp);
       // 必改 3：带别人的 id 和带不存在的 id，结果完全一样（家人能用的带 id 路由必须是 404，不是 403）
       const body = (v: Victim | 'missing') => JSON.stringify(r.method === 'GET' ? null : BODIES[key(r)]?.('xiao', ids[v], n));
       if (r.url.includes(':') || body(victim) !== body('missing')) {
+        await ATTACK_PREP[key(r)]?.();
         const miss = await attack(r, 'missing', attacker);
         if (res.statusCode !== miss.statusCode || errCode(res) !== errCode(miss)) oracle.push(`${label} 别人的 id → ${res.statusCode} ${errCode(res)}，不存在的 id → ${miss.statusCode} ${errCode(miss)}`);
       }
@@ -1058,19 +1293,35 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
         const hit = victimIds(victim, exp.echoes).filter(([, x]) => res.body.includes(x)).map(([k, x]) => `${k}=${x}`);
         if (hit.length) listLeak.push(`${label} 列表里有受害者的 id ${hit.join(',')}`);
       }
-      // 路径之外的别人的 id：身份覆盖头、query（含 ids 数组、伪造的翻页游标、排序 / 过滤）、请求体嵌套字段。
-      // 期望：和不带这些时一样，或者被 schema 拒（400）；不泄露；数据库快照兜底「没写到别人名下」
+      // 路径之外的别人的 id（必改 1）：身份覆盖头、query（含 ids 数组、伪造的翻页游标、排序 / 过滤）、请求体嵌套字段，
+      // 三种分成三个独立请求（塞一起时 body 被 schema 拒成 400，头和 query 就没测到）。
+      // 期望：头注入不碰 schema，必须和声明的完全一样；只给所有者的（期望 403）三种都必须严格 == 403，不接受 400；
+      // 家人能用的 query / body 注入，允许声明的期望或 schema 拒绝（400）。不泄露；数据库快照兜底「没写到别人名下」
       const v = ids[victim];
-      const inj = await attack(r, victim, attacker, nonce(), {
-        headers: { 'x-user-id': victim === 'owner' ? 'owner' : v.user!, 'x-aroomo-user-id': v.user ?? 'owner', 'x-forwarded-user': v.user ?? 'owner', 'x-aroomo-scope': 'owner' },
-        query: new URLSearchParams([
-          ['userId', v.user ?? 'owner'], ['user_id', v.user ?? 'owner'], ['scope', 'owner'], ['memberId', v.member!], ['vaultId', v.vault!], ['parentId', v.library!],
-          ['ids', v.inbox!], ['ids[]', v.library!], ['cursor', forgedCursor(victim)], ['sort', 'user_id'], ['filter', 'all'], ['deleted', 'true'],
-        ]).toString(),
-        body: { userId: v.user ?? 'owner', user_id: v.user ?? 'owner', scope: 'owner', memberId: v.member, vaultId: v.vault, parentId: v.library, ids: [v.inbox, v.library, v.task] },
-      });
-      if (!statusOk(exp, inj.statusCode) && inj.statusCode !== 400) wrong.push(`${label} 注入别人的 id → ${inj.statusCode} ${errCode(inj)} ${inj.body.slice(0, 120)}`);
-      if (leakedIn(inj).length) leaks.push(`${label} 注入别人的 id 后泄露：${inj.body.slice(0, 200)}`);
+      const injections: [string, NonNullable<Parameters<typeof attack>[4]>][] = [
+        ['头', { headers: { 'x-user-id': victim === 'owner' ? 'owner' : v.user!, 'x-aroomo-user-id': v.user ?? 'owner', 'x-forwarded-user': v.user ?? 'owner', 'x-aroomo-scope': 'owner' } }],
+        ['query', {
+          query: new URLSearchParams([
+            ['userId', v.user ?? 'owner'], ['user_id', v.user ?? 'owner'], ['scope', 'owner'], ['memberId', v.member!], ['vaultId', v.vault!], ['parentId', v.library!],
+            ['ids', v.inbox!], ['ids[]', v.library!], ['cursor', forgedCursor(victim)], ['sort', 'user_id'], ['filter', 'all'], ['deleted', 'true'],
+          ]).toString(),
+        }],
+        // GET 不收请求体，不发
+        ...(r.method === 'GET' ? [] : [['body', { body: { userId: v.user ?? 'owner', user_id: v.user ?? 'owner', scope: 'owner', memberId: v.member, vaultId: v.vault, parentId: v.library, ids: [v.inbox, v.library, v.task] } }] as [string, NonNullable<Parameters<typeof attack>[4]>]]),
+      ];
+      // 「只给所有者」按路由声明认（不是按期望 403 认：家人登记 HTTP 工具的 403 是处理器里的业务规则，schema 先跑是对的）
+      const ownerOnly = attacker === 'xiaoClient' ? !clientCanEnter(r) : isOwnerOnly(r);
+      for (const [kind, extra] of injections) {
+        await ATTACK_PREP[key(r)]?.();
+        const inj = await attack(r, victim, attacker, nonce(), extra);
+        const known = kind === 'body' && attacker === 'xiao' && VALIDATES_BEFORE_ADMIN_CHECK.includes(key(r));
+        if (known && inj.statusCode === 400) knownGapHit.add(key(r));
+        const allow400 = (!ownerOnly && kind !== '头') || known;
+        if (!(statusOk(exp, inj.statusCode) && (exp.code === undefined || errCode(inj) === exp.code)) && !(allow400 && inj.statusCode === 400)) {
+          wrong.push(`${label} ${kind}注入别人的 id → ${inj.statusCode} ${errCode(inj)}，应为 ${exp.status} ${exp.code ?? ''}${allow400 ? '（或 400）' : ''} ${inj.body.slice(0, 120)}`);
+        }
+        if (leakedIn(inj).length) leaks.push(`${label} ${kind}注入别人的 id 后泄露：${inj.body.slice(0, 200)}`);
+      }
     };
     // 先用小号自己发的全范围客户端令牌打一遍，再用小号会话打一遍
     for (const victim of ['owner', 'b'] as const) for (const r of routes) await run(r, victim, 'xiaoClient');
@@ -1095,10 +1346,14 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     expect(leaks, '响应（正文 / 响应头 / SSE / 编码后）里出现了别人的数据').toEqual([]);
     expect(oracle, '能从响应差异看出别人的资源存在').toEqual([]);
     expect(listLeak, '列表接口里出现了别人的资源').toEqual([]);
+    expect(VALIDATES_BEFORE_ADMIN_CHECK.filter((k) => !knownGapHit.has(k)), 'VALIDATES_BEFORE_ADMIN_CHECK 里的路由已经严格 403 了，从白名单删掉').toEqual([]);
 
     const after = await snapshot();
-    expect(diff(before, after), '受害者的数据被家人账号改动了（数据库快照，按 owner / B 的 user_id）').toEqual([]);
+    const changed = diff(before, after);
+    // 消息里带上变了的表名（自证脚本按它判断是不是快照抓到的）
+    expect(changed, `受害者的数据被家人账号改动了（数据库快照，按 owner / B）：${changed.map((x) => x.split('\n')[0]).join(', ')}`).toEqual([]);
     // 别人的会话 / 令牌没被攻击方的 logout-all / revoke-all 连带踢掉
     for (const w of ['owner', 'b', 'ownerClient', 'bClient'] as const) expect((await call(w, 'GET', w.endsWith('Client') ? '/api/clients/self' : '/api/auth/me')).statusCode, w).toBe(200);
-  });
+    // 三种注入分开发（必改 1）以后 PGlite 上约 20 秒，默认 30 秒太贴边（机器忙时会超时）
+  }, 120_000);
 });
