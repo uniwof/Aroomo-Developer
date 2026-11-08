@@ -101,7 +101,8 @@ def evaluate(labelled_prs, current_prs):
 
 def mark_exempt(pr):
     """给豁免的 PR 留评论 + 加 needs-leader-review（同一个 PR 只评论一次）。"""
-    if not any(MARK in (c.get("body") or "") for c in gh(f"/issues/{pr['number']}/comments?per_page=100")):
+    comments = gh(f"/issues/{pr['number']}/comments?per_page=100")
+    if not any(MARK in (c.get("body") or "") or EXEMPT_COMMENT in (c.get("body") or "") for c in comments):
         gh(f"/issues/{pr['number']}/comments", {"body": f"{MARK}\n{EXEMPT_COMMENT}"})
     if BLOCK_LABEL not in pr["labels"]:
         gh(f"/issues/{pr['number']}/labels", {"labels": [BLOCK_LABEL]})
@@ -189,5 +190,6 @@ class MergeGateTest(unittest.TestCase):
 if __name__ == "__main__":
     if "--selftest" in sys.argv[1:]:
         sys.argv = sys.argv[:1]
-        sys.exit(0 if unittest.main(exit=False).result.wasSuccessful() else 1)
+        res = unittest.main(exit=False, verbosity=2).result
+        sys.exit(0 if res.wasSuccessful() else 1)
     main()
