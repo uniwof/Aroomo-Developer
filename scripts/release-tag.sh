@@ -8,7 +8,7 @@
 #   scripts/release-tag.sh deploy vX.Y.Z --confirm vX.Y.Z   真正切换（版本号必须写两遍，防手滑）
 #   scripts/release-tag.sh rollback                      演练：显示将回到哪个版本
 #   scripts/release-tag.sh rollback --confirm <上一个版本>  真正回滚
-#   加 --hotfix：跳过合并闸门（#189），其他检查照旧。
+#   没有本地 --hotfix：闸门永远跑；紧急修复的豁免只认 GitHub 上该 PR 的 hotfix 标签（由 merge-gate.py 判定，#352 M3）。
 #   合并闸门需要环境里有只读 GH_TOKEN（不写 .env、不进日志）；目标版本没有 scripts/ci/merge-gate.py 就拒绝部署。
 #   加 --lobe-session-ok：回退目标写死 SHELL_AUTH: lobe-session 也照样切（只在确实要回旧登录、LobeHub 在跑时用）。
 #
@@ -301,18 +301,18 @@ do_switch() {
 # 合并闸门（#189 / #351）：用目标版本里的 scripts/ci/merge-gate.py（hotfix 豁免）。
 # 仓库里有带 needs-leader-review 且无 leader-approved 的 PR → 非零退出 → 拒绝发布（演练也查，失败即关闭）。
 # GH_TOKEN 从调用者环境继承（只读、仅本仓库的令牌），不写文件、不打印、不传给别的命令。
-# 闸门只读：hotfix 在这里整段跳过，补审评论/标签由 CI 的 merge-gate 工作流在 v* 标签推送时做。
+# 闸门固定只读（MERGE_GATE_READONLY=1，#352 M2）：PR 带 hotfix 标签照样放行，但服务器不写评论/标签，
+# 补审跟踪由 CI 的 merge-gate 工作流在 v* 标签推送时写。没有本地跳过开关（#352 M3）。
 run_gate() {
-  local hotfix="$1" gate="$2/scripts/ci/merge-gate.py"
-  if [ "$hotfix" = 1 ]; then log "hotfix：跳过合并闸门（事后必须补审）"; return 0; fi
+  local gate="$1/scripts/ci/merge-gate.py"
   if [ ! -f "$gate" ]; then
     [ "${RELEASE_REQUIRE_GATE:-1}" = 1 ] \
       || { log "提示：目标版本没有合并闸门（#189），RELEASE_REQUIRE_GATE=0 已放行"; return 0; }
-    die "目标版本 $(short "$target") 里没有 scripts/ci/merge-gate.py（#189），不部署；紧急修复用 --hotfix"
+    die "目标版本 $(short "$target") 里没有 scripts/ci/merge-gate.py（#189），不部署（首个可部署标签要在 #351/#352 进 main 之后打；回到更早的版本用 rollback）"
   fi
-  [ -n "${GH_TOKEN:-}" ] || die "合并闸门要查 GitHub：需要主会话在环境里提供只读 GH_TOKEN（read -rs GH_TOKEN; export GH_TOKEN），不要写进 .env 或命令行；紧急修复用 --hotfix"
+  [ -n "${GH_TOKEN:-}" ] || die "合并闸门要查 GitHub：需要主会话在环境里提供只读 GH_TOKEN（read -rs GH_TOKEN; export GH_TOKEN），不要写进 .env 或命令行"
   command -v "${RELEASE_PYTHON:-python3}" >/dev/null || die "服务器没有 python3，合并闸门跑不了，不部署"
-  REPO="${RELEASE_GATE_REPO:-uniwof/Aroomo-Developer}" TAG_SHA="$tcommit" TAG_NAME="$target" PR_NUMBER="" GITHUB_STEP_SUMMARY="" \
+  MERGE_GATE_READONLY=1 REPO="${RELEASE_GATE_REPO:-uniwof/Aroomo-Developer}" TAG_SHA="$tcommit" TAG_NAME="$target" PR_NUMBER="" GITHUB_STEP_SUMMARY="" \
     "${RELEASE_PYTHON:-python3}" -B "$gate" || die "合并闸门不通过（见上面列出的待审 PR），不部署"
 }
 
@@ -330,11 +330,11 @@ run_precheck() {
 }
 
 cmd="${1:-status}"; shift || true
-target=""; confirm=""; hotfix=0
+target=""; confirm=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --confirm) confirm="${2:-}"; shift 2 || die "--confirm 后面要写版本号" ;;
-    --hotfix) hotfix=1; shift ;;
+    --hotfix) die "没有本地 --hotfix 了（#352 M3）：紧急修复的豁免只认 GitHub 上该 PR 的 hotfix 标签（合并闸门判定），给 PR 加上 hotfix 标签后照常部署" ;;
     --lobe-session-ok) LOBE_OK=1; shift ;;
     -*) die "不认识的参数 $1" ;;
     *) target="$1"; shift ;;
@@ -352,7 +352,7 @@ case "$cmd" in
     tail -n 8 "$state/history.log" 2>/dev/null || true
     exit 0 ;;
   deploy|rollback) ;;
-  *) die "用法：release-tag.sh list | status | deploy vX.Y.Z [--confirm vX.Y.Z] [--hotfix] | rollback [--confirm <版本>]" ;;
+  *) die "用法：release-tag.sh list | status | deploy vX.Y.Z [--confirm vX.Y.Z] | rollback [--confirm <版本>]" ;;
 esac
 
 exec 9>"$state/lock"
@@ -395,7 +395,7 @@ EXTRA_FILES=(); NOBUILD=()
 # 生产前检查和闸门用目标版本里的 scripts/（RELEASE_ROOT 仍指向生产目录）
 tscripts="$(extract_scripts "$tcommit")"
 trap 'rm -f "$RELEASE_TAG_COPY"; rm -rf "$tscripts"' EXIT
-if [ "$cmd" = deploy ]; then run_gate "$hotfix" "$tscripts"; fi
+if [ "$cmd" = deploy ]; then run_gate "$tscripts"; fi
 
 # 没带对的 --confirm：只演练
 if [ -z "$confirm" ] || { [ "$confirm" != "$target" ] && [ "$confirm" != "$(short "$target")" ]; }; then
