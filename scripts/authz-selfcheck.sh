@@ -13,7 +13,6 @@
 # 用法：scripts/authz-selfcheck.sh        （要求 core/src 没有未提交的改动；退出时一定还原补丁）
 set -euo pipefail
 cd "$(dirname "$0")/.."
-ROOT=$PWD
 DIR=core/test/authz/self-check
 REQUIRE_PG=0
 if [[ "${CI:-}" == "true" || "${CI:-}" == "1" || "${AROOMO_REQUIRE_REAL_PG:-}" == "1" ]]; then REQUIRE_PG=1; fi
