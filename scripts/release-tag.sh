@@ -9,7 +9,9 @@
 #   scripts/release-tag.sh rollback                      演练：显示将回到哪个版本
 #   scripts/release-tag.sh rollback --confirm <上一个版本>  真正回滚
 #   没有本地 --hotfix：闸门永远跑；紧急修复的豁免只认 GitHub 上该 PR 的 hotfix 标签（由 merge-gate.py 判定，#352 M3）。
-#   合并闸门需要环境里有只读 GH_TOKEN（不写 .env、不进日志）；目标版本没有 scripts/ci/merge-gate.py 就拒绝部署。
+#   deploy 时脚本自己从标准输入读只读 GitHub 令牌（read -rs，不回显；可 < 只读文件）。不要 export GH_TOKEN：
+#   环境里的 GH_TOKEN 一进脚本就被清掉，令牌只作为合并闸门那一条命令的环境变量传入（#352 M1），
+#   precheck、构建、docker compose 都拿不到。目标版本没有 scripts/ci/merge-gate.py 就拒绝部署。
 #   加 --lobe-session-ok：回退目标写死 SHELL_AUTH: lobe-session 也照样切（只在确实要回旧登录、LobeHub 在跑时用）。
 #
 # 版本专属的 compose 叠加文件（docs/ops/RELEASE.md「回退到 v0.1.0」）：
@@ -54,6 +56,9 @@ if [ -z "${RELEASE_TAG_COPY:-}" ]; then
   RELEASE_TAG_COPY="$tmp" exec bash "$tmp" "$@"
 fi
 trap 'rm -f "$RELEASE_TAG_COPY"' EXIT
+# 令牌不从环境继承（#352 M1）：清掉，免得 precheck、构建、compose 跟着继承；deploy 时下面用 read -rs 读进不导出的变量
+unset GH_TOKEN GITHUB_TOKEN
+gate_tok=""
 
 state="$ROOT/.release"
 mkdir -p "$state"
@@ -300,7 +305,7 @@ do_switch() {
 
 # 合并闸门（#189 / #351）：用目标版本里的 scripts/ci/merge-gate.py（hotfix 豁免）。
 # 仓库里有带 needs-leader-review 且无 leader-approved 的 PR → 非零退出 → 拒绝发布（演练也查，失败即关闭）。
-# GH_TOKEN 从调用者环境继承（只读、仅本仓库的令牌），不写文件、不打印、不传给别的命令。
+# 令牌在不导出的变量 gate_tok 里，只在调用闸门这一条命令上作为 GH_TOKEN 传入；不写文件、不打印。
 # 闸门固定只读（MERGE_GATE_READONLY=1，#352 M2）：PR 带 hotfix 标签照样放行，但服务器不写评论/标签，
 # 补审跟踪由 CI 的 merge-gate 工作流在 v* 标签推送时写。没有本地跳过开关（#352 M3）。
 run_gate() {
@@ -310,9 +315,9 @@ run_gate() {
       || { log "提示：目标版本没有合并闸门（#189），RELEASE_REQUIRE_GATE=0 已放行"; return 0; }
     die "目标版本 $(short "$target") 里没有 scripts/ci/merge-gate.py（#189），不部署（首个可部署标签要在 #351/#352 进 main 之后打；回到更早的版本用 rollback）"
   fi
-  [ -n "${GH_TOKEN:-}" ] || die "合并闸门要查 GitHub：需要主会话在环境里提供只读 GH_TOKEN（read -rs GH_TOKEN; export GH_TOKEN），不要写进 .env 或命令行"
+  [ -n "$gate_tok" ] || die "合并闸门要查 GitHub：没读到只读令牌（deploy 会从标准输入读，输入不回显；不要 export GH_TOKEN、不要写进 .env 或命令行）"
   command -v "${RELEASE_PYTHON:-python3}" >/dev/null || die "服务器没有 python3，合并闸门跑不了，不部署"
-  MERGE_GATE_READONLY=1 REPO="${RELEASE_GATE_REPO:-uniwof/Aroomo-Developer}" TAG_SHA="$tcommit" TAG_NAME="$target" PR_NUMBER="" GITHUB_STEP_SUMMARY="" \
+  GH_TOKEN="$gate_tok" MERGE_GATE_READONLY=1 REPO="${RELEASE_GATE_REPO:-uniwof/Aroomo-Developer}" TAG_SHA="$tcommit" TAG_NAME="$target" PR_NUMBER="" GITHUB_STEP_SUMMARY="" \
     "${RELEASE_PYTHON:-python3}" -B "$gate" || die "合并闸门不通过（见上面列出的待审 PR），不部署"
 }
 
@@ -354,6 +359,13 @@ case "$cmd" in
   deploy|rollback) ;;
   *) die "用法：release-tag.sh list | status | deploy vX.Y.Z [--confirm vX.Y.Z] | rollback [--confirm <版本>]" ;;
 esac
+
+# deploy 要过合并闸门：先读令牌（终端上提示且不回显；也可 < 只读文件）。rollback 不读、不跑闸门（#352 M5）
+if [ "$cmd" = deploy ]; then
+  [ -t 0 ] && printf 'GitHub 只读令牌（输入不回显）：' >&2
+  IFS= read -rs gate_tok || true
+  [ -t 0 ] && echo >&2
+fi
 
 exec 9>"$state/lock"
 flock -n 9 || die "另一个发布正在进行"

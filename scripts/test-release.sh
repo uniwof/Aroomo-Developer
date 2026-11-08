@@ -28,6 +28,7 @@ cat >"$seed/scripts/compose.sh" <<'STUB'
 # 假 compose：记录调用；工作树里有 FAIL_UP 文件就让 up 失败
 cd "$(dirname "$0")/.."
 echo "$(git rev-parse --short HEAD) $*" >>"${RELEASE_TEST_CALLS:?}"
+[ -z "${GH_TOKEN:-}" ] || echo "compose.sh 拿到了 GH_TOKEN" >>"$RELEASE_TEST_CALLS.leak"
 if [ "${1:-}" = up ] && [ -f FAIL_UP ]; then exit 1; fi
 exit 0
 STUB
@@ -45,7 +46,8 @@ root = os.environ["RELEASE_ROOT"]
 with open(os.path.join(root, "gate.env"), "w") as f:
     f.write("REPO=%s\nTAG_SHA=%s\nTAG_NAME=%s\nTOKEN=%s\nREADONLY=%s\n" % (
         os.environ.get("REPO", ""), os.environ.get("TAG_SHA", ""), os.environ.get("TAG_NAME", ""),
-        "set" if os.environ.get("GH_TOKEN") else "unset", os.environ.get("MERGE_GATE_READONLY", "")))
+        {"": "unset", "stdin-gate-token-for-test-only": "stdin"}.get(os.environ.get("GH_TOKEN", ""), "other"),
+        os.environ.get("MERGE_GATE_READONLY", "")))
 if os.path.exists(os.path.join(root, "GATE_FAIL")):
     print("闸门桩：不通过（待审 PR #1）")
     sys.exit(1)
@@ -53,6 +55,7 @@ G
 cat >"$seed/scripts/release-precheck.sh" <<'G'
 #!/usr/bin/env bash
 echo "$*" >>"${RELEASE_ROOT:?}/precheck.args"
+[ -z "${GH_TOKEN:-}" ] || echo "precheck 拿到了 GH_TOKEN" >>"${RELEASE_TEST_CALLS:?}.leak"
 [ -f "$RELEASE_ROOT/PRECHECK_FAIL" ] && { echo "检查桩：不通过"; exit 1; }
 exit 0
 G
@@ -73,8 +76,9 @@ echo local-secret >"$root/deploy/.lobehub-cli-key"
 
 export RELEASE_ROOT="$root" RELEASE_TEST_CALLS="$work/calls.log" RELEASE_SKIP_CONSOLE=1 RELEASE_HEALTH_POLL_S=0
 export RELEASE_HEALTH_TIMEOUT_S=2 RELEASE_REQUIRE_PRECHECK=1 RELEASE_REQUIRE_GATE=1
-# 假令牌：只用来断言它到了闸门、且没进日志/状态文件
-export GH_TOKEN="fake-gate-token-for-test-only"
+# 假令牌：环境里故意 export 一个（脚本必须清掉、谁都不许拿到）；闸门的令牌从标准输入给（#352 M1）
+export GH_TOKEN="fake-env-token-for-test-only"
+GATE_TOKEN="stdin-gate-token-for-test-only"
 health="$work/health.sh"
 cat >"$health" <<'H'
 #!/usr/bin/env bash
@@ -91,7 +95,9 @@ case "\$q" in *to_regclass*) echo core_schema_migrations ;; *) cat "$applied" ;;
 D
 chmod +x "$dbcmd"; export RELEASE_DB_CMD="$dbcmd"
 : >"$RELEASE_TEST_CALLS"
-rel="$here/release-tag.sh"
+relbin="$here/release-tag.sh"
+rel_() { printf '%s\n' "$GATE_TOKEN" | "$relbin" "$@"; }   # 令牌走标准输入
+rel=rel_
 head_tag() { git -C "$root" describe --tags --exact-match HEAD 2>/dev/null || echo none; }
 
 expect "list 只列 main 上的标签" 0 "$rel" list
@@ -154,12 +160,12 @@ touch "$root/GATE_FAIL"
 expect "合并闸门（目标版本里的）不过则拒绝" 1 "$rel" deploy v0.2.0 --confirm v0.2.0
 [ "$(git -C "$root" rev-parse HEAD)" = "$(git -C "$seed" rev-parse v0.1.0)" ] && ok "闸门不过时没有切走" || bad "闸门不过却切走了"
 grep -qx 'REPO=uniwof/Aroomo-Developer' "$root/gate.env" && grep -qx "TAG_SHA=$(git -C "$seed" rev-parse v0.2.0)" "$root/gate.env" \
-  && grep -qx 'TAG_NAME=v0.2.0' "$root/gate.env" && grep -qx 'TOKEN=set' "$root/gate.env" \
+  && grep -qx 'TAG_NAME=v0.2.0' "$root/gate.env" && grep -qx 'TOKEN=stdin' "$root/gate.env" \
   && grep -qx 'READONLY=1' "$root/gate.env" \
-  && ok "闸门收到仓库、标签提交、标签名、令牌，且固定只读" || bad "闸门收到的参数不对：$(cat "$root/gate.env")"
+  && ok "闸门收到仓库、标签提交、标签名、标准输入读的令牌（不是环境里的），且固定只读" || bad "闸门收到的参数不对：$(cat "$root/gate.env")"
 expect "演练也跑闸门，不过则拒绝" 1 "$rel" deploy v0.2.0
-GH_TOKEN="" expect "没有 GH_TOKEN：拒绝（失败即关闭）" 1 "$rel" deploy v0.2.0 --confirm v0.2.0
-echo "$LAST_OUT" | grep -q 'GH_TOKEN' && ok "说明需要 GH_TOKEN" || bad "输出不对：$LAST_OUT"
+GATE_TOKEN="" expect "标准输入没给令牌：拒绝（环境里 export 的不算，失败即关闭）" 1 "$rel" deploy v0.2.0 --confirm v0.2.0
+echo "$LAST_OUT" | grep -q '没读到只读令牌' && ok "说明没读到令牌" || bad "输出不对：$LAST_OUT"
 [ "$(git -C "$root" rev-parse HEAD)" = "$(git -C "$seed" rev-parse v0.1.0)" ] && ok "缺令牌时没有切走" || bad "缺令牌却切走了"
 # 本地 --hotfix 不再跳过闸门（#352 M3）：豁免只认 GitHub 上 PR 的 hotfix 标签（merge-gate.py 判定）
 expect "本地 --hotfix 被拒绝，不跳过闸门" 1 "$rel" deploy v0.2.0 --confirm v0.2.0 --hotfix
@@ -221,6 +227,7 @@ printf 'services:\n  shell:\n    environment:\n      SHELL_AUTH: lobe-session\n'
 cat >"$seed/scripts/release-precheck.sh" <<'G'
 #!/usr/bin/env bash
 ls "$(dirname "$0")/../core/migrations" >"${RELEASE_ROOT:?}/precheck.migs" 2>&1 || true
+[ -z "${GH_TOKEN:-}" ] || echo "precheck(v0.4.0) 拿到了 GH_TOKEN" >>"${RELEASE_TEST_CALLS:?}.leak"
 exit 0
 G
 commit "Shell 写死 lobe-session"; git -C "$seed" tag v0.4.0
@@ -244,7 +251,8 @@ mkdir -p "$work/overrides"; printf 'services:\n  shell:\n    image: aroomo-shell
 expect "配好叠加文件后演练通过" 0 "$rel" deploy v0.5.0
 echo "$LAST_OUT" | grep -q "会叠加：$ovr" && ok "演练写明回退时会叠加哪个文件" || bad "输出不对：$LAST_OUT"
 docker_calls="$work/docker.calls"; : >"$docker_calls"
-printf '#!/usr/bin/env bash\necho "$*" >>"%s"\nexit 0\n' "$docker_calls" >"$work/docker.sh"; chmod +x "$work/docker.sh"
+# shellcheck disable=SC2016  # 桩脚本里的 $* / ${GH_TOKEN} 就是字面量
+printf '#!/usr/bin/env bash\necho "$*" >>"%s"\n[ -z "${GH_TOKEN:-}" ] || echo "docker 拿到了 GH_TOKEN" >>"%s.leak"\nexit 0\n' "$docker_calls" "$RELEASE_TEST_CALLS" >"$work/docker.sh"; chmod +x "$work/docker.sh"
 export RELEASE_DOCKER="$work/docker.sh"
 expect "切到 v0.5.0" 0 "$rel" deploy v0.5.0 --confirm v0.5.0
 [ ! -s "$docker_calls" ] && ok "没有叠加文件的版本照常走 compose.sh" || bad "v0.5.0 却直接调了 docker：$(cat "$docker_calls")"
@@ -269,5 +277,8 @@ unset RELEASE_DOCKER
 [ "$(stat -c %a "$root/.release/compose.log")" = 600 ] && ok "compose.log 权限 600" || bad "compose.log 权限不对"
 
 if grep -rn 'AGE-SECRET-KEY\|CORE_CHAT_TOKEN=abc' "$root/.release" >/dev/null 2>&1; then bad "状态/日志里出现了密钥"; else ok "日志无密钥"; fi
-if grep -rnF "$GH_TOKEN" "$root/.release" "$root/gate.env" >/dev/null 2>&1; then bad "日志/闸门记录里出现了 GH_TOKEN"; else ok "日志无 GH_TOKEN"; fi
+if grep -rnF -e "$GH_TOKEN" -e "$GATE_TOKEN" "$root/.release" "$root/gate.env" >/dev/null 2>&1; then bad "日志/闸门记录里出现了令牌"; else ok "日志无令牌"; fi
+# 令牌只给闸门（#352 M1）：precheck、compose.sh、docker 桩执行时环境里都没有 GH_TOKEN（它们确实跑过）
+[ -s "$root/precheck.args" ] && [ -s "$RELEASE_TEST_CALLS" ] && [ -s "$docker_calls" ] || bad "precheck/compose/docker 桩没跑过，下面的断言没意义"
+if [ -s "$RELEASE_TEST_CALLS.leak" ]; then bad "令牌传到了闸门以外：$(sort -u "$RELEASE_TEST_CALLS.leak")"; else ok "precheck、compose、docker 都拿不到 GH_TOKEN"; fi
 [ "$fail" = 0 ] && echo "全部通过" || { echo "有失败"; exit 1; }
