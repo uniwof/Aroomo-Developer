@@ -37,7 +37,7 @@
 #   RELEASE_DB_CMD（测试用：从 stdin 读一条 SQL、输出无表头结果的命令；默认走 compose exec postgres psql，只读）
 #   RELEASE_PRECHECK_DB（默认 aroomo_core）
 #   RELEASE_REQUIRE_GATE（默认 1：目标版本缺 scripts/ci/merge-gate.py 就拒绝部署；只有测试设 0）
-#   RELEASE_GATE_REPO（默认 uniwof/Aroomo-Developer）RELEASE_PYTHON（默认 python3）
+#   合并闸门的仓库写死为 uniwof/Aroomo-Developer、解释器固定 python3，不能用环境变量改（#352 N1）
 set -Eeuo pipefail
 
 ROOT="${RELEASE_ROOT:-/opt/aroomo}"
@@ -48,6 +48,7 @@ HEALTH_TIMEOUT_S="${RELEASE_HEALTH_TIMEOUT_S:-420}"
 SERVICES=(core lobe shell)
 TAG_RE='^v[0-9]+\.[0-9]+\.[0-9]+$'
 CONFIRM_MSG="需要主会话：确认生产切到标签版"
+GATE_REPO="uniwof/Aroomo-Developer"   # 合并闸门检查的仓库，写死，不读环境变量（#352 N1）
 
 # 把自己复制到临时文件再执行：checkout 会替换本文件，正在运行的脚本不能被改到一半
 if [ -z "${RELEASE_TAG_COPY:-}" ]; then
@@ -316,9 +317,16 @@ run_gate() {
     die "目标版本 $(short "$target") 里没有 scripts/ci/merge-gate.py（#189），不部署（首个可部署标签要在 #351/#352 进 main 之后打；回到更早的版本用 rollback）"
   fi
   [ -n "$gate_tok" ] || die "合并闸门要查 GitHub：没读到只读令牌（deploy 会从标准输入读，输入不回显；不要 export GH_TOKEN、不要写进 .env 或命令行）"
-  command -v "${RELEASE_PYTHON:-python3}" >/dev/null || die "服务器没有 python3，合并闸门跑不了，不部署"
-  GH_TOKEN="$gate_tok" MERGE_GATE_READONLY=1 REPO="${RELEASE_GATE_REPO:-uniwof/Aroomo-Developer}" TAG_SHA="$tcommit" TAG_NAME="$target" PR_NUMBER="" GITHUB_STEP_SUMMARY="" \
-    "${RELEASE_PYTHON:-python3}" -B "$gate" || die "合并闸门不通过（见上面列出的待审 PR），不部署"
+  # 闸门查的仓库必须就是代码拉取的那个：取远端地址最后两段 owner/repo 和写死的 GATE_REPO 比，不一致就拒绝（#352 N1）
+  local url p remote_repo
+  url="$(git_ remote get-url "$REMOTE" 2>/dev/null)" || die "读不出远端 $REMOTE 的地址，无法核对仓库，不部署"
+  p="${url%/}"; p="${p%.git}"
+  remote_repo="$(basename "$(dirname "$p" | sed 's|.*:||')")/$(basename "$p")"
+  [ "$remote_repo" = "$GATE_REPO" ] \
+    || die "远端 $REMOTE 的仓库是 $remote_repo，和合并闸门固定检查的 $GATE_REPO 不一致，不部署"
+  command -v python3 >/dev/null || die "服务器没有 python3，合并闸门跑不了，不部署"
+  GH_TOKEN="$gate_tok" MERGE_GATE_READONLY=1 REPO="$GATE_REPO" TAG_SHA="$tcommit" TAG_NAME="$target" PR_NUMBER="" GITHUB_STEP_SUMMARY="" \
+    python3 -B "$gate" || die "合并闸门不通过（见上面列出的待审 PR），不部署"
 }
 
 # 生产前检查 + 部署前备份（#229）。dry 时只检查、不备份。脚本取自目标版本（只有新版本知道自己要跑哪些迁移）

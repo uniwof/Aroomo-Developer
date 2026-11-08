@@ -19,7 +19,9 @@ expect() { # expect <说明> <期望退出码> <命令...>
   LAST_OUT="$out"
 }
 
-origin="$work/origin.git"; seed="$work/seed"; root="$work/prod"
+# 远端路径以 uniwof/Aroomo-Developer.git 结尾：发布脚本会把远端的 owner/repo 和闸门写死的仓库核对（#352 N1）
+origin="$work/gh/uniwof/Aroomo-Developer.git"; seed="$work/seed"; root="$work/prod"
+mkdir -p "$(dirname "$origin")"
 git init -q --bare -b main "$origin"
 git init -q -b main "$seed"
 mkdir -p "$seed/scripts" "$seed/deploy"
@@ -176,6 +178,20 @@ echo "$LAST_OUT" | grep -q '没读到只读令牌' && ok "说明没读到令牌"
 expect "本地 --hotfix 被拒绝，不跳过闸门" 1 "$rel" deploy v0.2.0 --confirm v0.2.0 --hotfix
 echo "$LAST_OUT" | grep -q 'hotfix 标签' && ok "说明豁免只认 GitHub 上的 hotfix 标签" || bad "输出不对：$LAST_OUT"
 [ "$(git -C "$root" rev-parse HEAD)" = "$(git -C "$seed" rev-parse v0.1.0)" ] && ok "--hotfix 时没有切走" || bad "--hotfix 却切走了"
+# 闸门的解释器和仓库不能用环境变量换（#352 N1）：设了 RELEASE_PYTHON=true、RELEASE_GATE_REPO 指向别的仓库，闸门照样跑、照样拒绝
+rm -f "$root/gate.env"
+RELEASE_PYTHON=true RELEASE_GATE_REPO=someone/no-pending-prs expect "设 RELEASE_PYTHON/RELEASE_GATE_REPO 也绕不过闸门" 1 "$rel" deploy v0.2.0 --confirm v0.2.0
+grep -qx 'REPO=uniwof/Aroomo-Developer' "$root/gate.env" 2>/dev/null && ok "闸门照样由 python3 跑、收到的仍是写死的仓库" || bad "闸门没跑或仓库不对：$(cat "$root/gate.env" 2>/dev/null)"
+[ "$(git -C "$root" rev-parse HEAD)" = "$(git -C "$seed" rev-parse v0.1.0)" ] && ok "设了这两个变量也没有切走" || bad "设了变量却切走了"
+# 远端地址的 owner/repo 和写死的仓库不一致：拒绝，闸门都不跑（闸门本可通过，确认是核对挡住的）
+mkdir -p "$work/gh/someone"; ln -s "$origin" "$work/gh/someone/Other.git"
+git -C "$root" remote set-url origin "$work/gh/someone/Other.git"
+rm -f "$root/GATE_FAIL" "$root/gate.env"
+expect "远端仓库和闸门写死的仓库不一致：拒绝部署" 1 "$rel" deploy v0.2.0 --confirm v0.2.0
+echo "$LAST_OUT" | grep -q 'someone/Other.*不一致' && ok "说明远端仓库不一致" || bad "输出不对：$LAST_OUT"
+[ ! -e "$root/gate.env" ] && ok "不一致时闸门没跑" || bad "不一致却跑了闸门"
+[ "$(git -C "$root" rev-parse HEAD)" = "$(git -C "$seed" rev-parse v0.1.0)" ] && ok "不一致时没有切走" || bad "不一致却切走了"
+git -C "$root" remote set-url origin "$origin"; touch "$root/GATE_FAIL"
 
 # 生产前检查：目标版本里没有 → 拒绝；有但失败 → 拒绝；演练带 --no-backup，真切换不带
 # 数据库只执行到 0001，让下面两条真正走到闸门/生产前检查（否则会先被迁移核对拒绝）
