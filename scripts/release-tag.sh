@@ -384,6 +384,12 @@ else
   git_ merge-base --is-ancestor "refs/tags/$target^{commit}" "refs/remotes/$REMOTE/$MAIN_BRANCH" \
     || die "标签 $target 不在 $MAIN_BRANCH 上，生产只部署 main 上的标签"
   tcommit="$(commit_of "refs/tags/$target")"
+  # 不许用 deploy 退到更旧的标签（#352 M4）：当前记录是 vX.Y.Z 标签、目标比它旧 → 拒绝，回退走 rollback。
+  # 当前记录是提交号（第一次从 dev 切到标签）时没有可比的版本号，不查。
+  if [[ "$cur" =~ $TAG_RE ]] && [ "$target" != "$cur" ] \
+     && [ "$(printf '%s\n%s\n' "$target" "$cur" | sort -V | head -1)" = "$target" ]; then
+    die "目标 $target 比当前已部署的 $cur 旧：不要用 deploy 回退，请改用 rollback（见 docs/ops/RELEASE.md「回滚方案」）"
+  fi
   if [ "$tcommit" = "$(git_ rev-parse HEAD)" ] && [ "$(read_state current)" = "$target" ]; then
     log "生产已经是 $target，无需部署"; exit 0
   fi

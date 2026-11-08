@@ -184,6 +184,12 @@ printf '0001_a.sql\n0002_b.sql\n' >"$applied"
 rm -f "$root/GATE_FAIL"
 expect "闸门通过后切到 v0.2.0" 0 "$rel" deploy v0.2.0 --confirm v0.2.0
 [ "$(head_tag)" = v0.2.0 ] && ok "现在是 v0.2.0" || bad "检出：$(head_tag)"
+
+# 部署比当前已部署标签旧的版本：演练、确认都拒绝，提示改用 rollback（#352 M4）
+expect "deploy 比当前（v0.2.0）旧的 v0.1.0：演练就拒绝" 1 "$rel" deploy v0.1.0
+echo "$LAST_OUT" | grep -q '比当前已部署的 v0.2.0 旧' && echo "$LAST_OUT" | grep -q 'rollback' && ok "说明比当前旧、改用 rollback" || bad "输出不对：$LAST_OUT"
+expect "deploy 比当前旧的 v0.1.0：确认也拒绝" 1 "$rel" deploy v0.1.0 --confirm v0.1.0
+[ "$(head_tag)" = v0.2.0 ] && ok "拒绝后仍是 v0.2.0" || bad "检出变了：$(head_tag)"
 touch "$root/PRECHECK_FAIL"
 expect "生产前检查（目标版本里的）失败则不切换" 1 "$rel" deploy v0.3.0 --confirm v0.3.0
 [ "$(head_tag)" = v0.2.0 ] && ok "检查失败后仍是 v0.2.0" || bad "检查失败却切换了"
