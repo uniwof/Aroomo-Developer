@@ -57,6 +57,8 @@ const CSRF = { 'x-aroomo-request': '1' };
 /** 种子里的一个「试用」能力（试用到期日按账号存） */
 const TRIAL_CAP = [...CAPABILITY_SEED.items, ...CAPABILITY_SEED.tools].find((c) => c.access === 'trial')!.id;
 const MISSING_UUID = '00000000-0000-4000-8000-0000000000ff';
+/** 所有者对话令牌（占位，≥32 字符）：配上它 /v1 才真的走鉴权，家人会话令牌才拿得到写死的 401（不然入口先 503 CHAT_NOT_CONFIGURED） */
+const CHAT_TOKEN = 'placeholder-chat-token-176-0000000000000000';
 /** generateVapidKeys 偶尔（私钥首字节为 0，约 1/256）给出 31 字节私钥、过不了配置校验：重试到合法为止，免得测试随机失败 */
 const VAPID = (() => {
   for (;;) {
@@ -484,8 +486,12 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
   const xiaoClientIds: string[] = [];
   let seq = 0;
   const nonce = () => `n${(++seq).toString(36)}`;
-  const call = (who: Who, method: string, url: string, payload?: object, extra?: Record<string, string>): Promise<Inject> =>
-    t.app.inject({ method, url, headers: { ...headers[who], ...(extra ?? {}) }, ...(payload !== undefined ? { payload } : {}) } as InjectOptions);
+  /** 每个凭据发了多少请求（auth/plugin.ts 按凭据限速 1200 次 / 分钟；遍历里攻击方会话要换新会话，见 run） */
+  const sent: Partial<Record<Who, number>> = {};
+  const call = (who: Who, method: string, url: string, payload?: object, extra?: Record<string, string>): Promise<Inject> => {
+    sent[who] = (sent[who] ?? 0) + 1;
+    return t.app.inject({ method, url, headers: { ...headers[who], ...(extra ?? {}) }, ...(payload !== undefined ? { payload } : {}) } as InjectOptions);
+  };
   const confirmToken = async (who: Who, res428: Inject): Promise<string> => {
     const ch = res428.json().error.confirm as { stepUrl: string };
     expect((await call(who, 'POST', ch.stepUrl, { step: 1 })).statusCode).toBe(200);
@@ -608,7 +614,7 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     t = await assistantEnv(
       { name: env.name, make: async (now) => ({ ...(await env.make(now)), pushFetch: (async () => new Response(null, { status: 201 })) as typeof fetch }) },
       // CORE_JOBS=off：twoAccounts 默认会启动进程内定时任务（首跑 60 秒后），慢机器上 Key 对账 / 模型能力刷新会在攻击中途改所有者的行、弄脏数据库快照
-      { extraEnv: { CORE_JOBS: 'off', VAULT_KEY: randomBytes(32).toString('base64'), PUSH_ENABLED: 'true', VAPID_PUBLIC_KEY: VAPID.publicKey, VAPID_PRIVATE_KEY: VAPID.privateKey, VAPID_SUBJECT: 'mailto:owner@example.test' } },
+      { extraEnv: { CORE_JOBS: 'off', CORE_CHAT_TOKEN: CHAT_TOKEN, VAULT_KEY: randomBytes(32).toString('base64'), PUSH_ENABLED: 'true', VAPID_PUBLIC_KEY: VAPID.publicKey, VAPID_PRIVATE_KEY: VAPID.privateKey, VAPID_SUBJECT: 'mailto:owner@example.test' } },
     );
     headers.xiao = t.xiaoHeaders;
     ids.xiao.user = t.xiaoId;
@@ -771,6 +777,19 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
       return (r.json() as { error?: { code?: string } }).error?.code ?? null;
     } catch {
       return null;
+    }
+  };
+  /**
+   * 第 2 轮必改 1：只认 schema 校验产生的 400。http/errors.ts 里只有 Fastify 校验分支回 { code: 'BAD_REQUEST', fields: [...] }；
+   * 处理器用 badRequest() 抛的业务 400 也叫 BAD_REQUEST，但没有 fields，所以按 fields 区分（不只看错误码）。
+   */
+  const isSchema400 = (r: Inject): boolean => {
+    if (r.statusCode !== 400) return false;
+    try {
+      const e = (r.json() as { error?: { code?: string; fields?: unknown } }).error;
+      return e?.code === 'BAD_REQUEST' && Array.isArray(e.fields);
+    } catch {
+      return false;
     }
   };
   /**
@@ -957,13 +976,18 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
       ['POST', '/v1/chat/completions', { messages: [{ role: 'user', content: 'x' }] }],
       ['POST', '/v1/responses', { input: 'x' }],
     ] as const;
-    // 必改 5：家人会话令牌打 /v1 一律 503 CHAT_NOT_CONFIGURED——测试里没配所有者对话令牌（CORE_CHAT_TOKEN），
-    // 入口在鉴权之前就关了，鉴权根本没走到；所以这里只能证明「进不去」，会话令牌的鉴权分支由配了 CORE_CHAT_TOKEN 的 chat 测试负责
-    for (const [method, url, payload] of V1) {
-      const res = await call('xiao', method, url, payload);
-      expect([res.statusCode, errCode(res)], `xiao ${method} ${url}`).toEqual([503, 'CHAT_NOT_CONFIGURED']);
-      expect(leakedIn(res)).toEqual([]);
+    // 第 2 轮：这里配了 CORE_CHAT_TOKEN，/v1 真的走到鉴权（chat/routes.ts callerCtx）。家人的会话令牌（Bearer）和 Cookie 会话
+    // 都不是所有者对话令牌、也不是 models:chat 客户端令牌 → 写死 401 UNAUTHORIZED（不再是鉴权之前的 503）
+    for (const who of ['xiao', 'xiaoCookie'] as const) {
+      for (const [method, url, payload] of V1) {
+        const res = await call(who, method, url, payload);
+        expect([res.statusCode, errCode(res)], `${who} ${method} ${url}`).toEqual([401, 'UNAUTHORIZED']);
+        expect(leakedIn(res)).toEqual([]);
+      }
     }
+    // 正向对照：所有者对话令牌能进（证明 401 不是因为入口整个关着）
+    const ownerChat = await t.app.inject({ method: 'GET', url: '/v1/models', headers: { authorization: `Bearer ${CHAT_TOKEN}` } });
+    expect(ownerChat.statusCode, ownerChat.body.slice(0, 200)).toBe(200);
     for (const w of ['xiao', 'xiaoClient'] as const) {
       const res = await call(w, 'POST', '/internal/route-preview', {});
       expect([res.statusCode, errCode(res)], `${w} /internal/route-preview`).toEqual([403, 'FORBIDDEN']);
@@ -1038,8 +1062,13 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
   interface McpPos {
     args: (v: Victim) => Promise<Json> | Json;
     expect: 'mark' | 'ok' | 'reached';
-    /** 带了资源 id（别人的 id 打进来必须 isError） */
-    takesId?: true;
+    /**
+     * 带了资源 id：arg = args() 里放 id 的参数，kind = 它在 ids 里的类别（不存在的值取 ids.missing[kind]）。
+     * 第 2 轮必改 2：攻击时用 args(受害者) 原样调（别人的 id），再把 arg 换成不存在的值调一次，两次报错必须完全一样
+     */
+    takesId?: { arg: string; kind: string };
+    /** 攻击方调用时的参数（默认 args(受害者)）：会在攻击方名下建东西的工具用攻击方自己的标记，免得自己建的东西里出现受害者标记、被当成泄露 */
+    attack?: (v: Victim) => Json;
     why?: string;
   }
   const MCP_DENIED = '工具不存在或当前客户端不可用';
@@ -1047,15 +1076,15 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     list_tools: { args: () => ({}), expect: 'ok', why: '工具目录，不含个人数据' },
     // shortcut: 测试不联网，call_tool 只证明主人过了 /mcp 的放行检查、真的进了工具网关（127.0.0.1 被网关自己的 SSRF 防护拦下）；要证明完整成功得给 GatewayService 注入 fetch（要改 src），暂不做
     call_tool: { args: () => ({ tool: 'read_webpage', args: { url: 'https://127.0.0.1/' } }), expect: 'reached', why: '不联网，见上' },
-    create_task: { args: (v) => ({ kind: 'checkin', site: `https://${MARK[v]}.example.test` }), expect: 'ok' },
-    get_task: { args: (v) => ({ id: ids[v].task }), expect: 'mark', takesId: true },
+    create_task: { args: (v) => ({ kind: 'checkin', site: `https://${MARK[v]}.example.test` }), expect: 'ok', attack: () => ({ kind: 'checkin', site: `https://${MARK.xiao}.example.test` }) },
+    get_task: { args: (v) => ({ id: ids[v].task }), expect: 'mark', takesId: { arg: 'id', kind: 'task' } },
     list_tasks: { args: () => ({}), expect: 'mark' },
-    cancel_task: { args: async (v) => ({ id: (await make(v, 'POST', '/api/tasks', { kind: 'browse', site: `https://${MARK[v]}.example.test` })).task.id }), expect: 'ok', takesId: true },
+    cancel_task: { args: async (v) => ({ id: (await make(v, 'POST', '/api/tasks', { kind: 'browse', site: `https://${MARK[v]}.example.test` })).task.id }), expect: 'ok', takesId: { arg: 'id', kind: 'task' } },
     search_library: { args: (v) => ({ query: MARK[v] }), expect: 'mark' },
-    get_library_item: { args: (v) => ({ id: ids[v].library }), expect: 'mark', takesId: true },
-    submit_resource: { args: (v) => ({ title: `${MARK[v]} mcp`, note: 'x' }), expect: 'ok' },
+    get_library_item: { args: (v) => ({ id: ids[v].library }), expect: 'mark', takesId: { arg: 'id', kind: 'library' } },
+    submit_resource: { args: (v) => ({ title: `${MARK[v]} mcp`, note: 'x' }), expect: 'ok', attack: () => ({ title: `${MARK.xiao} mcp`, note: 'x' }) },
     list_memory_topics: { args: () => ({}), expect: 'mark' },
-    get_memory: { args: (v) => ({ topic: ids[v].memory }), expect: 'mark', takesId: true },
+    get_memory: { args: (v) => ({ topic: ids[v].memory }), expect: 'mark', takesId: { arg: 'topic', kind: 'memory' } },
   };
   const mcpCall = (who: Who, name: string, args: object) => call(who, 'POST', '/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } });
   const mcpText = (r: Inject): { isError: boolean; text: string } => {
@@ -1078,29 +1107,44 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     expect(bad, '主人用自己的 id 调自己的 MCP 工具没成功').toEqual([]);
   });
 
-  it('/mcp：小号的全范围客户端令牌，tools/list 里每个工具带别人的 id 调一遍，都拿不到别人的数据', async () => {
-    const rpc = (method: string, params?: object) => call('xiaoClient', 'POST', '/mcp', { jsonrpc: '2.0', id: 1, method, ...(params ? { params } : {}) });
-    const tools = (await rpc('tools/list')).json().result.tools as { name: string; inputSchema: { properties?: Record<string, { enum?: string[] }> } }[];
-    expect(tools.length).toBeGreaterThan(5);
+  it('/mcp：小号的全范围客户端令牌，tools/list 里每个工具按 MCP_POSITIVE 的参数换成别人的调一遍；带 id 的工具「别人的 id」和「不存在的 id」报错完全一样', async () => {
+    const tools = ((await call('xiaoClient', 'POST', '/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/list' })).json().result.tools as { name: string }[]).map((x) => x.name);
+    // 参数不再按参数名猜（第 2 轮必改 2）：每个工具都从 MCP_POSITIVE 推（正向对照那条已证明表和 tools/list 一一对应）
+    expect(tools.filter((n) => !(n in MCP_POSITIVE)), '工具要先在 MCP_POSITIVE 登记').toEqual([]);
     const bad: string[] = [];
+    let compared = 0;
+    /** 报错的全部可观察内容（JSON-RPC error 或 result 的 isError + 文本）。查询值本身（攻击方自己发的）换成占位，其余逐字比较 */
+    const shape = (r: Inject, query: string) => {
+      const j = r.json() as Json;
+      const scrub = (x: unknown) => (x === undefined ? null : JSON.parse(JSON.stringify(x).split(query).join('<id>')));
+      return { status: r.statusCode, error: scrub(j.error), isError: mcpText(r).isError, text: mcpText(r).text.split(query).join('<id>') };
+    };
     for (const victim of ['owner', 'b'] as const) {
-      const v = ids[victim];
-      // 每个参数按名字填别人的 id；查询词填别人的标记；枚举取第一个
-      const guess = (name: string, p: { enum?: string[] }): unknown =>
-        p.enum?.[0] ?? ({ id: v.library, topic: v.memory, taskId: v.task, q: MARK[victim], query: MARK[victim], site: 'https://example.test', url: 'https://example.test' } as Record<string, unknown>)[name] ?? MARK.xiao;
-      for (const tool of tools) {
-        const argSets = [Object.fromEntries(Object.entries(tool.inputSchema.properties ?? {}).map(([n, p]) => [n, guess(n, p)]))];
-        if (/task/.test(tool.name)) argSets.push({ ...argSets[0], id: v.task });
-        for (const args of argSets) {
-          const res = await rpc('tools/call', { name: tool.name, arguments: args });
-          if (res.statusCode >= 500) bad.push(`${tool.name} [${victim}] → ${res.statusCode}`);
-          if (leakedIn(res).length) bad.push(`${tool.name} [${victim}] 泄露：${res.body.slice(0, 200)}`);
-          // 带资源 id 的工具：别人的 id 必须报错（正向对照里主人自己调是成功的）
-          if (MCP_POSITIVE[tool.name]?.takesId && res.statusCode === 200 && !mcpText(res).isError) bad.push(`${tool.name} [${victim}] 带别人的 id 调用成功了：${res.body.slice(0, 200)}`);
-        }
+      for (const name of tools) {
+        const spec = MCP_POSITIVE[name]!;
+        const args = spec.attack ? spec.attack(victim) : await spec.args(victim);
+        const res = await mcpCall('xiaoClient', name, args);
+        if (res.statusCode >= 500) bad.push(`${name} [${victim}] → ${res.statusCode}`);
+        if (leakedIn(res).length) bad.push(`${name} [${victim}] 泄露：${res.body.slice(0, 200)}`);
+        if (!spec.takesId) continue;
+        // 带资源 id 的工具：别人的 id 必须报错（正向对照里主人自己调是成功的），且和不存在的 id 报错完全一样
+        const { arg, kind } = spec.takesId;
+        if (name === 'get_memory') await ATTACK_PREP['DELETE /api/memory/:topic']!(); // 主题名按账号分命名空间：先删掉攻击方自己的同名主题
+        const other = String(args[arg]);
+        const missing = ids.missing[kind]!;
+        expect(other, `${name}：args(${victim}).${arg} 要是受害者的 id`).not.toBe(missing);
+        const again = await mcpCall('xiaoClient', name, args);
+        const miss = await mcpCall('xiaoClient', name, { ...args, [arg]: missing });
+        const a = shape(again, other);
+        const m = shape(miss, missing);
+        compared++;
+        if (!(a.isError || a.error)) bad.push(`${name} [${victim}] 带别人的 id 调用成功了：${again.body.slice(0, 200)}`);
+        if (JSON.stringify(a) !== JSON.stringify(m)) bad.push(`${name} [${victim}] 别人的 id 和不存在的 id 报错不一样：${JSON.stringify(a)} ≠ ${JSON.stringify(m)}`);
+        if (leakedIn(again).length || leakedIn(miss).length) bad.push(`${name} [${victim}] 泄露`);
       }
     }
     expect(bad).toEqual([]);
+    expect(compared, 'get_task、cancel_task、get_library_item、get_memory × owner / B 都要比对').toBe(8);
   });
 
   it('令牌提权：家人用自己的会话 / arc_ 令牌签发更大范围或所有者级令牌、列出 / 吊销别人的令牌都不行；过期 / 已吊销的令牌不能用', async () => {
@@ -1190,6 +1234,18 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
       ownerRows += await count(userScoped(db, 'owner'), table);
     }
     expect(bad).toEqual([]);
+    // 第 2 轮必改 3：系统范围（只读策略）按 owner / B 数出的行数 = 各自范围数出的行数。系统只读策略漏掉部分行时，
+    // 数据库快照（用系统范围读）会少看这些行、越权改了也发现不了；这里逐表、逐账号钉住
+    const countOf = async (q: Db, table: string, uid: string) => Number((await q.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table} WHERE user_id::text = $1`, [uid])).rows[0]!.n);
+    const sysAll = systemScoped(db);
+    const scopeGaps: string[] = [];
+    for (const table of rlsTables) {
+      for (const uid of victims) {
+        const [inSys, inOwn] = [await countOf(sysAll, table, uid), await countOf(userScoped(db, uid), table, uid)];
+        if (inSys !== inOwn) scopeGaps.push(`${table} [${uid === 'owner' ? 'owner' : 'b'}]：系统范围 ${inSys} 行，本人范围 ${inOwn} 行`);
+      }
+    }
+    expect(scopeGaps, '系统只读策略和本人范围看到的行数不一致（快照会漏看）').toEqual([]);
     // 正向对照：所有者自己的范围里确实有行（不是因为表是空的才读不到）
     expect(ownerRows).toBeGreaterThan(10);
     expect(await count(userScoped(db, 'owner'), 'vault_secrets')).toBeGreaterThan(0);
@@ -1274,11 +1330,18 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     };
     const expFor = (r: SeenRoute, attacker: Attacker): Exp =>
       attacker === 'xiaoClient' ? (clientCanEnter(r) ? CLIENT[key(r)]! : FORBID) : isOwnerOnly(r) ? FORBID : FAMILY[key(r)]!;
-    const forgedCursor = (v: Victim) => Buffer.from(`2099-01-01T00:00:00.000Z|${ids[v].conversation}`).toString('base64url');
+    const forgedCursor = (v: Victim | 'missing') => Buffer.from(`2099-01-01T00:00:00.000Z|${ids[v].conversation}`).toString('base64url');
+    let injCompared = 0;
     const run = async (r: SeenRoute, victim: Victim, attacker: Attacker) => {
       const exp = expFor(r, attacker);
       const label = `${key(r)} [${attacker}→${victim}]`;
       const n = nonce();
+      // 第 2 轮必改 1 每条注入多一个「不存在的 id」对照，攻击方会话一分钟内会超过按凭据的限速（1200）、拿到 429。
+      // 换一个新登录的会话（同一个小号账号，限速按凭据算）；客户端令牌那轮请求少，不用换
+      if (attacker === 'xiao' && (sent.xiao ?? 0) > 900) {
+        headers.xiao = await login('xiaohao@example.test', XIAOHAO_TEST_PASSWORD);
+        sent.xiao = 0;
+      }
       await ATTACK_PREP[key(r)]?.();
       const res = await attack(r, victim, attacker, n);
       check(label, res, exp);
@@ -1296,31 +1359,47 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
       // 路径之外的别人的 id（必改 1）：身份覆盖头、query（含 ids 数组、伪造的翻页游标、排序 / 过滤）、请求体嵌套字段，
       // 三种分成三个独立请求（塞一起时 body 被 schema 拒成 400，头和 query 就没测到）。
       // 期望：头注入不碰 schema，必须和声明的完全一样；只给所有者的（期望 403）三种都必须严格 == 403，不接受 400；
-      // 家人能用的 query / body 注入，允许声明的期望或 schema 拒绝（400）。不泄露；数据库快照兜底「没写到别人名下」
-      const v = ids[victim];
-      const injections: [string, NonNullable<Parameters<typeof attack>[4]>][] = [
-        ['头', { headers: { 'x-user-id': victim === 'owner' ? 'owner' : v.user!, 'x-aroomo-user-id': v.user ?? 'owner', 'x-forwarded-user': v.user ?? 'owner', 'x-aroomo-scope': 'owner' } }],
-        ['query', {
-          query: new URLSearchParams([
-            ['userId', v.user ?? 'owner'], ['user_id', v.user ?? 'owner'], ['scope', 'owner'], ['memberId', v.member!], ['vaultId', v.vault!], ['parentId', v.library!],
-            ['ids', v.inbox!], ['ids[]', v.library!], ['cursor', forgedCursor(victim)], ['sort', 'user_id'], ['filter', 'all'], ['deleted', 'true'],
-          ]).toString(),
-        }],
-        // GET 不收请求体，不发
-        ...(r.method === 'GET' ? [] : [['body', { body: { userId: v.user ?? 'owner', user_id: v.user ?? 'owner', scope: 'owner', memberId: v.member, vaultId: v.vault, parentId: v.library, ids: [v.inbox, v.library, v.task] } }] as [string, NonNullable<Parameters<typeof attack>[4]>]]),
-      ];
+      // 家人能用的 query / body 注入，允许声明的期望或「schema 校验拒绝」（isSchema400：BAD_REQUEST + fields，只有 http/errors.ts 的校验分支这样回）。
+      // 第 2 轮必改 1：处理器自己回的业务 400 不算 schema 拒绝 → 失败；凡是放过 400 的注入，再拿不存在的 id 做同样的注入，
+      // 状态码和错误码必须完全一样（否则业务 400 / 404 的差异就是一条存在性旁路）。不泄露；数据库快照兜底「没写到别人名下」
+      const injectionsFor = (target: Victim | 'missing'): [string, NonNullable<Parameters<typeof attack>[4]>][] => {
+        const v = ids[target];
+        const uid = target === 'owner' ? 'owner' : v.user!;
+        return [
+          ['头', { headers: { 'x-user-id': uid, 'x-aroomo-user-id': uid, 'x-forwarded-user': uid, 'x-aroomo-scope': 'owner' } }],
+          ['query', {
+            query: new URLSearchParams([
+              ['userId', uid], ['user_id', uid], ['scope', 'owner'], ['memberId', v.member!], ['vaultId', v.vault!], ['parentId', v.library!],
+              ['ids', v.inbox!], ['ids[]', v.library!], ['cursor', forgedCursor(target)], ['sort', 'user_id'], ['filter', 'all'], ['deleted', 'true'],
+            ]).toString(),
+          }],
+          // GET 不收请求体，不发
+          ...(r.method === 'GET' ? [] : [['body', { body: { userId: uid, user_id: uid, scope: 'owner', memberId: v.member, vaultId: v.vault, parentId: v.library, ids: [v.inbox, v.library, v.task] } }] as [string, NonNullable<Parameters<typeof attack>[4]>]]),
+        ];
+      };
       // 「只给所有者」按路由声明认（不是按期望 403 认：家人登记 HTTP 工具的 403 是处理器里的业务规则，schema 先跑是对的）
       const ownerOnly = attacker === 'xiaoClient' ? !clientCanEnter(r) : isOwnerOnly(r);
-      for (const [kind, extra] of injections) {
+      const missingInj = injectionsFor('missing');
+      for (const [idx, [kind, extra]] of injectionsFor(victim).entries()) {
         await ATTACK_PREP[key(r)]?.();
         const inj = await attack(r, victim, attacker, nonce(), extra);
         const known = kind === 'body' && attacker === 'xiao' && VALIDATES_BEFORE_ADMIN_CHECK.includes(key(r));
-        if (known && inj.statusCode === 400) knownGapHit.add(key(r));
+        if (known && isSchema400(inj)) knownGapHit.add(key(r));
         const allow400 = (!ownerOnly && kind !== '头') || known;
-        if (!(statusOk(exp, inj.statusCode) && (exp.code === undefined || errCode(inj) === exp.code)) && !(allow400 && inj.statusCode === 400)) {
-          wrong.push(`${label} ${kind}注入别人的 id → ${inj.statusCode} ${errCode(inj)}，应为 ${exp.status} ${exp.code ?? ''}${allow400 ? '（或 400）' : ''} ${inj.body.slice(0, 120)}`);
+        const declared = statusOk(exp, inj.statusCode) && (exp.code === undefined || errCode(inj) === exp.code);
+        if (!declared && !(allow400 && isSchema400(inj))) {
+          const why = inj.statusCode === 400 && allow400 ? '（400 但不是 schema 校验拒的——处理器的业务 400，存在性旁路）' : '';
+          wrong.push(`${label} ${kind}注入别人的 id → ${inj.statusCode} ${errCode(inj)}${why}，应为 ${exp.status} ${exp.code ?? ''}${allow400 ? '（或 schema 400）' : ''} ${inj.body.slice(0, 120)}`);
         }
         if (leakedIn(inj).length) leaks.push(`${label} ${kind}注入别人的 id 后泄露：${inj.body.slice(0, 200)}`);
+        if (allow400) {
+          injCompared++;
+          await ATTACK_PREP[key(r)]?.();
+          const miss = await attack(r, 'missing', attacker, nonce(), missingInj[idx]![1]);
+          if (inj.statusCode !== miss.statusCode || errCode(inj) !== errCode(miss)) {
+            oracle.push(`${label} ${kind}注入：别人的 id → ${inj.statusCode} ${errCode(inj)}，不存在的 id → ${miss.statusCode} ${errCode(miss)}`);
+          }
+        }
       }
     };
     // 先用小号自己发的全范围客户端令牌打一遍，再用小号会话打一遍
@@ -1347,6 +1426,8 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     expect(oracle, '能从响应差异看出别人的资源存在').toEqual([]);
     expect(listLeak, '列表接口里出现了别人的资源').toEqual([]);
     expect(VALIDATES_BEFORE_ADMIN_CHECK.filter((k) => !knownGapHit.has(k)), 'VALIDATES_BEFORE_ADMIN_CHECK 里的路由已经严格 403 了，从白名单删掉').toEqual([]);
+    // 「别人的 = 不存在的」注入对照真的跑了（家人能用的 query / body 注入每条都比对；0 = 循环没走到）
+    expect(injCompared, '放过 schema 400 的注入都要拿不存在的 id 再打一遍').toBeGreaterThan(50);
 
     const after = await snapshot();
     const changed = diff(before, after);
