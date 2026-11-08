@@ -132,8 +132,13 @@ expect "确认回滚也拒绝（迁移超前）" 1 "$rel" rollback --confirm "$(
 [ "$(head_tag)" = v0.2.0 ] && ok "拒绝后仍是 v0.2.0" || bad "拒绝后检出变了：$(head_tag)"
 
 printf '0001_a.sql\n' >"$applied"   # 假设 v0.2.0 没有真正执行过 0002
-expect "回滚演练" 0 "$rel" rollback
-expect "一键回滚到上一个（v0.1.0 之前的记录是 v0.1.0 的提交）" 0 "$rel" rollback --confirm "$(cat "$root/.release/previous")"
+# 回滚不受闸门限制（#352 M5）：闸门会失败、没有令牌（GitHub 不可用 / 令牌过期）时照样能紧急回滚
+touch "$root/GATE_FAIL"; rm -f "$root/gate.env"
+rel_notok() { "$relbin" "$@" </dev/null; }
+expect "回滚演练（闸门会失败、无令牌）" 0 rel_notok rollback
+expect "一键回滚到上一个（闸门会失败、无令牌也成功；v0.1.0 之前的记录是 v0.1.0 的提交）" 0 rel_notok rollback --confirm "$(cat "$root/.release/previous")"
+[ ! -e "$root/gate.env" ] && ok "回滚没有跑闸门" || bad "回滚跑了闸门"
+rm -f "$root/GATE_FAIL"
 [ "$(git -C "$root" rev-parse HEAD)" = "$(git -C "$seed" rev-parse v0.1.0)" ] && ok "回滚后是 v0.1.0 的提交" || bad "回滚后检出不对"
 [ "$(cat "$root/.release/previous")" = v0.2.0 ] && ok "回滚后 previous=v0.2.0（可再切回）" || bad "previous 状态不对"
 printf '0001_a.sql\n0002_b.sql\n' >"$applied"
