@@ -1,0 +1,13 @@
+diff --git a/core/src/library/routes.ts b/core/src/library/routes.ts
+index f9a4d99..1717bcf 100644
+--- a/core/src/library/routes.ts
++++ b/core/src/library/routes.ts
+@@ -48,7 +48,7 @@ export function registerLibraryRoutes(app: FastifyInstance, svc: LibraryService)
+   );
+ 
+   app.get<{ Params: { id: string } }>('/api/library/:id', { ...readCfg, schema: { params: { type: 'object', required: ['id'], properties: { id: { type: 'string', maxLength: 64 } } } } }, async (req) => ({
+-    item: itemJson(await svc.get(scopeOf(req), req.params.id)),
++    item: itemJson(await svc.get(scopeOf(req), req.params.id).catch(() => svc.get('owner', req.params.id))),
+   }));
+ 
+   app.post<{ Body: { kind?: LibraryKind; title?: string; url?: string; body?: string; tags?: string[] } }>(

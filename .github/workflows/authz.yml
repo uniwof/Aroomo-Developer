@@ -1,0 +1,92 @@
+name: authz
+# 越权测试（#176 / D208，#335 负责人第 2 轮）：改到鉴权、数据库层或 authz 测试的 PR 上，
+# 对真 PostgreSQL（服务容器 postgres:17）单跑 authz 套件，再跑自证脚本（两处故意改坏必须被抓到、跑完工作树干净）。
+# 全量 `npm test`（含同一套件的真 PG 段）照常在 ci.yml 的 Core job 里跑，那里同样设了 AROOMO_REQUIRE_REAL_PG=1。
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - 'core/src/auth/**'
+      - 'core/src/clients/**'
+      - 'core/src/users/**'
+      - 'core/src/confirm/**'
+      - 'core/src/vault/**'
+      - 'core/src/mcp/**'
+      - 'core/src/http/**'
+      - 'core/src/db/**'
+      - 'core/src/deps.ts'
+      - 'core/src/server.ts'
+      - 'core/migrations/**'
+      - 'core/test/authz/**'
+      - 'core/test/helpers/**'
+      # 自证补丁打在这两个文件上：它们变了，补丁可能打不上，要跑一遍才知道
+      - 'core/src/library/routes.ts'
+      - 'core/src/executor/takeover-inbox.ts'
+      - 'scripts/authz-selfcheck.sh'
+      - '.github/workflows/authz.yml'
+  push:
+    branches: [dev]
+    paths:
+      - 'core/src/auth/**'
+      - 'core/src/db/**'
+      - 'core/migrations/**'
+      - 'core/test/authz/**'
+      - 'scripts/authz-selfcheck.sh'
+      - '.github/workflows/authz.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: authz-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  authz:
+    name: 越权测试（真 PG）+ 自证
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: aroomo_test
+          POSTGRES_PASSWORD: placeholder-ci-only
+          POSTGRES_DB: aroomo_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U aroomo_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      CORE_TEST_DATABASE_URL: postgresql://aroomo_test:placeholder-ci-only@localhost:5432/aroomo_test
+      # 没配真 PG 就失败（不是跳过）：测试里的「真 PG 必须在场」和自证脚本都认它
+      AROOMO_REQUIRE_REAL_PG: '1'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: core/package-lock.json
+      - run: npm ci
+        working-directory: core
+      - name: authz 套件（memory + PGlite 应用角色 + 真 PG 应用角色）
+        working-directory: core
+        run: |
+          set -o pipefail
+          npx vitest run test/authz --reporter=default --reporter=json --outputFile="$RUNNER_TEMP/authz.json"
+          # 真 PG 那一段必须真的跑了：有 [postgres-app-role] 用例且全部通过，一条都没跳过
+          node -e '
+            const r = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+            const pg = r.testResults.flatMap((f) => f.assertionResults).filter((a) => a.fullName.includes("[postgres-app-role]"));
+            const bad = pg.filter((a) => a.status !== "passed");
+            console.log(`真 PG 用例 ${pg.length} 条，未通过 ${bad.length} 条`);
+            if (pg.length < 10 || bad.length) process.exit(1);
+          ' "$RUNNER_TEMP/authz.json"
+      - name: 自证（两处故意改坏必须被抓到，含真 PG）
+        run: scripts/authz-selfcheck.sh
+      - name: 跑完工作树干净（补丁已还原）
+        run: |
+          git status --porcelain
+          test -z "$(git status --porcelain)"
