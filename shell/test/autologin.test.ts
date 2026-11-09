@@ -82,6 +82,25 @@ describe('本机主人自动登录（独立版 D78）', () => {
     expect(r.headers.get('location')).toBe('/aroomo/members');
     const evil = await fetch(`${base}/signin?callbackUrl=${encodeURIComponent('//evil.example')}`, { headers: { accept: 'text/html' }, redirect: 'manual' });
     expect(evil.headers.get('location')).toBe('/');
+    // CodeQL #7：控制字符会被浏览器剥掉（/<TAB>/x → //x），一律不收
+    const tab = await fetch(`${base}/signin?callbackUrl=${encodeURIComponent('/\t/evil.example')}`, { headers: { accept: 'text/html' }, redirect: 'manual' });
+    expect(tab.headers.get('location')).toBe('/');
+  });
+
+  it('跳回原页面：路径解析后以 // 开头时不外跳（CodeQL #7）', async () => {
+    // fetch 会先规整路径，这里用原始请求行；/.//x 经 URL 解析后 pathname 是 //x
+    for (const path of ['/.//evil.example/x', '/./\\evil.example/x']) {
+      const loc = await new Promise<string | undefined>((resolve, reject) => {
+        const { hostname, port } = new URL(base);
+        const req = http.request({ hostname, port, path, headers: { accept: 'text/html' } }, (res) => {
+          res.resume();
+          resolve(res.headers.location);
+        });
+        req.on('error', reject);
+        req.end();
+      });
+      expect(loc).toBe('/');
+    }
   });
 
   it('已登录：不再登录，正常转发', async () => {
@@ -119,6 +138,8 @@ describe('配置', () => {
     expect(safeCallback('https://evil')).toBe('/');
     expect(safeCallback('/\\evil')).toBe('/');
     expect(safeCallback('/signin?x')).toBe('/');
+    expect(safeCallback('/\t/evil')).toBe('/');
+    expect(safeCallback('/\n/evil')).toBe('/');
     expect(safeCallback('/aroomo')).toBe('/aroomo');
   });
   it('登录失败（例如密码不对、LobeHub 没起来）时返回 null', async () => {
