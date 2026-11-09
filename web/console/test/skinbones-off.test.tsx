@@ -53,4 +53,23 @@ describe('Skin/Bones 开关关着', () => {
     expect(await screen.findByLabelText('输入消息')).toBeInTheDocument();
     expect(screen.queryByRole('navigation', { name: '工作台分区' })).not.toBeInTheDocument();
   });
+  // 切片 2：抽屉也在同一个开关后面
+  it('界面上没有抽屉入口', async () => {
+    render(
+      <MemoryRouter initialEntries={['/chat']}>
+        <ChatPage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByLabelText('输入消息')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '打开示例详情' })).not.toBeInTheDocument();
+  });
+  it('地址里带 ?drawer= 也不开抽屉', async () => {
+    render(
+      <MemoryRouter initialEntries={['/assets?drawer=preview&w=640']}>
+        <ChatPage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByLabelText('输入消息')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
 });
