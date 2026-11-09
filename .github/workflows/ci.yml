@@ -150,12 +150,8 @@ jobs:
       - run: docker build -t aroomo-core:ci core
       - run: docker build -t aroomo-backup:ci deploy/backup
       - run: docker build -t aroomo-shell:ci shell
-      - name: Trivy 镜像扫描（core、shell；HIGH/CRITICAL 有修复就失败；放行名单 .github/trivyignore.txt；#177）
-        run: scripts/ci/trivy-scan.sh aroomo-core:ci aroomo-shell:ci
-      - name: Trivy 镜像扫描（backup；暂时只报告不阻断；#337）
-        # shortcut: 基础镜像自带、备份用不到的 gosu 有 HIGH/CRITICAL；删它要改 deploy/backup（A+，等负责人审），
-        # 那个 PR 合并后把 backup 并进上一步一起阻断。每周定时扫描（trivy-weekly.yml）对 backup 照常标红开单。
-        run: scripts/ci/trivy-scan.sh aroomo-backup:ci || echo "::warning::backup 镜像有 HIGH/CRITICAL（有修复版本），见上方表格；#337"
+      - name: Trivy 镜像扫描（core、shell、backup；HIGH/CRITICAL 有修复就失败；放行名单 .github/trivyignore.txt；#177 #337）
+        run: scripts/ci/trivy-scan.sh aroomo-core:ci aroomo-shell:ci aroomo-backup:ci
       - name: shell 镜像冒烟测试
         run: |
           # 镜像里 NODE_ENV=production，SHELL_AUTH=off 会被拒绝启动（#245）；静态资源不需要登录
