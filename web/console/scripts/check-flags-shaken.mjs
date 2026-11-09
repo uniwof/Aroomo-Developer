@@ -22,7 +22,9 @@ export const MARKERS = {
   // Skin/Bones 切片 1：侧栏读屏名字和 /assets 空状态是这个开关独有的界面字
   // 切片 2：抽屉入口的按钮字；drawer-query.ts 里宽档的字符串字面量 '640'（开关开时出现 2 次、关时 0 次，实测 2026-11-10），
   // 谁把 drawer-query 不加开关地用进对话页，当场抓到。只认带引号的，免得数字 640 误判
-  SKIN_BONES: ['工作台分区', '工具与试用、知识库', '打开示例详情', /[`'"]640[`'"]/],
+  // 切片 3：这些字连同抽屉、空壳都挪进了 SkinBonesZone 懒加载块，开关开着时对话页包里也是 0 次；标志字留着，谁把它们挪回主包当场抓到。
+  // 「角色泳道」是 RoleLanes 的标题
+  SKIN_BONES: ['工作台分区', '工具与试用、知识库', '打开示例详情', /[`'"]640[`'"]/, '角色泳道'],
 };
 // 不查的开关和原因（核对时间 2026-11-07，#327）。代码挪进对话页包了就改成 MARKERS。
 export const NO_MARKER = {
@@ -52,6 +54,9 @@ export function findLeaks(js, flags) {
   for (const [flag, words] of Object.entries(MARKERS)) {
     if (!(flag in flags)) throw new Error(`MARKERS 里的 ${flag} 不在 flags.ts / work-flag.ts / skinbones-flag.ts`);
     if (flags[flag]) continue;
+    // SKIN_BONES 开着时 /work 本来就是四区之一（WORK 关着也有空壳地址），'/work' 进对话页包是对的，不算 WORK 漏进来（切片 3 实测：
+    // 不加这一句，开关一开核对就红）。WorkPage 本身在懒加载块里，WORK 关着时照样不进包
+    if (flag === 'WORK' && flags.SKIN_BONES) continue;
     for (const w of words) if (typeof w === 'string' ? js.includes(w) : w.test(js)) leaked.push(`${flag}（关）：对话页包里有「${w}」`);
   }
   return leaked;

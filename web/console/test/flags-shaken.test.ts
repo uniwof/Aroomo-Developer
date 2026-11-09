@@ -49,4 +49,13 @@ describe('标志文字的匹配', () => {
   it('开关打开时它的标志文字可以在包里', () => {
     expect(findLeaks('`/work`', { ...off, WORK: true })).toEqual([]);
   });
+  it('SKIN_BONES 开着时 /work 是四区之一，不算 WORK 漏进包（切片 3）', () => {
+    expect(findLeaks('[`/work`,`/assets`]', { ...off, SKIN_BONES: true })).toEqual([]);
+    // 两个开关都关着时照旧要抓
+    expect(findLeaks('[`/work`]', { ...off, SKIN_BONES: false })).toHaveLength(1);
+  });
+  it('角色泳道的标志字也查（切片 3）', () => {
+    expect(findLeaks('`角色泳道`', { ...off, SKIN_BONES: false })).toHaveLength(1);
+    expect(findLeaks('`角色泳道`', { ...off, SKIN_BONES: true })).toEqual([]);
+  });
 });

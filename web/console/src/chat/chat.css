@@ -2259,3 +2259,65 @@ kbd.row-value {
   padding: calc(1 * var(--k));
   overflow-y: auto;
 }
+
+/* Skin/Bones 角色泳道（开关 SKIN_BONES，切片 3）：/console 驾驶舱下面，四职能角色 + 其他，一道一列；
+   宽屏并排、窄了自动换行（最窄一道 12 × --k），8px 步进（0.5 × --k），字号跟 sumus 正文，无动画 */
+.lanes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(calc(12 * var(--k)), 1fr));
+  gap: calc(0.5 * var(--k));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.lane {
+  padding: calc(0.75 * var(--k));
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+.lane-title {
+  margin: 0 0 calc(0.5 * var(--k));
+  font-size: calc(0.875 * var(--k));
+  font-weight: 600;
+}
+.lane-count {
+  color: var(--muted);
+  font-weight: 400;
+}
+.lane-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: calc(0.8125 * var(--k));
+}
+.lane-list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(0.25 * var(--k));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.lane-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(0.5 * var(--k));
+  width: 100%;
+  min-height: calc(2.75 * var(--k)); /* 44px 点击区 */
+  padding: calc(0.25 * var(--k)) calc(0.5 * var(--k));
+  border: 0;
+  border-radius: calc(0.5 * var(--k));
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: calc(0.875 * var(--k));
+  text-align: left;
+  cursor: pointer;
+}
+.lane-item:hover {
+  background: var(--hover);
+}
+.lane-status {
+  color: var(--muted);
+  font-size: calc(0.8125 * var(--k));
+}
