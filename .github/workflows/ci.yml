@@ -444,6 +444,15 @@ jobs:
           scripts/test-release.sh | tee /tmp/test-release.log
           if grep -q '^FAIL' /tmp/test-release.log; then exit 1; fi
           if ! grep -qx '全部通过' /tmp/test-release.log; then echo "没有「全部通过」"; exit 1; fi
+      - name: release-tag.sh：机器上有 /opt/aroomo 时测试模式整机禁用（#353 M4，sudo 建空目录，跑完删掉）
+        run: |
+          set -o pipefail
+          if [ -e /opt/aroomo ]; then echo "runner 上已经有 /opt/aroomo，不动它"; exit 1; fi
+          sudo mkdir /opt/aroomo
+          trap 'sudo rmdir /opt/aroomo' EXIT
+          scripts/test-release.sh --prod-dir-present | tee /tmp/test-release-m4.log
+          if grep -q '^FAIL' /tmp/test-release-m4.log; then exit 1; fi
+          if ! grep -qx '全部通过' /tmp/test-release-m4.log; then echo "没有「全部通过」"; exit 1; fi
       - name: create-app-db-role.sh（假 docker / psql；生产与 --staging 两种调用）
         run: |
           set -o pipefail
