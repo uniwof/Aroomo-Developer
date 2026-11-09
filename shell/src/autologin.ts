@@ -77,11 +77,18 @@ export class LobeLocalAutoLogin implements AutoLogin {
   }
 }
 
+const hasControlChar = (s: string) => Array.from(s).some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f);
+
+/** 302 跳转目标：只收同源相对路径（单个 / 开头，不是 // 或 /\\，不含浏览器会剥掉的控制字符），否则回 / */
+export function safeLocalPath(raw: string | null): string {
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\') || hasControlChar(raw)) return '/';
+  return raw;
+}
+
 /** 登录页 / 注册页上的 callbackUrl：只接受本站相对路径 */
 export function safeCallback(raw: string | null): string {
-  if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) return '/';
-  if (/^\/(signin|signup)(\/|\?|$)/.test(raw)) return '/';
-  return raw;
+  const path = safeLocalPath(raw);
+  return /^\/(signin|signup)(\/|\?|$)/.test(path) ? '/' : path;
 }
 
 export function isLoopbackHost(host: string): boolean {
