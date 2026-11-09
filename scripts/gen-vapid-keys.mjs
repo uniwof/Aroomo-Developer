@@ -5,7 +5,10 @@ import { createECDH } from 'node:crypto';
 
 const ecdh = createECDH('prime256v1');
 ecdh.generateKeys();
+// getPrivateKey() 去掉前导零（约 1/256 只有 31 字节，config 会拒）：左补零到 32 字节（#348）
+const d = ecdh.getPrivateKey();
+const privateKey = Buffer.concat([Buffer.alloc(32 - d.length), d]);
 const subject = process.argv[2] ?? 'mailto:CHANGE_ME@example.com';
 process.stdout.write(
-  `VAPID_PUBLIC_KEY=${ecdh.getPublicKey().toString('base64url')}\nVAPID_PRIVATE_KEY=${ecdh.getPrivateKey().toString('base64url')}\nVAPID_SUBJECT=${subject}\n`,
+  `VAPID_PUBLIC_KEY=${ecdh.getPublicKey().toString('base64url')}\nVAPID_PRIVATE_KEY=${privateKey.toString('base64url')}\nVAPID_SUBJECT=${subject}\n`,
 );

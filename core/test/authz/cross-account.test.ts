@@ -29,7 +29,7 @@ import { createPgDb, type Db, type Queryable } from '../../src/db/db.js';
 import { migrate } from '../../src/db/migrate.js';
 import { systemScoped, userScoped } from '../../src/db/scope.js';
 import { memoryDeps, pgDeps } from '../../src/deps.js';
-import { b64u, generateVapidKeys, vapidKeysValid } from '../../src/push/webpush.js';
+import { b64u, generateVapidKeys } from '../../src/push/webpush.js';
 import { seedXiaohao } from '../../src/users/seed.js';
 import { addDeployment, type AssistantEnv, assistantEnv, baseBody } from '../helpers/assistants.js';
 import { openPglite, ownerAuth } from '../helpers/db.js';
@@ -59,13 +59,7 @@ const TRIAL_CAP = [...CAPABILITY_SEED.items, ...CAPABILITY_SEED.tools].find((c) 
 const MISSING_UUID = '00000000-0000-4000-8000-0000000000ff';
 /** 所有者对话令牌（占位，≥32 字符）：配上它 /v1 才真的走鉴权，家人会话令牌才拿得到写死的 401（不然入口先 503 CHAT_NOT_CONFIGURED） */
 const CHAT_TOKEN = 'placeholder-chat-token-176-0000000000000000';
-/** generateVapidKeys 偶尔（私钥首字节为 0，约 1/256）给出 31 字节私钥、过不了配置校验：重试到合法为止，免得测试随机失败 */
-const VAPID = (() => {
-  for (;;) {
-    const k = generateVapidKeys();
-    if (vapidKeysValid(k.publicKey, k.privateKey)) return k;
-  }
-})();
+const VAPID = generateVapidKeys();
 const pushKeys = () => ({ p256dh: b64u.enc(createECDH('prime256v1').generateKeys()), auth: b64u.enc(randomBytes(16)) });
 /** 路由数下限（2026-11 快照）：被 feature flag / 环境变量关掉的插件路由不会被收集，少了就说明有路由没被遍历到 */
 const MIN_API_ROUTES = 119;
