@@ -14,7 +14,10 @@ beforeEach(() => {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string) => {
-      if (url === '/api/members') return json({ members: [] });
+      if (url === '/api/members') return json({ members: [{ id: 'm1', name: '小建', aliases: [], capabilityTags: [], enabled: true, pinned: false, status: 'active', leadEligible: false, role: 'Architect' }] });
+      if (url.startsWith('/api/inbox/unread-count')) return json({ total: 0 });
+      if (url.startsWith('/api/capabilities')) return json({ items: [] });
+      if (url.startsWith('/api/audit')) return json({ entries: [] });
       return new Response('{}', { status: 404 });
     }),
   );
@@ -62,6 +65,17 @@ describe('Skin/Bones 开关关着', () => {
     );
     expect(await screen.findByLabelText('输入消息')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '打开示例详情' })).not.toBeInTheDocument();
+  });
+  // 切片 3：角色泳道也在同一个开关后面
+  it('驾驶舱里没有角色泳道，驾驶舱本身照常', async () => {
+    render(
+      <MemoryRouter initialEntries={['/console']}>
+        <ChatPage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('概览')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '角色泳道' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: /Architect/ })).not.toBeInTheDocument();
   });
   it('地址里带 ?drawer= 也不开抽屉', async () => {
     render(
