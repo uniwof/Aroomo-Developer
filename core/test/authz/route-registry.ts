@@ -6,19 +6,24 @@ export interface SeenRoute {
   method: string;
   url: string;
   config: Record<string, unknown>;
+  /** 路由级钩子（#349 结构测试用：鉴权检查必须在 preValidation，不在 preHandler） */
+  preValidation: unknown[];
+  preHandler: unknown[];
 }
+
+const hookList = (h: unknown): unknown[] => (h === undefined || h === null ? [] : Array.isArray(h) ? h : [h]);
 
 export const seenRoutes: SeenRoute[] = [];
 
 /** 在测试文件里写：vi.mock('fastify', async (orig) => (await import('./route-registry.js')).wrapFastify(await orig())) */
 export function wrapFastify<T extends { default: (...a: never[]) => unknown }>(real: T): T {
   const wrapped = ((...args: never[]) => {
-    const app = real.default(...args) as { addHook: (n: string, f: (r: { method: string | string[]; url: string; config?: object }) => void) => void };
+    const app = real.default(...args) as { addHook: (n: string, f: (r: { method: string | string[]; url: string; config?: object; preValidation?: unknown; preHandler?: unknown }) => void) => void };
     app.addHook('onRoute', (r) => {
       const methods = Array.isArray(r.method) ? r.method : [r.method];
       for (const m of methods) {
         if (m === 'HEAD' || m === 'OPTIONS') continue;
-        seenRoutes.push({ method: m, url: r.url, config: { ...(r.config ?? {}) } });
+        seenRoutes.push({ method: m, url: r.url, config: { ...(r.config ?? {}) }, preValidation: hookList(r.preValidation), preHandler: hookList(r.preHandler) });
       }
     });
     return app;

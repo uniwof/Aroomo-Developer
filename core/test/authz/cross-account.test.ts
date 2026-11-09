@@ -395,11 +395,10 @@ const CLIENT: Record<string, Exp> = {
 };
 
 /**
- * 已知缺口（必改 1 没法只靠测试做到）：这些只给所有者的路由用 adminGuard()，管理员检查在 preHandler 里，
- * Fastify 先跑 schema 校验，所以家人带多余字段的请求体先拿到 400、而不是 403。要严格 403 得改 src（把检查挪到 preValidation），
- * 留给负责人裁定；只有 body 注入这一种放宽，头 / query 注入和正常请求照样严格 403。修好后从这里删掉，否则「遍历」那条失败。
+ * 只给所有者、但管理员检查跑在 schema 校验之后的路由（body 注入放宽为可 400）。#349 已把 adminGuard 挪到 preValidation，现为空；
+ * 以后不许往里加：新的鉴权检查一律挂 onRequest / preValidation（见 test/admin-guard.test.ts 的结构测试）。
  */
-const VALIDATES_BEFORE_ADMIN_CHECK = ['POST /api/users/invites'];
+const VALIDATES_BEFORE_ADMIN_CHECK: string[] = [];
 
 /** 改动后会让攻击方自己的会话 / 令牌失效的路由：放到最后打 */
 const SELF_ENDING = ['POST /api/clients/revoke-all', 'POST /api/auth/logout', 'POST /api/auth/logout-all', 'POST /api/auth/password'];

@@ -4,7 +4,7 @@
  */
 import { createHash } from 'node:crypto';
 import rateLimit from '@fastify/rate-limit';
-import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerAsyncHookHandler, preValidationAsyncHookHandler } from 'fastify';
 import { bindAudit } from '../audit/common.js';
 import type { AuditActor, AuditFn, AuditLog } from '../audit/types.js';
 import { HttpError } from '../http/errors.js';
@@ -205,18 +205,21 @@ export function userGuard(): { config: { userRoute: true }; preHandler: preHandl
   };
 }
 
-/** 管理员：所有者令牌，或角色为 admin 的账号。 */
-export function adminGuard(): { config: { userRoute: true }; preHandler: preHandlerAsyncHookHandler } {
-  return {
-    config: { userRoute: true },
-    preHandler: async function (req: FastifyRequest) {
-      const p = req.principal;
-      if (!p) throw new HttpError(401, 'UNAUTHORIZED', '请先登录');
-      const isAdmin = p.type === 'owner' || (p.type === 'user' && p.role === 'admin');
-      if (!isAdmin) {
-        await req.audit('auth.denied', { type: 'role', id: 'admin' }, 'denied', `${req.method} ${req.routeOptions.url ?? ''}`);
-        throw new HttpError(403, 'FORBIDDEN', '只有管理员可以执行这个操作');
-      }
-    },
-  };
+/**
+ * 管理员检查：所有者令牌，或角色为 admin 的账号。挂在 preValidation（#349）：先 401/403 再校验请求体 / 参数，
+ * 未授权的请求拿不到 schema 400（不泄露请求体形状，也不是存在性旁路），和 work / push / assistants 的惯例一致。
+ */
+export const requireAdmin: preValidationAsyncHookHandler = async function (req: FastifyRequest) {
+  const p = req.principal;
+  if (!p) throw new HttpError(401, 'UNAUTHORIZED', '请先登录');
+  const isAdmin = p.type === 'owner' || (p.type === 'user' && p.role === 'admin');
+  if (!isAdmin) {
+    await req.audit('auth.denied', { type: 'role', id: 'admin' }, 'denied', `${req.method} ${req.routeOptions.url ?? ''}`);
+    throw new HttpError(403, 'FORBIDDEN', '只有管理员可以执行这个操作');
+  }
+};
+
+/** 管理员接口。用法：`{ ...adminGuard(), schema }`；不要再给同一路由另挂 preValidation（会覆盖掉这里的检查） */
+export function adminGuard(): { config: { userRoute: true }; preValidation: preValidationAsyncHookHandler } {
+  return { config: { userRoute: true }, preValidation: requireAdmin };
 }
