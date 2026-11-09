@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2015,SC2001
 # release-tag.sh 的本机测试（工单 #171）：用临时 git 仓库 + 假的 compose.sh，不需要 docker。
-#   scripts/test-release.sh
+#   scripts/test-release.sh                     主测试（机器上不能有 /opt/aroomo）
+#   scripts/test-release.sh --prod-dir-present  只测 #353 M4：/opt/aroomo 存在时测试模式整体被拒（CI 用 sudo 建空目录后跑）
 set -euo pipefail
 umask 022   # 测试本身用常见的 umask，断言 release-tag.sh 不会把文件权限改严
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,12 +20,33 @@ expect() { # expect <说明> <期望退出码> <命令...>
   LAST_OUT="$out"
 }
 
+# #353 M4：机器上有 /opt/aroomo 时，不论 RELEASE_ROOT 是哪个目录，测试模式都被拒，且什么都不写
+if [ "${1:-}" = --prod-dir-present ]; then
+  [ -d /opt/aroomo ] || { echo "FAIL - 这个模式要求 /opt/aroomo 已存在（CI 里 sudo mkdir 后再跑）"; exit 1; }
+  opt_list_before="$(ls -A /opt/aroomo)"
+  copy="$work/copy"; mkdir -p "$copy/deploy/tiers"; : >"$copy/deploy/tiers/standard.yml"
+  for c in status list "deploy v0.1.0" "deploy v0.1.0 --confirm v0.1.0" rollback; do
+    # shellcheck disable=SC2086  # 故意按空格拆成参数
+    RELEASE_TEST_MODE=1 RELEASE_ROOT="$copy" expect "有 /opt/aroomo 时，别的目录（仓库副本）上 RELEASE_TEST_MODE=1 也被拒：$c" 1 "$here/release-tag.sh" $c </dev/null
+    echo "$LAST_OUT" | grep -q '这台机器上有生产目录 /opt/aroomo，整机禁用测试模式' || bad "$c 的拒绝理由不对：$LAST_OUT"
+  done
+  [ ! -e "$copy/.release" ] && ok "被拒时副本目录里没建 .release/" || bad "被拒却在副本目录里写了东西"
+  [ "$(ls -A /opt/aroomo)" = "$opt_list_before" ] && ok "被拒时 /opt/aroomo 里没写任何东西" || bad "/opt/aroomo 里多了东西"
+  RELEASE_TEST_MODE=1 RELEASE_ROOT=/opt/aroomo expect "有 /opt/aroomo 时，它本身上测试模式也被拒" 1 "$here/release-tag.sh" status </dev/null
+  [ "$fail" = 0 ] && echo "全部通过" || { echo "有失败"; exit 1; }
+  exit 0
+fi
+if [ -e /opt/aroomo ] || [ -L /opt/aroomo ]; then
+  echo "FAIL - 机器上有 /opt/aroomo：release-tag.sh 在这里整机禁用测试模式（#353 M4），主测试不能在这台机器上跑"; exit 1
+fi
+
 # 远端路径以 uniwof/Aroomo-Developer.git 结尾：发布脚本会把远端的 owner/repo 和闸门写死的仓库核对（#352 N1）
 origin="$work/gh/uniwof/Aroomo-Developer.git"; seed="$work/seed"; root="$work/prod"
 mkdir -p "$(dirname "$origin")"
 git init -q --bare -b main "$origin"
 git init -q -b main "$seed"
-mkdir -p "$seed/scripts" "$seed/deploy"
+mkdir -p "$seed/scripts" "$seed/deploy/tiers"
+: >"$seed/deploy/tiers/standard.yml"   # 档位文件：release-tag.sh 要求 deploy/tiers/<档位>.yml 存在（#353 M1）
 cat >"$seed/scripts/compose.sh" <<'STUB'
 #!/usr/bin/env bash
 # 假 compose：记录调用；工作树里有 FAIL_UP 文件就让 up 失败
@@ -328,15 +350,16 @@ printf 'v0.4.0\n' >"$root/.release/current"; printf 'v0.5.0\n' >"$root/.release/
 
 # ---------------------------------------------------------------------------
 # 测试开关只在 RELEASE_TEST_MODE=1 时生效（#353）：不设测试模式时，设了任何一个就拒绝，什么都不动
-knobs=(RELEASE_REMOTE RELEASE_MAIN_BRANCH RELEASE_DB_CMD RELEASE_HEALTH_CMD RELEASE_REQUIRE_GATE
+knobs=(RELEASE_REMOTE RELEASE_MAIN_BRANCH RELEASE_DB_CMD RELEASE_PRECHECK_DB RELEASE_HEALTH_CMD RELEASE_REQUIRE_GATE
   RELEASE_REQUIRE_PRECHECK RELEASE_DOCKER RELEASE_SKIP_CONSOLE
   RELEASE_PSQL RELEASE_BACKUP_CMD RELEASE_SNAPSHOTS_CMD RELEASE_DOCKER_NETS_CMD RELEASE_IP_ROUTE_CMD
   RELEASE_MCP_NET_NAME RELEASE_MIGRATIONS_DIR)
-unset_args=(-u RELEASE_TEST_MODE); for k in "${knobs[@]}"; do unset_args+=(-u "$k"); done
+inherited=(DOCKER_HOST DOCKER_CONTEXT COMPOSE_PROJECT_NAME AROOMO_LOCAL AROOMO_DATA_DIR)
+unset_args=(-u RELEASE_TEST_MODE); for k in "${knobs[@]}" "${inherited[@]}"; do unset_args+=(-u "$k"); done
 prodlike() { env "${unset_args[@]}" "$@" "$relbin" "${PRODLIKE_ARGS[@]}" </dev/null; }   # 用法：prodlike [VAR=值…]
 head_before="$(git -C "$root" rev-parse HEAD)"; cur_before="$(cat "$root/.release/current")"
 hist_before="$(wc -l <"$root/.release/history.log")"
-declare -A knob_val=([RELEASE_REMOTE]=evil [RELEASE_MAIN_BRANCH]=dev [RELEASE_DB_CMD]="$dbcmd" [RELEASE_HEALTH_CMD]="$health"
+declare -A knob_val=([RELEASE_REMOTE]=evil [RELEASE_MAIN_BRANCH]=dev [RELEASE_DB_CMD]="$dbcmd" [RELEASE_PRECHECK_DB]=postgres [RELEASE_HEALTH_CMD]="$health"
   [RELEASE_REQUIRE_GATE]=0 [RELEASE_REQUIRE_PRECHECK]=0 [RELEASE_DOCKER]=true [RELEASE_SKIP_CONSOLE]=1
   [RELEASE_PSQL]=true [RELEASE_BACKUP_CMD]=true [RELEASE_SNAPSHOTS_CMD]=true [RELEASE_DOCKER_NETS_CMD]=true
   [RELEASE_IP_ROUTE_CMD]=true [RELEASE_MCP_NET_NAME]=x [RELEASE_MIGRATIONS_DIR]=/tmp)
@@ -346,6 +369,26 @@ for k in "${knobs[@]}"; do
   expect "非测试模式：设了 $k 就拒绝" 1 prodlike "$k=${knob_val[$k]}"
   echo "$LAST_OUT" | grep -q "测试开关.*$k" || bad "$k 的拒绝理由不对：$LAST_OUT"
 done
+# M2：会被 docker / compose / compose.sh 继承的变量，非测试模式下设了就拒绝并列名（#353）
+declare -A inh_val=([DOCKER_HOST]=tcp://127.0.0.1:1 [DOCKER_CONTEXT]=other [COMPOSE_PROJECT_NAME]=other
+  [AROOMO_LOCAL]=1 [AROOMO_DATA_DIR]=1)
+for k in "${inherited[@]}"; do
+  PRODLIKE_ARGS=(deploy v0.5.0 --confirm v0.5.0)
+  expect "非测试模式：设了 $k 就拒绝" 1 prodlike "$k=${inh_val[$k]}"
+  echo "$LAST_OUT" | grep -q "docker / compose 继承.*$k" || bad "$k 的拒绝理由不对：$LAST_OUT"
+done
+PRODLIKE_ARGS=(list)
+expect "非测试模式：同时设 DOCKER_HOST 和 COMPOSE_PROJECT_NAME 都列出来" 1 prodlike DOCKER_HOST=tcp://127.0.0.1:1 COMPOSE_PROJECT_NAME=other
+echo "$LAST_OUT" | grep -q 'DOCKER_HOST COMPOSE_PROJECT_NAME' && ok "列出全部设了的继承变量" || bad "输出不对：$LAST_OUT"
+expect "非测试模式：COMPOSE_PROFILES 不拒绝（生产 .env 用它）" 0 prodlike COMPOSE_PROFILES=tunnel,backup
+# M1：RELEASE_TIER 只许小写字母且档位文件存在（测试模式和非测试模式都校验）
+for t in ../local ../data-dir Standard 'standard ' std1 full; do
+  expect "RELEASE_TIER=$t 被拒" 1 env RELEASE_TIER="$t" "$relbin" status
+  echo "$LAST_OUT" | grep -q 'RELEASE_TIER 只能是小写字母\|档位 .* 不存在' || bad "RELEASE_TIER=$t 的拒绝理由不对：$LAST_OUT"
+done
+PRODLIKE_ARGS=(list)
+expect "非测试模式：RELEASE_TIER=../local 也被拒" 1 prodlike RELEASE_TIER=../local
+expect "RELEASE_TIER=standard（文件存在）照常" 0 env RELEASE_TIER=standard "$relbin" status
 PRODLIKE_ARGS=(rollback --confirm v0.5.0)
 expect "非测试模式：rollback 设 RELEASE_DB_CMD 也拒绝" 1 prodlike RELEASE_DB_CMD="$dbcmd"
 PRODLIKE_ARGS=(list)
@@ -382,6 +425,21 @@ env -u RELEASE_ROOT RELEASE_TEST_MODE=1 "$relbin" status >"$work/out" 2>&1 && ba
 PRODLIKE_ARGS=(deploy v0.5.0)
 expect "生产目录上不设测试模式、设了 RELEASE_REQUIRE_GATE=0 也拒绝" 1 prodlike RELEASE_ROOT=/opt/aroomo RELEASE_REQUIRE_GATE=0
 [ "$opt_existed" = 1 ] || { [ ! -e /opt/aroomo ] && ok "被拒时没有建 /opt/aroomo" || bad "被拒却建了 /opt/aroomo"; }
+
+# M3：退出时删的 RELEASE_TAG_COPY 只认自己建的那份（#353）。从环境继承来的路径一律不删，脚本重新复制自己
+victim="$work/victim.env"; echo keep >"$victim"
+expect "RELEASE_TAG_COPY 指向任意文件：照常运行" 0 env RELEASE_TAG_COPY="$victim" "$relbin" status
+[ -f "$victim" ] && ok "RELEASE_TAG_COPY 指向的任意文件没被删" || bad "RELEASE_TAG_COPY 指向的文件被删了"
+lookalike="$(mktemp /tmp/release-tag.XXXXXX)"; echo keep >"$lookalike"
+expect "RELEASE_TAG_COPY 形如 /tmp/release-tag.* 但不是 \$0：照常运行" 0 env RELEASE_TAG_COPY="$lookalike" "$relbin" status
+[ -f "$lookalike" ] && ok "不是 \$0 的 /tmp/release-tag.* 没被删" || bad "不是 \$0 的 /tmp/release-tag.* 被删了"
+rm -f "$lookalike"   # 测试自己建的临时文件
+ln -s "$victim" "$work/link-copy"
+expect "RELEASE_TAG_COPY 是软链接：照常运行" 0 env RELEASE_TAG_COPY="$work/link-copy" "$relbin" status
+[ -f "$victim" ] && ok "软链接指向的文件没被删" || bad "软链接指向的文件被删了"
+before_tmp="$(find /tmp -maxdepth 1 -name 'release-tag.*' -type f | sort)"
+expect "正常运行：退出后自己的临时副本被清掉" 0 "$relbin" status
+[ "$(find /tmp -maxdepth 1 -name 'release-tag.*' -type f | sort)" = "$before_tmp" ] && ok "没有留下 /tmp/release-tag.* 副本" || bad "留下了临时副本"
 
 # compose 输出写进 600 权限的日志文件，不再丢掉
 [ "$(stat -c %a "$root/.release/compose.log")" = 600 ] && ok "compose.log 权限 600" || bad "compose.log 权限不对"

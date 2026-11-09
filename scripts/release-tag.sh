@@ -30,14 +30,17 @@
 #            不打印 .env 的任何值；不碰 main（只读 origin/main）。
 #
 # 环境变量：
-#   RELEASE_ROOT（默认 /opt/aroomo）RELEASE_TIER（默认 standard，与现有生产一致）RELEASE_HEALTH_TIMEOUT_S（420）
-#   RELEASE_HEALTH_POLL_S（5）RELEASE_PRECHECK_DB（默认 aroomo_core）
+#   RELEASE_ROOT（默认 /opt/aroomo）RELEASE_TIER（默认 standard，与现有生产一致；只许小写字母且 deploy/tiers/<档位>.yml 存在，#353）
+#   RELEASE_HEALTH_TIMEOUT_S（420）RELEASE_HEALTH_POLL_S（5）
 #   合并闸门的仓库写死为 uniwof/Aroomo-Developer、解释器固定 python3，不能用环境变量改（#352 N1）
 # 测试开关（#353）：只在 RELEASE_TEST_MODE=1 时生效。不设 RELEASE_TEST_MODE=1 时只要设了任何一个就拒绝（不悄悄忽略），
-# 并且一律用安全默认值；RELEASE_ROOT 是生产目录 /opt/aroomo（含软链接、多余的 / 和 ..）时禁止 RELEASE_TEST_MODE=1。
+# 并且一律用安全默认值；机器上存在 /opt/aroomo（生产服务器），或 RELEASE_ROOT 就是它时，禁止 RELEASE_TEST_MODE=1。
+# 不设测试模式时，下面这些会被 docker / compose / compose.sh 继承、改掉操作对象的变量设了也拒绝（#353）：
+#   DOCKER_HOST DOCKER_CONTEXT COMPOSE_PROJECT_NAME AROOMO_LOCAL AROOMO_DATA_DIR。COMPOSE_PROFILES 不拒（生产 .env 用它）。
 #   RELEASE_REMOTE（origin）RELEASE_MAIN_BRANCH（main）
 #   RELEASE_HEALTH_CMD（命令 <服务名> 输出 healthy 即通过；默认看 docker 健康状态）RELEASE_SKIP_CONSOLE=1（不构建控制台）
 #   RELEASE_DB_CMD（从 stdin 读一条 SQL、输出无表头结果的命令；默认走 compose exec postgres psql，只读）
+#   RELEASE_PRECHECK_DB（迁移核对和生产前检查连的库；默认 aroomo_core）
 #   RELEASE_REQUIRE_PRECHECK=0 / RELEASE_REQUIRE_GATE=0（目标版本缺生产前检查 / 合并闸门时放行；默认 1 = 拒绝部署）
 #   RELEASE_DOCKER（docker 命令的桩）
 #   以及 release-precheck.sh 的桩（会被它继承）：RELEASE_PSQL RELEASE_BACKUP_CMD RELEASE_SNAPSHOTS_CMD
@@ -47,10 +50,12 @@ set -Eeuo pipefail
 ROOT="${RELEASE_ROOT:-/opt/aroomo}"
 PROD_ROOT="/opt/aroomo"   # 生产目录，写死（#353）
 # 测试开关（#353）：只在 RELEASE_TEST_MODE=1 时生效，见文件头
-TEST_KNOBS=(RELEASE_REMOTE RELEASE_MAIN_BRANCH RELEASE_DB_CMD RELEASE_HEALTH_CMD RELEASE_REQUIRE_GATE
+TEST_KNOBS=(RELEASE_REMOTE RELEASE_MAIN_BRANCH RELEASE_DB_CMD RELEASE_PRECHECK_DB RELEASE_HEALTH_CMD RELEASE_REQUIRE_GATE
   RELEASE_REQUIRE_PRECHECK RELEASE_DOCKER RELEASE_SKIP_CONSOLE
   RELEASE_PSQL RELEASE_BACKUP_CMD RELEASE_SNAPSHOTS_CMD RELEASE_DOCKER_NETS_CMD RELEASE_IP_ROUTE_CMD
   RELEASE_MCP_NET_NAME RELEASE_MIGRATIONS_DIR)
+# 会被 docker / compose / compose.sh 继承、改掉操作对象（别的引擎、别的 compose 项目、叠加 local/data-dir）的变量（#353）
+INHERITED_DENY=(DOCKER_HOST DOCKER_CONTEXT COMPOSE_PROJECT_NAME AROOMO_LOCAL AROOMO_DATA_DIR)
 TIER="${RELEASE_TIER:-standard}"
 HEALTH_TIMEOUT_S="${RELEASE_HEALTH_TIMEOUT_S:-420}"
 SERVICES=(core lobe shell)
@@ -59,7 +64,15 @@ CONFIRM_MSG="需要主会话：确认生产切到标签版"
 GATE_REPO="uniwof/Aroomo-Developer"   # 合并闸门检查的仓库，写死，不读环境变量（#352 N1）
 
 # 把自己复制到临时文件再执行：checkout 会替换本文件，正在运行的脚本不能被改到一半
-if [ -z "${RELEASE_TAG_COPY:-}" ]; then
+# RELEASE_TAG_COPY 退出时会被删掉，所以只认自己建的那份（#353）：等于 $0、形如 /tmp/release-tag.XXXXXX、是普通文件不是软链接。
+# 否则（从环境继承来的任意路径）不信任，重新复制自己。
+copy_ok=0
+if [ -n "${RELEASE_TAG_COPY:-}" ] && [ "$RELEASE_TAG_COPY" = "$0" ] \
+   && [[ "$RELEASE_TAG_COPY" =~ ^/tmp/release-tag\.[A-Za-z0-9]{6}$ ]] \
+   && [ -f "$RELEASE_TAG_COPY" ] && [ ! -L "$RELEASE_TAG_COPY" ]; then
+  copy_ok=1
+fi
+if [ "$copy_ok" = 0 ]; then
   tmp="$(mktemp /tmp/release-tag.XXXXXX)"
   cp "$0" "$tmp"
   RELEASE_TAG_COPY="$tmp" exec bash "$tmp" "$@"
@@ -83,13 +96,26 @@ is_prod_root() {
 if [ "$TEST_MODE" = 1 ] && is_prod_root; then
   early_die "生产目录 $ROOT 禁用测试模式：去掉 RELEASE_TEST_MODE=1 再运行（测试开关在生产上一律不生效）"
 fi
+# 生产的真实身份是 compose 项目 aroomo 和它的数据卷，不是路径（#353 M4）：机器上只要有 /opt/aroomo，就当它是生产服务器，
+# 任何目录、任何仓库副本都不许用测试模式（否则副本 + 桩照样能对生产项目 up -d）
+if [ "$TEST_MODE" = 1 ] && { [ -e "$PROD_ROOT" ] || [ -L "$PROD_ROOT" ]; }; then
+  early_die "这台机器上有生产目录 $PROD_ROOT，整机禁用测试模式（不论 RELEASE_ROOT 是哪里）：去掉 RELEASE_TEST_MODE=1 再运行"
+fi
 if [ "$TEST_MODE" = 0 ]; then
   set_knobs=()
   for v in "${TEST_KNOBS[@]}"; do [ -z "${!v:-}" ] || set_knobs+=("$v"); done
   [ "${#set_knobs[@]}" = 0 ] \
     || early_die "这些是测试开关，只在 RELEASE_TEST_MODE=1（非生产目录）下生效，生产不能设：${set_knobs[*]}。unset 后重跑"
   unset "${TEST_KNOBS[@]}"   # 连设成空串的也清掉：下面一律用安全默认值
+  set_inh=()
+  for v in "${INHERITED_DENY[@]}"; do [ -z "${!v:-}" ] || set_inh+=("$v"); done
+  [ "${#set_inh[@]}" = 0 ] \
+    || early_die "这些变量会被 docker / compose 继承、让发布打到别的引擎或项目，生产不能设：${set_inh[*]}。unset 后重跑"
+  unset "${INHERITED_DENY[@]}"
 fi
+# 档位只许小写字母，且对应档位文件存在（#353 M1）：不许 ../local 之类拼出别的叠加文件
+[[ "$TIER" =~ ^[a-z]+$ ]] || early_die "RELEASE_TIER 只能是小写字母（现在是 ${TIER}）"
+[ -f "$ROOT/deploy/tiers/$TIER.yml" ] || early_die "档位 $TIER 不存在（没有 deploy/tiers/$TIER.yml）"
 REMOTE="${RELEASE_REMOTE:-origin}"
 MAIN_BRANCH="${RELEASE_MAIN_BRANCH:-main}"
 

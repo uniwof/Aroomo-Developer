@@ -94,6 +94,7 @@ scripts/release-tag.sh rollback --confirm v0.1.0 --lobe-session-ok  # 明确要�
 - 这一版**没执行新迁移**：直接 `rollback`，数据不动。
 - 这一版**执行了新迁移**：`rollback` 会拒绝（旧代码读不了新结构）。先用部署前备份恢复（备份名在 `.release/precheck.ok`，步骤见 [BACKUP.md](BACKUP.md)，要所有者的主密钥），或按 `core/migrations/down/` 人工退，**再** `rollback`。会丢掉上线后写进新表的数据。
 - **回滚目标必须在 `origin/main` 上**（#353）：只查服务器本地已有的 `origin/main` 记录，不联网；不在上面（比如 dev 上的提交）就拒绝。
+- **不要 force-push 改写 main 的历史**：一旦远端 main 被改写、服务器 `fetch` 到新的 `origin/main`，原来的版本就不再是它的祖先，`rollback` 会拒绝（失败即关闭，是有意的）。真发生了，先找负责人和所有者，不要绕过这个检查。
 - 永远不要用 `deploy` 部署更旧的标签来回退：`release-tag.sh` 会拒绝（目标标签比当前旧，提示改用 rollback，#352 M4）。
 - **回滚不受合并闸门限制**（#352 M5）：`rollback` 不读令牌、不跑闸门，GitHub 不可用、令牌过期时仍能紧急回滚（测试钉死：闸门会失败且无令牌时 `rollback --confirm` 照样成功）。
 - 回到 v0.1.0 还要先配叠加文件、删应用角色那三行 `.env`（见下面「回退到 v0.1.0」）。
@@ -103,6 +104,14 @@ scripts/release-tag.sh rollback --confirm v0.1.0 --lobe-session-ok  # 明确要�
 ## 第一次从 dev 切到标签
 
 服务器现在在 dev 分支的某个提交上（不是标签；写本节时是 `e2a5b09`），那个版本里**没有** `release-tag.sh` 和 `release-precheck.sh`。第一次切换时 `previous` 记的是那个提交号，所以首次切换失败或需要回滚，都会回到它（前提是数据库没被新迁移改过，见上节第 9 步）。
+
+**首次切换之前先确认**：服务器当前检出的提交在 `origin/main` 上（是它的祖先），否则以后手动 `rollback` 回到它会被拒绝（切换失败时的自动回退不经过这个检查，不受影响）：
+
+```bash
+cd /opt/aroomo && git fetch origin main && git merge-base --is-ancestor HEAD origin/main && echo 在main上
+```
+
+没有输出「在main上」就先停下，找负责人确认首次切换方案。
 
 ### 第一次怎么把脚本拿到服务器上
 
@@ -174,17 +183,20 @@ v0.2.0 会执行迁移 0025–0030（会话、助手、运行、存库、推送�
 
 ## 测试开关只在测试模式下生效（#353）
 
-`release-tag.sh` 的测试开关**只在 `RELEASE_TEST_MODE=1` 时生效**：`RELEASE_REMOTE`、`RELEASE_MAIN_BRANCH`、`RELEASE_DB_CMD`、`RELEASE_HEALTH_CMD`、`RELEASE_REQUIRE_GATE`、`RELEASE_REQUIRE_PRECHECK`、`RELEASE_DOCKER`、`RELEASE_SKIP_CONSOLE`，以及 `release-precheck.sh` 会继承的桩 `RELEASE_PSQL`、`RELEASE_BACKUP_CMD`、`RELEASE_SNAPSHOTS_CMD`、`RELEASE_DOCKER_NETS_CMD`、`RELEASE_IP_ROUTE_CMD`、`RELEASE_MCP_NET_NAME`、`RELEASE_MIGRATIONS_DIR`。
+`release-tag.sh` 的测试开关**只在 `RELEASE_TEST_MODE=1` 时生效**：`RELEASE_REMOTE`、`RELEASE_MAIN_BRANCH`、`RELEASE_DB_CMD`、`RELEASE_PRECHECK_DB`、`RELEASE_HEALTH_CMD`、`RELEASE_REQUIRE_GATE`、`RELEASE_REQUIRE_PRECHECK`、`RELEASE_DOCKER`、`RELEASE_SKIP_CONSOLE`，以及 `release-precheck.sh` 会继承的桩 `RELEASE_PSQL`、`RELEASE_BACKUP_CMD`、`RELEASE_SNAPSHOTS_CMD`、`RELEASE_DOCKER_NETS_CMD`、`RELEASE_IP_ROUTE_CMD`、`RELEASE_MCP_NET_NAME`、`RELEASE_MIGRATIONS_DIR`。
 
 - **生产上（不设 `RELEASE_TEST_MODE`）**：设了上面任何一个（非空，哪怕值是 1）就**拒绝并列出名字**，不悄悄忽略；没设时一律用安全默认值：`origin`、`main`、compose 里只读的 psql、真实健康检查、闸门和生产前检查必跑。
-- **生产目录禁用测试模式**：`RELEASE_ROOT`（默认 `/opt/aroomo`）规范化后是 `/opt/aroomo`（含软链接、多余的 `/`、`..`）时，设 `RELEASE_TEST_MODE=1` 直接拒绝。
+- **生产服务器整机禁用测试模式**：机器上只要存在 `/opt/aroomo`，不论 `RELEASE_ROOT` 指向哪个目录（包括别的仓库副本），设 `RELEASE_TEST_MODE=1` 都直接拒绝；`RELEASE_ROOT` 规范化后是 `/opt/aroomo`（含软链接、多余的 `/`、`..`）时同样拒绝。生产的身份是 compose 项目 `aroomo` 和它的数据卷，不只是路径。
+- **会被 docker / compose 继承的变量**：不设测试模式时，`DOCKER_HOST`、`DOCKER_CONTEXT`、`COMPOSE_PROJECT_NAME`、`AROOMO_LOCAL`、`AROOMO_DATA_DIR` 设了（非空）就拒绝并列出名字。`COMPOSE_PROFILES` 不拒绝（生产 `.env` 用它启用 tunnel 和 backup），但**发布时 shell 里不要另外设 `COMPOSE_PROFILES`**，以 `.env` 为准。
+- **档位**：`RELEASE_TIER` 只许小写字母（`^[a-z]+$`），且 `deploy/tiers/<档位>.yml` 必须存在，否则拒绝（测试模式和生产都校验）。
+- **临时副本**：脚本把自己复制到 `/tmp/release-tag.XXXXXX` 再运行、退出时删掉。环境里继承来的 `RELEASE_TAG_COPY` 只有在等于正在运行的脚本、形如 `/tmp/release-tag.XXXXXX`、是普通文件时才认，否则不删它、重新复制。
 - `RELEASE_TEST_MODE` 只认 `1` 或不设，别的值拒绝。被拒发生在建 `.release/` 之前，生产目录里不写任何东西。
 - 合并闸门的仓库与 `python3` 仍然写死，不受任何环境变量影响（#352 N1）。
 - 单独运行 `release-precheck.sh` 时它自己的桩变量不受这里约束（本单只改 `release-tag.sh`）。
 
 ## 测试
 
-`scripts/test-release.sh`（以 `RELEASE_TEST_MODE=1` 运行）：临时 git 仓库 + 假的 compose，不需要 docker。覆盖列标签、拒绝 dev 标签/分支/不存在的标签、演练不切换、写错确认不切换、切换成功、坏版本自动回退（迁移没执行）、**迁移已执行后不自动回退并写「需要人工处理」**、**数据库超前时 `rollback` 演练和确认都拒绝**、**已跟踪文件有改动时演练和确认都拒绝且改动原样保留**、一键回滚、`.env` 缺项在演练时就拒绝、闸门/生产前检查取自目标版本且失败或缺失时拒绝（闸门：收到仓库/标签提交/标签名、标准输入读的令牌（环境里故意 export 的不算）、固定只读，演练也拦、没读到令牌拒绝、目标版本缺 `scripts/ci/merge-gate.py` 拒绝、本地 `--hotfix` 被拒不跳闸门、日志里没有令牌、**precheck/compose/docker 桩执行时都拿不到 `GH_TOKEN`**）、**deploy 比当前旧的标签演练和确认都拒绝**、**闸门会失败且无令牌时 `rollback` 演练和 `--confirm` 都成功、且没调用闸门**、读不出迁移记录时拒绝、本地密钥文件不被动、`compose.log` 权限 600、日志无密钥；precheck 拿到目标版本的 `core/migrations/`；回退目标写死 lobe-session 且没配叠加文件时 `deploy` 演练、`rollback` 演练和确认都拒绝，`--lobe-session-ok` 放行，叠加文件列了但不存在拒绝；配好后回滚带上叠加文件、只重建 core、`up --no-build`，没有叠加文件的版本照常走 `compose.sh`。#353 另加：不设测试模式时每个测试开关都被拒（deploy、rollback、list）且检出/current/日志都没动、闸门没跑；空串开关不算设、迁移核对确实走默认的只读 psql、list 默认只认 origin/main；`RELEASE_TEST_MODE` 非 1 拒绝；`/opt/aroomo`、`/opt/aroomo/`、`/opt/./aroomo`、`/opt/x/../aroomo`、指向它的软链接、不设 `RELEASE_ROOT` 时测试模式都被拒，且不建 `/opt/aroomo`；回滚目标在 dev 上演练/确认都拒绝、远端连不上回滚演练照样通过；首次从提交号切换时更旧的标签拒绝、同一提交或更新的放行。
+`scripts/test-release.sh`（以 `RELEASE_TEST_MODE=1` 运行）：临时 git 仓库 + 假的 compose，不需要 docker。覆盖列标签、拒绝 dev 标签/分支/不存在的标签、演练不切换、写错确认不切换、切换成功、坏版本自动回退（迁移没执行）、**迁移已执行后不自动回退并写「需要人工处理」**、**数据库超前时 `rollback` 演练和确认都拒绝**、**已跟踪文件有改动时演练和确认都拒绝且改动原样保留**、一键回滚、`.env` 缺项在演练时就拒绝、闸门/生产前检查取自目标版本且失败或缺失时拒绝（闸门：收到仓库/标签提交/标签名、标准输入读的令牌（环境里故意 export 的不算）、固定只读，演练也拦、没读到令牌拒绝、目标版本缺 `scripts/ci/merge-gate.py` 拒绝、本地 `--hotfix` 被拒不跳闸门、日志里没有令牌、**precheck/compose/docker 桩执行时都拿不到 `GH_TOKEN`**）、**deploy 比当前旧的标签演练和确认都拒绝**、**闸门会失败且无令牌时 `rollback` 演练和 `--confirm` 都成功、且没调用闸门**、读不出迁移记录时拒绝、本地密钥文件不被动、`compose.log` 权限 600、日志无密钥；precheck 拿到目标版本的 `core/migrations/`；回退目标写死 lobe-session 且没配叠加文件时 `deploy` 演练、`rollback` 演练和确认都拒绝，`--lobe-session-ok` 放行，叠加文件列了但不存在拒绝；配好后回滚带上叠加文件、只重建 core、`up --no-build`，没有叠加文件的版本照常走 `compose.sh`。#353 另加：不设测试模式时每个测试开关都被拒（deploy、rollback、list）且检出/current/日志都没动、闸门没跑；空串开关不算设、迁移核对确实走默认的只读 psql、list 默认只认 origin/main；`RELEASE_TEST_MODE` 非 1 拒绝；`/opt/aroomo`、`/opt/aroomo/`、`/opt/./aroomo`、`/opt/x/../aroomo`、指向它的软链接、不设 `RELEASE_ROOT` 时测试模式都被拒，且不建 `/opt/aroomo`；回滚目标在 dev 上演练/确认都拒绝、远端连不上回滚演练照样通过；首次从提交号切换时更旧的标签拒绝、同一提交或更新的放行。#353 第 2 轮另加：`RELEASE_PRECHECK_DB` 非测试模式被拒；`DOCKER_HOST`、`DOCKER_CONTEXT`、`COMPOSE_PROJECT_NAME`、`AROOMO_LOCAL`、`AROOMO_DATA_DIR` 非测试模式各自被拒并列名、`COMPOSE_PROFILES` 放行；`RELEASE_TIER` 为 `../local`、`../data-dir`、大写、带空格、带数字、档位文件不存在时都拒绝；`RELEASE_TAG_COPY` 指向任意文件、不是本脚本的 `/tmp/release-tag.*`、软链接时都不被删，正常运行不留临时副本。`scripts/test-release.sh --prod-dir-present`（CI 里 `sudo mkdir /opt/aroomo` 后跑、跑完 `rmdir`）：机器上有 `/opt/aroomo` 时在别的目录上 `status`/`list`/`deploy`/`rollback` 的测试模式都被拒，副本和 `/opt/aroomo` 里都不写东西；主测试在有 `/opt/aroomo` 的机器上直接失败退出。
 
 两个测试脚本都在 CI 的 `release-scripts` 任务里跑（precheck 的测试用 CI 的真 PostgreSQL 服务；输出里出现「跳过」或没有「全部通过」都算失败）。
 
