@@ -76,6 +76,7 @@ mkdir -p "$root/deploy"
 { echo "CORE_CHAT_TOKEN=abc"; echo "KEY_VAULTS_SECRET=$(head -c 32 /dev/zero | base64)"; } >"$root/deploy/.env"
 echo local-secret >"$root/deploy/.lobehub-cli-key"
 
+export RELEASE_TEST_MODE=1   # 下面的测试开关（#353）只在测试模式下生效
 export RELEASE_ROOT="$root" RELEASE_TEST_CALLS="$work/calls.log" RELEASE_SKIP_CONSOLE=1 RELEASE_HEALTH_POLL_S=0
 export RELEASE_HEALTH_TIMEOUT_S=2 RELEASE_REQUIRE_PRECHECK=1 RELEASE_REQUIRE_GATE=1
 # 假令牌：环境里故意 export 一个（脚本必须清掉、谁都不许拿到）；闸门的令牌从标准输入给（#352 M1）
@@ -299,6 +300,63 @@ grep -q 'build.*shell' "$docker_calls" && bad "重建了被钉住的 shell 镜�
 grep -q -- "-f $ovr up -d --remove-orphans --no-build\$" "$docker_calls" && ok "up 带叠加文件且 --no-build" || bad "up 调用不对：$(cat "$docker_calls")"
 grep -q -- "--project-directory $root/deploy -f $root/deploy/docker-compose.yml -f $root/deploy/tiers/standard.yml" "$docker_calls" && ok "和 compose.sh 用同一组基础文件" || bad "基础文件不对：$(cat "$docker_calls")"
 unset RELEASE_DOCKER
+
+# ---------------------------------------------------------------------------
+# 测试开关只在 RELEASE_TEST_MODE=1 时生效（#353）：不设测试模式时，设了任何一个就拒绝，什么都不动
+knobs=(RELEASE_REMOTE RELEASE_MAIN_BRANCH RELEASE_DB_CMD RELEASE_HEALTH_CMD RELEASE_REQUIRE_GATE
+  RELEASE_REQUIRE_PRECHECK RELEASE_DOCKER RELEASE_SKIP_CONSOLE
+  RELEASE_PSQL RELEASE_BACKUP_CMD RELEASE_SNAPSHOTS_CMD RELEASE_DOCKER_NETS_CMD RELEASE_IP_ROUTE_CMD
+  RELEASE_MCP_NET_NAME RELEASE_MIGRATIONS_DIR)
+unset_args=(-u RELEASE_TEST_MODE); for k in "${knobs[@]}"; do unset_args+=(-u "$k"); done
+prodlike() { env "${unset_args[@]}" "$@" "$relbin" "${PRODLIKE_ARGS[@]}" </dev/null; }   # 用法：prodlike [VAR=值…]
+head_before="$(git -C "$root" rev-parse HEAD)"; cur_before="$(cat "$root/.release/current")"
+hist_before="$(wc -l <"$root/.release/history.log")"
+declare -A knob_val=([RELEASE_REMOTE]=evil [RELEASE_MAIN_BRANCH]=dev [RELEASE_DB_CMD]="$dbcmd" [RELEASE_HEALTH_CMD]="$health"
+  [RELEASE_REQUIRE_GATE]=0 [RELEASE_REQUIRE_PRECHECK]=0 [RELEASE_DOCKER]=true [RELEASE_SKIP_CONSOLE]=1
+  [RELEASE_PSQL]=true [RELEASE_BACKUP_CMD]=true [RELEASE_SNAPSHOTS_CMD]=true [RELEASE_DOCKER_NETS_CMD]=true
+  [RELEASE_IP_ROUTE_CMD]=true [RELEASE_MCP_NET_NAME]=x [RELEASE_MIGRATIONS_DIR]=/tmp)
+rm -f "$root/gate.env"
+for k in "${knobs[@]}"; do
+  PRODLIKE_ARGS=(deploy v0.5.0 --confirm v0.5.0)
+  expect "非测试模式：设了 $k 就拒绝" 1 prodlike "$k=${knob_val[$k]}"
+  echo "$LAST_OUT" | grep -q "测试开关.*$k" || bad "$k 的拒绝理由不对：$LAST_OUT"
+done
+PRODLIKE_ARGS=(rollback --confirm v0.5.0)
+expect "非测试模式：rollback 设 RELEASE_DB_CMD 也拒绝" 1 prodlike RELEASE_DB_CMD="$dbcmd"
+PRODLIKE_ARGS=(list)
+expect "非测试模式：list 设 RELEASE_MAIN_BRANCH=dev 也拒绝" 1 prodlike RELEASE_MAIN_BRANCH=dev
+PRODLIKE_ARGS=(deploy v0.5.0)
+expect "非测试模式：同时设多个都列出来" 1 prodlike RELEASE_REQUIRE_GATE=0 RELEASE_REQUIRE_PRECHECK=0
+echo "$LAST_OUT" | grep -q 'RELEASE_REQUIRE_GATE RELEASE_REQUIRE_PRECHECK' && ok "列出全部设了的开关" || bad "输出不对：$LAST_OUT"
+[ "$(git -C "$root" rev-parse HEAD)" = "$head_before" ] && [ "$(cat "$root/.release/current")" = "$cur_before" ] \
+  && ok "被拒时检出和 current 都没动" || bad "被拒却改了检出或 current"
+[ ! -e "$root/gate.env" ] && ok "被拒时闸门没跑" || bad "被拒却跑了闸门"
+[ "$(wc -l <"$root/.release/history.log")" = "$hist_before" ] && ok "被拒发生在任何动作之前（history.log 没新行）" || bad "被拒前已经写了日志"
+PRODLIKE_ARGS=(deploy v0.5.0)
+expect "RELEASE_TEST_MODE 只认 1：设成 yes 拒绝" 1 prodlike RELEASE_TEST_MODE=yes
+# 设成空串的开关不算设了，但同样不生效：下面走的是默认 compose 里的 psql（桩没有输出 → 读不出迁移记录 → 拒绝）
+: >"$RELEASE_TEST_CALLS"
+PRODLIKE_ARGS=(deploy v0.5.0)
+expect "非测试模式不设开关：迁移核对走默认的 compose psql（不是 RELEASE_DB_CMD）" 1 prodlike RELEASE_DB_CMD=
+echo "$LAST_OUT" | grep -q '读不出数据库的迁移记录' && grep -q 'exec -T -e PGOPTIONS=-c default_transaction_read_only=on postgres psql' "$RELEASE_TEST_CALLS" \
+  && ok "用的是只读 psql 默认值" || bad "没走默认 psql：$LAST_OUT / $(cat "$RELEASE_TEST_CALLS")"
+PRODLIKE_ARGS=(list)
+expect "非测试模式不设开关：list 用默认 origin/main" 0 prodlike
+echo "$LAST_OUT" | grep -q 'v0.5.0' && ! echo "$LAST_OUT" | grep -q 'v0.9.0' && ok "默认只认 origin/main 上的标签" || bad "list 不对：$LAST_OUT"
+
+# 生产目录（/opt/aroomo，含默认值、多余的 /、..、软链接）禁用测试模式：直接拒绝，不在生产目录写任何东西
+opt_existed=0; [ -e /opt/aroomo ] && opt_existed=1
+for r in /opt/aroomo /opt/aroomo/ /opt/./aroomo /opt/x/../aroomo; do
+  RELEASE_ROOT="$r" expect "生产目录 $r 上 RELEASE_TEST_MODE=1 被拒" 1 "$relbin" status
+  echo "$LAST_OUT" | grep -q '生产目录.*禁用测试模式' || bad "$r 的拒绝理由不对：$LAST_OUT"
+done
+ln -s /opt/aroomo "$work/prod-link"
+RELEASE_ROOT="$work/prod-link" expect "指向 /opt/aroomo 的软链接上 RELEASE_TEST_MODE=1 被拒" 1 "$relbin" status
+env -u RELEASE_ROOT RELEASE_TEST_MODE=1 "$relbin" status >"$work/out" 2>&1 && bad "默认目录（/opt/aroomo）上测试模式却没被拒" \
+  || { grep -q '禁用测试模式' "$work/out" && ok "不设 RELEASE_ROOT（默认生产目录）时测试模式被拒" || bad "输出不对：$(cat "$work/out")"; }
+PRODLIKE_ARGS=(deploy v0.5.0)
+expect "生产目录上不设测试模式、设了 RELEASE_REQUIRE_GATE=0 也拒绝" 1 prodlike RELEASE_ROOT=/opt/aroomo RELEASE_REQUIRE_GATE=0
+[ "$opt_existed" = 1 ] || { [ ! -e /opt/aroomo ] && ok "被拒时没有建 /opt/aroomo" || bad "被拒却建了 /opt/aroomo"; }
 
 # compose 输出写进 600 权限的日志文件，不再丢掉
 [ "$(stat -c %a "$root/.release/compose.log")" = 600 ] && ok "compose.log 权限 600" || bad "compose.log 权限不对"

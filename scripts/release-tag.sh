@@ -29,20 +29,28 @@
 # 绝不做的事：git clean、git add -A、git stash -u（服务器上有未被忽略的本地密钥文件）；
 #            不打印 .env 的任何值；不碰 main（只读 origin/main）。
 #
-# 环境变量（测试和排障用，生产不用设）：
-#   RELEASE_ROOT（默认 /opt/aroomo）RELEASE_REMOTE（origin）RELEASE_MAIN_BRANCH（main）
-#   RELEASE_TIER（默认 standard，与现有生产一致）RELEASE_HEALTH_TIMEOUT_S（420）
-#   RELEASE_HEALTH_CMD（测试用：命令 <服务名> 输出 healthy 即通过）RELEASE_SKIP_CONSOLE=1（测试用：不构建控制台）
-#   RELEASE_REQUIRE_PRECHECK（默认 1：目标版本缺 scripts/release-precheck.sh 就拒绝部署；只有测试设 0）
-#   RELEASE_DB_CMD（测试用：从 stdin 读一条 SQL、输出无表头结果的命令；默认走 compose exec postgres psql，只读）
-#   RELEASE_PRECHECK_DB（默认 aroomo_core）
-#   RELEASE_REQUIRE_GATE（默认 1：目标版本缺 scripts/ci/merge-gate.py 就拒绝部署；只有测试设 0）
+# 环境变量：
+#   RELEASE_ROOT（默认 /opt/aroomo）RELEASE_TIER（默认 standard，与现有生产一致）RELEASE_HEALTH_TIMEOUT_S（420）
+#   RELEASE_HEALTH_POLL_S（5）RELEASE_PRECHECK_DB（默认 aroomo_core）
 #   合并闸门的仓库写死为 uniwof/Aroomo-Developer、解释器固定 python3，不能用环境变量改（#352 N1）
+# 测试开关（#353）：只在 RELEASE_TEST_MODE=1 时生效。不设 RELEASE_TEST_MODE=1 时只要设了任何一个就拒绝（不悄悄忽略），
+# 并且一律用安全默认值；RELEASE_ROOT 是生产目录 /opt/aroomo（含软链接、多余的 / 和 ..）时禁止 RELEASE_TEST_MODE=1。
+#   RELEASE_REMOTE（origin）RELEASE_MAIN_BRANCH（main）
+#   RELEASE_HEALTH_CMD（命令 <服务名> 输出 healthy 即通过；默认看 docker 健康状态）RELEASE_SKIP_CONSOLE=1（不构建控制台）
+#   RELEASE_DB_CMD（从 stdin 读一条 SQL、输出无表头结果的命令；默认走 compose exec postgres psql，只读）
+#   RELEASE_REQUIRE_PRECHECK=0 / RELEASE_REQUIRE_GATE=0（目标版本缺生产前检查 / 合并闸门时放行；默认 1 = 拒绝部署）
+#   RELEASE_DOCKER（docker 命令的桩）
+#   以及 release-precheck.sh 的桩（会被它继承）：RELEASE_PSQL RELEASE_BACKUP_CMD RELEASE_SNAPSHOTS_CMD
+#   RELEASE_DOCKER_NETS_CMD RELEASE_IP_ROUTE_CMD RELEASE_MCP_NET_NAME RELEASE_MIGRATIONS_DIR
 set -Eeuo pipefail
 
 ROOT="${RELEASE_ROOT:-/opt/aroomo}"
-REMOTE="${RELEASE_REMOTE:-origin}"
-MAIN_BRANCH="${RELEASE_MAIN_BRANCH:-main}"
+PROD_ROOT="/opt/aroomo"   # 生产目录，写死（#353）
+# 测试开关（#353）：只在 RELEASE_TEST_MODE=1 时生效，见文件头
+TEST_KNOBS=(RELEASE_REMOTE RELEASE_MAIN_BRANCH RELEASE_DB_CMD RELEASE_HEALTH_CMD RELEASE_REQUIRE_GATE
+  RELEASE_REQUIRE_PRECHECK RELEASE_DOCKER RELEASE_SKIP_CONSOLE
+  RELEASE_PSQL RELEASE_BACKUP_CMD RELEASE_SNAPSHOTS_CMD RELEASE_DOCKER_NETS_CMD RELEASE_IP_ROUTE_CMD
+  RELEASE_MCP_NET_NAME RELEASE_MIGRATIONS_DIR)
 TIER="${RELEASE_TIER:-standard}"
 HEALTH_TIMEOUT_S="${RELEASE_HEALTH_TIMEOUT_S:-420}"
 SERVICES=(core lobe shell)
@@ -60,6 +68,30 @@ trap 'rm -f "$RELEASE_TAG_COPY"' EXIT
 # 令牌不从环境继承（#352 M1）：清掉，免得 precheck、构建、compose 跟着继承；deploy 时下面用 read -rs 读进不导出的变量
 unset GH_TOKEN GITHUB_TOKEN
 gate_tok=""
+
+# 测试模式与生产目录（#353）。在建 .release/ 之前判断：生产目录上被拒时什么都不写
+early_die() { printf '拒绝：%s\n' "$*" >&2; exit 1; }
+case "${RELEASE_TEST_MODE:-}" in
+  "") TEST_MODE=0 ;;
+  1) TEST_MODE=1 ;;
+  *) early_die "RELEASE_TEST_MODE 只能是 1 或不设（现在是 ${RELEASE_TEST_MODE}）" ;;
+esac
+# 生产目录：规范化后（解开软链接、多余的 / 和 ..）等于 /opt/aroomo，或就是同一个目录
+is_prod_root() {
+  [ "$(realpath -m -- "$ROOT")" = "$(realpath -m -- "$PROD_ROOT")" ] || [ "$ROOT" -ef "$PROD_ROOT" ]
+}
+if [ "$TEST_MODE" = 1 ] && is_prod_root; then
+  early_die "生产目录 $ROOT 禁用测试模式：去掉 RELEASE_TEST_MODE=1 再运行（测试开关在生产上一律不生效）"
+fi
+if [ "$TEST_MODE" = 0 ]; then
+  set_knobs=()
+  for v in "${TEST_KNOBS[@]}"; do [ -z "${!v:-}" ] || set_knobs+=("$v"); done
+  [ "${#set_knobs[@]}" = 0 ] \
+    || early_die "这些是测试开关，只在 RELEASE_TEST_MODE=1（非生产目录）下生效，生产不能设：${set_knobs[*]}。unset 后重跑"
+  unset "${TEST_KNOBS[@]}"   # 连设成空串的也清掉：下面一律用安全默认值
+fi
+REMOTE="${RELEASE_REMOTE:-origin}"
+MAIN_BRANCH="${RELEASE_MAIN_BRANCH:-main}"
 
 state="$ROOT/.release"
 mkdir -p "$state"
