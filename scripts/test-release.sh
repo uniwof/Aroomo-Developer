@@ -302,6 +302,31 @@ grep -q -- "--project-directory $root/deploy -f $root/deploy/docker-compose.yml 
 unset RELEASE_DOCKER
 
 # ---------------------------------------------------------------------------
+# 回滚目标必须在 origin/main 上（#353）：只查本地 ref，不联网
+printf '0001_a.sql\n0002_b.sql\n0003_c.sql\n' >"$applied"
+printf '%s\n' "$(git -C "$seed" rev-parse v0.9.0)" >"$root/.release/previous"
+expect "回滚目标在 dev 上（不在 origin/main）：演练拒绝" 1 "$rel" rollback
+echo "$LAST_OUT" | grep -q '不在 origin/main 上' && ok "说明回滚目标不在 main 上" || bad "输出不对：$LAST_OUT"
+expect "回滚目标在 dev 上：确认也拒绝" 1 "$rel" rollback --confirm "$(git -C "$seed" rev-parse --short=7 v0.9.0)"
+[ "$(head_tag)" = v0.4.0 ] && ok "拒绝后仍是 v0.4.0" || bad "检出变了：$(head_tag)"
+printf 'v0.5.0\n' >"$root/.release/previous"
+git -C "$root" remote set-url origin "$work/gh/does-not-exist.git"
+expect "远端连不上时回滚演练照样通过（只查本地 origin/main）" 0 rel_notok rollback
+git -C "$root" remote set-url origin "$origin"
+
+# 第一次从提交号切到标签（#353）：目标比当前提交旧就拒绝；同一个提交或更新的照常
+rm -f "$root/.release/current" "$root/.release/previous"
+git -C "$root" checkout -q -f "$(git -C "$seed" rev-parse v0.5.0)"
+expect "当前是提交号（v0.5.0 的提交），deploy 更旧的 v0.4.0：演练拒绝" 1 "$rel" deploy v0.4.0
+echo "$LAST_OUT" | grep -q '比当前提交 .* 旧' && echo "$LAST_OUT" | grep -q rollback && ok "说明比当前提交旧、改用 rollback" || bad "输出不对：$LAST_OUT"
+expect "当前是提交号，deploy 更旧的 v0.4.0：确认也拒绝" 1 "$rel" deploy v0.4.0 --confirm v0.4.0
+[ "$(git -C "$root" rev-parse HEAD)" = "$(git -C "$seed" rev-parse v0.5.0)" ] && ok "拒绝后没切走" || bad "拒绝却切走了"
+expect "当前是提交号，deploy 同一个提交上的 v0.5.0：演练通过" 0 "$rel" deploy v0.5.0
+git -C "$root" checkout -q -f "$(git -C "$seed" rev-parse v0.4.0)"
+expect "当前是提交号（v0.4.0 的提交），deploy 更新的 v0.5.0：演练通过" 0 "$rel" deploy v0.5.0 --lobe-session-ok
+printf 'v0.4.0\n' >"$root/.release/current"; printf 'v0.5.0\n' >"$root/.release/previous"   # 还原状态
+
+# ---------------------------------------------------------------------------
 # 测试开关只在 RELEASE_TEST_MODE=1 时生效（#353）：不设测试模式时，设了任何一个就拒绝，什么都不动
 knobs=(RELEASE_REMOTE RELEASE_MAIN_BRANCH RELEASE_DB_CMD RELEASE_HEALTH_CMD RELEASE_REQUIRE_GATE
   RELEASE_REQUIRE_PRECHECK RELEASE_DOCKER RELEASE_SKIP_CONSOLE

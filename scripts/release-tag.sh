@@ -417,6 +417,9 @@ if [ "$cmd" = rollback ]; then
   log "回滚目标：$(short "$target")（当前 $(short "$cur")）"
   commit_of "$target" >/dev/null || die "找不到回滚目标 $(short "$target")"
   tcommit="$(commit_of "$target")"
+  # 回滚目标也必须在 main 上（#353）：只查本地已有的 $REMOTE/$MAIN_BRANCH，不联网（GitHub 不可用时照样能紧急回滚）
+  git_ merge-base --is-ancestor "$tcommit" "refs/remotes/$REMOTE/$MAIN_BRANCH" 2>/dev/null \
+    || die "回滚目标 $(short "$target") 不在 $REMOTE/$MAIN_BRANCH 上（查的是本地记录，没联网），生产只跑 main 上的版本"
 else
   [[ "$target" =~ $TAG_RE ]] || die "要部署的版本必须是 main 上形如 v0.1.0 的标签（拒绝：${target:-空}）"
   fetch_remote
@@ -425,10 +428,15 @@ else
     || die "标签 $target 不在 $MAIN_BRANCH 上，生产只部署 main 上的标签"
   tcommit="$(commit_of "refs/tags/$target")"
   # 不许用 deploy 退到更旧的标签（#352 M4）：当前记录是 vX.Y.Z 标签、目标比它旧 → 拒绝，回退走 rollback。
-  # 当前记录是提交号（第一次从 dev 切到标签）时没有可比的版本号，不查。
   if [[ "$cur" =~ $TAG_RE ]] && [ "$target" != "$cur" ] \
      && [ "$(printf '%s\n%s\n' "$target" "$cur" | sort -V | head -1)" = "$target" ]; then
     die "目标 $target 比当前已部署的 $cur 旧：不要用 deploy 回退，请改用 rollback（见 docs/ops/RELEASE.md「回滚方案」）"
+  fi
+  # 当前记录是提交号（第一次从 dev 切到标签，#353）：没有版本号可比，按提交历史比——目标是当前提交的祖先（更旧）就拒绝。
+  # shortcut: 两者没有祖先关系（比如 squash 合并）时判断不了、放行；生产 dev→main 用合并提交，祖先关系在。
+  if ! [[ "$cur" =~ $TAG_RE ]] && ccur="$(commit_of "$cur")" && [ "$tcommit" != "$ccur" ] \
+     && git_ merge-base --is-ancestor "$tcommit" "$ccur" 2>/dev/null; then
+    die "目标 $target 比当前提交 $(short "$cur") 旧：第一次切到标签也不能往回退，请改用 rollback 或部署更新的标签"
   fi
   if [ "$tcommit" = "$(git_ rev-parse HEAD)" ] && [ "$(read_state current)" = "$target" ]; then
     log "生产已经是 $target，无需部署"; exit 0
