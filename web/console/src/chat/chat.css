@@ -2153,3 +2153,52 @@ kbd.row-value {
 .side-tools > .pill-filter {
   margin-top: calc(0.125 * var(--k));
 }
+
+/* Skin/Bones 工作台侧栏（开关 SKIN_BONES，切片 1）：常驻 224px = 14 × --k，随字号缩放；8px 步进（0.5 × --k）；无动画 */
+.wb-nav {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: calc(14 * var(--k));
+  padding: calc(1 * var(--k)) calc(0.5 * var(--k));
+  border-right: 1px solid var(--border);
+  background: var(--rail);
+  overflow-y: auto;
+}
+.wb-list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(0.25 * var(--k));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wb-item {
+  display: flex;
+  align-items: center;
+  gap: calc(0.75 * var(--k));
+  width: 100%;
+  min-height: calc(2.75 * var(--k)); /* 44px：点击区 ≥44，不靠 .hit 的透明扩展也够 */
+  padding: calc(0.5 * var(--k)) calc(0.75 * var(--k));
+  border: 0;
+  border-radius: calc(0.5 * var(--k));
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: calc(0.9375 * var(--k));
+  text-align: left;
+  cursor: pointer;
+}
+.wb-item:hover {
+  background: var(--hover);
+}
+.wb-item[aria-current='page'] {
+  background: var(--selected);
+  font-weight: 600;
+}
+.wb-icon {
+  flex: none;
+  width: calc(1.125 * var(--k));
+  height: calc(1.125 * var(--k));
+}

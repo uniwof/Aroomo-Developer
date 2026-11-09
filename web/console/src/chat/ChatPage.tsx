@@ -25,6 +25,8 @@ import { ClaimFullError, claimLegacy, legacyClaimed, listTimeLabel, loadConversa
 import { useAsk } from '@/components/Dialog';
 import { ASSISTANTS, ASSISTANT_DRAFT, SAVED_CHATS, SCHEDULE_PAGE } from '@/lib/flags';
 import { WORK } from '@/lib/work-flag';
+import { SKIN_BONES } from '@/lib/skinbones-flag';
+import { Empty } from './ui';
 import { useAssistants, type AssistantInput } from '@/lib/assistants';
 import { archiveConversation, createConversation, fetchConversation, fetchConversations, fetchMessages, importLocalOnce, localPending, markRead, mergeRemote, renameConversation } from './saved';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -54,6 +56,8 @@ const GroupNewPanel = lazy(() => import('./group-new').then((m) => ({ default: m
 const CapabilityPanel = lazy(() => import('./capability-panel').then((m) => ({ default: m.CapabilityPanel })));
 // /work 单独懒加载块；开关关着时连这一行都被摇掉（对话页包 ≤150 KB）
 const WorkPage = WORK ? lazy(() => import('./pages/work/WorkPage')) : null;
+// Skin/Bones 四区侧栏：同样点开才下载。开关关着时这一行摇掉，它的四个图标也不进对话页包（实测 2026-11-09）
+const WorkbenchNav = SKIN_BONES ? lazy(() => import('./WorkbenchNav').then((m) => ({ default: m.WorkbenchNav }))) : null;
 
 /** 懒加载面板下载时：一句静态文字（不转圈，无动画） */
 function Later({ children }: { children: ReactNode }) {
@@ -76,7 +80,12 @@ const TITLES: Record<Exclude<View['kind'], 'chat' | 'member' | 'assistant'>, str
   audit: '审计记录',
   executors: '电脑助手',
   work: '项目',
+  // 开关关着时 '资产' 不该进对话页包，所以不写死在表里（titleOf 里补，整句随开关摇掉）
+  assets: '',
 };
+
+/** 面板标题。assets 的标题放在开关后面：SKIN_BONES 关着时这一句是常量 false，'资产' 不进对话页包 */
+const titleOf = (kind: Exclude<View['kind'], 'chat' | 'member' | 'assistant'>) => (SKIN_BONES && kind === 'assets' ? '资产' : TITLES[kind]);
 
 /** 上一层是哪里（顶栏「← 返回」） */
 function parentOf(v: View): { view: View; label: string } | null {
@@ -573,7 +582,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
   }, [prefs]);
   // 浏览器标签页标题跟着会话走（读屏切标签时能听到在哪个会话）
   useEffect(() => {
-    document.title = `${view.kind === 'chat' ? current.title : view.kind === 'member' ? '成员' : view.kind === 'assistant' ? (assistants?.find((a) => a.id === view.id)?.name ?? '助手') : TITLES[view.kind]} · Aroomo`;
+    document.title = `${view.kind === 'chat' ? current.title : view.kind === 'member' ? '成员' : view.kind === 'assistant' ? (assistants?.find((a) => a.id === view.id)?.name ?? '助手') : titleOf(view.kind)} · Aroomo`;
   }, [current.title, view, assistants]);
   useEffect(() => {
     const d = dialog.current;
@@ -1108,7 +1117,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     const shownMembers = groupConv ? allMembers.filter((m) => groupConv.group!.includes(m.name)) : allMembers;
     const parent = groupConv ? { go: () => void openConversation(groupConv.id), label: '对话', aria: '返回这段群聊' } : phone ? phoneParent(view) : parentOf(view);
     const member = view.kind === 'member' ? allMembers.find((m) => m.id === view.id) : undefined;
-    const title = view.kind === 'member' ? (member?.name ?? '成员') : view.kind === 'assistant' ? (assistants?.find((a) => a.id === view.id)?.name ?? '助手') : view.kind === 'settings' && view.section ? SETTINGS_SECTIONS.find((x) => x.id === view.section)!.label : TITLES[view.kind];
+    const title = view.kind === 'member' ? (member?.name ?? '成员') : view.kind === 'assistant' ? (assistants?.find((a) => a.id === view.id)?.name ?? '助手') : view.kind === 'settings' && view.section ? SETTINGS_SECTIONS.find((x) => x.id === view.section)!.label : titleOf(view.kind);
     main = (
       <>
         <PanelHeader title={title} lead={phone ? null : menuButton} {...(parent ? { onBack: () => ('go' in parent ? parent.go() : parent.view.kind === 'settings' && !phone ? setView(parent.view, { state: { bg: '/chat' } }) : setView(parent.view)), backLabel: parent.label, ...('aria' in parent && parent.aria ? { backAria: parent.aria } : {}) } : {})} />
@@ -1157,6 +1166,17 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
             />
           )}
           {view.kind === 'capmap' && <CapabilityPanel />}
+          {/* Skin/Bones 切片 1 空壳（开关关着时整段摇掉）：一句话 + 一个占位动作，不接数据 */}
+          {SKIN_BONES && !WorkPage && view.kind === 'work' && (
+            <div className="panel">
+              <Empty text="这里会放项目和版本，还没有接上。" action={<button type="button" className="btn btn-outline" onClick={() => setView({ kind: 'chat' })}>先回到对话</button>} />
+            </div>
+          )}
+          {SKIN_BONES && view.kind === 'assets' && (
+            <div className="panel">
+              <Empty text="这里会放点子、工具与试用、知识库，还没有接上。" action={<button type="button" className="btn btn-outline" onClick={() => setView({ kind: 'library' })}>先去资源库</button>} />
+            </div>
+          )}
           {WorkPage && view.kind === 'work' && (
             <WorkPage key={pathOf(view)} {...view} onGo={(w) => setView({ kind: 'work', ...w })} onAssistant={(id) => setView({ kind: 'assistant', id })} />
           )}
@@ -1243,7 +1263,13 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
       <p className="sr-only" aria-live="polite" data-net-status="">
         {netSay}
       </p>
-      {layout.rail && <Rail active={settingsOpen && !phone ? 'settings' : view.kind} onOpen={(t: RailTarget) => goto({ kind: t })} usage={usage} />}
+      {/* Skin/Bones（开关 SKIN_BONES）：224px 四区侧栏代替窄栏；关着时这里照旧是窄栏，WorkbenchNav 不进包 */}
+      {layout.rail && WorkbenchNav && !isFamily() && (
+        <Suspense fallback={null}>
+          <WorkbenchNav active={settingsOpen ? 'settings' : view.kind} onOpen={(z) => goto({ kind: z } as View)} />
+        </Suspense>
+      )}
+      {layout.rail && !(SKIN_BONES && !isFamily()) && <Rail active={settingsOpen && !phone ? 'settings' : view.kind} onOpen={(t: RailTarget) => goto({ kind: t })} usage={usage} />}
       {wide && !collapsed && (
         <aside className="side" aria-label="会话列表" style={{ width: `calc(${sideW} * var(--k))` }}>
           {sidebar}
