@@ -2202,3 +2202,60 @@ kbd.row-value {
   width: calc(1.125 * var(--k));
   height: calc(1.125 * var(--k));
 }
+
+/* Skin/Bones 右侧抽屉（开关 SKIN_BONES，切片 2）：常规 480 = 30 × --k，宽档 640 = 40 × --k；无动画 */
+.sdrawer {
+  position: fixed;
+  inset: 0 0 0 auto;
+  margin: 0;
+  width: min(calc(30 * var(--k)), 100vw);
+  max-width: 100vw;
+  height: 100dvh;
+  max-height: 100dvh;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.sdrawer-wide {
+  width: min(calc(40 * var(--k)), 100vw);
+}
+.sdrawer::backdrop {
+  background: rgb(0 0 0 / 0.28);
+}
+/* 规范「移动端 <680px 自动全屏」：680/16 = 42.5em，用 em 所以放大字号时也当小屏处理 */
+@media (max-width: 42.5em) {
+  .sdrawer,
+  .sdrawer-wide {
+    width: 100vw;
+    border-left: 0;
+  }
+}
+.sdrawer-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(0.5 * var(--k));
+  padding: calc(0.5 * var(--k)) calc(0.5 * var(--k)) calc(0.5 * var(--k)) calc(1 * var(--k));
+  border-bottom: 1px solid var(--border);
+}
+.sdrawer-title {
+  margin: 0;
+  font-size: calc(0.9375 * var(--k));
+  font-weight: 600;
+}
+.sdrawer-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(0.75 * var(--k));
+  padding: calc(1 * var(--k));
+  overflow-y: auto;
+}

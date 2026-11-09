@@ -26,6 +26,8 @@ import { useAsk } from '@/components/Dialog';
 import { ASSISTANTS, ASSISTANT_DRAFT, SAVED_CHATS, SCHEDULE_PAGE } from '@/lib/flags';
 import { WORK } from '@/lib/work-flag';
 import { SKIN_BONES } from '@/lib/skinbones-flag';
+// 抽屉 ↔ 地址：只有这里 import（懒加载的 SideDrawer 不碰它），用处都在 SKIN_BONES 后面，开关关着时整个模块摇掉
+import { drawerOf, withDrawer, type DrawerState } from './drawer-query';
 import { Empty } from './ui';
 import { useAssistants, type AssistantInput } from '@/lib/assistants';
 import { archiveConversation, createConversation, fetchConversation, fetchConversations, fetchMessages, importLocalOnce, localPending, markRead, mergeRemote, renameConversation } from './saved';
@@ -58,6 +60,8 @@ const CapabilityPanel = lazy(() => import('./capability-panel').then((m) => ({ d
 const WorkPage = WORK ? lazy(() => import('./pages/work/WorkPage')) : null;
 // Skin/Bones 四区侧栏：同样点开才下载。开关关着时这一行摇掉，它的四个图标也不进对话页包（实测 2026-11-09）
 const WorkbenchNav = SKIN_BONES ? lazy(() => import('./WorkbenchNav').then((m) => ({ default: m.WorkbenchNav }))) : null;
+// Skin/Bones 切片 2 右侧抽屉（?drawer=…&w=640）：同样点开才下载，开关关着时摇掉
+const SideDrawer = SKIN_BONES ? lazy(() => import('./SideDrawer')) : null;
 
 /** 懒加载面板下载时：一句静态文字（不转圈，无动画） */
 function Later({ children }: { children: ReactNode }) {
@@ -398,6 +402,17 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     if (to === loc.pathname + loc.search) return;
     nav(to, { replace: !!opts.replace, ...(opts.state !== undefined ? { state: opts.state } : {}) });
   }, []);
+  // Skin/Bones 切片 2：右侧抽屉的状态只在地址里（?drawer=<id>&w=640）。打开、关上各占一步历史（后退能关、前进能再开），切宽档不占
+  const drawer = SKIN_BONES && !isFamily() ? drawerOf(location.search) : null;
+  const setDrawer = (d: DrawerState | null, replace = false) => {
+    const { navigate: nav, location: loc } = navRef.current;
+    // Esc 的 keydown 和 cancel 可能先后都到：已经关了就不再写一步历史
+    if (!d && !drawerOf(loc.search)) return;
+    nav(loc.pathname + withDrawer(loc.search, d), { replace, state: loc.state });
+  };
+  const openDrawer = (id: string) => setDrawer({ id, wide: false });
+  /** 面板 ErrorBoundary 的 key 去掉抽屉参数：开关抽屉不重挂面板，打开它的按钮还在，关上后焦点能回去 */
+  const panelKey = (search: string) => withDrawer(search, null);
   // 自审 B16：下面的内容滚到顶栏底下时，顶栏加一条细分隔线（大字号时不再像半行字被切掉）；换页面 / 换会话自动归零
   const [scrolledKey, setScrolledKey] = useState('');
   const [prefs, setPrefs] = useState<ChatPrefs>(() => loadPrefs());
@@ -1122,7 +1137,9 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
       <>
         <PanelHeader title={title} lead={phone ? null : menuButton} {...(parent ? { onBack: () => ('go' in parent ? parent.go() : parent.view.kind === 'settings' && !phone ? setView(parent.view, { state: { bg: '/chat' } }) : setView(parent.view)), backLabel: parent.label, ...('aria' in parent && parent.aria ? { backAria: parent.aria } : {}) } : {})} />
         <div className="panel-scroll">
-          <ErrorBoundary key={location.pathname + location.search} onReset={() => setView({ kind: 'chat' })}>
+          {/* 抽屉参数不算换页：开关抽屉不重挂面板，打开它的按钮还在，关上后焦点能回去。
+              开关关着时这一句是常量 false，只剩 location.search（drawer-query 整个在懒加载块里，不进对话页包） */}
+          <ErrorBoundary key={location.pathname + (SKIN_BONES ? panelKey(location.search) : location.search)} onReset={() => setView({ kind: 'chat' })}>
           <Later>
           {view.kind === 'members' && (
             <>
@@ -1175,6 +1192,10 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
           {SKIN_BONES && view.kind === 'assets' && (
             <div className="panel">
               <Empty text="这里会放点子、工具与试用、知识库，还没有接上。" action={<button type="button" className="btn btn-outline" onClick={() => setView({ kind: 'library' })}>先去资源库</button>} />
+              {/* 切片 2：右侧抽屉的入口（示例），开关关着时整段摇掉；开哪个抽屉由 openDrawer 写进地址 */}
+              <button type="button" className="btn btn-outline" onClick={() => openDrawer('preview')}>
+                打开示例详情
+              </button>
             </div>
           )}
           {WorkPage && view.kind === 'work' && (
@@ -1342,6 +1363,11 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
               setView({ kind: 'assistant', id: a.id });
             }}
           />
+        </Suspense>
+      )}
+      {SideDrawer && drawer && (
+        <Suspense fallback={null}>
+          <SideDrawer key={drawer.id} id={drawer.id} wide={drawer.wide} onClose={() => setDrawer(null)} onWide={(wide) => setDrawer({ ...drawer, wide }, true)} />
         </Suspense>
       )}
       {!wide && !phone && (
