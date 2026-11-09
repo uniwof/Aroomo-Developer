@@ -47,6 +47,7 @@ import { PgConversationStore } from './conversations/pg.js';
 import type { ConversationStore } from './conversations/types.js';
 import { MemoryPushStore, PgPushStore, type PushStore } from './push/store.js';
 import { MemoryWorkStore, PgWorkStore, type WorkStore } from './work/store.js';
+import { MemoryMemberToolStore, PgMemberToolStore, type MemberToolStore } from './members/tools.js';
 import { MemorySettingsStore, PgSettingsStore, type SettingsStore } from './settings/store.js';
 
 export interface CoreDeps {
@@ -75,6 +76,8 @@ export interface CoreDeps {
   pushFetch?: typeof fetch;
   /** /work 项目与版本（0033） */
   work: WorkStore;
+  /** 成员工具分配（0035，docs/api/design-member-tools-v1.md） */
+  memberTools: MemberToolStore;
   /** 测试时注入：/work 同步 GitHub 用的 fetch */
   workFetch?: typeof fetch;
   /** 测试时注入：对话入口调用 LiteLLM 用的 fetch */
@@ -96,11 +99,12 @@ export interface CoreDeps {
 }
 
 export function memoryDeps(now: () => Date = () => new Date()): CoreDeps {
+  const members = new MemoryMemberStore();
   return {
     now,
     auditLog: new MemoryAuditLog(now),
     operatorTokens: new MemoryOperatorTokenStore(),
-    members: new MemoryMemberStore(),
+    members,
     inbox: new MemoryInboxStore(),
     confirmChallenges: new MemoryChallengeStore(),
     keys: new MemoryKeyStore(),
@@ -115,6 +119,7 @@ export function memoryDeps(now: () => Date = () => new Date()): CoreDeps {
     conversations: new MemoryConversationStore(),
     push: new MemoryPushStore(),
     work: new MemoryWorkStore(),
+    memberTools: new MemoryMemberToolStore(members),
   };
 }
 
@@ -139,6 +144,7 @@ export function pgDeps(db: Db, now: () => Date = () => new Date()): CoreDeps {
     conversations: new PgConversationStore(db),
     push: new PgPushStore(db),
     work: new PgWorkStore(db),
+    memberTools: new PgMemberToolStore(db),
     // 操作员令牌的签发 / 持久化属于负责人体系，后续 Issue 再落库
     operatorTokens: new MemoryOperatorTokenStore(),
   };

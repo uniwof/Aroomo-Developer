@@ -19,6 +19,8 @@ export const MARKERS = {
   // 标志文字是组件独有的界面字：TaskCard 的确认块「花多少：」、反问块输入框「写你的回答」；QuickReplies 的「我自己写…」
   TASK_CARDS: ['花多少：', '写你的回答'],
   QUICK_REPLIES: ['我自己写…'],
+  // 成员工具分配：对话页包里只有懒加载块的文件名（组件的字都在 MemberTools 块里）；资源库「算力」那一行在 views 懒加载块，不在对话页包
+  MEMBER_TOOLS: [/MemberTools-[\w-]+\.js/],
 };
 // 不查的开关和原因（核对时间 2026-11-07，#327）。代码挪进对话页包了就改成 MARKERS。
 export const NO_MARKER = {
@@ -29,7 +31,7 @@ export const NO_MARKER = {
 
 export function readFlags() {
   const flags = {};
-  for (const f of ['src/lib/flags.ts', 'src/lib/work-flag.ts']) {
+  for (const f of ['src/lib/flags.ts', 'src/lib/work-flag.ts', 'src/lib/member-tools-flag.ts']) {
     const src = readFileSync(root + f, 'utf8');
     if (/export\s+const\s+\w+\s*=\s*\{/.test(src)) throw new Error(`${f}：开关不能写成对象（构建器不内联对象属性，关着的代码会进包）`);
     for (const [, k, v] of src.matchAll(/^export const (\w+) = (true|false);$/gm)) flags[k] = v === 'true';
@@ -46,7 +48,7 @@ export function uncovered(flags) {
 export function findLeaks(js, flags) {
   const leaked = [];
   for (const [flag, words] of Object.entries(MARKERS)) {
-    if (!(flag in flags)) throw new Error(`MARKERS 里的 ${flag} 不在 flags.ts / work-flag.ts`);
+    if (!(flag in flags)) throw new Error(`MARKERS 里的 ${flag} 不在 flags.ts / work-flag.ts / member-tools-flag.ts`);
     if (flags[flag]) continue;
     for (const w of words) if (typeof w === 'string' ? js.includes(w) : w.test(js)) leaked.push(`${flag}（关）：对话页包里有「${w}」`);
   }
