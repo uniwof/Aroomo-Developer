@@ -24,6 +24,16 @@ describe('Web Push 协议', () => {
     expect(() => encryptPayload(Buffer.from('x'), { p256dh: b64u.enc(bad), auth: 'BTBZMqHH6r4Tts7J_aSIgg' })).toThrow();
   });
 
+  it('VAPID 私钥恒为 32 字节：首字节为 0 时左补零，仍和公钥成对、能签名（#348）', () => {
+    const d = Buffer.alloc(32, 1);
+    d[0] = 0;
+    const k = generateVapidKeys({ privateKey: d });
+    expect(b64u.dec(k.privateKey)).toEqual(d);
+    expect(vapidKeysValid(k.publicKey, k.privateKey)).toBe(true);
+    expect(() => vapidAuthorization('https://fcm.googleapis.com/fcm/send/abc', { ...k, subject: 'mailto:owner@example.test' }, new Date())).not.toThrow();
+    for (let i = 0; i < 2000; i++) expect(b64u.dec(generateVapidKeys().privateKey).length).toBe(32);
+  });
+
   it('VAPID：ES256 JWT 能用公钥验过；aud 是推送地址的源，exp ≤ 24 小时', () => {
     const k = { ...generateVapidKeys(), subject: 'mailto:owner@example.test' };
     expect(vapidKeysValid(k.publicKey, k.privateKey)).toBe(true);
