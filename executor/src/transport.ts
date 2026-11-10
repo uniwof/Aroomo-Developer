@@ -56,8 +56,6 @@ export interface HttpTransportOptions {
   fetchImpl?: typeof fetch;
   /** 普通请求超时；长轮询在此基础上加 waitSec */
   timeoutMs?: number;
-  /** 本次进程的执行员 id（hello 后设置） */
-  executorId?: string;
   /**
    * 经公网走 Cloudflare Access（#365）：CF-Access-Client-Id / Secret 两个头，只发给 baseUrl 同源；
    * Secret 每次现取（读取函数自己缓存），不挂在对象字段上。
@@ -68,7 +66,6 @@ export interface HttpTransportOptions {
 export class HttpTransport implements CoreTransport {
   readonly #o: HttpTransportOptions;
   readonly #fetch: typeof fetch;
-  #executorId: string | undefined;
   readonly #origin: string;
 
   constructor(o: HttpTransportOptions) {
@@ -79,7 +76,6 @@ export class HttpTransport implements CoreTransport {
     this.#origin = u.origin;
     this.#o = { ...o, baseUrl: o.baseUrl.replace(/\/+$/, '') };
     this.#fetch = o.fetchImpl ?? fetch;
-    this.#executorId = o.executorId;
   }
 
   async #call<T>(method: 'GET' | 'POST', path: string, body?: unknown, extraMs = 0, signal?: AbortSignal): Promise<{ status: number; data: T | null }> {
@@ -95,7 +91,7 @@ export class HttpTransport implements CoreTransport {
       'user-agent': `aroomo-executor/${this.#o.version}`,
       accept: 'application/json',
     };
-    if (this.#executorId) headers['x-aroomo-executor'] = this.#executorId;
+    // 不发 x-aroomo-executor（#376 M2）：Core 只按设备令牌的 clientId 认执行员，不读这个头；Shell 也会剥掉它
     if (body !== undefined) headers['content-type'] = 'application/json';
     if (cf) {
       headers['cf-access-client-id'] = cf.id;
@@ -141,7 +137,6 @@ export class HttpTransport implements CoreTransport {
   async hello(req: HelloRequest): Promise<HelloResponse> {
     const r = await this.#call<HelloResponse>('POST', '/hello', req);
     if (!r.data?.executorId) throw new CoreError(502, 'BAD_RESPONSE', 'hello 响应缺 executorId');
-    this.#executorId = r.data.executorId;
     return r.data;
   }
 

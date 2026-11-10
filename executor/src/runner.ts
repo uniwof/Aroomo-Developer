@@ -26,9 +26,11 @@ export interface RunnerOptions {
   platform: string;
   version: string;
   handlers?: Partial<Record<Task['kind'], TaskHandler>>;
-  /** 测试可调小 */
+  /** 鉴权失败（401/403/3xx）后第一次重试的等待，之后指数退避到 5 分钟（测试可调小） */
   authRetryMs?: number;
   backoff?: Backoff;
+  /** 鉴权失败的退避器（测试注入；默认 authRetryMs 起、5 分钟封顶、带抖动） */
+  authBackoff?: Backoff;
   /** 接管卡最长等待（默认 24 小时；超时按取消处理） */
   takeoverMaxWaitMs?: number;
   /** 单个任务的最长「实际操作」时间（不含等你处理接管卡的时间），默认 10 分钟；超时按失败回报，避免浏览器卡住时一直占着租约 */
@@ -49,6 +51,7 @@ export class Runner {
   #pollWaitSec = 25;
   #leaseSec = 600;
   readonly #backoff: Backoff;
+  readonly #authBackoff: Backoff;
   /** 已处理任务数（测试与状态页用） */
   completed = 0;
 
@@ -56,6 +59,8 @@ export class Runner {
     this.#o = o;
     this.#handlers = { ...HANDLERS, ...(o.handlers ?? {}) };
     this.#backoff = o.backoff ?? new Backoff();
+    const authBase = o.authRetryMs ?? 5_000;
+    this.#authBackoff = o.authBackoff ?? new Backoff(authBase, Math.max(authBase, 5 * 60_000));
   }
 
   get state(): RunnerState {
@@ -77,6 +82,7 @@ export class Runner {
       this.#leaseSec = Math.max(30, r.leaseSec || 600);
       this.#state = 'online';
       this.#backoff.reset();
+      this.#authBackoff.reset();
       this.#o.logger.info('已连上 Core', { executorId: r.executorId, adapters: browsers, sites: this.#o.allowlist.siteCount });
       return true;
     } catch (e) {
@@ -86,10 +92,12 @@ export class Runner {
   }
 
   async #onTransportError(e: unknown, signal: AbortSignal): Promise<void> {
+    // #376 M6：鉴权失败（401/403/3xx，含 Cloudflare 偶发的 403）不退出也不狂刷：指数退避后自动重连，连上即复位
     if (e instanceof CoreError && e.authFailed) {
       this.#state = 'auth_failed';
-      this.#o.logger.error('设备令牌无效或权限不够，请在控制台重新生成执行员令牌', { status: e.status, code: e.code });
-      await sleep(this.#o.authRetryMs ?? 5 * 60_000, signal);
+      const ms = this.#authBackoff.next();
+      this.#o.logger.error('鉴权失败（设备令牌或 Cloudflare Access），稍后自动重连；一直失败请在控制台重新生成执行员令牌', { status: e.status, code: e.code, retryInMs: ms });
+      await sleep(ms, signal);
       return;
     }
     this.#state = 'reconnecting';
@@ -115,6 +123,7 @@ export class Runner {
         continue;
       }
       this.#backoff.reset();
+      this.#authBackoff.reset();
       if (task) await this.runTask(task, signal);
     }
     this.#state = 'stopped';
@@ -187,7 +196,8 @@ export class Runner {
               if (st.status === 'cancelled') throw new TaskCancelled(st.note ? `你取消了任务：${st.note}` : '你取消了任务');
             } catch (e) {
               if (e instanceof TaskCancelled || e instanceof LeaseLost) throw e;
-              if (e instanceof CoreError && !e.retryable) throw e;
+              // 鉴权失败也退避重试（#376 M6），不因一次 403 放弃接管卡
+              if (e instanceof CoreError && !e.retryable && !e.authFailed) throw e;
               await sleep(bo.next(), signal);
             }
           }
@@ -291,7 +301,7 @@ export class Runner {
         await this.#o.transport.result(taskId, result);
         return;
       } catch (e) {
-        if (e instanceof CoreError && !e.retryable) {
+        if (e instanceof CoreError && !e.retryable && !e.authFailed) {
           log.error('结果提交被 Core 拒绝', { taskId, code: e.code });
           return;
         }
