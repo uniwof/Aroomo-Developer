@@ -119,6 +119,15 @@ describe.each(rlsTargets)('RLS P2 users / user_invites / audit_log（$name）', 
       expect(await s.updateUser('00000000-0000-4000-8000-0000000000ee', { status: 'disabled' }, T1)).toBeNull();
       await expect(s.insertUser(user('00000000-0000-4000-8000-0000000000dd', 'Xiao@Example.test'))).rejects.toBeInstanceOf(EmailTakenError);
     });
+    it('getUser 行为写死（负责人第 2 轮 M3 小缺口）：id 存在 → 那一行；不存在 → null；\'owner\' → 抛 uuid 格式错（22P02），不返回任何行', async () => {
+      const { s } = await seeded();
+      expect(await s.getUser(XIAO)).toMatchObject({ id: XIAO, email: 'xiao@example.test', role: 'user', status: 'active' });
+      expect(await s.getUser(OWNER)).toMatchObject({ id: OWNER, role: 'admin', status: 'active' });
+      expect(await s.getUser('00000000-0000-4000-8000-0000000000ee')).toBeNull();
+      // users.id 是 uuid：'owner'（所有者令牌的 user_id）在 PG 里直接被类型拒绝，读不到任何账号。
+      // 路由的 :id 都有 format: 'uuid'，'owner' 到不了这里；内存存储对 'owner' 返回 null（两者都不会给出账号）。
+      await expect(s.getUser('owner')).rejects.toMatchObject({ code: '22P02' });
+    });
     it('系统范围只读：不能改、不能删、不能插', async () => {
       const { db } = await seeded();
       const sys = systemScoped(db);
