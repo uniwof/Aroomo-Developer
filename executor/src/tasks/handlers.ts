@@ -34,6 +34,8 @@ export const checkin: TaskHandler = async (ctx, s) => {
   await ctx.progress('act', '签到');
   const said = await s.act(ctx.task.instruction || '找到签到按钮并点击；如果今天已签到，说明已签到');
   await handleBlockers(ctx, s);
+  const actWhy = failedReply(said);
+  if (actWhy) throw new TaskFailed('CHECKIN_FAILED', `签到没有成功：${actWhy}`);
   const verdict = await s.act('判断签到结果，只回答「已签到」「今天已签到」「需要登录」「失败：原因」其中之一');
   if (verdict.includes('需要登录')) {
     await ctx.takeover('login_failed', '签到时发现还没登录，请在电脑浏览器里登录后点「我已处理」', await s.screenshot());

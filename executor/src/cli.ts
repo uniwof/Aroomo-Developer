@@ -99,7 +99,7 @@ export async function main(argv: string[]): Promise<number> {
       out(`白名单网站：${buildAllowlist(cfg).siteCount} 个`);
       let reach = false;
       try {
-        const r = await fetch(new URL('/health', cfg.coreUrl), { signal: AbortSignal.timeout(5000) });
+        const r = await fetch(new URL('/healthz', cfg.coreUrl), { signal: AbortSignal.timeout(5000) });
         reach = r.ok;
         out(`Core 连通：${r.ok ? '正常' : `异常（HTTP ${r.status}）`}`);
       } catch {
