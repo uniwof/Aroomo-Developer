@@ -13,7 +13,8 @@ const ctxOf = (userId: string): ToolCtx => ({
   },
 });
 const mk = () => {
-  const svc = new ExecutorService(new MemoryExecutorStore(), () => new Date('2026-10-30T00:00:00Z'));
+  // #347：建任务时就校验 secretId 归属，服务这边给同一套「只有 u1 有 sec1」
+  const svc = new ExecutorService(new MemoryExecutorStore(), () => new Date('2026-10-30T00:00:00Z'), async (u, id) => (u === 'u1' && id === 'sec1' ? 'x' : null));
   const a = new ExecutorAgentAdapter(svc, async (u, id) => u === 'u1' && id === 'sec1');
   return { svc, a };
 };
