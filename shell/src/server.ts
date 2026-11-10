@@ -63,7 +63,12 @@ export const PREPARING_HTML = `<!doctype html><html lang="zh-CN"><head><meta cha
  */
 export const CORE_COOKIE_ROUTES: readonly { readonly method: string; readonly path: string }[] = [
   { method: 'POST', path: '/api/chat/stream' },
+  // #293（负责人 #288 裁定，D256）：只读「我是谁」，让控制台拿到账号自己的 id（不再落到主人令牌那份的 'owner'）。只放 GET、不带请求体；Core 回什么原样回
+  { method: 'GET', path: '/api/auth/me' },
 ];
+
+/** 这些路由不收请求体（GET /api/auth/me）：带了就在 Shell 挡掉，不转给 Core */
+const CORE_COOKIE_NO_BODY = new Set(['GET /api/auth/me']);
 
 /** 这条路径在白名单里吗（精确匹配，不认前缀）；返回允许的方法，不在返回 undefined */
 export function coreCookieRouteMethods(pathname: string): string[] | undefined {
@@ -559,6 +564,9 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
       if (methods) {
         if (!methods.includes(req.method ?? '')) return sendJson(res, 405, { error: { code: 'METHOD_NOT_ALLOWED', message: '不支持这个请求方法' } }, { allow: methods.join(', ') });
         if (!csrfOk(req)) return sendJson(res, 403, { error: { code: 'CSRF', message: '请求来源不对' } });
+        if (CORE_COOKIE_NO_BODY.has(`${req.method} ${p}`) && (req.headers['transfer-encoding'] !== undefined || (req.headers['content-length'] ?? '0') !== '0')) {
+          return sendJson(res, 400, { error: { code: 'BODY_NOT_ALLOWED', message: '这个请求不能带内容' } });
+        }
         const cookie = coreSessionCookie(req.headers.cookie);
         if (!cookie) return sendJson(res, 401, { error: { code: 'UNAUTHORIZED', message: '请先登录' } });
         return proxyCoreCookie(req, res, url, cookie);

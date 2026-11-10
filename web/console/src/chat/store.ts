@@ -406,6 +406,35 @@ export function claimLegacy(account: string, storage: Storage = globalThis.local
   return add.length;
 }
 
+/**
+ * #293：以前从 Shell 打开时 Core 回的是主人令牌（kind=owner），本机会话存在 'owner' 那份；现在问到的是她自己的账号 id（和直接开 Core 登录同一份）。
+ * 确认是所有者账号后（调用方负责：Core 回 ownerAccount=true），把 'owner' 那份并进她账号那份，按会话 id 去重（她账号那份已有的 id 一律不动）。
+ * 'owner' 那份保留不删、不改；并完记一笔（按账号），之后不再并。放不下（超过上限或存满）什么都不记、不写，下次再试。返回并进来几段。
+ */
+export const OWNER_SHARE = 'owner';
+const ownerMergedKey = (account: string) => `${LEGACY_KEY}.owner-merged:u:${account}`;
+export function mergeOwnerShare(account: string, storage: Storage | undefined = globalThis.localStorage): number {
+  if (!storage || !ACCOUNT_RE.test(account) || account === OWNER_SHARE) return 0;
+  try {
+    if (storage.getItem(ownerMergedKey(account)) === '1') return 0;
+    const share = loadConversations(OWNER_SHARE, storage).filter((c) => c.messages.length > 0);
+    const mine = loadConversations(account, storage);
+    const have = new Set(mine.map((c) => c.id));
+    const add = share.filter((c) => !have.has(c.id));
+    if (add.length) {
+      const merged = [...mine, ...add].sort((a, b) => b.updatedAt - a.updatedAt);
+      if (merged.length > MAX_CONVERSATIONS) return 0;
+      storage.setItem(chatKey(account), JSON.stringify(merged));
+      const saved = new Set(loadConversations(account, storage).map((c) => c.id));
+      if (!add.every((c) => saved.has(c.id))) return 0;
+    }
+    storage.setItem(ownerMergedKey(account), '1');
+    return add.length;
+  } catch {
+    return 0;
+  }
+}
+
 export function newConversation(opts: Partial<Pick<Conversation, 'title' | 'model' | 'group'>> = {}): Conversation {
   const id = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `c${Date.now()}${Math.random().toString(16).slice(2)}`;
   return { id, title: opts.title ?? '新对话', model: opts.model ?? 'aroomo', ...(opts.group ? { group: opts.group } : {}), messages: [], updatedAt: Date.now() };

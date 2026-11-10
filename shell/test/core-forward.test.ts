@@ -11,6 +11,8 @@ import { CORE_COOKIE_ROUTES, consoleRedirect, coreCookieRouteMethods, createShel
 
 const TOKEN = 'placeholder-owner-token-0123456789abcdef';
 const GOOD = 'user_sess_01';
+/** 家人账号的会话：/api/auth/me 回家人自己 */
+const FAMILY = 'family_sess_02';
 
 interface Seen {
   method: string;
@@ -40,9 +42,15 @@ beforeAll(async () => {
       coreSeen.push({ method: req.method ?? '', url: req.url ?? '', headers: req.headers, body: Buffer.concat(chunks).toString('utf8') });
       // 照真 Core 的规矩：没有有效会话 401、Cookie 会话缺 CSRF 头 403、带 Authorization 401
       const m = /(?:^|;\s*)(?:__Host-)?aroomo_session=([^;]+)/.exec(req.headers.cookie ?? '');
-      if (req.headers.authorization || !m || m[1] !== GOOD) {
+      if (req.headers.authorization || !m || (m[1] !== GOOD && m[1] !== FAMILY)) {
         res.writeHead(401, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({ error: { code: 'UNAUTHORIZED', message: '请先登录' } }));
+      }
+      // 照真 Core：GET /api/auth/me 只读，Cookie 会话不要 CSRF 头；回当前账号
+      if (req.method === 'GET' && req.url === '/api/auth/me') {
+        const id = m[1] === FAMILY ? 'acct-family' : 'acct-owner';
+        res.writeHead(200, { 'content-type': 'application/json', 'set-cookie': 'aroomo_session=evil; Path=/' });
+        return res.end(JSON.stringify({ kind: 'user', ownerAccount: id === 'acct-owner', user: { id, email: `${id}@example.test`, role: id === 'acct-owner' ? 'owner' : 'user' } }));
       }
       if (!req.headers['x-aroomo-request']) {
         res.writeHead(403, { 'content-type': 'application/json' });
@@ -108,8 +116,15 @@ const chat = (headers: Record<string, string>, p = '/api/chat/stream', method = 
   });
 
 describe('白名单直通 Core：POST /api/chat/stream', () => {
-  it('白名单是逐条列出的精确路径，第 1 批只有 POST /api/chat/stream', () => {
-    expect(CORE_COOKIE_ROUTES).toEqual([{ method: 'POST', path: '/api/chat/stream' }]);
+  it('白名单是逐条列出的精确路径，POST /api/chat/stream 和 GET /api/auth/me（#293）', () => {
+    expect(CORE_COOKIE_ROUTES).toEqual([
+      { method: 'POST', path: '/api/chat/stream' },
+      { method: 'GET', path: '/api/auth/me' }, // #293
+    ]);
+    expect(coreCookieRouteMethods('/api/auth/me')).toEqual(['GET']);
+    expect(coreCookieRouteMethods('/api/auth/me/')).toBeUndefined();
+    expect(coreCookieRouteMethods('/api/auth/logout')).toBeUndefined();
+    expect(coreCookieRouteMethods('/api/auth/password')).toBeUndefined();
     expect(coreCookieRouteMethods('/api/chat/stream')).toEqual(['POST']);
     expect(coreCookieRouteMethods('/api/chat/stream/')).toBeUndefined();
     expect(coreCookieRouteMethods('/api/chat')).toBeUndefined();
@@ -201,11 +216,93 @@ describe('白名单直通 Core：POST /api/chat/stream', () => {
     const g = await chat({ 'x-aroomo-request': '1', cookie }, '/api/chat/stream', 'GET');
     expect(g.status).toBe(405);
     expect(g.headers.get('allow')).toBe('POST');
-    for (const p of ['/api/members', '/api/chat/stream/x', '/api/chat', '/api/auth/me', '/api/keys']) {
+    for (const p of ['/api/members', '/api/chat/stream/x', '/api/chat', '/api/auth/me/', '/api/auth/logout', '/api/keys']) {
       await chat({ 'x-aroomo-request': '1', cookie }, p);
     }
     expect(coreSeen).toHaveLength(0);
-    expect(lobeSeen).toHaveLength(5);
+    expect(lobeSeen).toHaveLength(6);
+  });
+});
+
+describe('白名单直通 Core：GET /api/auth/me（#293）', () => {
+  const me = (headers: Record<string, string> = {}, method = 'GET', extra: RequestInit = {}) => fetch(base + '/api/auth/me', { method, headers: { accept: 'application/json', ...headers }, ...extra });
+
+  it('不登录（没有会话 Cookie）：401，Core 和 LobeHub 都收不到', async () => {
+    const r = await me({ cookie: 'other=1' });
+    expect(r.status).toBe(401);
+    expect(coreSeen).toHaveLength(0);
+    expect(lobeSeen).toHaveLength(0);
+  });
+
+  it('会话无效：Core 判 401，原样返回', async () => {
+    const r = await me({ cookie: '__Host-aroomo_session=expired_sess_9' });
+    expect(r.status).toBe(401);
+    expect(coreSeen).toHaveLength(1);
+  });
+
+  it('所有者回自己的账号；家人回家人自己（不是所有者那份）', async () => {
+    const o = await me({ cookie: `__Host-aroomo_session=${GOOD}` });
+    expect(o.status).toBe(200);
+    expect(((await o.json()) as { user: { id: string } }).user.id).toBe('acct-owner');
+    const f = await me({ cookie: `__Host-aroomo_session=${FAMILY}` });
+    expect(f.status).toBe(200);
+    const fb = (await f.json()) as { kind: string; ownerAccount: boolean; user: { id: string } };
+    expect(fb.user.id).toBe('acct-family');
+    expect(fb.ownerAccount).toBe(false);
+  });
+
+  it('响应里没有令牌、没有 Set-Cookie；转过去的请求不带 Authorization 和主人令牌，只带会话 Cookie', async () => {
+    const r = await me({ cookie: `better-auth.session_token=lobe; __Host-aroomo_session=${GOOD}; other=1`, authorization: `Bearer ${TOKEN}`, 'x-api-key': 'k', 'cf-access-jwt-assertion': 'jwt' });
+    const text = await r.text();
+    expect(r.status).toBe(200);
+    expect(r.headers.get('set-cookie')).toBeNull();
+    expect(text).not.toContain(TOKEN);
+    expect(text).not.toMatch(/token|secret/i);
+    const h = coreSeen[0]!.headers;
+    expect(coreSeen[0]!.method).toBe('GET');
+    expect(coreSeen[0]!.url).toBe('/api/auth/me');
+    expect(h.authorization).toBeUndefined();
+    expect(h.cookie).toBe(`__Host-aroomo_session=${GOOD}`);
+    expect(h['x-api-key']).toBeUndefined();
+    expect(h['cf-access-jwt-assertion']).toBeUndefined();
+    expect(JSON.stringify(h)).not.toContain(TOKEN);
+  });
+
+  it('只放 GET：POST/PUT/DELETE/PATCH 405，Core 收不到', async () => {
+    const cookie = `__Host-aroomo_session=${GOOD}`;
+    for (const m of ['POST', 'PUT', 'DELETE', 'PATCH']) {
+      const r = await me({ cookie, 'x-aroomo-request': '1', 'content-type': 'application/json' }, m, { body: '{}' });
+      expect(r.status, m).toBe(405);
+      expect(r.headers.get('allow')).toBe('GET');
+    }
+    expect(coreSeen).toHaveLength(0);
+  });
+
+  it('GET 带了请求体：400，Core 收不到', async () => {
+    const r = await new Promise<number>((resolve, reject) => {
+      const u = new URL(base + '/api/auth/me');
+      const q = http.request({ host: u.hostname, port: u.port, path: u.pathname, method: 'GET', headers: { cookie: `__Host-aroomo_session=${GOOD}`, 'content-length': '2' } }, (res) => {
+        res.resume();
+        resolve(res.statusCode ?? 0);
+      });
+      q.on('error', reject);
+      q.end('{}');
+    });
+    expect(r).toBe(400);
+    expect(coreSeen).toHaveLength(0);
+  });
+
+  it('lobe-session 下不开：照旧给 LobeHub，Core 收不到', async () => {
+    const coreUrl = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
+    const lobeUrl = `http://127.0.0.1:${(lobe.address() as AddressInfo).port}`;
+    const s2 = createShellServer(loadConfig({ SHELL_AUTH: 'lobe-session', CORE_UPSTREAM: coreUrl, LOBE_UPSTREAM: lobeUrl }), { session: { check: async () => true } });
+    const b = await listen(s2);
+    const r = await fetch(b + '/api/auth/me', { headers: { cookie: `aroomo_session=${GOOD}` } });
+    expect(r.status).toBe(404);
+    expect(coreSeen).toHaveLength(0);
+    expect(lobeSeen).toEqual(['GET /api/auth/me']);
+    s2.closeAllConnections?.();
+    await new Promise((r2) => s2.close(r2));
   });
 });
 
