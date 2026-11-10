@@ -91,7 +91,7 @@ export class EgoLiteDriver implements BrowserDriver {
 
   constructor(o: EgoLiteOptions = {}) {
     this.#exec = o.exec ?? spawnEgoExec(o.command);
-    this.#timeout = o.timeoutMs ?? 90_000;
+    this.#timeout = o.timeoutMs ?? 45_000;
   }
 
   async run<T>(space: string | number, body: string): Promise<T> {

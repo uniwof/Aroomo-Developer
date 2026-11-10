@@ -62,3 +62,31 @@ export async function pickBrowser(ports: BrowserPort[]): Promise<BrowserPort | n
   }
   return null;
 }
+
+/** 依次尝试可用的适配器开工作空间：探活或打开失败/超时就降级到下一个；全失败返回 null（不挂起） */
+export async function openFirstWorking(
+  ports: BrowserPort[],
+  opts: OpenOptions,
+  openTimeoutMs = 30_000,
+): Promise<{ port: BrowserPort; session: BrowserSession } | null> {
+  for (const port of ports) {
+    try {
+      if (!(await port.available())) continue;
+      let timer: NodeJS.Timeout | undefined;
+      const timeout = new Promise<never>((_, rej) => {
+        timer = setTimeout(() => rej(new Error('打开浏览器超时')), openTimeoutMs);
+      });
+      try {
+        const opening = port.open(opts);
+        opening.catch(() => undefined);
+        const session = await Promise.race([opening, timeout]);
+        return { port, session };
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    } catch {
+      // 降级到下一个适配器
+    }
+  }
+  return null;
+}

@@ -8,7 +8,7 @@ import { Backoff, sleep } from './backoff.js';
 import type { Logger } from './logger.js';
 import type { PhonePort } from './adapters/droidrun.js';
 import { runPhoneTask } from './tasks/phone.js';
-import { pickBrowser, type BrowserPort, type BrowserSession } from './ports/browser.js';
+import { openFirstWorking, type BrowserPort, type BrowserSession } from './ports/browser.js';
 import { TASK_KINDS, type ResultRequest, type ScreenshotSummary, type SecretRef, type Task, type TakeoverReason } from './protocol.js';
 import { Redactor } from './redact.js';
 import { TaskCancelled, TaskFailed, type TaskContext, type TaskHandler, type TaskOutcome } from './tasks/context.js';
@@ -263,9 +263,9 @@ export class Runner {
         out = await guarded(runPhoneTask(ctx, phone));
       } else {
         const handler = this.#handlers[task.kind];
-        const port = await pickBrowser(this.#o.browsers);
-        if (!port) throw new TaskFailed('NO_BROWSER', '本机没有可用的浏览器适配器（ego lite / Playwright 都不可用）');
-        const opened = await guarded(port.open({ label: task.id.slice(0, 8), redact: (s) => redactor.redact(s) }));
+        const picked = await openFirstWorking(this.#o.browsers, { label: task.id.slice(0, 8), redact: (s) => redactor.redact(s) });
+        if (!picked) throw new TaskFailed('NO_BROWSER', '本机没有可用的浏览器适配器（ego lite / Playwright 都不可用或打不开）');
+        const opened = picked.session;
         session = opened;
         out = await guarded(handler(ctx, opened));
       }
