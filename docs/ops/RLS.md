@@ -28,7 +28,8 @@ core_settings 加 `user_id text NOT NULL DEFAULT 'owner'`，按键名前缀回�
 应用侧 `PgSettingsStore` 用同一套换算（`settingsOwnerOf`），但**范围由调用方声明，不由键名决定**：构造时显式给出归属账号（`new PgSettingsStore(db, 'owner')`；`scopedSettings(store, userId)` 经 `forAccount(userId)` 声明该账号），每次读写先断言键名换算出的账号 = 声明的账号，不一致抛错；断言过了才在该账号的 userScoped 里读写，并带 `WHERE user_id`。没有跨账号枚举，不新增 systemScoped。用量计数、负责人、规矩、工具网关定义因此进 RLS。
 局限：RLS 只挡「写错的 SQL」；「声明错账号」（调用方把别人的 userId 传进 scopedSettings）RLS 挡不住，靠路由层只用会话里的 userId（D111）。内存版 `MemorySettingsStore` 无 RLS、不做该断言（只用于单元测试）。
 不经 scopedSettings、直接用所有者 store（`deps.settings`，声明为 'owner'）的地方，键都不带 `u<hex>.` 前缀：`UsageService`、`LeadService`、`SecurityService`（`core/src/server.ts`）、`trialExpiryJob` 的 `TrialService`、`vaultStartupCheck`（`core/src/index.ts`，全局 vault.fp）。其中任何一处拿到带前缀的键都会被断言拒绝。
-回退：`core/migrations/down/0037_rls_p1_settings.down.sql`（回退前先备份；表所有者执行）。上线前核对：`core_settings` 回填后 `user_id <> 'owner'` 的行数 = 键名带 `u<hex>.` 前缀的行数（CHECK 已保证一致，迁移失败即不一致）。
+0039（#380）在回填之后去掉 `user_id` 的 DEFAULT：漏写 user_id 的 INSERT 直接 NOT NULL 报错，不会悄悄落到所有者名下。结构测试 `core/test/settings-for-account-structure.test.ts` 限定 `forAccount(` 只能在 `scopedSettings` 里调用（堵住「拿别人的 id 直接声明范围」）。
+回退：`core/migrations/down/0037_rls_p1_settings.down.sql`（先跑 `0039_core_settings_drop_default.down.sql`）（回退前先备份；表所有者执行）。上线前核对：`core_settings` 回填后 `user_id <> 'owner'` 的行数 = 键名带 `u<hex>.` 前缀的行数（CHECK 已保证一致，迁移失败即不一致）。
 
 ## 应用连接角色与上线步骤
 
@@ -77,4 +78,6 @@ core_settings 加 `user_id text NOT NULL DEFAULT 'owner'`，按键名前缀回�
 - `user_invites`：`user_invites_creator`（只有所有者 `app.user_id='owner'` 且 `created_by='owner'`，或**在用的管理员**（users 本人那行 role=admin、status=active）且 `created_by='user:<本人 id>'`）+ `user_invites_system_read`（按码哈希查找、管理员列表）+ `user_invites_system_redeem`（只允许系统范围 UPDATE，用于标记已用）。触发器 `user_invites_redeem_only`：任何范围的 UPDATE 只能把 `used_at` 从 NULL 改成非 NULL，其余列一律不许动。系统范围不能 INSERT / DELETE；整个 schema 里引用 `app.system_scope` 的写策略只有 `user_invites_system_redeem` 一条（`core/test/rls-p2.test.ts` 结构测试钉住）。insertInvite 的调用点只有 `users/service.ts` 的 createInvite（POST /api/users/invites）和 resetLink（POST /api/users/:id/reset-link），都在 adminGuard 后。
 - `audit_log`：`audit_log_append`（INSERT 任何范围都行，含登录失败 / 系统任务；应用侧不 RETURNING）+ `audit_log_system_read`（只给 systemScoped，即所有者的 GET /api/audit）。用户范围读不到任何审计行。0001 的行级触发器在 RLS 下对看不到的行不触发，所以 0038 加语句级触发器 `audit_log_no_update_delete_stmt`：任何范围的 UPDATE / DELETE 语句都直接报错。`auditLog.query` 唯一的读取方是 GET /api/audit（`audit/routes.ts`）；登录失败锁定（`UsersService.#fails`）和接口限速（@fastify/rate-limit）都在内存计数，不读审计，所以范围错了不会让安全逻辑「计数为 0 即放行」。
 - **局限（M5）**：`users_self` 允许本人改自己那行的任何列，包括 role 和 status；数据库层分不出「本人提权」和「管理员停用别人」（`user_invites_creator` 的管理员判断同样信任这一行）。这道防线只在应用层：自助接口（`/api/auth/password`、`/auth/accept`）的请求体 `additionalProperties:false` 且不收 role / status，改 role / status 只有 adminGuard 后的 `/api/users/:id/enable|disable` 和启动 seed。证据：`core/test/rls-p2-users-http.test.ts`。
+- **审计保留期清理（#380）**：将来要删 `audit_log` 旧行（按保留期清理），**必须单独写一个迁移，并经所有者本人确认后才能合入和执行**（删数据属于红线）；不得为此在应用代码、脚本或临时会话里绕开或临时禁用语句级只追加触发器 `audit_log_no_update_delete_stmt`，也不得给应用角色放回 DELETE。
+
 回退：`core/migrations/down/0038_rls_p2.down.sql`（回退前先备份；表所有者执行；连同两个触发器和 `user_invites_redeem_only()` 函数一起删）。NO_RLS_TABLES 现在只剩 `core_schema_migrations`（永久豁免）。上生产前：应用角色需 `GRANT USAGE ON SEQUENCE audit_log_seq_seq`（grantAppRole 已含 ALL SEQUENCES）。表所有者也受 FORCE RLS 约束，pg_dump 必须用超级用户或 BYPASSRLS 角色，恢复演练对比 users、user_invites、audit_log、core_settings 四张表行数。
