@@ -18,6 +18,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import type { AuditFn } from '../audit/types.js';
 import type { Db } from '../db/db.js';
 import { toDate, toDateOrNull } from '../db/db.js';
+import { systemScoped, userScoped } from '../db/scope.js';
 import { conflict, HttpError, notFound } from '../http/errors.js';
 import type { AccessVerifier } from './access.js';
 
@@ -74,16 +75,27 @@ export interface ChallengeRow {
   usedAt: Date | null;
 }
 
+/**
+ * 确认记录的 RLS 归属键（0036，#345 P0）：owner → 'owner'；user:<id> → <id>；其他操作者（client:… / operator:…）原样。
+ * 数据库里 confirm_challenges.user_id 存这个值，所有读写都带着操作者（actor）进 userScoped：别的操作者看不到、改不了。
+ */
+export function challengeScope(actor: string): string {
+  if (actor === 'owner') return 'owner';
+  if (actor.startsWith('user:') && actor.length > 5) return actor.slice(5);
+  return actor;
+}
+
 export interface ChallengeStore {
   insert(row: ChallengeRow): Promise<void>;
-  get(id: string): Promise<ChallengeRow | null>;
-  findByTokenHash(hash: string): Promise<ChallengeRow | null>;
+  /** 读写都要带操作者：不是这个操作者的记录一律当作不存在 */
+  get(actor: string, id: string): Promise<ChallengeRow | null>;
+  findByTokenHash(actor: string, hash: string): Promise<ChallengeRow | null>;
   /** 原子：只有 step1_at 为空时写入，返回是否写入 */
-  markStep1(id: string, at: Date): Promise<boolean>;
+  markStep1(actor: string, id: string, at: Date): Promise<boolean>;
   /** 原子：只有已完成第一步、尚未签发令牌时写入 */
-  issueToken(id: string, tokenHash: string, at: Date): Promise<boolean>;
+  issueToken(actor: string, id: string, tokenHash: string, at: Date): Promise<boolean>;
   /** 原子：只有未用过、未过期时写入 used_at；并发只有一个成功 */
-  consume(id: string, at: Date): Promise<boolean>;
+  consume(actor: string, id: string, at: Date): Promise<boolean>;
   /** 定时清理：删除过期时间早于 before 的确认记录，返回删除条数（审计日志另有留痕，不受影响） */
   deleteExpired(before: Date): Promise<number>;
 }
@@ -93,29 +105,33 @@ export class MemoryChallengeStore implements ChallengeStore {
   async insert(row: ChallengeRow): Promise<void> {
     this.#rows.set(row.id, structuredClone(row));
   }
-  async get(id: string): Promise<ChallengeRow | null> {
+  #mine(actor: string, id: string): ChallengeRow | undefined {
     const r = this.#rows.get(id);
+    return r && challengeScope(r.actor) === challengeScope(actor) ? r : undefined;
+  }
+  async get(actor: string, id: string): Promise<ChallengeRow | null> {
+    const r = this.#mine(actor, id);
     return r ? structuredClone(r) : null;
   }
-  async findByTokenHash(hash: string): Promise<ChallengeRow | null> {
-    for (const r of this.#rows.values()) if (r.tokenHash === hash) return structuredClone(r);
+  async findByTokenHash(actor: string, hash: string): Promise<ChallengeRow | null> {
+    for (const r of this.#rows.values()) if (r.tokenHash === hash && challengeScope(r.actor) === challengeScope(actor)) return structuredClone(r);
     return null;
   }
-  async markStep1(id: string, at: Date): Promise<boolean> {
-    const r = this.#rows.get(id);
+  async markStep1(actor: string, id: string, at: Date): Promise<boolean> {
+    const r = this.#mine(actor, id);
     if (!r || r.step1At) return false;
     r.step1At = new Date(at);
     return true;
   }
-  async issueToken(id: string, tokenHash: string, at: Date): Promise<boolean> {
-    const r = this.#rows.get(id);
+  async issueToken(actor: string, id: string, tokenHash: string, at: Date): Promise<boolean> {
+    const r = this.#mine(actor, id);
     if (!r || !r.step1At || r.tokenHash) return false;
     r.tokenHash = tokenHash;
     r.tokenIssuedAt = new Date(at);
     return true;
   }
-  async consume(id: string, at: Date): Promise<boolean> {
-    const r = this.#rows.get(id);
+  async consume(actor: string, id: string, at: Date): Promise<boolean> {
+    const r = this.#mine(actor, id);
     if (!r || r.usedAt || r.expiresAt.getTime() <= at.getTime()) return false;
     r.usedAt = new Date(at);
     return true;
@@ -175,47 +191,65 @@ function fromPg(r: PgRow): ChallengeRow {
   };
 }
 
+/**
+ * RLS（0036，#345 P0）：读写都在操作者的 userScoped 范围里（user_id = challengeScope(actor)）。
+ * deleteExpired 是跨操作者的定时清理：systemScoped 只读找出有过期记录的归属键，再逐个归属键在 userScoped 里删。
+ */
 export class PgChallengeStore implements ChallengeStore {
   constructor(private readonly db: Db) {}
   async insert(r: ChallengeRow): Promise<void> {
-    await this.db.query(
-      `INSERT INTO confirm_challenges (${PG_COLS}) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+    const uid = challengeScope(r.actor);
+    await userScoped(this.db, uid).query(
+      `INSERT INTO confirm_challenges (${PG_COLS}, user_id) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
       [
         r.id, r.scope, r.actor, r.kind, r.title, JSON.stringify(r.consequences), r.confirmLabel, r.payloadSalt, r.payloadDigest,
-        r.requiresReauth, r.createdAt, r.expiresAt, r.step1At, r.tokenHash, r.tokenIssuedAt, r.usedAt,
+        r.requiresReauth, r.createdAt, r.expiresAt, r.step1At, r.tokenHash, r.tokenIssuedAt, r.usedAt, uid,
       ],
     );
   }
-  async get(id: string): Promise<ChallengeRow | null> {
-    const { rows } = await this.db.query<PgRow>(`SELECT ${PG_COLS} FROM confirm_challenges WHERE id = $1`, [id]);
+  async get(actor: string, id: string): Promise<ChallengeRow | null> {
+    const uid = challengeScope(actor);
+    const { rows } = await userScoped(this.db, uid).query<PgRow>(`SELECT ${PG_COLS} FROM confirm_challenges WHERE user_id = $1 AND id = $2`, [uid, id]);
     return rows[0] ? fromPg(rows[0]) : null;
   }
-  async findByTokenHash(hash: string): Promise<ChallengeRow | null> {
-    const { rows } = await this.db.query<PgRow>(`SELECT ${PG_COLS} FROM confirm_challenges WHERE token_hash = $1`, [hash]);
+  async findByTokenHash(actor: string, hash: string): Promise<ChallengeRow | null> {
+    const uid = challengeScope(actor);
+    const { rows } = await userScoped(this.db, uid).query<PgRow>(`SELECT ${PG_COLS} FROM confirm_challenges WHERE user_id = $1 AND token_hash = $2`, [uid, hash]);
     return rows[0] ? fromPg(rows[0]) : null;
   }
-  async markStep1(id: string, at: Date): Promise<boolean> {
-    const { rows } = await this.db.query('UPDATE confirm_challenges SET step1_at = $2 WHERE id = $1 AND step1_at IS NULL RETURNING id', [id, at]);
+  async markStep1(actor: string, id: string, at: Date): Promise<boolean> {
+    const uid = challengeScope(actor);
+    const { rows } = await userScoped(this.db, uid).query('UPDATE confirm_challenges SET step1_at = $3 WHERE user_id = $1 AND id = $2 AND step1_at IS NULL RETURNING id', [uid, id, at]);
     return rows.length > 0;
   }
-  async issueToken(id: string, tokenHash: string, at: Date): Promise<boolean> {
-    const { rows } = await this.db.query(
-      `UPDATE confirm_challenges SET token_hash = $2, token_issued_at = $3
-        WHERE id = $1 AND step1_at IS NOT NULL AND token_hash IS NULL RETURNING id`,
-      [id, tokenHash, at],
+  async issueToken(actor: string, id: string, tokenHash: string, at: Date): Promise<boolean> {
+    const uid = challengeScope(actor);
+    const { rows } = await userScoped(this.db, uid).query(
+      `UPDATE confirm_challenges SET token_hash = $3, token_issued_at = $4
+        WHERE user_id = $1 AND id = $2 AND step1_at IS NOT NULL AND token_hash IS NULL RETURNING id`,
+      [uid, id, tokenHash, at],
     );
     return rows.length > 0;
   }
-  async consume(id: string, at: Date): Promise<boolean> {
-    const { rows } = await this.db.query(
-      'UPDATE confirm_challenges SET used_at = $2 WHERE id = $1 AND used_at IS NULL AND expires_at > $2 RETURNING id',
-      [id, at],
+  async consume(actor: string, id: string, at: Date): Promise<boolean> {
+    const uid = challengeScope(actor);
+    const { rows } = await userScoped(this.db, uid).query(
+      'UPDATE confirm_challenges SET used_at = $3 WHERE user_id = $1 AND id = $2 AND used_at IS NULL AND expires_at > $3 RETURNING id',
+      [uid, id, at],
     );
     return rows.length > 0;
   }
   async deleteExpired(before: Date): Promise<number> {
-    const { rows } = await this.db.query('DELETE FROM confirm_challenges WHERE expires_at < $1 RETURNING id', [before]);
-    return rows.length;
+    const { rows: owners } = await systemScoped(this.db).query<{ user_id: string }>(
+      'SELECT DISTINCT user_id FROM confirm_challenges WHERE expires_at < $1 ORDER BY user_id',
+      [before],
+    );
+    let n = 0;
+    for (const { user_id: uid } of owners) {
+      const { rows } = await userScoped(this.db, uid).query('DELETE FROM confirm_challenges WHERE user_id = $1 AND expires_at < $2 RETURNING id', [uid, before]);
+      n += rows.length;
+    }
+    return n;
   }
 }
 
@@ -319,7 +353,7 @@ export class ConfirmService {
       throw new HttpError(428, 'CONFIRM_REQUIRED', '这个操作需要确认', { confirm: this.toJson(ch) });
     }
     const now = this.#o.now();
-    const r = await this.store.findByTokenHash(sha256(ctx.confirmToken));
+    const r = await this.store.findByTokenHash(ctx.actor, sha256(ctx.confirmToken));
     const fail = async (code: string, message: string): Promise<never> => {
       await audit('confirm.rejected', target, 'failed', code);
       throw conflict(message, code);
@@ -332,7 +366,7 @@ export class ConfirmService {
     }
     if (r.usedAt) return fail('CONFIRM_USED', '这个确认已经用过了');
     if (r.expiresAt.getTime() <= now.getTime()) return fail('CONFIRM_EXPIRED', '确认已过期，请重新操作');
-    if (!(await this.store.consume(r.id, now))) return fail('CONFIRM_USED', '这个确认已经用过了');
+    if (!(await this.store.consume(ctx.actor, r.id, now))) return fail('CONFIRM_USED', '这个确认已经用过了');
     await audit('confirm.consumed', target, 'ok', `${r.kind} ${r.id}`);
   }
 
@@ -374,7 +408,7 @@ export class ConfirmService {
   }
 
   async get(id: string, actor: string): Promise<ChallengeJson> {
-    const r = await this.store.get(id);
+    const r = await this.store.get(actor, id);
     if (!r || r.actor !== actor) throw notFound('找不到这个确认');
     return this.toJson(r);
   }
@@ -389,7 +423,7 @@ export class ConfirmService {
     audit: AuditFn,
   ): Promise<{ challenge: ChallengeJson; confirmToken?: string }> {
     const now = this.#o.now();
-    const r = await this.store.get(id);
+    const r = await this.store.get(ctx.actor, id);
     const target = { type: 'confirm', id: r?.scope ?? id };
     const reject = async (status: number, code: string, message: string, extra?: Record<string, unknown>): Promise<never> => {
       await audit(`confirm.step${step}`, target, status === 403 ? 'denied' : 'failed', code);
@@ -400,8 +434,8 @@ export class ConfirmService {
     if (r.expiresAt.getTime() <= now.getTime()) return reject(409, 'CONFIRM_EXPIRED', '确认已过期，请重新操作');
 
     if (step === 1) {
-      if (!r.step1At) await this.store.markStep1(id, now);
-      const fresh = (await this.store.get(id)) as ChallengeRow;
+      if (!r.step1At) await this.store.markStep1(ctx.actor, id, now);
+      const fresh = (await this.store.get(ctx.actor, id)) as ChallengeRow;
       await audit('confirm.step1', target, 'ok', r.id);
       return { challenge: this.toJson(fresh) };
     }
@@ -426,9 +460,9 @@ export class ConfirmService {
     }
 
     const token = randomBytes(24).toString('base64url');
-    if (!(await this.store.issueToken(id, sha256(token), now))) return reject(409, 'CONFIRM_USED', '这个确认已经完成了');
+    if (!(await this.store.issueToken(ctx.actor, id, sha256(token), now))) return reject(409, 'CONFIRM_USED', '这个确认已经完成了');
     await audit('confirm.step2', target, 'ok', `${r.id}${reauthNote}`);
-    const fresh = (await this.store.get(id)) as ChallengeRow;
+    const fresh = (await this.store.get(ctx.actor, id)) as ChallengeRow;
     return { challenge: this.toJson(fresh), confirmToken: token };
   }
 }

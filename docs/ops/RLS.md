@@ -13,6 +13,13 @@ migrate() 把整次迁移（所有未执行的文件）放在同一个事务里�
 ## systemScoped
 只给跨用户系统任务，只读。新增调用处必须进 core/test/system-scoped-allowlist.test.ts 的白名单，并在 PR 说明理由（负责人审）。
 
+## 登录前查找与跨用户清理（0036，#345 P0）
+client_tokens、user_sessions 按令牌哈希查找发生在知道「是谁」之前：只读这一步用 systemScoped（`getByHash` / `getSession`），查到之后的 touch、吊销、新建都切回 userScoped。
+exec_tasks 的 `sweep`、confirm_challenges 的 `deleteExpired` 是定时的跨用户清理：先 systemScoped 只读找出受影响的 user_id，再逐个 user_id 在 userScoped 里改 / 删（系统范围没有写策略）。
+confirm_challenges 原来没有 user_id，0036 加列并按 actor 回填：`owner`→`owner`，`user:<id>`→`<id>`，其他原样；应用侧用 `challengeScope(actor)` 换算，别的操作者读不到也点不了。
+user_sessions.user_id 是 uuid，策略写 `user_id::text = …`。其余五张表的非空串 CHECK 用 NOT VALID（旧数据里若有空串不挡迁移，上线前清理见 #229）。
+回退：`core/migrations/down/0036_rls_p0.down.sql`（表所有者执行）。仍无 RLS 的表见 `core/test/authz/cross-account.test.ts` 的 NO_RLS_TABLES。
+
 ## 应用连接角色与上线步骤
 
 - 规则：业务表 `user_id = current_setting('app.user_id')`，ENABLE + FORCE。Core 每个事务开头 `set_config('app.user_id', …, true)`（`core/src/db/scope.ts`）。
