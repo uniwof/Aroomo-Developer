@@ -30,6 +30,10 @@ Describe '安装脚本 install-windows.ps1' {
         $b[2] | Should -Be 0xBF
     }
 
+    It '开头把控制台输出设为 UTF-8（读屏读 node 的中文不乱码）' {
+        (Get-Content -Raw -Encoding UTF8 $script:Install) | Should -Match 'OutputEncoding\s*=\s*New-Object System\.Text\.UTF8Encoding'
+    }
+
     It '提供 NoAutostart / NoAutoUpdate / SkipToken / TaskName 四个参数' {
         $names = (Get-ParsedAst $script:Install).Ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath }
         foreach ($n in 'NoAutostart', 'NoAutoUpdate', 'SkipToken', 'TaskName') { $names | Should -Contain $n }
@@ -65,6 +69,10 @@ Describe '安装脚本 install-windows.ps1' {
 Describe '更新脚本 update-windows.ps1' {
     It '能被解析，没有语法错误' {
         (Get-ParsedAst $script:Update).Errors.Count | Should -Be 0
+    }
+
+    It '开头把控制台输出设为 UTF-8（读屏读 node 的中文不乱码）' {
+        (Get-Content -Raw -Encoding UTF8 $script:Update) | Should -Match 'OutputEncoding\s*=\s*New-Object System\.Text\.UTF8Encoding'
     }
 
     It '带 UTF-8 BOM' {
