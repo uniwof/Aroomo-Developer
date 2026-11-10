@@ -479,7 +479,11 @@ export class ConfirmService {
       // #346 M1：家人本人确认，第二步必须输入本人当前密码（不进日志、审计、请求体摘要）
       const check = this.#o.accountPassword;
       if (!check) return reject(503, 'ACCOUNT_REAUTH_NOT_CONFIGURED', '这个操作需要输入密码确认，但服务器还没有接好');
-      if (!ctx.password) return reject(401, 'PASSWORD_REQUIRED', '请输入你的登录密码再确认');
+      if (!ctx.password) {
+        // 直接 throw，不经 reject()：CodeQL 把带 PASSWORD_* 字面量的调用结果当成密码，经 step 返回值流进 sha256（告警 #20 误报）
+        await audit(`confirm.step${step}`, target, 'failed', 'PASSWORD_REQUIRED');
+        throw new HttpError(401, 'PASSWORD_REQUIRED', '请输入你的登录密码再确认');
+      }
       try {
         await check(ctx.actor.slice('user:'.length), ctx.password, ctx.clientKey ?? '', audit);
       } catch (e) {
