@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadConfig, ConfigError } from '../src/config.js';
 import { createShellServer } from '../src/server.js';
-import { LobeLocalAutoLogin, safeCallback } from '../src/autologin.js';
+import { AUTOLOGIN_MARK, LobeLocalAutoLogin, safeCallback, safeLocalPath } from '../src/autologin.js';
 
 // 假的 LobeHub：Better Auth 的 sign-in / sign-up / get-session
 let lobe: Server;
@@ -90,17 +90,29 @@ describe('本机主人自动登录（独立版 D78）', () => {
   it('跳回原页面：路径解析后以 // 开头时不外跳（CodeQL #7）', async () => {
     // fetch 会先规整路径，这里用原始请求行；/.//x 经 URL 解析后 pathname 是 //x
     for (const path of ['/.//evil.example/x', '/./\\evil.example/x']) {
-      const loc = await new Promise<string | undefined>((resolve, reject) => {
+      const r = await new Promise<http.IncomingMessage>((resolve, reject) => {
         const { hostname, port } = new URL(base);
         const req = http.request({ hostname, port, path, headers: { accept: 'text/html' } }, (res) => {
           res.resume();
-          resolve(res.headers.location);
+          resolve(res);
         });
         req.on('error', reject);
         req.end();
       });
-      expect(loc).toBe('/');
+      // 302 且带自动登录标记：确实走了自动登录分支，不是碰巧回了 /
+      expect(r.statusCode).toBe(302);
+      expect((r.headers['set-cookie'] ?? []).join('\n')).toContain(`${AUTOLOGIN_MARK}=1`);
+      expect(r.headers.location).toBe('/');
     }
+  });
+
+  it('callbackUrl 含非 ASCII：百分号编码后跳转，服务不受影响（#357 M2）', async () => {
+    const r = await fetch(`${base}/signin?callbackUrl=%2F%E4%B8%AD`, { headers: { accept: 'text/html' }, redirect: 'manual' });
+    expect(r.status).toBe(302);
+    expect(r.headers.get('location')).toBe('/%E4%B8%AD');
+    const next = await fetch(`${base}/chat?x=1`, { headers: { accept: 'text/html' }, redirect: 'manual' });
+    expect(next.status).toBe(302);
+    expect(next.headers.get('location')).toBe('/chat?x=1');
   });
 
   it('已登录：不再登录，正常转发', async () => {
@@ -161,5 +173,41 @@ describe('D80-2 Host 白名单', () => {
   });
   it('服务器版不限制', () => {
     expect(loadConfig({}).allowedHosts).toBeUndefined();
+  });
+});
+
+describe('safeLocalPath 穷举（#357 M1/M2）', () => {
+  // 小字母表上穷举长度 ≤5 的所有串
+  const ALPHA = ['/', '\\', '.', '\t', '\n', '\r', 'a', ':', '@', '%', ' ', '中'];
+  function* strings(max: number): Generator<string> {
+    let layer = [''];
+    for (let n = 1; n <= max; n++) {
+      layer = layer.flatMap((s) => ALPHA.map((c) => s + c));
+      yield* layer;
+    }
+  }
+  const BASE = 'http://host.test';
+  const hostOf = (s: string) => {
+    try {
+      return new URL(s, BASE).host;
+    } catch {
+      return null;
+    }
+  };
+
+  it('结果要么是 /，要么解析后仍在本站，且只含 U+0021–U+007E；同一判据在原始输入上能找到外跳', () => {
+    const offSite: string[] = [];
+    const nonAscii: string[] = [];
+    let rawEscapes = 0;
+    for (const s of strings(5)) {
+      const h = hostOf(s);
+      if (h !== null && h !== 'host.test') rawEscapes++;
+      const out = safeLocalPath(s);
+      if (out !== '/' && hostOf(out) !== 'host.test') offSite.push(JSON.stringify(s));
+      if (!/^[\x21-\x7e]+$/.test(out)) nonAscii.push(JSON.stringify(s));
+    }
+    expect(offSite.slice(0, 5)).toEqual([]);
+    expect(nonAscii.slice(0, 5)).toEqual([]);
+    expect(rawEscapes).toBeGreaterThan(0); // 判据不是恒真
   });
 });
