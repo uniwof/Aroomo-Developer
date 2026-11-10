@@ -19,6 +19,7 @@
 | `POST /api/inbox/:id/actions/:actionId`（动作的 `confirm.kind` 不是 `normal` 时） | 按动作 |
 | `POST /api/keys`、`PATCH /api/keys/:id`（带 `apiKey`）——**只在发起方不是主人本人时**（智能体 / 操作员，D73）；主人在界面上手动保存 = 普通保存 | credential |
 | `DELETE /api/keys/:id`（任何人，D73） | credential |
+| `POST /api/vault/:id/reveal`（credential）、`DELETE /api/vault/:id`（irreversible）——**家人账号删 / 查看自己的条目由家人本人做重要确认**（#346）；确认卡和令牌绑定 账号 + 条目，别人的卡 404、别人的令牌 409 | credential / irreversible |
 
 ## 2. 流程
 

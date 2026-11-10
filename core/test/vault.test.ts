@@ -88,18 +88,19 @@ describe.each(envs)('保险箱接口 B2（$name）', (env) => {
       const r = await app.inject({ method: 'POST', url: '/auth/accept', payload: { token: inv.json().token, password: PW } });
       return bearer(r.json().token);
     };
-    /** 走完重要确认再发 */
-    const confirmed = async (method: 'POST' | 'DELETE', url: string, payload: object = {}) => {
-      const first = await owner(method, url, payload);
+    /** 走完重要确认再发（谁调用，谁点那两步） */
+    const confirmedAs = (who: ReturnType<typeof call>) => async (method: 'POST' | 'DELETE', url: string, payload: object = {}) => {
+      const first = await who(method, url, payload);
       if (first.statusCode !== 428) return first;
       const ch = first.json().error.confirm;
-      expect((await owner('POST', ch.stepUrl, { step: 1 })).statusCode).toBe(200);
+      expect((await who('POST', ch.stepUrl, { step: 1 })).statusCode).toBe(200);
       clock.advance(3000);
-      const s2 = await owner('POST', ch.stepUrl, { step: 2 });
+      const s2 = await who('POST', ch.stepUrl, { step: 2 });
       expect(s2.statusCode).toBe(200);
-      return owner(method, url, { ...payload, confirmToken: s2.json().confirmToken });
+      return who(method, url, { ...payload, confirmToken: s2.json().confirmToken });
     };
-    return { owner, bearer, register, confirmed, deps, app };
+    const confirmed = confirmedAs(owner);
+    return { owner, bearer, register, confirmed, confirmedAs, clock, deps, app };
   }
 
   it('新增 → 列表只有名字、类型、末 4 位；任何响应、审计里都没有明文', async () => {
@@ -163,7 +164,7 @@ describe.each(envs)('保险箱接口 B2（$name）', (env) => {
     expect((await owner('POST', '/api/vault', { name: 'brave', kind: 'api_key', value: SECRET })).statusCode).toBe(201);
   });
 
-  it('账号之间互相隔离：看不到、改不了、删不了、读不了他人条目；账号暂不能查看明文', async () => {
+  it('账号之间互相隔离：看不到、改不了、删不了、读不了他人条目', async () => {
     const { owner, register, confirmed } = await setup();
     const a = await register('a@example.com');
     const b = await register('b@example.com');
@@ -178,10 +179,71 @@ describe.each(envs)('保险箱接口 B2（$name）', (env) => {
     }
     // 所有者令牌的数据也不会被账号看到；所有者令牌看不到账号的
     expect((await owner('GET', '/api/vault')).json().secrets.map((s: { id: string }) => s.id)).toEqual([idOwner]);
-    // 账号查看明文 / 删除：在「密码重新验证」做完之前一律 403
-    expect((await a('POST', `/api/vault/${idA}/reveal`, {})).statusCode).toBe(403);
-    expect((await a('DELETE', `/api/vault/${idA}`)).statusCode).toBe(403);
     expect((await confirmed('POST', `/api/vault/${idOwner}/reveal`)).json().value).toBe(SECRET);
+  });
+
+  it('家人查看 / 删除自己的条目：由家人本人做重要确认（#346）', async () => {
+    const { register, confirmedAs } = await setup();
+    const a = await register('a@example.com');
+    const mine = confirmedAs(a);
+    const idA = (await a('POST', '/api/vault', { name: 'Mail', kind: 'password', value: 'sk-A-aaaaaaaaaaaaaaaa' })).json().secret.id;
+    // 不带令牌：先给确认卡（428），不再是 403
+    const first = await a('POST', `/api/vault/${idA}/reveal`, {});
+    expect(first.statusCode).toBe(428);
+    expect(first.json().error.confirm.kind).toBe('credential');
+    const done = await mine('POST', `/api/vault/${idA}/reveal`);
+    expect(done.statusCode, done.body).toBe(200);
+    expect(done.json().value).toBe('sk-A-aaaaaaaaaaaaaaaa');
+    expect((await a('DELETE', `/api/vault/${idA}`)).statusCode).toBe(428);
+    expect((await mine('DELETE', `/api/vault/${idA}`)).statusCode).toBe(204);
+    expect((await a('GET', '/api/vault')).json().secrets).toHaveLength(0);
+  });
+
+  it('家人的确认令牌绑定账号 + 条目：别的条目、别的账号、所有者的令牌都用不了；也点不了别人的确认卡', async () => {
+    const { owner, register, confirmed, clock } = await setup();
+    const a = await register('a@example.com');
+    const b = await register('b@example.com');
+    const idOwner = (await owner('POST', '/api/vault', { name: 'O', kind: 'note', value: 'owner-note-value' })).json().secret.id;
+    const idA = (await a('POST', '/api/vault', { name: 'A1', kind: 'note', value: 'a-note-1' })).json().secret.id;
+    const idA2 = (await a('POST', '/api/vault', { name: 'A2', kind: 'note', value: 'a-note-2' })).json().secret.id;
+    const idB = (await b('POST', '/api/vault', { name: 'B1', kind: 'note', value: 'b-note-1' })).json().secret.id;
+    const tokenOf = async (who: typeof a, id: string): Promise<{ token: string; stepUrl: string }> => {
+      const first = await who('DELETE', `/api/vault/${id}`);
+      expect(first.statusCode).toBe(428);
+      const { stepUrl } = first.json().error.confirm as { stepUrl: string };
+      expect((await who('POST', stepUrl, { step: 1 })).statusCode).toBe(200);
+      clockAdvance();
+      const s2 = await who('POST', stepUrl, { step: 2 });
+      expect(s2.statusCode, s2.body).toBe(200);
+      return { token: s2.json().confirmToken as string, stepUrl };
+    };
+    const clockAdvance = (): void => clock.advance(3000);
+    const ta = await tokenOf(a, idA);
+    // 同一个家人，别的条目：令牌绑定 scope → 409
+    const wrongItem = await a('DELETE', `/api/vault/${idA2}`, { confirmToken: ta.token });
+    expect([wrongItem.statusCode, wrongItem.json().error.code]).toEqual([409, 'CONFIRM_INVALID']);
+    // 别的家人拿去删自己的条目：令牌绑定账号 → 409；别人的条目 → 404
+    const otherAcct = await b('DELETE', `/api/vault/${idB}`, { confirmToken: ta.token });
+    expect([otherAcct.statusCode, otherAcct.json().error.code]).toEqual([409, 'CONFIRM_INVALID']);
+    expect((await b('DELETE', `/api/vault/${idA}`, { confirmToken: ta.token })).statusCode).toBe(404);
+    // 所有者的令牌家人用不了
+    const firstOwner = await owner('DELETE', `/api/vault/${idOwner}`, {});
+    const chOwner = firstOwner.json().error.confirm as { stepUrl: string };
+    expect((await owner('POST', chOwner.stepUrl, { step: 1 })).statusCode).toBe(200);
+    clockAdvance();
+    const ownerToken = (await owner('POST', chOwner.stepUrl, { step: 2 })).json().confirmToken as string;
+    const usingOwners = await a('DELETE', `/api/vault/${idA2}`, { confirmToken: ownerToken });
+    expect([usingOwners.statusCode, usingOwners.json().error.code]).toEqual([409, 'CONFIRM_INVALID']);
+    // 家人点不了所有者的确认卡 / 别的家人的确认卡，也读不到（404，和不存在一样）
+    for (const who of [a, b]) {
+      expect((await who('POST', chOwner.stepUrl, { step: 1 })).statusCode).toBe(404);
+      expect((await who('GET', chOwner.stepUrl.replace('/steps', ''))).statusCode).toBe(404);
+    }
+    expect((await b('POST', ta.stepUrl, { step: 1 })).statusCode).toBe(404);
+    // 本人用自己的令牌删自己的那条，成功；令牌只能用一次
+    expect((await a('DELETE', `/api/vault/${idA}`, { confirmToken: ta.token })).statusCode).toBe(204);
+    expect((await a('DELETE', `/api/vault/${idA2}`, { confirmToken: ta.token })).statusCode).toBe(409);
+    expect((await confirmed('DELETE', `/api/vault/${idOwner}`)).statusCode).toBe(204);
   });
 
   it('操作员、未登录都用不了保险箱', async () => {

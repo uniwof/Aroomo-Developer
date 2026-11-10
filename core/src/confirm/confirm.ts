@@ -11,6 +11,8 @@
  *      → 返回一次性 confirmToken；
  *   4. 带 confirmToken 重新调用原接口 → 执行。令牌绑定 scope + 操作者 + 请求体加盐摘要，用过即作废，默认 5 分钟过期。
  * - 重要确认只能由主人本人完成（操作员没有 confirm:important，D62）。
+ *   例外（#346）：调用方在 spec 里声明 allowAccount 的操作（家人删 / 查看「自己」的保险箱条目），
+ *   由家人账号本人做重要确认；确认令牌绑定「账号 + 资源（scope）+ 请求体」，拿别人的令牌无效。
  * - 令牌只存 SHA-256；请求体只存加盐 SHA-256（可能含 Key，不存原文）。
  * 前端组件约定见 docs/architecture/CONFIRM-CARD.md。
  */
@@ -44,6 +46,11 @@ export interface ConfirmSpec {
   consequences?: string[];
   /** 第二次点击按钮上的字，默认「确认」 */
   confirmLabel?: string;
+  /**
+   * 账号本人也可以做这次重要确认（#346）。只给「操作自己名下数据」的调用点用；
+   * 操作员、客户端令牌不受影响（仍然 403），确认卡按 actor 绑定，账号只能点自己的卡。
+   */
+  allowAccount?: boolean;
   /** 绑定到令牌的请求内容（例如新增 Key 的请求体）；只存加盐摘要 */
   payload?: unknown;
 }
@@ -309,7 +316,8 @@ export class ConfirmService {
       await audit('confirm.normal', target, 'ok');
       return;
     }
-    if (!ctx.canConfirmImportant) {
+    const selfAccount = spec.allowAccount === true && ctx.actor.startsWith('user:');
+    if (!ctx.canConfirmImportant && !selfAccount) {
       await audit('confirm.denied', target, 'denied', spec.kind);
       throw new HttpError(403, 'FORBIDDEN', '这个操作需要主人本人确认');
     }

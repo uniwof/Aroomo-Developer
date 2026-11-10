@@ -1,4 +1,4 @@
-/** 确认卡的服务端接口（DECISIONS D63；约定见 docs/architecture/CONFIRM-CARD.md）。只有主人能用。 */
+/** 确认卡的服务端接口（DECISIONS D63；约定见 docs/architecture/CONFIRM-CARD.md）。主人和家人账号能用，但每个人只能看 / 点自己名下的确认卡（按 actor 绑定，别人的卡 404）；操作员、客户端令牌不行。 */
 import type { FastifyInstance } from 'fastify';
 import { guard } from '../auth/plugin.js';
 import { actorKey } from '../auth/tokens.js';
@@ -9,14 +9,14 @@ const idParam = { type: 'object', required: ['id'], properties: { id: { type: 's
 export function registerConfirmRoutes(app: FastifyInstance, svc: ConfirmService): void {
   app.get<{ Params: { id: string } }>(
     '/api/confirm/:id',
-    { ...guard('confirm:important'), schema: { params: idParam } },
+    { ...guard('confirm:important', { user: true }), schema: { params: idParam } },
     async (req) => ({ confirm: await svc.get(req.params.id, actorKey(req.principal!)) }),
   );
 
   app.post<{ Params: { id: string }; Body: { step: 1 | 2 } }>(
     '/api/confirm/:id/steps',
     {
-      ...guard('confirm:important'),
+      ...guard('confirm:important', { user: true }),
       schema: {
         params: idParam,
         body: { type: 'object', required: ['step'], additionalProperties: false, properties: { step: { type: 'integer', enum: [1, 2] } } },

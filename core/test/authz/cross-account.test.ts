@@ -72,7 +72,7 @@ const NO_RLS_TABLES: Record<string, string> = {
   // 理由一栏写的是现状（2026-11 迁移 0001–0034），不是负责人的裁定：要不要补 RLS 另立工单
   audit_log: '只追加；只给所有者读（GET /api/audit），按 actor_id 记',
   client_tokens: '登录前按 token_hash 查，此时还没有 app.user_id；业务查询带 WHERE user_id',
-  confirm_challenges: '确认卡按 actor 绑定，只有所有者能做重要确认',
+  confirm_challenges: '确认卡按 actor 绑定：所有者和家人各点各的（#346）',
   core_schema_migrations: '迁移记录，不属于任何账号',
   core_settings: '按 key 前缀 u<账号 id>. 分账号，没有 user_id 列',
   exec_takeovers: '执行员接管卡：应用层带 WHERE user_id',
@@ -316,6 +316,8 @@ const FAMILY: Record<string, Exp> = {
   'PUT /api/vault/:id': NF,
   'POST /api/vault/:id/reveal': NF,
   'DELETE /api/vault/:id': NF,
+  'GET /api/confirm/:id': { status: 404, code: 'NOT_FOUND', why: '确认卡按操作者绑定，别人的卡和不存在的一样（#346）' },
+  'POST /api/confirm/:id/steps': { status: 404, code: 'NOT_FOUND', why: '同上：点不了别人的确认卡（#346）' },
   'POST /api/clients': { status: 201, why: '发给自己的令牌（提权另测）' },
   'GET /api/clients': LIST,
   'DELETE /api/clients/:id': NF,
@@ -580,6 +582,8 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     // 收件箱卡片（所有者走接口；账号没有发卡接口，直接写库，和后台任务给账号发卡一样）
     i.inbox = await newInboxCard(v);
     i.action = 'ok';
+    // 确认卡：所有者和家人各有一张（家人也能自己做重要确认，#346）
+    i.confirm = await newChallenge(v);
     if (v === 'owner') {
       // 只给所有者的功能：助手（含一次运行）、作品项目（含一个版本）、确认卡
       i.assistant = await newAssistant();
@@ -588,7 +592,6 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
       i.project = (await make('owner', 'POST', '/api/work/projects', { name: `${m} project` })).project.id;
       await t.deps.work.addVersions('owner', i.project!, [{ sourceType: 'github_release', sourceRef: `${m}-v1`, label: 'v1', title: `${m} release`, actor: null, artifacts: [], sourceState: 'published', sourceAt: t.clock.now() }], t.clock.now());
       i.version = (await make('owner', 'GET', `/api/work/projects/${i.project}/versions`)).versions[0].id;
-      i.confirm = await newChallenge();
       await make('owner', 'POST', '/api/users/invites', { email: `${m}-invite@example.test` });
       // 推送订阅只给所有者：攻击前得有一行，快照才真的盖住 push_subscriptions
       await make('owner', 'POST', '/api/push/subscriptions', BODIES['POST /api/push/subscriptions']!('owner', {}, 'seed')!);
@@ -597,9 +600,9 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     }
   }
   /** 所有者触发一次重要确认（删一个备用保险箱条目），返回确认卡 id */
-  const newChallenge = async (): Promise<string> => {
-    const spare = (await make('owner', 'POST', '/api/vault', { name: `${MARK.owner}spv${nonce()}`, kind: 'note', value: 'spare' })).secret.id as string;
-    const r = await call('owner', 'DELETE', `/api/vault/${spare}`, {});
+  const newChallenge = async (v: Victim): Promise<string> => {
+    const spare = (await make(v, 'POST', '/api/vault', { name: `${MARK[v]}spv${nonce()}`, kind: 'note', value: 'spare' })).secret.id as string;
+    const r = await call(v, 'DELETE', `/api/vault/${spare}`, {});
     expect(r.statusCode, r.body).toBe(428);
     return /\/api\/confirm\/([^/]+)\/steps/.exec((r.json().error.confirm as { stepUrl: string }).stepUrl)![1]!;
   };
@@ -713,12 +716,7 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     'PUT /api/members/order': { body: async (v) => ({ ids: ((await make(v, 'GET', '/api/members')).members as { id: string }[]).map((x) => x.id) }) },
     'PUT /api/settings/lead': { prep: async (v) => makeEligible(v, ids[v].member!) },
     'DELETE /api/memory/:topic': { prep: spare('memory', async (v) => { const tp = `spare-${nonce()}`; await make(v, 'PUT', `/api/memory/${tp}`, { title: 'spare', body: 'spare' }); return tp; }) },
-    'DELETE /api/vault/:id': {
-      victims: ['owner'],
-      why: '家人删保险箱条目要所有者本人确认（重要确认），B 拿到 403 是设计如此',
-      prep: spare('vault', async () => (await make('owner', 'POST', '/api/vault', { name: `${MARK.owner}spv${nonce()}`, kind: 'note', value: 'spare' })).secret.id),
-    },
-    'POST /api/vault/:id/reveal': { victims: ['owner'], why: '家人查看明文要所有者本人确认，B 拿到 403 是设计如此' },
+    'DELETE /api/vault/:id': { prep: spare('vault', async (v) => (await make(v, 'POST', '/api/vault', { name: `${MARK[v]}spv${nonce()}`, kind: 'note', value: 'spare' })).secret.id) },
     'POST /api/tasks/:id/cancel': { prep: spare('task', async (v) => (await make(v, 'POST', '/api/tasks', { kind: 'browse', site: `https://${MARK[v]}.example.test` })).task.id) },
     'POST /api/tasks/:id/takeovers/:tid/resolve': {
       prep: async (v) => {
@@ -825,7 +823,6 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     users: { owner: '所有者不在 users 表（所有者令牌认证）' },
     user_sessions: { owner: '所有者用所有者令牌，不建会话' },
     user_invites: { b: '只有所有者能发邀请 / 重置链接（按发起人 created_by 认）' },
-    confirm_challenges: { b: '家人做不了重要确认（只有所有者有确认卡）' },
     assistants: { b: '助手只给所有者' },
     assistant_members: { b: '助手只给所有者' },
     assistant_runs: { b: '助手只给所有者' },
@@ -836,7 +833,7 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
   };
   /** 一行属于谁：user_invites 按发起人 created_by；有 user_id 列按它；users 按 id；审计按 actor_id；确认卡按 actor；设置按 key 前缀（u<去掉连字符的账号 id>.，没前缀 = 所有者） */
   const sideOf = (table: string, j: Record<string, unknown>): string | null => {
-    const raw = table === 'user_invites' ? j.created_by : 'user_id' in j ? j.user_id : table === 'users' ? j.id : table === 'audit_log' ? j.actor_id : table === 'confirm_challenges' ? j.actor : table === 'core_settings' ? (/^u([0-9a-f]{32})\./.exec(String(j.key))?.[1] ?? 'owner') : null;
+    const raw = table === 'user_invites' ? j.created_by : 'user_id' in j ? j.user_id : table === 'users' ? j.id : table === 'audit_log' ? j.actor_id : table === 'confirm_challenges' ? String(j.actor).replace(/^user:/, '') : table === 'core_settings' ? (/^u([0-9a-f]{32})\./.exec(String(j.key))?.[1] ?? 'owner') : null;
     if (raw == null) return null;
     const id = String(raw).replace(/-/g, '');
     return id === 'owner' ? 'owner' : id === ids.b.user!.replace(/-/g, '') ? 'b' : null;
@@ -997,24 +994,34 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     expect(leakedIn(await call('bClient', 'GET', '/v1/models'))).toEqual(['b']);
   });
 
-  it('重要确认令牌不能跨账号：所有者点完确认拿到的令牌，小号拿去删所有者的或删自己的保险箱条目都不行', async () => {
-    // 家人账号自己做不了重要确认（只有普通确认，直接放行），能拿到重要确认令牌的只有所有者
+  it('重要确认令牌不能跨账号：令牌绑定账号 + 条目；所有者的令牌小号用不了，小号自己的令牌只能删自己点过确认的那一条（#346）', async () => {
+    // 家人能自己做重要确认；能拿到所有者确认令牌的只有所有者
     const own = (await make('xiao', 'POST', '/api/vault', { name: 'xiaoreplay', kind: 'note', value: 'xiao-replay' })).secret.id as string;
+    const own2 = (await make('xiao', 'POST', '/api/vault', { name: 'xiaoreplay2', kind: 'note', value: 'xiao-replay-2' })).secret.id as string;
     const first = await call('owner', 'DELETE', `/api/vault/${ids.owner.vault}`, {});
     expect(first.statusCode).toBe(428);
     const token = await confirmToken('owner', first);
-    // 别人的条目：和不存在的一样 404；自己的条目：令牌绑定的是所有者和那次操作，用在这里要重新确认（428）
+    // 别人的条目：和不存在的一样 404；自己的条目：令牌绑定的是所有者和那次操作 → 409 CONFIRM_INVALID
     const other = await call('xiao', 'DELETE', `/api/vault/${ids.owner.vault}`, { confirmToken: token });
     expect(other.statusCode, other.body).toBe(404);
     const mine = await call('xiao', 'DELETE', `/api/vault/${own}`, { confirmToken: token });
-    // 必改 5：家人删保险箱条目要所有者本人确认，拿所有者的令牌来也一样是 403（不会走到 428 让它自己再确认一次）
-    expect([mine.statusCode, errCode(mine)], `小号用所有者的确认令牌删自己的条目 → ${mine.body}`).toEqual([403, 'FORBIDDEN']);
-    for (const r of [other, mine]) expect(leakedIn(r)).toEqual([]);
+    expect([mine.statusCode, errCode(mine)], `小号用所有者的确认令牌删自己的条目 → ${mine.body}`).toEqual([409, 'CONFIRM_INVALID']);
+    // 小号自己的令牌：只对点过确认的那条有效，换一条（或用在所有者的条目上）都不行
+    const xfirst = await call('xiao', 'DELETE', `/api/vault/${own}`, {});
+    expect(xfirst.statusCode).toBe(428);
+    const xtoken = await confirmToken('xiao', xfirst);
+    const wrongItem = await call('xiao', 'DELETE', `/api/vault/${own2}`, { confirmToken: xtoken });
+    expect([wrongItem.statusCode, errCode(wrongItem)]).toEqual([409, 'CONFIRM_INVALID']);
+    const onOwners = await call('xiao', 'DELETE', `/api/vault/${ids.owner.vault}`, { confirmToken: xtoken });
+    expect(onOwners.statusCode, onOwners.body).toBe(404);
+    for (const r of [other, mine, wrongItem, onOwners]) expect(leakedIn(r)).toEqual([]);
+    expect((await call('xiao', 'DELETE', `/api/vault/${own}`, { confirmToken: xtoken })).statusCode).toBe(204);
     expect(JSON.stringify((await call('owner', 'GET', '/api/vault')).json())).toContain(ids.owner.vault);
-    expect(JSON.stringify((await call('xiao', 'GET', '/api/vault')).json())).toContain(own);
-    // 小号也不能替所有者点确认的两步、看确认卡（/api/confirm 只给所有者）
+    expect(JSON.stringify((await call('xiao', 'GET', '/api/vault')).json())).toContain(own2);
+    // 小号不能替所有者点确认的两步、也看不到所有者的确认卡（404，和不存在的一样）
     const ch = first.json().error.confirm as { stepUrl: string };
-    expect((await call('xiao', 'POST', ch.stepUrl, { step: 1 })).statusCode).toBe(403);
+    expect((await call('xiao', 'POST', ch.stepUrl, { step: 1 })).statusCode).toBe(404);
+    expect((await call('xiao', 'GET', ch.stepUrl.replace('/steps', ''))).statusCode).toBe(404);
   });
 
   it('任务里声明别人的保险箱 id：小号自己的执行员领到任务也取不到别人的凭据；声明了的「别人的」和「不存在的」一样 404', async () => {
