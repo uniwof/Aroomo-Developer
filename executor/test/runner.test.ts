@@ -166,6 +166,31 @@ describe('执行员 ↔ 模拟 Core', () => {
     expect(core.hellos).toBe(1);
   });
 
+  it('#376 M6 鉴权失败（403）：不退出，按指数退避自动重连，连上后照常领任务', async () => {
+    core.authFailNext = 4;
+    const { runner, done } = makeRunner({ actReplies: { 签到: '今天已签到' } }, { runner: { authBackoff: new Backoff(20, 1000, () => 0) } });
+    let exited = false;
+    void done.then(() => (exited = true));
+    await core.waitFor(() => runner.state === 'online');
+    expect(exited).toBe(false);
+    const waits = logs.filter((l) => l.includes('鉴权失败')).map((l) => (JSON.parse(l) as { retryInMs: number }).retryInMs);
+    expect(waits).toEqual([20, 40, 80, 160]);
+    const t = core.enqueue({ kind: 'checkin', site: 'https://example.com/daily' });
+    await core.waitFor(() => core.results.has(t.id));
+    expect(core.results.get(t.id)!.status).toBe('succeeded');
+  });
+
+  it('#376 M6 提交结果遇到偶发 403：退避重试直到提交成功，不丢结果', async () => {
+    const { runner } = makeRunner({ actReplies: { 签到: '今天已签到' } });
+    await core.waitFor(() => runner.state === 'online');
+    core.authFailOn = '/result';
+    core.authFailNext = 2;
+    const t = core.enqueue({ kind: 'checkin', site: 'https://example.com/daily' });
+    await core.waitFor(() => core.results.has(t.id), 12000);
+    expect(core.authFailNext).toBe(0);
+    expect(core.results.get(t.id)!.status).toBe('succeeded');
+  });
+
   it('令牌无效：进入 auth_failed，不领任务，日志不含令牌', async () => {
     const { runner } = makeRunner({}, { token: 'wrong-token-value-123456' });
     core.enqueue({ kind: 'browse', site: 'https://example.com/' });

@@ -3,6 +3,8 @@
  * 只发出站请求；令牌放在请求头，从不出现在日志和错误消息里。
  */
 
+import { cfSecretReader } from './cf-access.js';
+import { buildAllowlist, type ExecutorConfig, tokenReader } from './config.js';
 import type {
   HelloRequest,
   HelloResponse,
@@ -29,8 +31,9 @@ export class CoreError extends Error {
     return this.status === 0 || this.status === 429 || this.status >= 500;
   }
 
+  /** 401/403，或 3xx（Cloudflare Access 没放行时跳去登录页） */
   get authFailed(): boolean {
-    return this.status === 401 || this.status === 403;
+    return this.status === 401 || this.status === 403 || (this.status >= 300 && this.status < 400);
   }
 }
 
@@ -53,26 +56,32 @@ export interface HttpTransportOptions {
   fetchImpl?: typeof fetch;
   /** 普通请求超时；长轮询在此基础上加 waitSec */
   timeoutMs?: number;
-  /** 本次进程的执行员 id（hello 后设置） */
-  executorId?: string;
+  /**
+   * 经公网走 Cloudflare Access（#365）：CF-Access-Client-Id / Secret 两个头，只发给 baseUrl 同源；
+   * Secret 每次现取（读取函数自己缓存），不挂在对象字段上。
+   */
+  cfAccess?: { clientId: string; getSecret: () => string };
 }
 
 export class HttpTransport implements CoreTransport {
   readonly #o: HttpTransportOptions;
   readonly #fetch: typeof fetch;
-  #executorId: string | undefined;
+  readonly #origin: string;
 
   constructor(o: HttpTransportOptions) {
     const u = new URL(o.baseUrl);
     if (u.protocol !== 'https:' && !['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname)) {
       throw new Error('Core 地址必须是 https（本机测试除外）');
     }
+    this.#origin = u.origin;
     this.#o = { ...o, baseUrl: o.baseUrl.replace(/\/+$/, '') };
     this.#fetch = o.fetchImpl ?? fetch;
-    this.#executorId = o.executorId;
   }
 
   async #call<T>(method: 'GET' | 'POST', path: string, body?: unknown, extraMs = 0, signal?: AbortSignal): Promise<{ status: number; data: T | null }> {
+    const url = `${this.#o.baseUrl}/api/executor${path}`;
+    // CF 两个头只发给 coreUrl 这个源（防 Secret 去到别处）；先取，取不到就不发请求
+    const cf = this.#o.cfAccess && new URL(url).origin === this.#origin ? { id: this.#o.cfAccess.clientId, secret: this.#o.cfAccess.getSecret() } : undefined;
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), (this.#o.timeoutMs ?? 15_000) + extraMs);
     const onAbort = () => ctrl.abort();
@@ -82,22 +91,31 @@ export class HttpTransport implements CoreTransport {
       'user-agent': `aroomo-executor/${this.#o.version}`,
       accept: 'application/json',
     };
-    if (this.#executorId) headers['x-aroomo-executor'] = this.#executorId;
+    // 不发 x-aroomo-executor（#376 M2）：Core 只按设备令牌的 clientId 认执行员，不读这个头；Shell 也会剥掉它
     if (body !== undefined) headers['content-type'] = 'application/json';
+    if (cf) {
+      headers['cf-access-client-id'] = cf.id;
+      headers['cf-access-client-secret'] = cf.secret;
+    }
     let res: Response;
     try {
-      res = await this.#fetch(`${this.#o.baseUrl}/api/executor${path}`, {
+      res = await this.#fetch(url, {
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: ctrl.signal,
-        redirect: 'error',
+        // 不跟随跳转：Secret 和设备令牌不跟着 3xx 去别的源；3xx 当错误
+        redirect: 'manual',
       });
     } catch (e) {
       throw new CoreError(0, signal?.aborted ? 'ABORTED' : 'NETWORK', `连不上 Core：${(e as Error).name}`);
     } finally {
       clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
+    }
+    if (res.type === 'opaqueredirect' || (res.status >= 300 && res.status < 400)) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new CoreError(res.status || 302, 'REDIRECT', 'Core 返回了跳转（可能被 Cloudflare Access 拦下，检查 cfAccess 配置和密钥）');
     }
     if (res.status === 204) return { status: 204, data: null };
     let data: unknown = null;
@@ -119,7 +137,6 @@ export class HttpTransport implements CoreTransport {
   async hello(req: HelloRequest): Promise<HelloResponse> {
     const r = await this.#call<HelloResponse>('POST', '/hello', req);
     if (!r.data?.executorId) throw new CoreError(502, 'BAD_RESPONSE', 'hello 响应缺 executorId');
-    this.#executorId = r.data.executorId;
     return r.data;
   }
 
@@ -158,5 +175,30 @@ export class HttpTransport implements CoreTransport {
 
   async result(taskId: string, req: ResultRequest): Promise<void> {
     await this.#call('POST', `/tasks/${encodeURIComponent(taskId)}/result`, req);
+  }
+}
+
+/** 按配置组装 HttpTransport（cfAccess 配了才带 CF 两个头） */
+export function transportFor(cfg: ExecutorConfig, version: string, extra: Partial<HttpTransportOptions> = {}): HttpTransport {
+  return new HttpTransport({
+    baseUrl: cfg.coreUrl,
+    getToken: tokenReader(cfg),
+    version,
+    ...(cfg.cfAccess ? { cfAccess: { clientId: cfg.cfAccess.clientId, getSecret: cfSecretReader(cfg) } } : {}),
+    ...extra,
+  });
+}
+
+/**
+ * 探活：走和干活一样的路（/api/executor/hello，带设备令牌和 CF 两个头）。
+ * #367 的 /healthz 经公网会被 owner-only 的 Access 应用拦住，探不出真实情况（#365）。
+ */
+export async function probeCore(t: CoreTransport, cfg: ExecutorConfig, version: string): Promise<{ ok: boolean; status?: number; reason?: string }> {
+  try {
+    await t.hello({ deviceName: cfg.deviceName, platform: `${process.platform}-${process.arch}`, version, adapters: cfg.browsers, allowlistHash: buildAllowlist(cfg).hash() });
+    return { ok: true, status: 200 };
+  } catch (e) {
+    if (e instanceof CoreError) return e.status ? { ok: false, status: e.status, reason: e.code } : { ok: false, reason: e.code };
+    return { ok: false, reason: e instanceof Error ? e.message : 'UNKNOWN' };
   }
 }
