@@ -120,7 +120,7 @@ describe('执行员 ↔ 真实 Core', () => {
   it('所有者取消接管卡 → 任务 cancelled', async () => {
     const alice = await register('alice2@example.com');
     const token = await deviceToken(alice);
-    startRunner(token, { blockers: [{ reason: 'payment', message: '要付款' }] });
+    const browser = startRunner(token, { blockers: [{ reason: 'payment', message: '要付款' }] });
     const tid = (await alice('POST', '/api/tasks', { kind: 'browse', site: 'https://example.com/' })).json.task.id as string;
     const card = await until(async () => (await alice('GET', `/api/tasks/${tid}/takeovers`)).json.takeovers[0]);
     await alice('POST', `/api/tasks/${tid}/takeovers/${card.id}/resolve`, { cancel: true });
@@ -129,6 +129,29 @@ describe('执行员 ↔ 真实 Core', () => {
       return t.status === 'cancelled' ? t : undefined;
     });
     expect(task.status).toBe('cancelled');
+    // M3 验收 4：放弃后浏览器页面关闭，不再重试（没有新会话，状态不变）
+    await until(async () => browser.sessions[0]?.closed);
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(browser.sessions).toHaveLength(1);
+    expect((await alice('GET', `/api/tasks/${tid}`)).json.task.status).toBe('cancelled');
+  });
+
+  it('M3 验收 2：签到任务 排队中 → 进行中 → 成功，摘要写明已签到', async () => {
+    const alice = await register('alice4@example.com');
+    const token = await deviceToken(alice);
+    const tid = (await alice('POST', '/api/tasks', { kind: 'checkin', site: 'https://example.com/daily' })).json.task.id as string;
+    expect((await alice('GET', `/api/tasks/${tid}`)).json.task.status).toBe('queued');
+    const browser = startRunner(token, { actReplies: { 签到: '今天已签到，获得 5 积分' }, actDelayMs: 600 });
+    const seen: string[] = [];
+    const task = await until(async () => {
+      const t = (await alice('GET', `/api/tasks/${tid}`)).json.task;
+      if (seen.at(-1) !== t.status) seen.push(t.status);
+      return t.status === 'succeeded' ? t : undefined;
+    });
+    expect(seen).toContain('running');
+    expect(seen.at(-1)).toBe('succeeded');
+    expect(task.resultSummary).toContain('已签到');
+    expect(browser.sessions[0]!.actions.every((a) => a.trim().length > 0)).toBe(true); // Core 没写 instruction 时用默认指令，不能给浏览器空指令
   });
 
   it('越权：B 的设备领不到 A 的任务，取不到 A 的凭据，A 的任务仍在排队', async () => {

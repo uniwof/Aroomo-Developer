@@ -81,6 +81,15 @@ jobs:
           $r = Invoke-ScriptAnalyzer -Path executor/scripts -Recurse -ExcludeRule PSAvoidUsingWriteHost,PSUseBOMForUnicodeEncodedFile
           $r | Format-Table -AutoSize RuleName, Severity, ScriptName, Line, Message | Out-String -Width 250
           if (@($r | Where-Object Severity -in 'Error','Warning').Count -gt 0) { exit 1 }
+      - name: Pester（安装 / 更新脚本的验收与红线）
+        shell: powershell
+        run: |
+          Import-Module Pester -MinimumVersion 5.0
+          $c = New-PesterConfiguration
+          $c.Run.Path = 'executor/test/ps'
+          $c.Run.Exit = $true
+          $c.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $c
       - name: 实跑安装脚本（Windows PowerShell 5.1，不注册自启）
         shell: powershell
         env:

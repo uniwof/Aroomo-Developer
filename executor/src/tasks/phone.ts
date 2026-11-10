@@ -32,7 +32,7 @@ export async function runPhoneTask(ctx: TaskContext, phone: PhonePort): Promise<
   const credentials: Record<string, string> = {};
   for (const ref of ctx.task.secrets ?? []) credentials[secretIdFor(ref.field)] = await ctx.secret(ref);
   const ids = Object.keys(credentials);
-  const base = ctx.task.instruction ?? DEFAULT_GOAL[ctx.task.kind] ?? '打开应用';
+  const base = ctx.task.instruction || (DEFAULT_GOAL[ctx.task.kind] ?? '打开应用');
   const goal = [
     `${base}。应用包名：${allowed.host}。`,
     ids.length ? `需要输入账号信息时用 type_secret 动作，可用的 secret id：${ids.join(', ')}。` : '',

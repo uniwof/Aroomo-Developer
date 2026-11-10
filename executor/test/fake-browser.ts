@@ -14,6 +14,8 @@ export interface FakeScript {
   redirectTo?: string;
   /** act 指令包含这个关键字时一直不返回（模拟浏览器卡死），直到会话被关闭 */
   hangOn?: string;
+  /** 每次 act 先等这么久（毫秒），让「进行中」状态可被观察 */
+  actDelayMs?: number;
 }
 
 export class FakeSession implements BrowserSession {
@@ -40,6 +42,7 @@ export class FakeSession implements BrowserSession {
   }
   async act(instruction: string) {
     this.actions.push(instruction);
+    if (this.script.actDelayMs) await new Promise((r) => setTimeout(r, this.script.actDelayMs));
     if (this.script.hangOn && instruction.includes(this.script.hangOn)) {
       await new Promise<void>((resolve) => {
         this.#onClose.push(resolve);
