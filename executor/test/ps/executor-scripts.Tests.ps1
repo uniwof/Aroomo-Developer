@@ -54,6 +54,7 @@ Describe '安装脚本 install-windows.ps1' {
         try {
             $ps = (Get-Command powershell.exe).Source
             $cmd = "`$env:PATH = '$empty'; & '$($script:Install)' -NoAutostart -SkipToken"
+            $ErrorActionPreference = 'Continue' # 子进程的错误输出在 Pester 里会变成终止错误，这里只看输出和退出码
             $out = & $ps -NoProfile -ExecutionPolicy Bypass -Command $cmd 2>&1 | Out-String
             $LASTEXITCODE | Should -Not -Be 0
             $out | Should -Match 'Node\.js'
