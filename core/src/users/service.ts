@@ -163,6 +163,30 @@ export class UsersService {
     return { token: s.token, expiresAt: s.expiresAt.toISOString(), user: publicUser(u) };
   }
 
+  /**
+   * #346 M1：家人本人做重要确认时核对当前密码。和 login 共用同一份失败计数与锁定（键 = 邮箱|客户端），
+   * 不另开爆破入口；密码不进日志 / 审计。失败 401 BAD_CREDENTIALS，锁定中 429 TOO_MANY_ATTEMPTS。
+   */
+  async verifyForConfirm(userId: string, password: string, clientKey: string, audit: AuditFn): Promise<void> {
+    const u = await this.store.getUser(userId);
+    const key = `${(u?.email ?? '').trim().toLowerCase()}|${clientKey}`;
+    const t = this.now().getTime();
+    const f = this.#fails.get(key);
+    if (f && f.n >= MAX_FAILS && f.until > t) {
+      await audit('auth.reauth', { type: 'user', id: userId }, 'denied', '尝试次数过多');
+      throw new HttpError(429, 'TOO_MANY_ATTEMPTS', '尝试次数太多，请 15 分钟后再试');
+    }
+    const ok = await verifyPassword(String(password ?? ''), u ? u.passwordHash : DUMMY_HASH);
+    if (!u || !ok || u.status !== 'active') {
+      const prev = f && f.until > t ? f.n : 0;
+      this.#fails.set(key, { n: prev + 1, until: t + LOCK_MS });
+      await audit('auth.reauth', { type: 'user', id: userId }, 'failed');
+      throw new HttpError(401, 'BAD_CREDENTIALS', '密码不对');
+    }
+    this.#fails.delete(key);
+    await audit('auth.reauth', { type: 'user', id: userId }, 'ok');
+  }
+
   async logout(p: UserPrincipal, audit: AuditFn): Promise<void> {
     await this.store.revokeSession(p.userId, p.sessionId, this.now());
     await audit('auth.logout', { type: 'user', id: p.userId }, 'ok');

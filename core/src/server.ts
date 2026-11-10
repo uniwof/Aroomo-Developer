@@ -251,6 +251,8 @@ export function buildServer(
     reauth: cfg.accessReauth,
     reauthMaxAgeS: cfg.accessReauthMaxAgeS,
     ...(access ? { access } : {}),
+    // #346 M1：家人本人确认第二步核对本人密码（和登录共用锁定）
+    accountPassword: (userId, password, clientKey, audit) => users.verifyForConfirm(userId, password, clientKey, audit),
   });
   registerConfirmRoutes(app, confirm);
 

@@ -19,7 +19,7 @@
 | `POST /api/inbox/:id/actions/:actionId`（动作的 `confirm.kind` 不是 `normal` 时） | 按动作 |
 | `POST /api/keys`、`PATCH /api/keys/:id`（带 `apiKey`）——**只在发起方不是主人本人时**（智能体 / 操作员，D73）；主人在界面上手动保存 = 普通保存 | credential |
 | `DELETE /api/keys/:id`（任何人，D73） | credential |
-| `POST /api/vault/:id/reveal`（credential）、`DELETE /api/vault/:id`（irreversible）——**家人账号删 / 查看自己的条目由家人本人做重要确认**（#346）；确认卡和令牌绑定 账号 + 条目，别人的卡 404、别人的令牌 409 | credential / irreversible |
+| `POST /api/vault/:id/reveal`（credential）、`DELETE /api/vault/:id`（irreversible）——**家人账号删 / 查看自己的条目由家人本人做重要确认**（#346）；确认卡和令牌绑定 账号 + 条目，别人的卡 404、别人的令牌 409；**家人第二步必须带本人当前登录密码**（`requiresPassword: true`，和登录共用失败计数与 15 分钟锁定；Access 只放所有者，家人用密码代替；密码不进日志 / 审计 / 请求体摘要）；只认账号会话（arc_ / 操作员 / 设备令牌 403） | credential / irreversible |
 
 ## 2. 流程
 
@@ -118,3 +118,5 @@ interface ConfirmCardProps {
 3. 取消随时可用（关闭卡片即可；challenge 会自然过期）。
 4. 不在前端缓存或显示 `confirmToken`；拿到后立刻用于重发并丢弃。
 5. 按钮①、②位置错开，避免连点两下误触。
+
+**家人本人确认（#346）**：只有调用点声明 `allowAccount: true` 才开放，目前正好两处（保险箱 reveal / delete），由 `test/confirm-account-self.test.ts` 结构测试钉住。以后新增调用点要同时改那条结构测试，并走 A+ 审查。控制台家人侧需渲染确认卡并在第二步提供密码输入（未在 #371）。

@@ -477,10 +477,11 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     return t.app.inject({ method, url, headers: { ...h, ...(extra ?? {}) }, ...(payload !== undefined ? { payload } : {}) } as InjectOptions);
   };
   const confirmToken = async (who: Who, res428: Inject): Promise<string> => {
-    const ch = res428.json().error.confirm as { stepUrl: string };
+    const ch = res428.json().error.confirm as { stepUrl: string; requiresPassword?: true };
     expect((await call(who, 'POST', ch.stepUrl, { step: 1 })).statusCode).toBe(200);
     t.clock.advance(3000);
-    const s2 = await call(who, 'POST', ch.stepUrl, { step: 2 });
+    // #346 M1：家人本人确认，第二步带本人登录密码
+    const s2 = await call(who, 'POST', ch.stepUrl, { step: 2, ...(ch.requiresPassword ? { password: PW[who] } : {}) });
     expect(s2.statusCode, s2.body).toBe(200);
     return s2.json().confirmToken as string;
   };

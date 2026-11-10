@@ -95,8 +95,9 @@ describe.each(envs)('保险箱接口 B2（$name）', (env) => {
       const ch = first.json().error.confirm;
       expect((await who('POST', ch.stepUrl, { step: 1 })).statusCode).toBe(200);
       clock.advance(3000);
-      const s2 = await who('POST', ch.stepUrl, { step: 2 });
-      expect(s2.statusCode).toBe(200);
+      // #346 M1：家人本人确认，第二步带本人登录密码
+      const s2 = await who('POST', ch.stepUrl, { step: 2, ...(ch.requiresPassword ? { password: PW } : {}) });
+      expect(s2.statusCode, s2.body).toBe(200);
       return who(method, url, { ...payload, confirmToken: s2.json().confirmToken });
     };
     const confirmed = confirmedAs(owner);
@@ -210,10 +211,11 @@ describe.each(envs)('保险箱接口 B2（$name）', (env) => {
     const tokenOf = async (who: typeof a, id: string): Promise<{ token: string; stepUrl: string }> => {
       const first = await who('DELETE', `/api/vault/${id}`);
       expect(first.statusCode).toBe(428);
-      const { stepUrl } = first.json().error.confirm as { stepUrl: string };
+      const { stepUrl, requiresPassword } = first.json().error.confirm as { stepUrl: string; requiresPassword?: true };
+      expect(requiresPassword).toBe(true);
       expect((await who('POST', stepUrl, { step: 1 })).statusCode).toBe(200);
       clockAdvance();
-      const s2 = await who('POST', stepUrl, { step: 2 });
+      const s2 = await who('POST', stepUrl, { step: 2, password: PW });
       expect(s2.statusCode, s2.body).toBe(200);
       return { token: s2.json().confirmToken as string, stepUrl };
     };

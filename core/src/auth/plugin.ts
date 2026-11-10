@@ -212,7 +212,7 @@ export const requireOwner: preHandlerAsyncHookHandler = async function (req: Fas
 
 /** 统一确认服务需要的操作者上下文（D63）。重要确认只能由主人完成（confirm:important，D62）。 */
 export function confirmCtx(p: Principal, confirmToken?: string): ConfirmCtx {
-  return { actor: actorKey(p), canConfirmImportant: principalCan(p, 'confirm:important'), ...(confirmToken ? { confirmToken } : {}) };
+  return { actor: actorKey(p), canConfirmImportant: principalCan(p, 'confirm:important'), principalType: p.type, ...(confirmToken ? { confirmToken } : {}) };
 }
 
 /** 账号可用的接口（本人的数据）。用法：`{ ...userGuard(), schema }` */
