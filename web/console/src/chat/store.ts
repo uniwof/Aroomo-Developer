@@ -409,15 +409,26 @@ export function claimLegacy(account: string, storage: Storage = globalThis.local
 /**
  * #293：以前从 Shell 打开时 Core 回的是主人令牌（kind=owner），本机会话存在 'owner' 那份；现在问到的是她自己的账号 id（和直接开 Core 登录同一份）。
  * 确认是所有者账号后（调用方负责：Core 回 ownerAccount=true），把 'owner' 那份并进她账号那份，按会话 id 去重（她账号那份已有的 id 一律不动）。
- * 'owner' 那份保留不删、不改；并完记一笔（按账号），之后不再并。放不下（超过上限或存满）什么都不记、不写，下次再试。返回并进来几段。
+ * #377 M2：不再「只并一次」。按账号记一份「已经考虑过的 owner 会话 id」集合，每次只补并集合外的新会话：
+ * 直通一时问不到、退回 owner 那份期间新开的会话，恢复后会补并；她在账号那份删掉的会话 id 已在集合里，不会被并回来。
+ * 'owner' 那份保留不删、不改。放不下（超过上限）或写不进：什么都不写、集合不变，下次再试。返回这次并进来几段。
  */
 export const OWNER_SHARE = 'owner';
-const ownerMergedKey = (account: string) => `${LEGACY_KEY}.owner-merged:u:${account}`;
+const ownerMergedKey = (account: string) => `${LEGACY_KEY}.owner-merged-ids:u:${account}`;
+function readMergedIds(storage: Storage, account: string): Set<string> {
+  try {
+    const v = JSON.parse(storage.getItem(ownerMergedKey(account)) ?? '[]') as unknown;
+    return new Set(Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
 export function mergeOwnerShare(account: string, storage: Storage | undefined = globalThis.localStorage): number {
   if (!storage || !ACCOUNT_RE.test(account) || account === OWNER_SHARE) return 0;
   try {
-    if (storage.getItem(ownerMergedKey(account)) === '1') return 0;
-    const share = loadConversations(OWNER_SHARE, storage).filter((c) => c.messages.length > 0);
+    const seen = readMergedIds(storage, account);
+    const share = loadConversations(OWNER_SHARE, storage).filter((c) => c.messages.length > 0 && !seen.has(c.id));
+    if (share.length === 0) return 0;
     const mine = loadConversations(account, storage);
     const have = new Set(mine.map((c) => c.id));
     const add = share.filter((c) => !have.has(c.id));
@@ -428,7 +439,10 @@ export function mergeOwnerShare(account: string, storage: Storage | undefined = 
       const saved = new Set(loadConversations(account, storage).map((c) => c.id));
       if (!add.every((c) => saved.has(c.id))) return 0;
     }
-    storage.setItem(ownerMergedKey(account), '1');
+    // 这次看过的（并进来的 + 她那份本来就有的）都记进集合；只记 owner 那份里存在的 id，集合不会无限长
+    const ownerIds = new Set(loadConversations(OWNER_SHARE, storage).map((c) => c.id));
+    const next = [...new Set([...seen, ...share.map((c) => c.id)])].filter((id) => ownerIds.has(id));
+    storage.setItem(ownerMergedKey(account), JSON.stringify(next));
     return add.length;
   } catch {
     return 0;

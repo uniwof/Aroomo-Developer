@@ -30,12 +30,32 @@ describe('#293 mergeOwnerShare：owner 那份并进账号那份', () => {
     expect(loadConversations('owner').map((c) => c.id)).toEqual(['a', 'b']);
   });
 
-  it('只并一次：并完再有新的 owner 会话也不再并（记号按账号）', () => {
+  it('#377 M2 补并：并完之后 owner 那份又多了新会话（直通一时问不到期间新开的），下次只补并新的', () => {
     saveConversations([conv('a', 'A', 5)], 'owner');
     expect(mergeOwnerShare(OWNER)).toBe(1);
     saveConversations([conv('a', 'A', 5), conv('z', 'Z', 6)], 'owner');
+    expect(mergeOwnerShare(OWNER)).toBe(1);
+    expect(loadConversations(OWNER).map((c) => c.id).sort()).toEqual(['a', 'z']);
     expect(mergeOwnerShare(OWNER)).toBe(0);
-    expect(loadConversations(OWNER).map((c) => c.id)).toEqual(['a']);
+  });
+
+  it('#377 M2 不复活：她在账号那份删掉的会话，不会被 owner 那份并回来', () => {
+    saveConversations([conv('a', 'A', 5), conv('b', 'B', 4)], 'owner');
+    expect(mergeOwnerShare(OWNER)).toBe(2);
+    saveConversations(loadConversations(OWNER).filter((c) => c.id !== 'a'), OWNER);
+    expect(mergeOwnerShare(OWNER)).toBe(0);
+    expect(loadConversations(OWNER).map((c) => c.id)).toEqual(['b']);
+  });
+
+  it('#377 M2 端到端顺序：并入 → 退回 owner 新开一段 → 恢复直通补并；删过的不复活；刷新（再调一次）不重复', () => {
+    saveConversations([conv('a', 'A', 5)], 'owner');
+    expect(mergeOwnerShare(OWNER)).toBe(1);
+    saveConversations([], OWNER); // 她删了 a
+    saveConversations([conv('a', 'A', 5), conv('n', '断线期间', 7)], 'owner');
+    expect(mergeOwnerShare(OWNER)).toBe(1);
+    expect(mergeOwnerShare(OWNER)).toBe(0);
+    expect(loadConversations(OWNER).map((c) => c.id)).toEqual(['n']);
+    expect(loadConversations('owner').map((c) => c.id).sort()).toEqual(['a', 'n']);
   });
 
   it('不把别的账号那份并进来；也不会并进 owner 自己或非法账号', () => {

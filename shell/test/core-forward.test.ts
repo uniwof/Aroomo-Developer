@@ -49,7 +49,17 @@ beforeAll(async () => {
       // 照真 Core：GET /api/auth/me 只读，Cookie 会话不要 CSRF 头；回当前账号
       if (req.method === 'GET' && req.url === '/api/auth/me') {
         const id = m[1] === FAMILY ? 'acct-family' : 'acct-owner';
-        res.writeHead(200, { 'content-type': 'application/json', 'set-cookie': 'aroomo_session=evil; Path=/' });
+        // #377 M1：上游故意带上可缓存 / 跨源的头，证明 Shell 会剥掉、覆盖
+        res.writeHead(200, {
+          'content-type': 'application/json',
+          'set-cookie': 'aroomo_session=evil; Path=/',
+          'cache-control': 'public, max-age=600',
+          etag: '"me-v1"',
+          'last-modified': 'Tue, 10 Nov 2026 00:00:00 GMT',
+          'access-control-allow-origin': '*',
+          'access-control-allow-credentials': 'true',
+          vary: 'Accept',
+        });
         return res.end(JSON.stringify({ kind: 'user', ownerAccount: id === 'acct-owner', user: { id, email: `${id}@example.test`, role: id === 'acct-owner' ? 'owner' : 'user' } }));
       }
       if (!req.headers['x-aroomo-request']) {
@@ -290,6 +300,50 @@ describe('白名单直通 Core：GET /api/auth/me（#293）', () => {
     });
     expect(r).toBe(400);
     expect(coreSeen).toHaveLength(0);
+  });
+
+  const rawGet = (path: string, headers: Record<string, string>, method = 'GET') =>
+    new Promise<number>((resolve, reject) => {
+      const u = new URL(base + path);
+      const q = http.request({ host: u.hostname, port: u.port, path: u.pathname + u.search, method, headers }, (res) => {
+        res.resume();
+        resolve(res.statusCode ?? 0);
+      });
+      q.on('error', reject);
+      q.end();
+    });
+
+  it('M1 不缓存：no-store + Vary: Cookie，剥掉上游 ETag / Last-Modified / CORS / 上游 cache-control', async () => {
+    const r = await me({ cookie: `__Host-aroomo_session=${GOOD}` });
+    expect(r.status).toBe(200);
+    expect(r.headers.get('cache-control')).toBe('no-store');
+    expect(r.headers.get('vary')).toBe('Cookie');
+    expect(r.headers.get('x-aroomo-upstream')).toBe('core');
+    for (const h of ['etag', 'last-modified', 'access-control-allow-origin', 'access-control-allow-credentials', 'set-cookie']) expect([h, r.headers.get(h)]).toEqual([h, null]);
+  });
+
+  it('M1 不开跨源：Origin 不是本站 / Sec-Fetch-Site 是 cross-site 或 same-site → 403，Core 收不到；同源对照 200', async () => {
+    const cookie = `__Host-aroomo_session=${GOOD}`;
+    for (const h of [{ origin: 'https://evil.example' }, { 'sec-fetch-site': 'cross-site' }, { 'sec-fetch-site': 'same-site' }, { origin: 'null' }] as Record<string, string>[]) {
+      const r = await me({ cookie, ...h });
+      expect([JSON.stringify(h), r.status]).toEqual([JSON.stringify(h), 403]);
+    }
+    expect(coreSeen).toHaveLength(0);
+    const u = new URL(base);
+    expect((await me({ cookie, origin: `${u.protocol}//${u.host}`, 'sec-fetch-site': 'same-origin' })).status).toBe(200);
+    expect((await me({ cookie, 'sec-fetch-site': 'none' })).status).toBe(200);
+    expect(coreSeen).toHaveLength(2);
+  });
+
+  it('M4 带 query（?x=1、?=）→ 400，Core 收不到；HEAD → 405；content-length: 00 当作 0 放行；光一个 ? 转发时不带 query', async () => {
+    const cookie = `__Host-aroomo_session=${GOOD}`;
+    expect(await rawGet('/api/auth/me?x=1', { cookie })).toBe(400);
+    expect(await rawGet('/api/auth/me?=', { cookie })).toBe(400);
+    expect(await rawGet('/api/auth/me', { cookie }, 'HEAD')).toBe(405);
+    expect(coreSeen).toHaveLength(0);
+    expect(await rawGet('/api/auth/me', { cookie, 'content-length': '00' })).toBe(200);
+    expect(await rawGet('/api/auth/me?', { cookie })).toBe(200);
+    expect(coreSeen.map((x) => x.url)).toEqual(['/api/auth/me', '/api/auth/me']);
   });
 
   it('lobe-session 下不开：照旧给 LobeHub，Core 收不到', async () => {
