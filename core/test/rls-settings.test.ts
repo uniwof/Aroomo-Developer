@@ -205,6 +205,8 @@ describe.each(rlsTargets)('迁移 0037 回退与回填（$name）', (target) => 
         for (const k of EDGE_KEYS) await db.query(`INSERT INTO core_settings (key, value, updated_at) VALUES ($1, $2::jsonb, $3)`, [k, JSON.stringify({ k }), T0]);
         const before = await data();
         expect(await migrate(db)).toEqual(['0037_rls_p1_settings.sql']);
+        // 0039（DROP DEFAULT）已记录在案不会重跑；0037 重新 up 会带回 DEFAULT，这里补跑 0039 的语句（幂等）
+        await db.exec(readFileSync(fileURLToPath(new URL('../migrations/0039_settings_drop_default.sql', import.meta.url)), 'utf8'));
         expect(await state()).toEqual(UP);
         expect(await data()).toEqual(before);
         // 再 down → 数据仍原样（down 只删列不删行）
@@ -212,6 +214,8 @@ describe.each(rlsTargets)('迁移 0037 回退与回填（$name）', (target) => 
         expect(await state()).toEqual(DOWNED);
         expect(await data()).toEqual(before);
         expect(await migrate(db)).toEqual(['0037_rls_p1_settings.sql']);
+        // 0039（DROP DEFAULT）已记录在案不会重跑；0037 重新 up 会带回 DEFAULT，这里补跑 0039 的语句（幂等）
+        await db.exec(readFileSync(fileURLToPath(new URL('../migrations/0039_settings_drop_default.sql', import.meta.url)), 'utf8'));
         expect(await state()).toEqual(UP);
       });
       const { rows } = await systemScoped(db).query<{ key: string; user_id: string }>('SELECT key, user_id FROM core_settings ORDER BY key COLLATE "C"');

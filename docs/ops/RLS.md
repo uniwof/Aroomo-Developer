@@ -78,3 +78,6 @@ core_settings 加 `user_id text NOT NULL DEFAULT 'owner'`，按键名前缀回�
 - `audit_log`：`audit_log_append`（INSERT 任何范围都行，含登录失败 / 系统任务；应用侧不 RETURNING）+ `audit_log_system_read`（只给 systemScoped，即所有者的 GET /api/audit）。用户范围读不到任何审计行。0001 的行级触发器在 RLS 下对看不到的行不触发，所以 0038 加语句级触发器 `audit_log_no_update_delete_stmt`：任何范围的 UPDATE / DELETE 语句都直接报错。`auditLog.query` 唯一的读取方是 GET /api/audit（`audit/routes.ts`）；登录失败锁定（`UsersService.#fails`）和接口限速（@fastify/rate-limit）都在内存计数，不读审计，所以范围错了不会让安全逻辑「计数为 0 即放行」。
 - **局限（M5）**：`users_self` 允许本人改自己那行的任何列，包括 role 和 status；数据库层分不出「本人提权」和「管理员停用别人」（`user_invites_creator` 的管理员判断同样信任这一行）。这道防线只在应用层：自助接口（`/api/auth/password`、`/auth/accept`）的请求体 `additionalProperties:false` 且不收 role / status，改 role / status 只有 adminGuard 后的 `/api/users/:id/enable|disable` 和启动 seed。证据：`core/test/rls-p2-users-http.test.ts`。
 回退：`core/migrations/down/0038_rls_p2.down.sql`（回退前先备份；表所有者执行；连同两个触发器和 `user_invites_redeem_only()` 函数一起删）。NO_RLS_TABLES 现在只剩 `core_schema_migrations`（永久豁免）。上生产前：应用角色需 `GRANT USAGE ON SEQUENCE audit_log_seq_seq`（grantAppRole 已含 ALL SEQUENCES）。表所有者也受 FORCE RLS 约束，pg_dump 必须用超级用户或 BYPASSRLS 角色，恢复演练对比 users、user_invites、audit_log、core_settings 四张表行数。
+
+## 审计保留期清理（#345 约定）
+将来若要做 audit_log 旧行的保留期清理（删除旧行），**必须单独写迁移，并经所有者确认**（删数据属于红线）；不得为此临时绕开 0038 的语句级只追加触发器。
