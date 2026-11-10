@@ -54,5 +54,6 @@ export interface ClientTokenStore {
   /** 吊销这个用户的一枚令牌；不是他的或不存在返回 false（对别人的令牌表现为「不存在」） */
   revoke(userId: string, id: string, at: Date): Promise<boolean>;
   revokeAll(userId: string, at: Date): Promise<number>;
-  touch(id: string, at: Date): Promise<void>;
+  /** 令牌主人的范围内更新最后使用时间；不是他的令牌什么也不做 */
+  touch(userId: string, id: string, at: Date): Promise<void>;
 }

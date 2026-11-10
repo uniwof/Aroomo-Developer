@@ -71,17 +71,11 @@ const MIN_API_ROUTES = 119;
  * 这些表的跨账号隔离靠应用层（WHERE user_id / 只给所有者的接口），由上面的接口遍历和数据库快照兜。
  */
 const NO_RLS_TABLES: Record<string, string> = {
-  // 理由一栏写的是现状（2026-11 迁移 0001–0034），不是负责人的裁定：要不要补 RLS 另立工单
+  // 理由一栏写的是现状，不是负责人的裁定。#345：P0（client_tokens / user_sessions / exec_* / executors / confirm_challenges）已在 0036 开 RLS，从名单删掉；core_settings（P1）、users / user_invites / audit_log（P2）待做
   audit_log: '只追加；只给所有者读（GET /api/audit），按 actor_id 记',
-  client_tokens: '登录前按 token_hash 查，此时还没有 app.user_id；业务查询带 WHERE user_id',
-  confirm_challenges: '确认卡按 actor 绑定，只有所有者能做重要确认',
   core_schema_migrations: '迁移记录，不属于任何账号',
   core_settings: '按 key 前缀 u<账号 id>. 分账号，没有 user_id 列',
-  exec_takeovers: '执行员接管卡：应用层带 WHERE user_id',
-  exec_tasks: '执行员任务：应用层带 WHERE user_id',
-  executors: '执行员设备：应用层带 WHERE user_id',
   user_invites: '登录前按邀请码查',
-  user_sessions: '登录前按 token_hash 查',
   users: '登录前按邮箱查',
 };
 
@@ -1287,7 +1281,10 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
       const tpl = (await sys.query<{ j: Record<string, unknown> }>(`SELECT to_jsonb(x) AS j FROM ${table} x WHERE user_id::text = ANY($1) LIMIT 1`, [victims])).rows[0]?.j;
       if (!tpl) continue; // 上面的正向对照已经报了
       const j = typeof tpl === 'string' ? (JSON.parse(tpl) as Record<string, unknown>) : tpl;
+      // user_sessions.user_id 是 uuid（外键 users.id），'owner' 不是合法值，往 owner 名下插是类型错误而不是 RLS 拒绝；它的 WITH CHECK 用 B 的 id 测
+      const uidType = (await db.query<{ t: string }>(`SELECT format_type(a.atttypid, a.atttypmod) AS t FROM pg_attribute a WHERE a.attrelid = (current_schema() || '.' || $1)::regclass AND a.attname = 'user_id'`, [table])).rows[0]?.t;
       for (const target of victims) {
+        if (uidType === 'uuid' && target === 'owner') continue;
         const row = { ...j, user_id: target, ...(typeof j.id === 'string' ? { id: /^[0-9a-f-]{36}$/.test(j.id) ? randomUUID() : `${j.id}x176` } : {}) };
         const list = cols.join(', ');
         const err = await inTx(xiao, (x) => x.query(`INSERT INTO ${table} (${list}) SELECT ${list} FROM jsonb_populate_record(NULL::${table}, $1::jsonb)`, [JSON.stringify(row)])).then(() => null, (e: Error) => e);

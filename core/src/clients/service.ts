@@ -94,7 +94,7 @@ export class ClientTokenService {
     } else {
       this.#hits.set(r.id, { minute, n: 1 });
     }
-    await this.store.touch(r.id, t);
+    await this.store.touch(r.userId, r.id, t);
     return { type: 'client', id: r.id, clientId: r.id, userId: r.userId, name: r.name, scopes: new Set(r.scopes) };
   }
 }

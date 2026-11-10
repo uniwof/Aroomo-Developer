@@ -22,6 +22,17 @@ function forcedTables(): string[] {
   return [...forced].sort();
 }
 
+/**
+ * 开了 FORCE RLS、但不进 release-precheck 清单的表（#345 P0，迁移 0036），每条写理由（负责人第 1 轮裁定接受这两张）。
+ * release-precheck 检查 1 只认文本列 user_id，查的是「空串 / NULL」：
+ * - user_sessions：user_id 是 uuid（外键 users.id），类型上就不可能有空串，NOT NULL 由列约束保证；
+ * - confirm_challenges：user_id 是 0036 新加、按 actor 回填的列（CHECK 非空串、且必须等于 confirm_challenge_scope(actor)，都是 VALID），
+ *   上线前的生产库里还没有这一列，进清单会让发布前预检在 0036 上生产前失败；0036 上生产之后再进清单。
+ *   上生产前要查的是 actor 为 NULL / 空串的行（#229），不是 user_id。
+ * client_tokens / exec_tasks / exec_takeovers / executors 已在清单里（M4：非空串 CHECK 是 NOT VALID，旧空串靠预检拦）。
+ */
+const NOT_IN_PRECHECK_LIST = ['confirm_challenges', 'user_sessions'];
+
 function listed(): string[] {
   return readFileSync(LIST, 'utf8')
     .split('\n')
@@ -34,9 +45,14 @@ describe('rls-tables.txt 和迁移一致', () => {
   it('每张 FORCE RLS 的表都在清单里，清单里没有多余的表', () => {
     const forced = forcedTables();
     expect(forced.length).toBeGreaterThan(10);
-    expect(listed()).toEqual(forced);
+    expect(listed()).toEqual(forced.filter((t) => !NOT_IN_PRECHECK_LIST.includes(t)));
+    // 豁免名单里的表必须真的开了 FORCE RLS（不能留着已经删掉的表名）
+    for (const t of NOT_IN_PRECHECK_LIST) expect(forced, t).toContain(t);
   });
   it('push_subscriptions（0029）在清单里', () => {
     expect(listed()).toContain('push_subscriptions');
+  });
+  it('#345 P0 的四张 text user_id 表在清单里（M4）', () => {
+    for (const t of ['client_tokens', 'exec_tasks', 'exec_takeovers', 'executors']) expect(listed(), t).toContain(t);
   });
 });
