@@ -7,7 +7,9 @@ import { lazy, useState, type ReactNode } from 'react';
 import { Bell, BellRing, ArrowLeft, ChevronRight, Home, Keyboard, Monitor, Moon, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Sun, UserRound, Users, X } from 'lucide-react';
 import { activityLabel, api, isFamily, type Member } from '@/lib/api';
 import { useAsk } from '@/components/Dialog';
-import { useUsage } from '@/lib/usage';
+import { useUsage, type UsageRow } from '@/lib/usage';
+import { HoverCard, hoverCardId } from '@/components/HoverCard';
+import { MemberAvatar, type AvatarStatus } from '@/components/brand';
 import { UsageLine } from '@/components/UsageLine';
 import { BudgetSection, Field, Group, LeadSection, McpSection, SecuritySection } from '@/pages/Settings';
 import { FamilySection, GeneralSection, PasswordRow, ProfileSection, SignOutGroup } from './settings-sections';
@@ -80,12 +82,26 @@ function statusLine(m: Member): string {
   return `${activityLabel(a)}${a.reason ? ` · ${a.reason}` : ''}${since}`;
 }
 
-function MemberRows({ list, onOpen }: { list: Member[]; onOpen: (m: Member) => void }) {
+/** 头像角标（D217）：停用 ⏸、冷却 ⏳、今天用完 🌙；其余不加角标 */
+function ringStatus(m: Member): AvatarStatus {
+  if (!m.enabled) return 'paused';
+  if (m.activity?.state === 'cooldown') return 'cooldown';
+  if (m.activity?.state === 'depleted') return 'sleeping';
+  return 'available';
+}
+
+/** 一行成员：头像外圈 = 今天余量（GET /api/usage）；悬停 300ms / 聚焦 / 长按出 3 行悬停卡（D218） */
+function MemberRows({ list, onOpen, usage }: { list: Member[]; onOpen: (m: Member) => void; usage: UsageRow[] | null }) {
   return (
     <>
-          {list.map((m) => (
-            <button key={m.id} type="button" className="row row-button" onClick={() => onOpen(m)}>
-              <Avatar name={m.name} size="sm" glyph={m.avatar} />
+      {list.map((m) => {
+        const q = usage?.find((u) => u.memberId === m.id)?.quota;
+        return (
+          <HoverCard key={m.id} memberId={m.id} wrap>
+            <button type="button" className="row row-button" onClick={() => onOpen(m)} aria-describedby={hoverCardId(m.id)}>
+              <MemberAvatar name={m.name} online={m.enabled && m.status === 'active'} status={ringStatus(m)} used={q?.used} limit={q?.limit}>
+                <Avatar name={m.name} size="sm" glyph={m.avatar} />
+              </MemberAvatar>
               <span className="row-text">
                 <span className="row-label">{m.name}</span>
                 <span className="row-hint">
@@ -96,7 +112,9 @@ function MemberRows({ list, onOpen }: { list: Member[]; onOpen: (m: Member) => v
               </span>
               <ChevronRight aria-hidden="true" className="row-chevron" />
             </button>
-          ))}
+          </HoverCard>
+        );
+      })}
     </>
   );
 }
@@ -106,6 +124,7 @@ function MemberRows({ list, onOpen }: { list: Member[]; onOpen: (m: Member) => v
  * 空状态 = 一句话 + 直达「添加成员」（审计 M2）。
  */
 export function MembersPanel({ members, onOpen, onAdd, failed, onRetry }: { members: Member[]; onOpen: (m: Member) => void; onAdd?: () => void; failed?: boolean; onRetry?: () => void }) {
+  const { rows: usage } = useUsage(120_000);
   const active = members.filter((m) => m.enabled && m.status === 'active');
   const candidates = members.filter((m) => m.enabled && m.status === 'candidate');
   const off = members.filter((m) => !m.enabled);
@@ -130,17 +149,17 @@ export function MembersPanel({ members, onOpen, onAdd, failed, onRetry }: { memb
         <>
           {active.length > 0 && (
             <Group title={`在职（${active.length}）`}>
-              <MemberRows list={active} onOpen={onOpen} />
+              <MemberRows list={active} onOpen={onOpen} usage={usage} />
             </Group>
           )}
           {candidates.length > 0 && (
             <Group title={`候选（${candidates.length}）`}>
-              <MemberRows list={candidates} onOpen={onOpen} />
+              <MemberRows list={candidates} onOpen={onOpen} usage={usage} />
             </Group>
           )}
           {off.length > 0 && (
             <Group title={`已停用（${off.length}）`}>
-              <MemberRows list={off} onOpen={onOpen} />
+              <MemberRows list={off} onOpen={onOpen} usage={usage} />
             </Group>
           )}
         </>

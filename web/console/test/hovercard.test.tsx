@@ -35,3 +35,69 @@ describe('悬停卡与头像', () => {
     expect(b!.getAttribute('aria-label')).toContain('余量未知');
   });
 });
+
+describe('#172 成员列表接入头像圆环 + 悬停卡', () => {
+  it('wrap：不多占 Tab 位；按钮聚焦即出卡，读屏经 aria-describedby 读到 3 行；没有限速/价格/Key', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ name: 'Kimi', type: ['text'], status: '可用', remaining: { value: 7, unit: '次/天', source: '估算' } }), { status: 200, headers: { 'content-type': 'application/json' } })));
+    const { container } = render(<HoverCard memberId="m1" wrap><button type="button" aria-describedby="hc-m1">Kimi</button></HoverCard>);
+    expect(container.querySelectorAll('[tabindex]')).toHaveLength(0);
+    await act(async () => { screen.getByRole('button').focus(); await new Promise((r) => setTimeout(r, 0)); });
+    const tip = await screen.findByRole('tooltip');
+    await screen.findByText('余量：7 次/天（估算）');
+    expect(tip.id).toBe('hc-m1');
+    expect(tip.querySelectorAll('span.block')).toHaveLength(3);
+    expect(tip.textContent).not.toMatch(/限速|价格|渠道|sk-|key/i);
+  });
+  it('读不到时说一句，不编数字', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500, headers: { 'content-type': 'application/json' } })));
+    render(<HoverCard memberId="m2" wrap><button type="button">X</button></HoverCard>);
+    await act(async () => { screen.getByRole('button').focus(); await new Promise((r) => setTimeout(r, 0)); });
+    expect(await screen.findByText('暂时读不到，稍后再看')).toBeTruthy();
+  });
+  it('长按出卡后松手，不触发按钮点击', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+    const onClick = vi.fn();
+    render(<HoverCard memberId="m3" wrap><button type="button" onClick={onClick}>X</button></HoverCard>);
+    const btn = screen.getByRole('button');
+    fireEvent.touchStart(btn);
+    act(() => { vi.advanceTimersByTime(500); });
+    expect(screen.getByRole('tooltip')).toBeTruthy();
+    fireEvent.touchEnd(btn);
+    fireEvent.click(btn);
+    expect(onClick).not.toHaveBeenCalled();
+    fireEvent.click(btn);
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+  it('头像可包住传入的头像；圆环画剩余；停用降饱和带 ⏸', () => {
+    const { container } = render(
+      <MemberAvatar name="Kimi" online={false} status="paused" used={3} limit={4}>
+        <span data-testid="face" />
+      </MemberAvatar>,
+    );
+    const img = container.querySelector('[role=img]')!;
+    expect(img.querySelector('[data-testid=face]')).toBeTruthy();
+    expect(img.className).toContain('grayscale');
+    expect(img.getAttribute('aria-label')).toContain('已停用');
+    expect(img.getAttribute('aria-label')).toContain('额度剩余 25%');
+    expect(img.querySelector('[data-testid=avatar-status]')!.textContent).toBe('⏸');
+  });
+  it('候选（离线、无角标）不读成「可用」', () => {
+    const { container } = render(<MemberAvatar name="C" online={false} status="available" />);
+    const label = container.querySelector('[role=img]')!.getAttribute('aria-label')!;
+    expect(label).toContain('离线');
+    expect(label).not.toContain('可用');
+  });
+});
+
+describe('#172 MembersPanel', () => {
+  it('每行头像带圆环，按钮指向自己的悬停卡', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ members: [] }), { status: 200, headers: { 'content-type': 'application/json' } })));
+    const { MembersPanel } = await import('@/chat/panels');
+    const m = { id: 'k1', name: 'Kimi', aliases: [], capabilityTags: ['text'], enabled: true, pinned: false, status: 'active', leadEligible: false };
+    render(<MembersPanel members={[m]} onOpen={() => {}} />);
+    const btn = screen.getByRole('button', { name: /Kimi/ });
+    expect(btn.getAttribute('aria-describedby')).toBe('hc-k1');
+    expect(btn.querySelector('[role=img]')!.getAttribute('aria-label')).toContain('余量未知');
+  });
+});
