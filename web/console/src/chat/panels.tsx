@@ -3,12 +3,11 @@
  * 参照 sumus：侧栏底部「Members」、顶部齿轮打开的内容都在主区域原地显示，不开第二层抽屉；
  * 面板内容一律是分组列表（iOS / sumus 式），不用标签页。最终位置等负责人的 sumus→Aroomo 逐屏映射方案再定。
  */
-import { lazy, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useState, type ReactNode } from 'react';
 import { Bell, BellRing, ArrowLeft, ChevronRight, Home, Keyboard, Monitor, Moon, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Sun, UserRound, Users, X } from 'lucide-react';
 import { activityLabel, api, isFamily, type Member } from '@/lib/api';
 import { useAsk } from '@/components/Dialog';
 import { useUsage, type UsageRow } from '@/lib/usage';
-import { HoverCard, hoverCardId } from '@/components/HoverCard';
 import { MemberAvatar, type AvatarStatus } from '@/components/brand';
 import { UsageLine } from '@/components/UsageLine';
 import { BudgetSection, Field, Group, LeadSection, McpSection, SecuritySection } from '@/pages/Settings';
@@ -25,6 +24,13 @@ import { FONT_DEFAULT, FONT_MAX, FONT_MIN, clampFont } from '@/lib/display';
 import type { Theme } from '@/lib/display';
 
 // #281：设置 › 通知点开才下载（对话页包 ≤150 KB gz）；下载时一句静态文字，不转圈；下载失败说一句 + 「刷新」
+// #172：悬停卡点开成员页后才下载（对话页包 ≤150 KB gz）；没下载好之前就是普通的一行，下载失败也照常能点
+const HoverCard = lazy(() =>
+  import('@/components/HoverCard').then(
+    (m) => ({ default: m.HoverCard }),
+    () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }),
+  ),
+);
 const PushSection = lazy(() => import('./push-section').then((m) => ({ default: m.PushSection })));
 
 /**
@@ -96,23 +102,28 @@ function MemberRows({ list, onOpen, usage }: { list: Member[]; onOpen: (m: Membe
     <>
       {list.map((m) => {
         const q = usage?.find((u) => u.memberId === m.id)?.quota;
-        return (
-          <HoverCard key={m.id} memberId={m.id} wrap>
-            <button type="button" className="row row-button" onClick={() => onOpen(m)} aria-describedby={hoverCardId(m.id)}>
-              <MemberAvatar name={m.name} online={m.enabled && m.status === 'active'} status={ringStatus(m)} used={q?.used} limit={q?.limit}>
-                <Avatar name={m.name} size="sm" glyph={m.avatar} />
-              </MemberAvatar>
-              <span className="row-text">
-                <span className="row-label">{m.name}</span>
-                <span className="row-hint">
-                  {m.role ? `${m.role} · ` : ''}
-                  {statusText(m)}
-                  {m.capabilityTags.length > 0 && ` · ${m.capabilityTags.join('、')}`}
-                </span>
+        const row = (
+          <button type="button" className="row row-button" onClick={() => onOpen(m)} aria-describedby={`hc-${m.id}`}>
+            <MemberAvatar name={m.name} online={m.enabled && m.status === 'active'} status={ringStatus(m)} used={q?.used} limit={q?.limit}>
+              <Avatar name={m.name} size="sm" glyph={m.avatar} />
+            </MemberAvatar>
+            <span className="row-text">
+              <span className="row-label">{m.name}</span>
+              <span className="row-hint">
+                {m.role ? `${m.role} · ` : ''}
+                {statusText(m)}
+                {m.capabilityTags.length > 0 && ` · ${m.capabilityTags.join('、')}`}
               </span>
-              <ChevronRight aria-hidden="true" className="row-chevron" />
-            </button>
-          </HoverCard>
+            </span>
+            <ChevronRight aria-hidden="true" className="row-chevron" />
+          </button>
+        );
+        return (
+          <Suspense key={m.id} fallback={row}>
+            <HoverCard memberId={m.id} wrap>
+              {row}
+            </HoverCard>
+          </Suspense>
         );
       })}
     </>
