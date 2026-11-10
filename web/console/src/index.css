@@ -661,6 +661,11 @@ textarea[aria-invalid='true'] {
   font-size: 0.8125rem;
 }
 
+/* 成员悬停卡（D218）打开时别被分组的圆角裁掉 */
+.group:has([role='tooltip']) {
+  overflow: visible;
+}
+
 /* 删除这类不能撤销的确认：红底（浅色白字 / 深色深字，都 ≥4.5:1）；弹窗里默认焦点在「取消」 */
 .btn-danger-fill,
 .btn-primary.btn-danger-fill:hover:not(:disabled) {
