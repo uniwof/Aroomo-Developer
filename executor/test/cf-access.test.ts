@@ -219,3 +219,25 @@ describe('#365 泄露检查：日志里没有 Secret / 设备令牌', () => {
     expect(lines).toHaveLength(2);
   });
 });
+
+/**
+ * #376 M5：真 DPAPI 往返，不用替身。Windows CI（executor.yml windows-install 作业）设 AROOMO_REAL_DPAPI=1 实跑，
+ * 并核对这条用例的结果是 passed（不是 skipped）；其他环境不设这个变量就不跑。
+ * 设了变量却不在 Windows 上 → 直接失败（防止误以为跑过了）。
+ */
+describe.runIf(process.env.AROOMO_REAL_DPAPI === '1')('#376 真 DPAPI 往返（Windows CI 实跑）', () => {
+  it('真 DPAPI：saveCfSecret 加密落盘 → cfSecretReader 解开，值一致；文件里没有明文；安装脚本存的那份也能解开', () => {
+    expect(process.platform).toBe('win32');
+    const dir = mkdtempSync(join(tmpdir(), 'aroomo-dpapi-'));
+    const tokenFile = join(dir, 'device-token');
+    const secret = `real-dpapi-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    saveCfSecret(cfSecretPath({ tokenFile }), secret);
+    expect(readFileSync(cfSecretPath({ tokenFile }), 'utf8')).not.toContain(secret);
+    expect(cfSecretReader({ tokenFile }, {})()).toBe(secret);
+    // 安装脚本（-CredentialFile）存下的那份：CI 先跑安装脚本，再把它的 device-token 路径和期望值传进来
+    const installed = process.env.AROOMO_REAL_DPAPI_TOKENFILE;
+    const expected = process.env.AROOMO_REAL_DPAPI_EXPECT;
+    expect(installed && expected, '没拿到安装脚本存的路径和期望值').toBeTruthy();
+    expect(cfSecretReader({ tokenFile: installed! }, {})()).toBe(expected);
+  });
+});

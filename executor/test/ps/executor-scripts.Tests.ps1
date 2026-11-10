@@ -43,7 +43,22 @@ Describe '安装脚本 install-windows.ps1' {
         $ast = (Get-ParsedAst $script:Install).Ast
         $cmds = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)
         $out = $cmds | Where-Object { $_.GetCommandName() -in 'Write-Output', 'Write-Host', 'Write-Step', 'Write-Verbose', 'Write-Warning', 'Out-File', 'Add-Content', 'Set-Content' }
-        foreach ($c in $out) { $c.Extent.Text | Should -Not -Match '\$plain|\$secure|\$env:AROOMO_EXECUTOR_TOKEN' }
+        foreach ($c in $out) { $c.Extent.Text | Should -Not -Match '\$plain|\$secure|\$cfSecret|\$cred\b|\$env:AROOMO_EXECUTOR_TOKEN|\$env:AROOMO_CF_ACCESS_CLIENT_SECRET' }
+    }
+
+    It '计划任务运行身份是当前用户、仅登录时（不是 SYSTEM；DPAPI 按当前用户加密，#376 M5）' {
+        $text = Get-Content -LiteralPath $script:Install -Raw -Encoding UTF8
+        $text | Should -Match 'New-ScheduledTaskPrincipal -UserId \(\[Security\.Principal\.WindowsIdentity\]::GetCurrent\(\)\.Name\) -LogonType Interactive'
+        $text | Should -Not -MatchExactly 'NT AUTHORITY|\bSYSTEM\b|ServiceAccount|-RunLevel Highest'
+        ([regex]::Matches($text, 'Register-ScheduledTask ')).Count | Should -Be ([regex]::Matches($text, '-Principal \$principal')).Count
+    }
+
+    It '远程安装用凭据文件：只有路径进命令行，读完覆盖并删除，给了凭据文件就不弹输入（#376 M7）' {
+        $text = Get-Content -LiteralPath $script:Install -Raw -Encoding UTF8
+        $text | Should -Match '\[string\]\$CredentialFile'
+        $text | Should -Match 'WriteAllBytes\(\$CredentialFile'
+        $text | Should -Match 'Remove-Item -LiteralPath \$CredentialFile -Force'
+        $text | Should -Match 'if \(-not \$plain -and -not \$CredentialFile\)'
     }
 
     It '令牌文件收紧为只有当前用户可读，且不在命令行里带令牌' {
