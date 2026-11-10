@@ -32,6 +32,11 @@ describe('#383 悬停卡与行内同源', () => {
     expect(row).toHaveTextContent('不可用 · 没有可用的 Key');
     expect(row.querySelector('[data-testid=avatar-ring-unknown]')).toBeTruthy();
     expect(row.querySelector('[role=img]')!.getAttribute('aria-label')).toContain('余量未知');
+    // #389 头像读屏状态与行内 statusText 同源：不能读成「可用」
+    const aria = row.querySelector('[role=img]')!.getAttribute('aria-label')!;
+    expect(aria).toContain(row.querySelector('.row-hint')!.textContent!);
+    expect(aria).not.toContain('可用，');
+    expect(aria).toBe('Eps，不可用 · 没有可用的 Key，余量未知');
     // 悬停卡是懒加载块：等它换上再聚焦
     await vi.waitFor(async () => expect((await find()).parentElement!.tagName).toBe('SPAN'));
     row = await find();
