@@ -24,8 +24,9 @@ LobeHub Tasks（定时）→ 负责人 → Core MCP create_task ─┐
 
 - 设备令牌 = Core 外部客户端令牌（HUB 1.1，B3），放在请求头 `Authorization: Bearer <token>`。
 - 需要的新 scope：`tasks:pull`（领取、进度、接管、结果）、`tasks:secret`（按任务取保险箱凭据）。没有 `tasks:secret` 的令牌只能跑不需要凭据的任务。
+- 设备令牌只能带这两个范围（#376 M4）：混入别的范围签发时 400 `MIXED_SCOPES`；带执行员范围的令牌只能进 `/api/executor/*`，别的接口（含 `/v1`、`/mcp`）一律拒绝。
 - 令牌归属某个 user_id：执行员只能领到**这个用户**的任务，取到**这个用户**的保险箱条目（越权测试由 Core 负责）。
-- 执行员每个请求带 `X-Aroomo-Executor: <executorId>`（hello 返回）与 `User-Agent: aroomo-executor/<version>`。
+- 执行员每个请求带 `User-Agent: aroomo-executor/<version>`。Core 只按设备令牌（clientId）认执行员，**不读也不需要** `X-Aroomo-Executor`；执行员不再发这个头，Shell 公网通路也会剥掉它（#376 M2）。
 
 ## 3. 路由（全部 JSON，前缀 `/api/executor`）
 

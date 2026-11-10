@@ -23,7 +23,7 @@ import { createECDH, createHash, randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { InjectOptions } from 'fastify';
 import { CAPABILITY_SEED } from '../../src/capabilities/seed.js';
-import { CLIENT_SCOPES } from '../../src/clients/types.js';
+import { CLIENT_SCOPES, EXECUTOR_SCOPES } from '../../src/clients/types.js';
 import { assertAppRoleSafe, grantAppRole } from '../../src/db/app-role.js';
 import { createPgDb, type Db, type Queryable } from '../../src/db/db.js';
 import { migrate } from '../../src/db/migrate.js';
@@ -40,7 +40,9 @@ vi.mock('fastify', async (orig) => (await import('./route-registry.js')).wrapFas
 
 type Json = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 type Victim = 'owner' | 'b';
-/** xiao* = 攻击方（小号）；*Client = 各自发的全范围客户端令牌（arc_）；*Cookie = 控制台 Cookie 会话；fresh = 正向对照临时建的一次性家人账号 */
+/** 非执行员的全部范围（#376 M4：执行员范围必须单独发一枚设备令牌，不能混在一起） */
+const NON_EXECUTOR_SCOPES = CLIENT_SCOPES.filter((s) => !EXECUTOR_SCOPES.includes(s));
+/** xiao* = 攻击方（小号）；*Client = 各自发的两枚客户端令牌（arc_）：非执行员全范围一枚 + 设备令牌一枚，打 /api/executor/* 时自动换用设备令牌（见 call）；*Cookie = 控制台 Cookie 会话；fresh = 正向对照临时建的一次性家人账号 */
 type Who = Victim | 'xiao' | 'xiaoClient' | 'xiaoCookie' | 'ownerClient' | 'bClient' | 'bCookie' | 'fresh';
 type Marked = Victim | 'xiao';
 /** 每个身份的数据都带自己的标记（小写字母数字，能过各种 pattern 校验）；响应里出现别人的标记 = 泄露 */
@@ -464,13 +466,16 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
   const ids: Record<Victim | 'xiao' | 'missing', Ids> = { owner: {}, b: {}, xiao: {}, missing: {} };
   /** 攻击方以外各身份发的客户端令牌 id（快照时排除攻击方自己的行） */
   const xiaoClientIds: string[] = [];
+  /** *Client 身份的设备令牌（tasks:pull + tasks:secret）：只用于 /api/executor/*（#376 M4 拆成两枚令牌） */
+  const deviceHeaders: Partial<Record<Who, Record<string, string>>> = {};
   let seq = 0;
   const nonce = () => `n${(++seq).toString(36)}`;
   /** 每个凭据发了多少请求（auth/plugin.ts 按凭据限速 1200 次 / 分钟；遍历里攻击方会话要换新会话，见 run） */
   const sent: Partial<Record<Who, number>> = {};
   const call = (who: Who, method: string, url: string, payload?: object, extra?: Record<string, string>): Promise<Inject> => {
     sent[who] = (sent[who] ?? 0) + 1;
-    return t.app.inject({ method, url, headers: { ...headers[who], ...(extra ?? {}) }, ...(payload !== undefined ? { payload } : {}) } as InjectOptions);
+    const h = (url.startsWith('/api/executor/') && deviceHeaders[who]) || headers[who];
+    return t.app.inject({ method, url, headers: { ...h, ...(extra ?? {}) }, ...(payload !== undefined ? { payload } : {}) } as InjectOptions);
   };
   const confirmToken = async (who: Who, res428: Inject): Promise<string> => {
     const ch = res428.json().error.confirm as { stepUrl: string };
@@ -558,8 +563,9 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     await make(v, 'PUT', '/api/interrupt-budget', { daily: 5 });
     i.capability = TRIAL_CAP;
     await make(v, 'PUT', `/api/capabilities/${i.capability}/trial`, { endsAt: '2027-03-01' });
-    // 受害者自己的全范围客户端令牌 + 执行员：主任务已被受害者的执行员领走、并且挂了一张接管卡（攻击时 task / takeover 都是真的）
-    headers[clientOf(v)] = { authorization: `Bearer ${(await make(v, 'POST', '/api/clients', { name: `${m} all`, scopes: [...CLIENT_SCOPES], rateLimitPerMin: 6000 })).token as string}` };
+    // 受害者自己的两枚客户端令牌（非执行员全范围 + 设备令牌）+ 执行员：主任务已被受害者的执行员领走、并且挂了一张接管卡（攻击时 task / takeover 都是真的）
+    headers[clientOf(v)] = { authorization: `Bearer ${(await make(v, 'POST', '/api/clients', { name: `${m} all`, scopes: NON_EXECUTOR_SCOPES, rateLimitPerMin: 6000 })).token as string}` };
+    deviceHeaders[clientOf(v)] = { authorization: `Bearer ${(await make(v, 'POST', '/api/clients', { name: `${m} device`, scopes: [...EXECUTOR_SCOPES], rateLimitPerMin: 6000 })).token as string}` };
     await make(clientOf(v), 'POST', '/api/executor/hello', { deviceName: `${m}dev`, platform: 'p', version: '1' });
     i.task = await claimedTask(v);
     i.takeover = await takeoverOn(v, i.task);
@@ -607,9 +613,11 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     await seed('b');
     for (const k of Object.values(PARAM_KIND)) ids.missing[k] = MISSING_UUID;
     Object.assign(ids.missing, { member: 'missingbot', memory: 'topic-missing', httpTool: 'missingtool', capability: TRIAL_CAP, action: 'ok' });
-    const xc = await make('xiao', 'POST', '/api/clients', { name: 'xiao all', scopes: [...CLIENT_SCOPES], rateLimitPerMin: 6000 });
-    xiaoClientIds.push(xc.client.id as string);
+    const xc = await make('xiao', 'POST', '/api/clients', { name: 'xiao all', scopes: NON_EXECUTOR_SCOPES, rateLimitPerMin: 6000 });
+    const xd = await make('xiao', 'POST', '/api/clients', { name: 'xiao device', scopes: [...EXECUTOR_SCOPES], rateLimitPerMin: 6000 });
+    xiaoClientIds.push(xc.client.id as string, xd.client.id as string);
     headers.xiaoClient = { authorization: `Bearer ${xc.token as string}` };
+    deviceHeaders.xiaoClient = { authorization: `Bearer ${xd.token as string}` };
     await call('xiaoClient', 'POST', '/api/executor/hello', { deviceName: 'xiaodev', platform: 'p', version: '1' });
   });
   afterAll(async () => {
@@ -1129,7 +1137,7 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
   it('令牌提权：家人用自己的会话 / arc_ 令牌签发更大范围或所有者级令牌、列出 / 吊销别人的令牌都不行；过期 / 已吊销的令牌不能用', async () => {
     // 1. 会话签发：范围只能从 CLIENT_SCOPES 里挑；所有者级 / 通配 / 能力名一律 400，且没有多出令牌
     const before = ((await make('xiao', 'GET', '/api/clients')).clients as unknown[]).length;
-    for (const scopes of [['*'], ['owner'], ['admin'], ['confirm:important'], ['settings:write'], [...CLIENT_SCOPES, 'owner']]) {
+    for (const scopes of [['*'], ['owner'], ['admin'], ['confirm:important'], ['settings:write'], [...CLIENT_SCOPES, 'owner'], [...CLIENT_SCOPES]]) {
       const r = await call('xiao', 'POST', '/api/clients', { name: 'escalate', scopes });
       expect(r.statusCode, `scopes=${scopes.join(',')} → ${r.body}`).toBe(400);
       expect(r.body).not.toMatch(/arc_/);

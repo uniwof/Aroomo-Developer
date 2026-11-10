@@ -5,6 +5,7 @@
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { isLoopbackHost } from './autologin.js';
+import type { AccessJwtConfig } from './executor-gate.js';
 
 export type AuthMode = 'core-session' | 'lobe-session' | 'off';
 
@@ -55,6 +56,13 @@ export interface ShellConfig {
    * 公网直连来的请求一律用直连地址。转给 Core 登录 / MCP 做限速用（#259 负责人必改 2）。未设置 = 只用直连地址。
    */
   clientIpHeader: 'cf-connecting-ip' | 'x-real-ip' | undefined;
+  /**
+   * 执行员公网通路（#365 方向 1a）：/api/executor/* 直通 Core 前，Shell 自己校验 Cloudflare Access JWT。
+   * SHELL_EXECUTOR_ACCESS_TEAM_DOMAIN / _AUD / _CLIENT_ID 三项都设才开；都不设 = 这条路径整条关闭（404）；只设一部分 = 拒绝启动。
+   */
+  executorAccess: AccessJwtConfig | undefined;
+  /** 执行员通路鉴权前按 IP 限速：每分钟最多几次（SHELL_EXECUTOR_RATE_PER_MIN，默认 120） */
+  executorRatePerMin: number;
 }
 
 export class ConfigError extends Error {}
@@ -110,6 +118,19 @@ export function loadConfig(env: Env = process.env): ShellConfig {
   if (ipHeader !== undefined && ipHeader !== 'cf-connecting-ip' && ipHeader !== 'x-real-ip') {
     throw new ConfigError('SHELL_CLIENT_IP_HEADER 只能是 cf-connecting-ip 或 x-real-ip');
   }
+  const exTeam = str(env, 'SHELL_EXECUTOR_ACCESS_TEAM_DOMAIN')?.toLowerCase();
+  const exAud = str(env, 'SHELL_EXECUTOR_ACCESS_AUD');
+  const exClient = str(env, 'SHELL_EXECUTOR_ACCESS_CLIENT_ID');
+  let executorAccess: AccessJwtConfig | undefined;
+  if (exTeam || exAud || exClient) {
+    if (!exTeam || !exAud || !exClient) {
+      throw new ConfigError('SHELL_EXECUTOR_ACCESS_TEAM_DOMAIN、SHELL_EXECUTOR_ACCESS_AUD、SHELL_EXECUTOR_ACCESS_CLIENT_ID 必须同时设置（或都不设，关闭执行员通路）');
+    }
+    if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(exTeam)) throw new ConfigError('SHELL_EXECUTOR_ACCESS_TEAM_DOMAIN 只写域名，如 example.cloudflareaccess.com');
+    executorAccess = { teamDomain: exTeam, aud: exAud, clientId: exClient };
+  }
+  const rateRaw = str(env, 'SHELL_EXECUTOR_RATE_PER_MIN') ?? '120';
+  if (!/^\d+$/.test(rateRaw) || Number(rateRaw) < 1 || Number(rateRaw) > 6000) throw new ConfigError('SHELL_EXECUTOR_RATE_PER_MIN 必须是 1–6000 的整数');
   return {
     host,
     port: Number(portRaw),
@@ -126,5 +147,7 @@ export function loadConfig(env: Env = process.env): ShellConfig {
     localOwner,
     allowedHosts,
     clientIpHeader: ipHeader,
+    executorAccess,
+    executorRatePerMin: Number(rateRaw),
   };
 }

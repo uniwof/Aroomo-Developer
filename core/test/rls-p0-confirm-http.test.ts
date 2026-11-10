@@ -15,7 +15,7 @@
  */
 import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { CLIENT_SCOPES } from '../src/clients/types.js';
+import { CLIENT_SCOPES, EXECUTOR_SCOPES } from '../src/clients/types.js';
 import { grantAppRole } from '../src/db/app-role.js';
 import { createPgDb, type Db } from '../src/db/db.js';
 import { migrate } from '../src/db/migrate.js';
@@ -101,10 +101,12 @@ describe.each(targets)('M2 确认令牌换身份使用（$name，应用角色）
       },
       { CORE_JOBS: 'off', VAULT_KEY: randomBytes(32).toString('base64') },
     );
-    const oc = await t.owner('POST', '/api/clients', { name: 'owner all', scopes: [...CLIENT_SCOPES] });
+    // #376 M4：执行员范围不能混进别的令牌；这里只测保险箱路由，用「非执行员全范围」令牌
+    const allButExecutor = CLIENT_SCOPES.filter((s) => !EXECUTOR_SCOPES.includes(s));
+    const oc = await t.owner('POST', '/api/clients', { name: 'owner all', scopes: allButExecutor });
     expect(oc.statusCode, oc.body).toBe(201);
     ownerClient = bearer(oc.json().token as string);
-    const xc = await t.xiao('POST', '/api/clients', { name: 'xiao all', scopes: [...CLIENT_SCOPES] });
+    const xc = await t.xiao('POST', '/api/clients', { name: 'xiao all', scopes: allButExecutor });
     expect(xc.statusCode, xc.body).toBe(201);
     xiaoClient = bearer(xc.json().token as string);
     ownerVault = (await t.owner('POST', '/api/vault', { name: 'ownerv', kind: 'password', value: 'owner-plain-m2' })).json().secret.id as string;
