@@ -47,9 +47,9 @@ export class MemoryUserStore implements UserStore {
     const s = this.#sessions.get(tokenHash);
     return s ? { ...s } : null;
   }
-  async revokeSession(tokenHash: string, at: Date): Promise<void> {
+  async revokeSession(userId: string, tokenHash: string, at: Date): Promise<void> {
     const s = this.#sessions.get(tokenHash);
-    if (s && !s.revokedAt) s.revokedAt = at;
+    if (s && s.userId === userId && !s.revokedAt) s.revokedAt = at;
   }
   async revokeUserSessions(userId: string, at: Date, exceptTokenHash?: string): Promise<void> {
     for (const s of this.#sessions.values()) {

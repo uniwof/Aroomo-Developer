@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { AuditFn } from '../audit/types.js';
 import { badRequest, HttpError, notFound } from '../http/errors.js';
-import { CLIENT_SCOPES, type ClientPrincipal, type ClientScope, type ClientTokenRecord, type ClientTokenStore, type PublicClient } from './types.js';
+import { CLIENT_SCOPES, EXECUTOR_SCOPES, hasExecutorScope, type ClientPrincipal, type ClientScope, type ClientTokenRecord, type ClientTokenStore, type PublicClient } from './types.js';
 
 export const CLIENT_PREFIX = 'arc_';
 const sha256 = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
@@ -38,6 +38,10 @@ export class ClientTokenService {
     if (scopes.length === 0) throw badRequest('至少选一个权限范围', 'NO_SCOPES');
     const bad = scopes.find((s) => !(CLIENT_SCOPES as readonly string[]).includes(s));
     if (bad) throw badRequest(`不认识的权限范围：${bad}`, 'UNKNOWN_SCOPE');
+    // #376 M4：设备令牌和别的令牌分开发（同一台电脑上，混合令牌会让「设备令牌只能用在执行员接口」失效）
+    if (hasExecutorScope(scopes) && scopes.some((s) => !EXECUTOR_SCOPES.includes(s))) {
+      throw badRequest('执行员权限（tasks:pull、tasks:secret）要单独发一枚令牌，不能和别的权限放在一起', 'MIXED_SCOPES');
+    }
     if ((await this.store.listByUser(userId)).filter((r) => !r.revokedAt).length >= MAX_CLIENTS_PER_USER) {
       throw new HttpError(409, 'TOO_MANY_CLIENTS', '客户端令牌太多了，先吊销不用的');
     }
@@ -90,7 +94,7 @@ export class ClientTokenService {
     } else {
       this.#hits.set(r.id, { minute, n: 1 });
     }
-    await this.store.touch(r.id, t);
+    await this.store.touch(r.userId, r.id, t);
     return { type: 'client', id: r.id, clientId: r.id, userId: r.userId, name: r.name, scopes: new Set(r.scopes) };
   }
 }

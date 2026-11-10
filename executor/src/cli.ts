@@ -9,6 +9,7 @@
  *   sites                列出白名单
  *   recipe add <网站> [newapi|generic] / list / remove <网站>  装 / 看 / 删站点配方（登录+签到）
  *   check-url <网址>     看某个网址是否在白名单里
+ *   cf-access <Client ID> 保存 Cloudflare Access Service Token：Secret 从标准输入读（不回显、不进命令行），Windows 存 DPAPI
  *   run                  连接 Core 并开始领取任务（Ctrl+C 退出）
  */
 
@@ -30,7 +31,8 @@ import { Runner } from './runner.js';
 import { HANDLERS } from './tasks/handlers.js';
 import { addTemplate, listRecipes, removeSite, TEMPLATE_NAMES, type TemplateName } from './tasks/recipe-templates.js';
 import { loadRecipes, withRecipes } from './tasks/recipes.js';
-import { HttpTransport } from './transport.js';
+import { probeCore, transportFor } from './transport.js';
+import { cfSecretPath, saveCfSecret, setCfClientId } from './cf-access.js';
 
 export const VERSION = '0.1.0';
 
@@ -97,18 +99,19 @@ export async function main(argv: string[]): Promise<number> {
       out(`Core：${cfg.coreUrl}`);
       out(`设备令牌：${tokenOk ? '已就绪' : '缺少'}`);
       out(`白名单网站：${buildAllowlist(cfg).siteCount} 个`);
+      out(`Cloudflare Access：${cfg.cfAccess ? '已配置' : '未配置'}`);
       let reach = false;
       try {
-        const r = await fetch(new URL('/healthz', cfg.coreUrl), { signal: AbortSignal.timeout(5000) });
+        const r = await probeCore(transportFor(cfg, VERSION, { timeoutMs: 8000 }), cfg, VERSION);
         reach = r.ok;
-        out(`Core 连通：${r.ok ? '正常' : `异常（HTTP ${r.status}）`}`);
+        out(`Core 连通：${r.ok ? '正常' : r.status ? `异常（HTTP ${r.status}）` : '无法连接'}`);
       } catch {
         out('Core 连通：无法连接');
       }
       return tokenOk && reach ? 0 : 2;
     }
     case 'doctor': {
-      const [text, code] = renderDoctor(await runDoctor(loadConfig(path), realProbes()));
+      const [text, code] = renderDoctor(await runDoctor(loadConfig(path), realProbes(VERSION)));
       out(text);
       return code;
     }
@@ -160,6 +163,29 @@ export async function main(argv: string[]): Promise<number> {
       out('用法：aroomo-executor recipe add <网站> [newapi|generic] | list | remove <网站>');
       return 64;
     }
+    case 'cf-access': {
+      // 给 Hark 远程协助用的一条命令：echo <secret> | aroomo-executor cf-access <Client ID>（Secret 走标准输入，不进命令行和历史）
+      if (!arg) {
+        out('用法：<Secret 从标准输入> | aroomo-executor cf-access <Client ID>');
+        return 64;
+      }
+      if (process.stdin.isTTY) {
+        out('Secret 要从标准输入传进来（不在屏幕上粘贴）；请让 Hark 远程协助运行这条命令');
+        return 64;
+      }
+      const cfg = loadConfig(path);
+      const chunks: Buffer[] = [];
+      for await (const c of process.stdin as AsyncIterable<Buffer>) chunks.push(c);
+      try {
+        saveCfSecret(cfSecretPath(cfg), Buffer.concat(chunks).toString('utf8'));
+        setCfClientId(path, arg);
+      } catch (e) {
+        out(`不行：${e instanceof Error ? e.message : String(e)}`);
+        return 1;
+      }
+      out('已保存 Cloudflare Access 凭据（密钥用 Windows DPAPI 加密，只有当前用户能解开）。下一步运行 status 看「Core 连通：正常」。');
+      return 0;
+    }
     case 'sites': {
       const cfg = loadConfig(path);
       const sites = [...buildAllowlist(cfg).sites()];
@@ -178,7 +204,7 @@ export async function main(argv: string[]): Promise<number> {
     case 'run': {
       const cfg = loadConfig(path);
       const logger = createLogger({ level: cfg.logLevel });
-      const transport = new HttpTransport({ baseUrl: cfg.coreUrl, getToken: tokenReader(cfg), version: VERSION });
+      const transport = transportFor(cfg, VERSION);
       const browsers = browserPorts(cfg, dirname(path));
       if (browsers.length === 0) logger.warn('还没有可用的浏览器适配器，领到的网页任务会失败并回报原因');
       const phones = cfg.phone.enabled
@@ -203,7 +229,7 @@ export async function main(argv: string[]): Promise<number> {
       return 0;
     }
     default:
-      out('用法：aroomo-executor <init|check|status|doctor|allow <网站>|disallow <网站>|sites|check-url <网址>|run>');
+      out('用法：aroomo-executor <init|check|status|doctor|allow <网站>|disallow <网站>|sites|check-url <网址>|cf-access <Client ID>|run>');
       return cmd ? 64 : 0;
   }
 }

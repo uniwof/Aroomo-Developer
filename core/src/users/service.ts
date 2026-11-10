@@ -164,7 +164,7 @@ export class UsersService {
   }
 
   async logout(p: UserPrincipal, audit: AuditFn): Promise<void> {
-    await this.store.revokeSession(p.sessionId, this.now());
+    await this.store.revokeSession(p.userId, p.sessionId, this.now());
     await audit('auth.logout', { type: 'user', id: p.userId }, 'ok');
   }
 

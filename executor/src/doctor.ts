@@ -5,6 +5,7 @@
 
 import { spawnEgoExec, type EgoExec } from './adapters/ego-lite.js';
 import { buildAllowlist, type ExecutorConfig, tokenReader } from './config.js';
+import { probeCore, transportFor } from './transport.js';
 
 export interface DoctorItem {
   name: string;
@@ -17,20 +18,20 @@ export interface DoctorItem {
 
 export interface DoctorProbes {
   nodeVersion: string;
-  coreHealth(url: string): Promise<{ ok: boolean; status?: number }>;
+  /** 试连 Core 的执行员接口（/api/executor/hello，#365） */
+  coreHealth(cfg: ExecutorConfig): Promise<{ ok: boolean; status?: number; reason?: string }>;
   ego: EgoExec;
   npxOk(): Promise<boolean>;
 }
 
-export function realProbes(): DoctorProbes {
+export function realProbes(version = '0.0.0'): DoctorProbes {
   return {
     nodeVersion: process.versions.node,
-    coreHealth: async (url) => {
+    coreHealth: async (cfg) => {
       try {
-        const r = await fetch(new URL('/healthz', url), { signal: AbortSignal.timeout(5000) });
-        return { ok: r.ok, status: r.status };
-      } catch {
-        return { ok: false };
+        return await probeCore(transportFor(cfg, version, { timeoutMs: 8000 }), cfg, version);
+      } catch (e) {
+        return { ok: false, reason: e instanceof Error ? e.message : 'UNKNOWN' };
       }
     },
     ego: spawnEgoExec(),
@@ -72,8 +73,8 @@ export async function runDoctor(cfg: ExecutorConfig, p: DoctorProbes): Promise<D
   const sites = buildAllowlist(cfg).siteCount;
   items.push({ name: `白名单网站 ${sites} 个`, ok: sites > 0, warn: true, hint: '名单是空的，不会访问任何网站；用 allow <网站> 加入' });
 
-  const core = await p.coreHealth(cfg.coreUrl);
-  items.push({ name: 'Core 连通', ok: core.ok, hint: core.status ? `Core 返回 HTTP ${core.status}，稍后再试` : '连不上 Core，检查网络和 coreUrl' });
+  const core = await p.coreHealth(cfg);
+  items.push({ name: 'Core 连通', ok: core.ok, hint: coreHint(core) });
 
   if (cfg.browsers.includes('ego-lite')) {
     let ok = false;
@@ -97,4 +98,11 @@ export function renderDoctor(items: DoctorItem[]): [string, number] {
   const bad = items.filter((i) => !i.ok && !i.warn).length;
   lines.push(bad === 0 ? '检查完毕：可以开始干活。' : `检查完毕：有 ${bad} 项要处理，处理后再运行 doctor。`);
   return [lines.join('\n'), bad === 0 ? 0 : 2];
+}
+
+function coreHint(c: { status?: number; reason?: string }): string {
+  if (!c.status) return c.reason && !/^(NETWORK|ABORTED)$/.test(c.reason) ? c.reason : '连不上 Core，检查网络和 coreUrl';
+  if (c.status >= 300 && c.status < 400) return '被 Cloudflare Access 拦下（跳去登录页）：检查 cfAccess.clientId 和 cf-access 密钥';
+  if (c.status === 401 || c.status === 403) return `Core 拒绝（HTTP ${c.status}）：设备令牌或 Cloudflare Access 密钥不对，请重新生成`;
+  return `Core 返回 HTTP ${c.status}，稍后再试`;
 }

@@ -34,6 +34,9 @@ export class MockCore {
   secretCalls = 0;
   token = TEST_TOKEN;
   failNext = 0;
+  /** 接下来 n 个请求回 403（模拟 Cloudflare 偶发拦截）；authFailOn 限定只拦某个路径（如 '/result'） */
+  authFailNext = 0;
+  authFailOn: string | undefined;
 
   get url(): string {
     return `http://127.0.0.1:${this.port}`;
@@ -90,6 +93,10 @@ export class MockCore {
     if (req.headers.authorization !== `Bearer ${this.token}`) return err(401, 'UNAUTHORIZED');
     const url = new URL(req.url ?? '/', 'http://x');
     const p = url.pathname.replace(/^\/api\/executor/, '');
+    if (this.authFailNext > 0 && (!this.authFailOn || p.endsWith(this.authFailOn))) {
+      this.authFailNext--;
+      return err(403, 'ACCESS_DENIED');
+    }
     let m: RegExpMatchArray | null;
 
     if (req.method === 'POST' && p === '/hello') {

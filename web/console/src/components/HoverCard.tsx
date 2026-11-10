@@ -15,19 +15,31 @@ export function cardLines(c: MemberCard): [string, string, string] {
   return [`${c.name} · ${c.type.join('、')}`, `状态：${c.status}`, rem];
 }
 
-export function HoverCard({ memberId, children, delay = 300 }: { memberId: string; children: ReactNode; delay?: number }) {
+/** 卡片元素的 id：包住按钮时（wrap），按钮用 aria-describedby 指向它，读屏聚焦按钮就读到 3 行 */
+export const hoverCardId = (memberId: string) => `hc-${memberId}`;
+
+/**
+ * wrap=true：包住一个本身能聚焦的元素（如成员列表的一行按钮），自己不再占一个 Tab 位；
+ * 里面元素聚焦时卡片出现（焦点事件冒泡上来）。长按打开卡片后松手，不触发里面按钮的点击。
+ */
+export function HoverCard({ memberId, children, delay = 300, wrap = false }: { memberId: string; children: ReactNode; delay?: number; wrap?: boolean }) {
   const [open, setOpen] = useState(false);
   const [card, setCard] = useState<MemberCard | null>(null);
   const [failed, setFailed] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const id = `hc-${memberId}`;
+  const pressed = useRef(false);
+  const id = hoverCardId(memberId);
 
-  function show(ms: number) {
+  function show(ms: number, byPress = false) {
     clearTimeout(timer.current);
-    timer.current = setTimeout(() => setOpen(true), ms);
+    timer.current = setTimeout(() => {
+      if (byPress) pressed.current = true;
+      setOpen(true);
+    }, ms);
   }
   function hide() {
     clearTimeout(timer.current);
+    pressed.current = false;
     setOpen(false);
   }
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -47,6 +59,7 @@ export function HoverCard({ memberId, children, delay = 300 }: { memberId: strin
   useEffect(() => {
     if (!open || card) return;
     let alive = true;
+    setFailed(false);
     api<MemberCard>('GET', `/api/members/${encodeURIComponent(memberId)}/card`)
       .then((c) => alive && setCard(c))
       .catch(() => alive && setFailed(true));
@@ -59,23 +72,31 @@ export function HoverCard({ memberId, children, delay = 300 }: { memberId: strin
   return (
     <span
       ref={rootRef}
-      className="relative inline-flex min-h-12 min-w-12 items-center justify-center"
-      tabIndex={0}
-      aria-describedby={open ? id : undefined}
+      className={wrap ? 'relative block' : 'relative inline-flex min-h-12 min-w-12 items-center justify-center'}
+      {...(wrap ? {} : { tabIndex: 0, 'aria-describedby': open ? id : undefined })}
       onMouseEnter={() => show(delay)}
       onMouseLeave={hide}
       onFocus={() => show(0)}
       onBlur={hide}
-      onTouchStart={() => show(500)}
+      onTouchStart={() => show(500, true)}
       onTouchEnd={() => clearTimeout(timer.current)}
       onTouchMove={() => clearTimeout(timer.current)}
       onContextMenu={(e) => e.preventDefault()}
+      onClickCapture={(e) => {
+        // 长按看卡片，松手不当成点了一下（不跳走）
+        if (pressed.current) {
+          pressed.current = false;
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }}
       onKeyDown={(e) => e.key === 'Escape' && hide()}
     >
       {children}
       {open && (
-        <span id={id} role="tooltip" className="absolute left-0 top-full z-20 mt-1 w-64 space-y-1 tip">
-          {lines ? lines.map((l, i) => <span key={i} className="block">{l}</span>) : <span className="block">{failed ? '暂时读不到' : '正在读取…'}</span>}
+        // aria-live：卡片数据读回来后读屏播报 3 行（聚焦时先出「正在读取…」）
+        <span id={id} role="tooltip" aria-live="polite" className="absolute left-0 top-full z-20 mt-1 w-64 max-w-[calc(100vw-2rem)] space-y-1 tip">
+          {lines ? lines.map((l, i) => <span key={i} className="block">{l}</span>) : <span className="block">{failed ? '暂时读不到，稍后再看' : '正在读取…'}</span>}
         </span>
       )}
     </span>

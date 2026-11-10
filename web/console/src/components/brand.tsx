@@ -1,5 +1,6 @@
 /** D7 品牌要素：Aroomo Logo、名称、额度圆环、在线彩色 / 离线黑白头像。 */
 import logoSvg from '@/logo-mark.svg?raw';
+import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
 export function Logo({ size = 28, className }: { size?: number; className?: string }) {
@@ -87,8 +88,10 @@ export function statusFromText(s?: string): AvatarStatus {
 }
 
 /**
- * 成员头像（D217，全控制台共用）：Logo/首字母；圆环 = 余量（未知画淡空环，不编数字）；
- * 永久免费实线、试用虚线；不可用降饱和 + 状态图标；只用一个强调色。
+ * 成员头像（D217，全控制台共用）：Logo/首字母，或传进来的头像（children，如对话页的 Aroomo 头像）；
+ * 外圈圆环 = 余量（未知画淡空环，不编数字）；永久免费实线、试用虚线；不可用降饱和 + 状态图标；只用一个强调色。
+ * 圆环用 viewBox 画，跟着里面头像的大小走（头像随字号放大时圆环一起放大）。
+ * 不做「干活时流动高光」：所有者不要动画（负责人 #214 审查也建议删）。
  */
 export function MemberAvatar({
   name,
@@ -99,6 +102,7 @@ export function MemberAvatar({
   limit,
   free,
   status,
+  children,
 }: {
   name: string;
   online: boolean;
@@ -108,19 +112,20 @@ export function MemberAvatar({
   limit?: number | null;
   free?: 'permanent' | 'trial';
   status?: AvatarStatus;
+  children?: ReactNode;
 }) {
   const initial = Array.from(name.trim())[0]?.toUpperCase() ?? '?';
   const st = status ?? (online ? 'available' : 'sleeping');
   const unavailable = !online || st !== 'available';
   const f = quotaFraction(used, limit);
-  const ring = size + 8;
-  const r = (ring - 3) / 2;
+  const V = 48;
+  const r = (V - 3) / 2;
   const c = 2 * Math.PI * r;
   const dash = free === 'trial' ? '4 3' : undefined;
   const label = [
     name,
     online ? '在线' : '离线',
-    STATUS_ICON[st].text,
+    online || st !== 'available' ? STATUS_ICON[st].text : '',
     f == null ? '余量未知' : `额度剩余 ${Math.round((1 - f) * 100)}%`,
     free === 'permanent' ? '永久免费' : free === 'trial' ? '试用' : '',
   ]
@@ -131,32 +136,31 @@ export function MemberAvatar({
       role="img"
       aria-label={label}
       data-online={online ? 'true' : 'false'}
-      className={cn('relative inline-flex shrink-0 items-center justify-center', unavailable && 'grayscale opacity-70')}
-      style={{ width: ring, height: ring }}
+      // 传进来的是圆角方头像：留宽一点，圆环不压到方块的角
+      className={cn('relative inline-flex shrink-0 items-center justify-center', children ? 'p-2' : 'p-1', unavailable && 'grayscale opacity-70')}
     >
-      <svg width={ring} height={ring} className="absolute inset-0" aria-hidden="true">
-        <circle cx={ring / 2} cy={ring / 2} r={r} fill="none" stroke="var(--border)" strokeWidth="2.5" strokeDasharray={dash} opacity={f == null ? 0.5 : 1} />
+      <svg viewBox={`0 0 ${V} ${V}`} className="absolute inset-0 h-full w-full" aria-hidden="true">
+        <circle cx={V / 2} cy={V / 2} r={r} fill="none" stroke="var(--border)" strokeWidth="2.5" strokeDasharray={dash} opacity={f == null ? 0.5 : 1} />
         {f != null && (
           <circle
             data-testid="avatar-arc"
-            cx={ring / 2}
-            cy={ring / 2}
+            cx={V / 2}
+            cy={V / 2}
             r={r}
             fill="none"
             stroke="var(--color-brand)"
             strokeWidth="2.5"
             strokeLinecap="round"
             strokeDasharray={free === 'trial' ? trialDash(c * (1 - f)) : `${c * (1 - f)} ${c}`}
-            transform={`rotate(-90 ${ring / 2} ${ring / 2})`}
+            transform={`rotate(-90 ${V / 2} ${V / 2})`}
           />
         )}
       </svg>
-      <span
-        className={cn('relative inline-flex items-center justify-center overflow-hidden rounded-full bg-brand font-semibold text-brand-ink')}
-        style={{ width: size, height: size }}
-      >
-        {src ? <img src={src} alt="" width={size} height={size} /> : <span aria-hidden="true">{initial}</span>}
-      </span>
+      {children ?? (
+        <span className="relative inline-flex items-center justify-center overflow-hidden rounded-full bg-brand font-semibold text-brand-ink" style={{ width: size, height: size }}>
+          {src ? <img src={src} alt="" width={size} height={size} /> : <span aria-hidden="true">{initial}</span>}
+        </span>
+      )}
       {STATUS_ICON[st].icon && (
         <span aria-hidden="true" data-testid="avatar-status" className="absolute -bottom-1 -right-1 rounded-full bg-[var(--card)] leading-none">
           {STATUS_ICON[st].icon}

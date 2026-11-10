@@ -31,8 +31,8 @@ export class MemoryClientTokenStore implements ClientTokenStore {
     }
     return n;
   }
-  async touch(id: string, at: Date): Promise<void> {
+  async touch(userId: string, id: string, at: Date): Promise<void> {
     const r = this.#rows.get(id);
-    if (r) r.lastUsedAt = at;
+    if (r && r.userId === userId) r.lastUsedAt = at;
   }
 }

@@ -43,7 +43,46 @@ Describe '安装脚本 install-windows.ps1' {
         $ast = (Get-ParsedAst $script:Install).Ast
         $cmds = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)
         $out = $cmds | Where-Object { $_.GetCommandName() -in 'Write-Output', 'Write-Host', 'Write-Step', 'Write-Verbose', 'Write-Warning', 'Out-File', 'Add-Content', 'Set-Content' }
-        foreach ($c in $out) { $c.Extent.Text | Should -Not -Match '\$plain|\$secure|\$env:AROOMO_EXECUTOR_TOKEN' }
+        foreach ($c in $out) { $c.Extent.Text | Should -Not -Match '\$plain|\$secure|\$cfSecret|\$cred\b|\$env:AROOMO_EXECUTOR_TOKEN|\$env:AROOMO_CF_ACCESS_CLIENT_SECRET' }
+    }
+
+    It '计划任务运行身份是当前用户、仅登录时（不是 SYSTEM；DPAPI 按当前用户加密，#376 M5）' {
+        $text = Get-Content -LiteralPath $script:Install -Raw -Encoding UTF8
+        $text | Should -Match 'New-ScheduledTaskPrincipal -UserId \(\[Security\.Principal\.WindowsIdentity\]::GetCurrent\(\)\.Name\) -LogonType Interactive'
+        $text | Should -Not -MatchExactly 'NT AUTHORITY|\bSYSTEM\b|ServiceAccount|-RunLevel Highest'
+        ([regex]::Matches($text, 'Register-ScheduledTask ')).Count | Should -Be ([regex]::Matches($text, '-Principal \$principal')).Count
+    }
+
+    It '远程安装用凭据文件：只有路径进命令行，读完覆盖并删除，给了凭据文件就不弹输入（#376 M7）' {
+        $text = Get-Content -LiteralPath $script:Install -Raw -Encoding UTF8
+        $text | Should -Match '\[string\]\$BootstrapFile'
+        $text | Should -Match 'WriteAllBytes\(\$BootstrapFile'
+        $text | Should -Match 'Remove-Item -LiteralPath \$BootstrapFile -Force'
+        $text | Should -Match 'if \(-not \$plain -and -not \$BootstrapFile\)'
+    }
+
+    It '凭据文件在任何构建步骤之前就读入并删除（#376 C1，静态顺序）' {
+        $text = Get-Content -LiteralPath $script:Install -Raw -Encoding UTF8
+        $text.IndexOf('Remove-Item -LiteralPath $BootstrapFile') | Should -BeGreaterThan 0
+        $text.IndexOf('Remove-Item -LiteralPath $BootstrapFile') | Should -BeLessThan $text.IndexOf('& npm ci')
+    }
+
+    It '后续步骤（npm ci）失败时凭据文件已不在磁盘上（#376 C1，实跑）' -Skip:(-not $script:OnWindows) {
+        # 把脚本拷到一个没有 package.json 的空目录下运行：Node 检查能过，npm ci 必然失败
+        $root = Join-Path ([IO.Path]::GetTempPath()) ('aroomo-c1-' + [guid]::NewGuid())
+        New-Item -ItemType Directory -Path (Join-Path $root 'scripts') | Out-Null
+        try {
+            $copy = Join-Path $root 'scripts\install-windows.ps1'
+            Copy-Item -LiteralPath $script:Install -Destination $copy
+            $cred = Join-Path $root 'cred.json'
+            '{"deviceToken":"ci-c1-placeholder","cfClientId":"ci.access","cfClientSecret":"ci-c1-secret"}' | Set-Content -LiteralPath $cred -Encoding UTF8
+            $ps = (Get-Command powershell.exe).Source
+            $ErrorActionPreference = 'Continue'
+            $out = & $ps -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $copy -BootstrapFile $cred -NoAutostart 2>&1 | Out-String
+            $LASTEXITCODE | Should -Not -Be 0
+            $out | Should -Match 'npm ci'
+            Test-Path -LiteralPath $cred | Should -BeFalse
+        } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
     It '令牌文件收紧为只有当前用户可读，且不在命令行里带令牌' {
