@@ -77,11 +77,23 @@ export class LobeLocalAutoLogin implements AutoLogin {
   }
 }
 
+const hasControlChar = (s: string) => Array.from(s).some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f);
+
+/**
+ * 302 跳转目标：只收同源相对路径（单个 / 开头，不是 // 或 /\\，不含浏览器会剥掉的控制字符），否则回 /。
+ * 通过后把 U+0021–U+007E 以外的字符百分号编码（UTF-8），否则 writeHead 遇到非 ASCII 会抛 ERR_INVALID_CHAR。
+ * 注意：不要改成先 new URL() 解析、再拼 pathname + search —— 那会把 /.//x 这类输入变成 //x，重新引入 CodeQL #7 的根因。
+ * 结论由 test/autologin.test.ts 的穷举性质测试固定。
+ */
+export function safeLocalPath(raw: string | null): string {
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\') || hasControlChar(raw)) return '/';
+  return raw.replace(/[^\x21-\x7e]/gu, (c) => Buffer.from(c).toString('hex').toUpperCase().replace(/../g, '%$&'));
+}
+
 /** 登录页 / 注册页上的 callbackUrl：只接受本站相对路径 */
 export function safeCallback(raw: string | null): string {
-  if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) return '/';
-  if (/^\/(signin|signup)(\/|\?|$)/.test(raw)) return '/';
-  return raw;
+  const path = safeLocalPath(raw);
+  return /^\/(signin|signup)(\/|\?|$)/.test(path) ? '/' : path;
 }
 
 export function isLoopbackHost(host: string): boolean {
