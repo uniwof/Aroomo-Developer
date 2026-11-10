@@ -128,7 +128,7 @@ export function pgDeps(db: Db, now: () => Date = () => new Date()): CoreDeps {
     inbox: new PgInboxStore(db),
     confirmChallenges: new PgChallengeStore(db),
     keys: new PgKeyStore(db),
-    settings: new PgSettingsStore(db),
+    settings: new PgSettingsStore(db, 'owner'),
     users: new PgUserStore(db),
     vault: new PgVaultStore(db),
     clients: new PgClientTokenStore(db),

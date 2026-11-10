@@ -156,7 +156,7 @@ describe('/api/settings/lead（负责人）', () => {
 describe.each(dbTargets)('SettingsStore（$name）', (t) => {
   it('读写、覆盖', async () => {
     const db = await t.open();
-    const s = new PgSettingsStore(db);
+    const s = new PgSettingsStore(db, 'owner');
     expect(await s.get('lead')).toBeNull();
     await s.set('lead', { memberId: 'a' }, new Date());
     await s.set('lead', { memberId: 'b' }, new Date());
