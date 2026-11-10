@@ -9,7 +9,8 @@ import net, { type AddressInfo } from 'node:net';
 import { createSign, generateKeyPairSync, type KeyObject } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConfigError, loadConfig } from '../src/config.js';
-import { createShellServer } from '../src/server.js';
+import { createShellServer, type ShellDeps } from '../src/server.js';
+import { allowAll } from '../src/session.js';
 import { executorPathOk, isExecutorCandidate } from '../src/executor-gate.js';
 
 const TEAM = 'aroomo-test.cloudflareaccess.com';
@@ -50,7 +51,7 @@ const servers: Server[] = [];
 const listen = (s: Server) =>
   new Promise<string>((r) => s.listen(0, '127.0.0.1', () => r(`http://127.0.0.1:${(s.address() as AddressInfo).port}`)));
 
-async function makeShell(extra: Record<string, string> = {}, opts: { noAccess?: boolean } = {}): Promise<string> {
+async function makeShell(extra: Record<string, string> = {}, opts: { noAccess?: boolean; deps?: ShellDeps } = {}): Promise<string> {
   const env: Record<string, string> = {
     SHELL_AUTH: 'core-session',
     CORE_UPSTREAM: coreUrl,
@@ -61,7 +62,7 @@ async function makeShell(extra: Record<string, string> = {}, opts: { noAccess?: 
     ...(opts.noAccess ? {} : { SHELL_EXECUTOR_ACCESS_TEAM_DOMAIN: TEAM, SHELL_EXECUTOR_ACCESS_AUD: AUD, SHELL_EXECUTOR_ACCESS_CLIENT_ID: CLIENT_ID }),
     ...extra,
   };
-  const s = createShellServer(loadConfig(env), { fetchJwks: async () => jwks, now: () => NOW });
+  const s = createShellServer(loadConfig(env), { fetchJwks: async () => jwks, now: () => NOW, ...opts.deps });
   servers.push(s);
   return listen(s);
 }
@@ -217,7 +218,6 @@ describe('#365 路径变形：一律拒绝，Core 与 LobeHub 收到次数 = 0',
     '/api/Executor/hello',
     '/x/../api/executor/hello',
     '/api/executor',
-    '/api/executor-allowlist',
     '/api/executor/hello%00',
     '/api/executor/hello%0a',
     '/api/executor/hello%7F',
@@ -261,7 +261,32 @@ describe('#365 路径变形：一律拒绝，Core 与 LobeHub 收到次数 = 0',
     for (const p of bad) expect(executorPathOk(p)).toBe(false);
     expect(isExecutorCandidate('/api/%65xecutor/x', '/api/executor/x')).toBe(true);
     expect(isExecutorCandidate('/api/chat/stream', '/api/chat/stream')).toBe(false);
+    for (const p of HUMAN_ROUTES) expect(isExecutorCandidate(p, p), p).toBe(false);
   });
+});
+
+/** 人用的接口：名字里带 executor，但不是 /api/executor/ 这一段，必须照原分支走（#376 M1 正向对照） */
+const HUMAN_ROUTES = ['/api/executors', '/api/executor-allowlist', '/aroomo/api/executors', '/aroomo/api/executor-allowlist'];
+
+describe('#376 M1 正向对照：人用的执行员管理接口不进闸门', () => {
+  for (const noAccess of [false, true]) {
+    for (const p of HUMAN_ROUTES) {
+      it(`${noAccess ? '未配' : '已配'} Access：GET ${p} 照原分支转发（/aroomo/api → Core，其余 → LobeHub）`, async () => {
+        const b = await makeShell({}, { noAccess, deps: { session: allowAll } });
+        const r = await raw(b, p, {}, 'GET');
+        expect(r.body).not.toMatch(/NOT_FOUND|BAD_PATH|ACCESS_DENIED|找不到/);
+        if (p.startsWith('/aroomo/api/')) {
+          // 和同分支的普通接口（/aroomo/api/memory）结果完全一样：证明走的是 /aroomo/api 分支，不是执行员闸门
+          const ctl = await raw(b, '/aroomo/api/memory', {}, 'GET');
+          expect([r.status, JSON.parse(r.body).error?.code]).toEqual([ctl.status, JSON.parse(ctl.body).error?.code]);
+          expect(lobeSeen).toHaveLength(0);
+        } else {
+          expect(lobeSeen).toEqual([`GET ${p}`]);
+          expect(coreSeen).toHaveLength(0);
+        }
+      });
+    }
+  }
 });
 
 describe('#365 Access JWT 逐项反向（Shell 自己验，失败即关闭）', () => {

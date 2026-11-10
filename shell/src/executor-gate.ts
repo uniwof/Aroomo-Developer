@@ -18,7 +18,11 @@ export const EXECUTOR_UPSTREAM_TIMEOUT_MS = 60_000;
 /** 转给 Core 的客户端请求头（精确白名单）；host、x-forwarded-for、x-real-ip 由 Shell 自己填 */
 export const EXECUTOR_FORWARD_HEADERS = ['authorization', 'content-type', 'content-length', 'accept'] as const;
 
-/** 这个请求是否「看起来想去执行员接口」：是就交给闸门（要么严格放行，要么拒绝），不落到 LobeHub */
+/**
+ * 这个请求是否「看起来想去执行员接口」：是就交给闸门（要么严格放行，要么拒绝），不落到 LobeHub。
+ * 按路径段判断（#376 M1）：某个 `api` 段后面紧跟的一段恰好是 `executor`（原始、解码后、规整后任一形式，不分大小写）。
+ * `/api/executors`、`/api/executor-allowlist`、`/aroomo/api/executors` 这些人用的接口不算，照原分支走。
+ */
 export function isExecutorCandidate(rawUrl: string, normalizedPath: string): boolean {
   const raw = (rawUrl.split('?')[0] ?? '').toLowerCase();
   let dec = raw;
@@ -27,7 +31,10 @@ export function isExecutorCandidate(rawUrl: string, normalizedPath: string): boo
   } catch {
     /* 解码失败也按原样判断 */
   }
-  return [raw, dec, normalizedPath.toLowerCase()].some((s) => s.replace(/[\\/]+/g, '/').includes('/api/executor'));
+  return [raw, dec, normalizedPath.toLowerCase()].some((s) => {
+    const seg = s.split(/[\\/]+/);
+    return seg.some((x, i) => x === 'api' && seg[i + 1] === 'executor');
+  });
 }
 
 /** 严格检查原始请求目标：不规整、不解码，看到可疑写法就拒绝 */
