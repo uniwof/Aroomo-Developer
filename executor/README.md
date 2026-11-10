@@ -82,7 +82,7 @@ Register-ScheduledTask -TaskName "Aroomo Executor" -Action $act -Trigger $trg -S
 staging / 生产整站在 Cloudflare Access 后面，执行员走单独的 `/api/executor/` 应用，要一枚 Service Token：
 
 - Client ID 写在 `config.json` 的 `cfAccess.clientId`；**Secret 不写配置**，用 Windows DPAPI 加密存在配置目录 `cf-access-secret.dpapi`（其他系统用环境变量 `AROOMO_CF_ACCESS_CLIENT_SECRET`）。
-- 安装时设好 `AROOMO_EXECUTOR_TOKEN`、`AROOMO_CF_ACCESS_CLIENT_ID`、`AROOMO_CF_ACCESS_CLIENT_SECRET` 三个环境变量再跑安装脚本，一条命令装完、不用粘贴。**眼睛不方便时由 Hark 远程协助完成**（经 Tailscale SSH 设好变量运行，你什么都不用输入）。
+- 远程安装用凭据文件：`install-windows.ps1 -CredentialFile <JSON 文件>`（deviceToken / cfClientId / cfClientSecret），脚本读完即删，命令行里没有秘密。**不要在交互式 PowerShell 里敲 `$env:...='<秘密>'`**（会明文进 PSReadLine 历史）。远程通道怎么走见 [docs/ops/EXECUTOR-ACCESS.md](../docs/ops/EXECUTOR-ACCESS.md)（Tailscale SSH 不支持 Windows 服务端；在你电脑上开 sshd 要你本人确认）。
 - 已经装好、只补 Access 凭据：`<Secret 从标准输入> | node dist\cli.js cf-access <Client ID>`。
 - `status` / `doctor` 探活走 `/api/executor/hello`（和干活同一条路）；显示「被 Cloudflare Access 拦下」时检查 Client ID 和密钥。
 - 两个 CF 头只发给 `coreUrl` 同源，不跟随任何跳转（3xx 当错误）。
