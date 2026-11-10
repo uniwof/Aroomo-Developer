@@ -321,7 +321,7 @@ const FAMILY: Record<string, Exp> = {
   'PUT /api/interrupt-budget': { status: 200, why: '按账号存' },
   'GET /api/tasks/:id/takeovers': { status: 404, code: 'TASK_NOT_FOUND' },
   'POST /api/tasks/:id/takeovers/:tid/resolve': { status: 404, code: 'TAKEOVER_NOT_FOUND' },
-  'POST /api/tasks': { status: 201, why: '任务建在自己名下；声明的别人的凭据执行员取不到（另测）' },
+  'POST /api/tasks': { status: 404, code: 'SECRET_NOT_FOUND', why: '#347：声明别人的保险箱条目建任务当场 404，和不存在的同一个错误（建在自己名下的正向在 POSITIVE）' },
   'GET /api/tasks': { ...LIST, echoes: ['vault'], why: '攻击方自己的任务里声明过受害者的保险箱 id（攻击时自己提交的），列表回显的是这个值；凭据本身取不到（另测）' },
   'GET /api/tasks/:id': NF,
   'POST /api/tasks/:id/cancel': NF,
@@ -1007,11 +1007,17 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     expect((await call('xiao', 'POST', ch.stepUrl, { step: 1 })).statusCode).toBe(403);
   });
 
-  it('任务里声明别人的保险箱 id：小号自己的执行员领到任务也取不到别人的凭据；声明了的「别人的」和「不存在的」一样 404', async () => {
+  it('任务里声明别人的保险箱 id：建任务时就 404（别人的和不存在的同一个错误）；领到任务的执行员也取不到没声明的别人的凭据', async () => {
     const own = (await make('xiao', 'POST', '/api/vault', { name: 'xiaoexec', kind: 'password', value: `${MARK.xiao}-exec` })).secret.id as string;
     const MISSING_2 = '00000000-0000-4000-8000-0000000000fe';
-    // 声明：自己的、所有者的、不存在的（必改 8：不存在的也要声明，才和「别人的」走同一个分支）；B 的不声明
-    const tid = (await make('xiao', 'POST', '/api/tasks', { kind: 'login', site: `https://${MARK.xiao}.example.test`, secrets: [own, ids.owner.vault!, MISSING_UUID].map((secretId) => ({ secretId, field: 'value' })) })).task.id as string;
+    const create = (secretIds: string[]) => call('xiao', 'POST', '/api/tasks', { kind: 'login', site: `https://${MARK.xiao}.example.test`, secrets: secretIds.map((secretId) => ({ secretId, field: 'value' })) });
+    // #347：声明别人的 = 声明不存在的，建任务当场 404 SECRET_NOT_FOUND，任务不入队
+    for (const bad of [ids.owner.vault!, MISSING_UUID]) {
+      const r = await create([own, bad]);
+      expect(leakedIn(r), bad).toEqual([]);
+      expect([r.statusCode, errCode(r)], bad).toEqual([404, 'SECRET_NOT_FOUND']);
+    }
+    const tid = (await create([own])).json().task.id as string;
     let claimed: string | undefined;
     for (let n = 0; n < 20 && claimed !== tid; n++) {
       const c = await call('xiaoClient', 'POST', '/api/executor/tasks/claim', { waitSec: 0 });
@@ -1030,12 +1036,11 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
       expect(leakedIn(r), secretId).toEqual([]);
       return [r.statusCode, errCode(r)];
     };
-    // 声明过的：别人的 = 保险箱里不存在的，一样 404 SECRET_NOT_FOUND
-    expect(await result(ids.owner.vault!), '声明了所有者的条目').toEqual([404, 'SECRET_NOT_FOUND']);
-    expect(await result(MISSING_UUID), '声明了不存在的条目').toEqual([404, 'SECRET_NOT_FOUND']);
-    // 没声明的：别人的 = 不存在的，一样 422 SECRET_NOT_DECLARED（不先查保险箱，看不出存在）
+    // 执行时那道检查保留：没声明的：别人的 = 不存在的，一样 422 SECRET_NOT_DECLARED（不先查保险箱，看不出存在）
+    expect(await result(ids.owner.vault!), '没声明所有者的条目').toEqual([422, 'SECRET_NOT_DECLARED']);
+    expect(await result(MISSING_UUID), '没声明的不存在条目').toEqual([422, 'SECRET_NOT_DECLARED']);
     expect(await result(ids.b.vault!), '没声明 B 的条目').toEqual([422, 'SECRET_NOT_DECLARED']);
-    expect(await result(MISSING_2), '没声明的不存在条目').toEqual([422, 'SECRET_NOT_DECLARED']);
+    expect(await result(MISSING_2), '没声明的不存在条目 2').toEqual([422, 'SECRET_NOT_DECLARED']);
   });
 
   /**

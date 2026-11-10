@@ -3,7 +3,9 @@
  * 任务只带 secret id（凭据由执行员运行时按 id 现取，网关与模型都看不到明文）。
  */
 import type { TaskRecord } from '../executor/types.js';
-import { TASK_KINDS } from '../executor/types.js';
+import { MAX_TASK_SECRETS, TASK_KINDS } from '../executor/types.js';
+import { assertSecretsOwned, type SecretExists } from '../executor/service.js';
+import { HttpError } from '../http/errors.js';
 import { type ToolAdapter, type ToolCtx, type ToolResult, type ToolRisk, type ToolSpec, maxRisk, textResult } from './types.js';
 
 /** 只依赖 ExecutorService 的这三个方法 */
@@ -23,8 +25,8 @@ export interface TaskPort {
   cancel(userId: string, id: string, audit: ToolCtx['audit']): Promise<TaskRecord>;
 }
 
-/** 登记任务引用的 secret 前确认属于该用户（VaultService.exists） */
-export type SecretExists = (userId: string, secretId: string) => Promise<boolean>;
+/** 登记任务引用的 secret 前确认属于该用户（VaultService.exists）；类型和校验都在 executor/service（#347 唯一校验点） */
+export type { SecretExists } from '../executor/service.js';
 
 const SPECS: ToolSpec[] = [
   {
@@ -41,7 +43,7 @@ const SPECS: ToolSpec[] = [
         instruction: { type: 'string', maxLength: 4000 },
         secrets: {
           type: 'array',
-          maxItems: 10,
+          maxItems: MAX_TASK_SECRETS,
           items: {
             type: 'object',
             required: ['secretId', 'field'],
@@ -115,9 +117,14 @@ export class ExecutorAgentAdapter implements ToolAdapter {
         const secretId = str(o.secretId);
         const field = str(o.field);
         if (!secretId || !field) return textResult('secrets 每项都要有 secretId 和 field', true);
-        // 网关调用者只能引用自己保险箱里的 secret
-        if (!(await this.secretExists(ctx.userId, secretId))) return textResult('找不到这个凭据', true);
         secrets.push({ secretId, field });
+      }
+      // 网关调用者只能引用自己保险箱里的 secret（和 service.create 同一个校验；这里先拦，免得走到确认卡）
+      try {
+        await assertSecretsOwned(this.secretExists, ctx.userId, secrets);
+      } catch (e) {
+        if (e instanceof HttpError && (e.code === 'SECRET_NOT_FOUND' || e.code === 'TOO_MANY_SECRETS')) return textResult(e.message, true);
+        throw e;
       }
     }
     const t = await this.tasks.create(

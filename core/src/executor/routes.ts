@@ -6,6 +6,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { scopeOf } from "../auth/plugin.js";
 import { HttpError } from "../http/errors.js";
 import { ExecutorService, taskJson } from "./service.js";
+import { MAX_TASK_SECRETS } from "./types.js";
 
 const uuidParam = {
   type: "object",
@@ -330,7 +331,7 @@ export function registerExecutorRoutes(
             instruction: { type: "string", maxLength: 4000 },
             secrets: {
               type: "array",
-              maxItems: 10,
+              maxItems: MAX_TASK_SECRETS,
               items: {
                 type: "object",
                 required: ["secretId", "field"],

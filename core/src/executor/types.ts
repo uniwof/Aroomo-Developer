@@ -116,3 +116,6 @@ export interface ExecutorStore {
   /** 所有者取消：queued 直接变 cancelled；running 标记 cancel_requested */
   cancel(userId: string, id: string, now: Date): Promise<TaskRecord | null>;
 }
+
+/** 一个任务最多引用几个保险箱凭据（HTTP schema maxItems 和 service 校验共用，#347 M1） */
+export const MAX_TASK_SECRETS = 10;
