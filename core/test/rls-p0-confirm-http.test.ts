@@ -133,8 +133,9 @@ describe.each(targets)('M2 确认令牌换身份使用（$name，应用角色）
   const auditIds = async () => new Set((await t.deps.auditLog.query({ limit: 500 })).entries.map((e) => e.id));
   const ROUTE_DENIED = 'auth.denied:denied:POST 客户端令牌没有这个范围';
   const attackers = [
-    // 家人会话：重放主人的请求 → 条目不在自己名下，404（和不存在一样）；拿去确认自己的条目 → 家人没有 confirm:important，403 + confirm.denied
-    { name: '家人会话', who: () => 'xiao' as const, replay: [404, 'NOT_FOUND'], own: [403, 'FORBIDDEN'], audit: ['confirm.denied:denied:credential'] },
+    // 家人会话：重放主人的请求 → 条目不在自己名下，404（和不存在一样）；拿去确认自己的条目 → #346 起家人可自己确认自己的保险箱操作，
+    // 但令牌绑定 actor + scope，主人的令牌对不上 → 409 CONFIRM_INVALID + confirm.rejected，卡不被用掉
+    { name: '家人会话', who: () => 'xiao' as const, replay: [404, 'NOT_FOUND'], own: [409, 'CONFIRM_INVALID'], audit: ['confirm.rejected:failed:CONFIRM_INVALID'] },
     // arc_ 客户端令牌（家人的 / 主人自己的）：保险箱路由不收客户端令牌，路由层 403 + auth.denied，到不了确认服务
     { name: '家人的 arc_ 令牌', who: () => xiaoClient, replay: [403, 'FORBIDDEN'], own: [403, 'FORBIDDEN'], audit: [ROUTE_DENIED, ROUTE_DENIED] },
     { name: '主人自己的 arc_ 令牌', who: () => ownerClient, replay: [403, 'FORBIDDEN'], own: [403, 'FORBIDDEN'], audit: [ROUTE_DENIED, ROUTE_DENIED] },
@@ -156,7 +157,8 @@ describe.each(targets)('M2 确认令牌换身份使用（$name，应用角色）
 
   it('三种攻击之后：审计里有拒绝记录，没有任何 confirm.consumed；卡的 used_at 仍为 NULL、仍归主人', async () => {
     const acts = await auditActions();
-    expect(acts.filter((a) => a.startsWith('confirm.denied:denied')).length).toBe(1);
+    // #346：家人那次改由令牌绑定拒绝（confirm.rejected），不再是角色拒绝（confirm.denied）
+    expect(acts.filter((a) => a.startsWith('confirm.rejected:failed:CONFIRM_INVALID')).length).toBe(1);
     expect(acts.some((a) => a.startsWith('confirm.consumed'))).toBe(false);
     expect(await usedAt()).toEqual({ used_at: null, user_id: 'owner' });
   });
