@@ -1,7 +1,7 @@
 // #377 M3（负责人第 1 轮）：设了 CORE_OWNER_ACCOUNT_ID 的「并入」端到端（由 scripts/test-ui-e2e.sh 在 Core 带上它重启后调用）。
 // 所有者：先在本机种 'owner' 那份（以前从 Shell 打开时存的），从 Shell 打开 /console/chat →
 //   直通 /api/auth/me 回她自己的账号 + ownerAccount=true → 'owner' 那份并进她账号那份；'owner' 那份原样保留；刷新后不重复。
-// 家人对照：同一台机器上也有 'owner' 那份，家人从 Shell 打开 → ownerAccount=false → 不并入，家人那份里没有这些会话。
+// 家人对照：Shell 只给所有者开 /console（家人 403，控制台不运行，不会并入）；直通回家人自己、ownerAccount=false；同机 'owner' 那份不动。
 // 说明：这版控制台 SAVED_CHATS=false（会话存在本机浏览器），所以这里断言的是「她账号那份 + 页面列表」，不查服务端会话表。
 import { createRequire } from 'node:module';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -78,6 +78,8 @@ const browser = await chromium.launch();
 }
 
 // —— 家人对照：不并入 ——
+// Shell 的 /console 只给所有者（ownerOk：admin + SHELL_OWNER_EMAIL），家人从 Shell 打开拿到 403，控制台不运行，也就不会并入。
+// 这里如实断言这道门 + 直通回的是家人自己（ownerAccount=false）+ 同机的 'owner' 那份不动、家人那份里没有它们。
 {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'en-US' });
   const page = await ctx.newPage();
@@ -85,18 +87,18 @@ const browser = await chromium.launch();
   await page.fill('#password', process.env.E2E_FAMILY_PASSWORD);
   await page.fill('#password2', process.env.E2E_FAMILY_PASSWORD);
   await page.click('button[type="submit"]');
-  await page.waitForURL(onConsole, { timeout: 30000 }).catch(() => {});
-  check('并入 家人设密码后进入 /console', onConsole(page.url()), page.url());
+  const said = await page.waitForFunction(() => /没有权限使用所有者的控制台/.test(document.getElementById('msg')?.textContent ?? ''), null, { timeout: 30000 }).then(() => true, () => false);
+  check('并入 家人设密码后已登录，但 Shell 不给家人开所有者控制台（留在设密码页提示）', said && !onConsole(page.url()), `${page.url()} ${(await page.locator('#msg').textContent().catch(() => '')) ?? ''}`);
   const who = await whoAmI(page);
   check('并入 家人直通 /api/auth/me：家人自己的账号，ownerAccount=false', who.status === 200 && who.kind === 'user' && Boolean(who.id) && who.id !== ownerId && who.ownerAccount === false, JSON.stringify(who));
   const theirs = `aroomo.chat.v1:u:${who.id}`;
   await page.evaluate(([k, v]) => localStorage.setItem(k, v), [OWNER_KEY, OWNER_SHARE]);
-  await page.goto(base + '/console/chat', { waitUntil: 'networkidle' });
-  await page.waitForTimeout(6000);
+  const res = await page.goto(base + '/console/chat', { waitUntil: 'domcontentloaded' });
+  const isConsole = await page.evaluate(() => Boolean(document.querySelector('meta[name="aroomo-shell"]')));
+  check('并入 家人对照：从 Shell 打开 /console 是 403，控制台不运行', res?.status() === 403 && !isConsole, `HTTP ${res?.status()} 控制台 ${isConsole}`);
+  await page.waitForTimeout(3000);
   const got = ids(await read(page, theirs));
-  check('并入 家人对照：\'owner\' 那份不并进家人那份', SEEDED.every((id) => !got.includes(id)), JSON.stringify(got));
-  const shown = await page.getByText('并入测试甲').count();
-  check('并入 家人对照：页面上看不到所有者的会话', shown === 0, `出现 ${shown} 处`);
+  check('并入 家人对照：家人那份里没有所有者的会话', SEEDED.every((id) => !got.includes(id)), JSON.stringify(got));
   check('并入 家人对照：\'owner\' 那份原样', (await read(page, OWNER_KEY)) === OWNER_SHARE);
   await page.screenshot({ path: path.join(out, 'merge-family.png') });
   await ctx.close();
