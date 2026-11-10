@@ -25,6 +25,8 @@ declare module 'fastify' {
     clientMcp?: boolean;
     /** 客户端可以查看自己（GET /api/clients/self） */
     clientSelf?: boolean;
+    /** 管理员接口（adminGuard 打的标记）：结构测试以它找管理员路由，并要求 preValidation 里含 requireAdmin（#358 M2） */
+    adminOnly?: boolean;
   }
   interface FastifyRequest {
     principal: Principal | null;
@@ -219,7 +221,13 @@ export const requireAdmin: preValidationAsyncHookHandler = async function (req: 
   }
 };
 
-/** 管理员接口。用法：`{ ...adminGuard(), schema }`；不要再给同一路由另挂 preValidation（会覆盖掉这里的检查） */
-export function adminGuard(): { config: { userRoute: true }; preValidation: preValidationAsyncHookHandler } {
-  return { config: { userRoute: true }, preValidation: requireAdmin };
+/**
+ * 管理员接口。用法：`{ ...adminGuard(), schema }`；要额外的 preValidation 钩子写 `adminGuard(extra1, extra2)`，排在 requireAdmin 之后。
+ * 不要再给同一路由另写 preValidation：展开后会覆盖掉 requireAdmin（结构测试按 adminOnly 标记会抓到）。
+ */
+export function adminGuard(...extra: preValidationAsyncHookHandler[]): {
+  config: { userRoute: true; adminOnly: true };
+  preValidation: preValidationAsyncHookHandler[];
+} {
+  return { config: { userRoute: true, adminOnly: true }, preValidation: [requireAdmin, ...extra] };
 }
