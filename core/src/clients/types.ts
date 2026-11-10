@@ -3,6 +3,10 @@
  */
 
 /** 目前可授予的范围。tools:call = 调用 MCP 白名单里的内置只读工具（M2 只有 read_webpage）。扩大白名单不能让已发的授权自动扩大：要么改成 tools:call:<id>，要么要求重新授权。 */
+/** 执行员范围（docs/executor-protocol.md）：带它们的是设备令牌，只能进 /api/executor/*，签发时不能和别的范围混在一枚令牌里（#365 / #376 M4） */
+export const EXECUTOR_SCOPES: readonly string[] = ['tasks:pull', 'tasks:secret'];
+export const hasExecutorScope = (scopes: Iterable<string>): boolean => [...scopes].some((s) => EXECUTOR_SCOPES.includes(s));
+
 export const CLIENT_SCOPES = ['bookmarks:read', 'library:read', 'library:write', 'memory:read', 'brief:read', 'tools:list', 'tools:call', 'models:chat', 'tasks:pull', 'tasks:secret', 'tasks:create', 'tasks:read'] as const;
 export type ClientScope = (typeof CLIENT_SCOPES)[number];
 
