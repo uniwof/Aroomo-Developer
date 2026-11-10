@@ -21,7 +21,7 @@ function setup() {
   const store = new MemoryExecutorStore();
   const resolve = vi.fn(async () => 'plain');
   const exists = vi.fn(async (u: string, id: string) => u === U1 && MINE.includes(id));
-  const svc = new ExecutorService(store, () => new Date('Tue 2026-11-10 8:00 AM CST (UTC+08:00)'), resolve, undefined, undefined, exists);
+  const svc = new ExecutorService(store, () => new Date('2026-11-10T00:00:00.000Z'), resolve, undefined, undefined, exists);
   const queued = async (u = U1) => (await store.listTasks(u, 500)).length;
   return { svc, store, resolve, exists, queued };
 }

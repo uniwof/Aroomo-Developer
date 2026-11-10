@@ -156,7 +156,9 @@ describe('MCP 任务工具：端到端（/mcp）', () => {
     const before = text(await call(full, 'list_tasks'));
     for (const secretId of ['00000000-0000-4000-8000-0000000000aa', 'not-a-uuid']) {
       const r = await call(full, 'create_task', { kind: 'checkin', site: 'https://example.org', secrets: [{ secretId, field: 'password' }] });
-      expect(r.json().result?.isError ?? Boolean(r.json().error)).toBe(true);
+      // 拦下它的是「MCP 签到只收 kind + site」那条规则（gateway callTask field_not_allowed），不是别的错误
+      expect(r.json().error).toBeUndefined();
+      expect(r.json().result).toEqual({ content: [{ type: 'text', text: '这里派签到任务只能带 kind 和 site；其他字段请在手机或控制台发起。' }], isError: true });
       expect(r.body).not.toContain(secretId);
     }
     expect(text(await call(full, 'list_tasks'))).toBe(before);
