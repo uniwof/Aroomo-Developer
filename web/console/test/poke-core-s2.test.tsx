@@ -44,7 +44,8 @@ describe('切片 2：成员状态文字', () => {
     expect(await row('Beta')).toHaveTextContent('冷却');
     expect(await row('Gamma')).toHaveTextContent('耗尽');
     expect(await row('Delta')).toHaveTextContent('就绪');
-    expect(await row('Eps')).toHaveTextContent('状态未知');
+    expect(await row('Eps')).toHaveTextContent('不可用 · 没有可用的 Key');
+    expect(await row('Eps')).not.toHaveTextContent('状态未知');
     expect(await row('Old')).toHaveTextContent('离线');
     expect(main().textContent).not.toMatch(/\d+%/);
   });

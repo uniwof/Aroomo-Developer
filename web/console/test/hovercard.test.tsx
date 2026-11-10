@@ -25,14 +25,36 @@ describe('悬停卡与头像', () => {
     expect(tip.textContent).toContain('状态：休眠');
   });
   it('头像：永久免费实线、试用虚线、状态图标、aria', () => {
-    const { container } = render(<><MemberAvatar name="A" online used={5} limit={10} free="trial" status="trial" /><MemberAvatar name="B" online free="permanent" /></>);
+    const { container } = render(<><MemberAvatar name="A" online used={5} limit={10} free="trial" status="trial" /><MemberAvatar name="B" online used={0} limit={10} free="permanent" /></>);
     const [a, b] = container.querySelectorAll('[role=img]');
     expect(a!.getAttribute('aria-label')).toContain('试用');
     expect(a!.getAttribute('aria-label')).toContain('额度剩余 50%');
     expect(a!.querySelector('[data-testid=avatar-status]')!.textContent).toBe('⌛');
     expect(a!.querySelector('circle')!.getAttribute('stroke-dasharray')).toBe('4 3');
     expect(b!.querySelector('circle')!.getAttribute('stroke-dasharray')).toBeNull();
-    expect(b!.getAttribute('aria-label')).toContain('余量未知');
+  });
+});
+
+describe('#383 余量未知的圆环', () => {
+  it('未知走「未知」分支（灰色虚线整圈），0% 与 100% 不走；aria 写「余量未知」', () => {
+    const { container } = render(<><MemberAvatar name="U" online /><MemberAvatar name="Z" online used={0} limit={10} /><MemberAvatar name="F" online used={10} limit={10} /></>);
+    const [u, z, f] = container.querySelectorAll('[role=img]');
+    const ring = u!.querySelector('[data-testid=avatar-ring-unknown]')!;
+    expect(ring.getAttribute('stroke')).toBe('var(--muted)');
+    expect(ring.getAttribute('stroke-dasharray')).toBe('2 4');
+    expect(u!.querySelector('[data-testid=avatar-arc]')).toBeNull();
+    expect(u!.getAttribute('aria-label')).toContain('余量未知');
+    for (const el of [z!, f!]) {
+      expect(el.querySelector('[data-testid=avatar-ring-unknown]')).toBeNull();
+      expect(el.getAttribute('aria-label')).not.toContain('余量未知');
+    }
+    expect(z!.getAttribute('aria-label')).toContain('额度剩余 100%');
+    expect(f!.getAttribute('aria-label')).toContain('额度剩余 0%');
+  });
+  it('cardLines 传了 status 就用它（行内同源），不传才用 Core 的', () => {
+    const c = { name: 'K', type: ['text'], status: '可用', remaining: { value: null, unit: null, source: '未知' } };
+    expect(cardLines(c, '不可用 · 没有可用的 Key')[1]).toBe('状态：不可用 · 没有可用的 Key');
+    expect(cardLines(c)[1]).toBe('状态：可用');
   });
 });
 

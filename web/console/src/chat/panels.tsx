@@ -120,7 +120,7 @@ function MemberRows({ list, onOpen, usage }: { list: Member[]; onOpen: (m: Membe
         );
         return (
           <Suspense key={m.id} fallback={row}>
-            <HoverCard memberId={m.id} wrap>
+            <HoverCard memberId={m.id} wrap status={statusText(m)}>
               {row}
             </HoverCard>
           </Suspense>
