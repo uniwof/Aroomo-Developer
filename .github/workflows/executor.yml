@@ -104,7 +104,8 @@ jobs:
           node executor\dist\cli.js check
           if ($LASTEXITCODE -ne 0) { throw 'check 没通过（令牌文件应可读）' }
       - name: 真 DPAPI 往返 + 凭据文件安装 + 计划任务运行身份（#376 M5 / M7，不得跳过）
-        shell: powershell
+        # pwsh（UTF-8）跑这一步的中文；安装脚本本身仍由 Windows PowerShell 5.1 子进程运行（脚本带 BOM）
+        shell: pwsh
         env:
           AROOMO_EXECUTOR_CONFIG: ${{ runner.temp }}\exec2\config.json
         run: |
