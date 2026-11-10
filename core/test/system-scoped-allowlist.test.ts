@@ -8,7 +8,11 @@ const SRC = fileURLToPath(new URL('../src/', import.meta.url));
 // 文件 → 允许的调用次数
 const ALLOW: Record<string, number> = {
   'assistants/pg.ts': 3, // systemActiveRuns（重启恢复）/ systemDueAssistants（定时执行器第一步）/ systemStaleWaitingRuns（等确认过期作废，裁定 12）：只读找行，改写切回 userScoped
+  'clients/pg.ts': 1, // getByHash：登录前按令牌哈希找令牌（还没有 app.user_id），只读；找到后的写入都切回 userScoped（#345 P0）
+  'confirm/confirm.ts': 1, // deleteExpired：定时清理先 systemScoped 只读找出有过期记录的归属键，再逐个 userScoped 删（#345 P0）
+  'executor/pg.ts': 1, // sweep：定时清扫先 systemScoped 只读找出有活要清的用户，再逐个 userScoped 改（#345 P0）
   'members/pg.ts': 1, // userIds：系统定时任务列出有成员的用户
+  'users/pg.ts': 1, // getSession：登录前按会话令牌哈希找会话，只读；吊销 / 新建都在 userScoped（#345 P0）
   'vault/pg.ts': 2, // countAll / countLive：只给启动检查（vaultStartupCheck）用，只读计数，不对用户接口开放
 };
 

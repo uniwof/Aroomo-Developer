@@ -31,13 +31,13 @@ describe.each(twoAccountEnvs)('过期记录清理（$name）', (env) => {
     const old = await startPurge('Old'); // 10:00 创建，10:05 过期
     t.clock.advance(DAY); // 次日 10:00：已过期 23 小时 55 分
     expect(await t.app.jobs.runOnce('confirm-cleanup')).toBe('');
-    expect(await t.deps.confirmChallenges.get(old)).not.toBeNull();
+    expect(await t.deps.confirmChallenges.get('owner', old)).not.toBeNull();
 
     const fresh = await startPurge('Fresh'); // 次日 10:00 创建，还没过期
     t.clock.advance(5 * 60 * SEC + SEC); // 次日 10:05:01：Old 过期刚好满 1 天又 1 秒
     expect(await t.app.jobs.runOnce('confirm-cleanup')).toBe('deleted=1');
-    expect(await t.deps.confirmChallenges.get(old)).toBeNull();
-    expect(await t.deps.confirmChallenges.get(fresh)).not.toBeNull(); // 刚过期的不删
+    expect(await t.deps.confirmChallenges.get('owner', old)).toBeNull();
+    expect(await t.deps.confirmChallenges.get('owner', fresh)).not.toBeNull(); // 刚过期的不删
     expect(await t.app.jobs.runOnce('confirm-cleanup')).toBe('');
   });
 
