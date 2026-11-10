@@ -102,6 +102,17 @@ describe.each(rlsTargets)('RLS P0 六张表（$name）', (target) => {
     );
   });
 
+  it('C1 confirm_challenges.actor 是 NOT NULL（换算函数 STRICT，actor 为 NULL 时 CHECK 会放行，所以必须非空）', async () => {
+    // 类型层：ChallengeRow.actor 不可为空（改成可空会编译失败）
+    const actorNotNullable: null extends ChallengeRow['actor'] ? false : undefined extends ChallengeRow['actor'] ? false : true = true;
+    expect(actorNotNullable).toBe(true);
+    const db = await open();
+    const { rows } = await db.query<{ is_nullable: string }>(
+      `SELECT is_nullable FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'confirm_challenges' AND column_name = 'actor'`,
+    );
+    expect(rows).toEqual([{ is_nullable: 'NO' }]);
+  });
+
   describe('client_tokens', () => {
     it('不设 app.user_id：查询为空、写入被拒', async () => {
       const db = await open();
@@ -262,7 +273,7 @@ describe.each(rlsTargets)('RLS P0 六张表（$name）', (target) => {
   it('M3 exec_tasks 有 user_id 为空串的旧脏行：sweep 不抛错、跳过它，其他用户照常清扫', async () => {
     const db = await open();
     const s = new PgExecutorStore(db);
-    const OLD = new Date('Sun 2026-11-01 8:00 AM CST (UTC+08:00)');
+    const OLD = new Date('2026-11-01T00:00:00Z');
     await s.insertTask({ ...task(3, 'owner'), createdAt: OLD });
     await s.insertTask({ ...task(4, XIAO), createdAt: OLD });
     await asAdmin(db, async () => {
@@ -272,7 +283,7 @@ describe.each(rlsTargets)('RLS P0 六张表（$name）', (target) => {
     });
     // 系统范围看得见脏行（负责人第 1 轮：「空串行谁也看不见」不对）
     expect((await systemScoped(db).query(`SELECT 1 FROM exec_tasks WHERE user_id = ''`)).rows).toHaveLength(1);
-    const r = await s.sweep(T1, new Date('Thu 2026-11-05 8:00 AM CST (UTC+08:00)'));
+    const r = await s.sweep(T1, new Date('2026-11-05T00:00:00Z'));
     expect(r).toEqual({ requeued: 0, expired: 2 });
     expect((await s.getTask('owner', id(3)))?.status).toBe('failed');
     expect((await s.getTask(XIAO, id(4)))?.status).toBe('failed');
