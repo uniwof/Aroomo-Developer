@@ -136,7 +136,8 @@ export function MemberAvatar({
       role="img"
       aria-label={label}
       data-online={online ? 'true' : 'false'}
-      className={cn('relative inline-flex shrink-0 items-center justify-center p-1', unavailable && 'grayscale opacity-70')}
+      // 传进来的是圆角方头像：留宽一点，圆环不压到方块的角
+      className={cn('relative inline-flex shrink-0 items-center justify-center', children ? 'p-2' : 'p-1', unavailable && 'grayscale opacity-70')}
     >
       <svg viewBox={`0 0 ${V} ${V}`} className="absolute inset-0 h-full w-full" aria-hidden="true">
         <circle cx={V / 2} cy={V / 2} r={r} fill="none" stroke="var(--border)" strokeWidth="2.5" strokeDasharray={dash} opacity={f == null ? 0.5 : 1} />
