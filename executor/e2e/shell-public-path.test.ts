@@ -27,7 +27,8 @@ const PW = 'correct-horse-battery';
 const TEAM = 'aroomo-e2e.cloudflareaccess.com';
 const AUD = 'aud-executor-e2e';
 const CF_ID = 'e2e-client-id.access';
-const CF_SECRET = 'e2e-cf-secret-placeholder-0123456789';
+/** 测试里现生成，不写死在仓库里 */
+const CF_SECRET = randomBytes(24).toString('hex');
 const key = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const jwks = { keys: [{ ...(key.publicKey.export({ format: 'jwk' }) as object), kid: 'k1', alg: 'RS256', use: 'sig' }] };
 
