@@ -4,7 +4,7 @@
  */
 import { createHash } from 'node:crypto';
 import rateLimit from '@fastify/rate-limit';
-import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerAsyncHookHandler, preValidationAsyncHookHandler } from 'fastify';
 import { bindAudit } from '../audit/common.js';
 import type { AuditActor, AuditFn, AuditLog } from '../audit/types.js';
 import { HttpError } from '../http/errors.js';
@@ -12,6 +12,7 @@ import type { Capability } from './capabilities.js';
 import type { ConfirmCtx } from '../confirm/confirm.js';
 import { actorKey, type Principal, principalCan } from './tokens.js';
 import { CSRF_HEADER, readSessionCookie, UNSAFE_METHODS } from './session-cookie.js';
+import { EXECUTOR_SCOPES, hasExecutorScope } from '../clients/types.js';
 
 declare module 'fastify' {
   interface FastifyContextConfig {
@@ -25,6 +26,8 @@ declare module 'fastify' {
     clientMcp?: boolean;
     /** 客户端可以查看自己（GET /api/clients/self） */
     clientSelf?: boolean;
+    /** 管理员接口（adminGuard 打的标记）：结构测试以它找管理员路由，并要求 preValidation 里含 requireAdmin（#358 M2） */
+    adminOnly?: boolean;
   }
   interface FastifyRequest {
     principal: Principal | null;
@@ -60,6 +63,13 @@ function limitKey(req: FastifyRequest): string {
 }
 
 const noAudit: AuditFn = async () => undefined;
+
+/** 执行员接口前缀（#365） */
+export const EXECUTOR_PREFIX = '/api/executor/';
+/** 设备令牌 = 只带执行员范围的客户端令牌（控制台给执行员生成的就是这种；签发时禁止混合，见 clients/service.ts） */
+export function isDeviceToken(scopes: ReadonlySet<string>): boolean {
+  return scopes.size > 0 && [...scopes].every((s) => EXECUTOR_SCOPES.includes(s));
+}
 
 /** 解码后的路径（去掉查询串）；解码失败返回 '/api/'，失败即关闭 */
 function decodedPath(url: string): string {
@@ -116,6 +126,16 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
     if (cookieToken && UNSAFE_METHODS.has(req.method) && !req.headers[CSRF_HEADER]) {
       await req.audit('auth.denied', { type: 'csrf', id: req.routeOptions.url ?? req.url.split('?')[0] ?? '' }, 'denied', `${req.method} Cookie 会话缺少 ${CSRF_HEADER} 头`);
       throw new HttpError(403, 'CSRF', `用 Cookie 登录时，改动类请求要带 ${CSRF_HEADER} 头`);
+    }
+    // #365 / #376 M4：执行员接口只认设备令牌（只带 tasks:pull / tasks:secret 的客户端令牌）；带执行员范围的令牌也只能进执行员接口。
+    // 已签发的混合令牌（执行员范围 + 别的范围）两边都进不去，等于失效（失败即关闭）。
+    // 执行员接口经 Shell 暴露在公网（Access Service Token 后面），这样即使边缘配错，所有者 / 账号 / 其他令牌也进不来，设备令牌也打不开别的接口。
+    const executorRoute = pattern.startsWith(EXECUTOR_PREFIX);
+    const client = principal.type === 'client' ? principal : undefined;
+    const denied = executorRoute ? !client || !isDeviceToken(client.scopes) : Boolean(client && hasExecutorScope(client.scopes));
+    if (denied) {
+      await req.audit('auth.denied', { type: 'route', id: req.routeOptions.url ?? req.url.split('?')[0] ?? '' }, 'denied', `${req.method} ${executorRoute ? '执行员接口只认设备令牌' : '带执行员范围的令牌只能调用执行员接口'}`);
+      throw new HttpError(403, 'FORBIDDEN', '没有权限执行这个操作');
     }
     // D62：操作员只按白名单放行。没有声明能力的接口、不存在的接口、白名单外的能力，一律拒绝并审计。
     if (principal.type === 'client') {
@@ -205,18 +225,27 @@ export function userGuard(): { config: { userRoute: true }; preHandler: preHandl
   };
 }
 
-/** 管理员：所有者令牌，或角色为 admin 的账号。 */
-export function adminGuard(): { config: { userRoute: true }; preHandler: preHandlerAsyncHookHandler } {
-  return {
-    config: { userRoute: true },
-    preHandler: async function (req: FastifyRequest) {
-      const p = req.principal;
-      if (!p) throw new HttpError(401, 'UNAUTHORIZED', '请先登录');
-      const isAdmin = p.type === 'owner' || (p.type === 'user' && p.role === 'admin');
-      if (!isAdmin) {
-        await req.audit('auth.denied', { type: 'role', id: 'admin' }, 'denied', `${req.method} ${req.routeOptions.url ?? ''}`);
-        throw new HttpError(403, 'FORBIDDEN', '只有管理员可以执行这个操作');
-      }
-    },
-  };
+/**
+ * 管理员检查：所有者令牌，或角色为 admin 的账号。挂在 preValidation（#349）：先 401/403 再校验请求体 / 参数，
+ * 未授权的请求拿不到 schema 400（不泄露请求体形状，也不是存在性旁路），和 work / push / assistants 的惯例一致。
+ */
+export const requireAdmin: preValidationAsyncHookHandler = async function (req: FastifyRequest) {
+  const p = req.principal;
+  if (!p) throw new HttpError(401, 'UNAUTHORIZED', '请先登录');
+  const isAdmin = p.type === 'owner' || (p.type === 'user' && p.role === 'admin');
+  if (!isAdmin) {
+    await req.audit('auth.denied', { type: 'role', id: 'admin' }, 'denied', `${req.method} ${req.routeOptions.url ?? ''}`);
+    throw new HttpError(403, 'FORBIDDEN', '只有管理员可以执行这个操作');
+  }
+};
+
+/**
+ * 管理员接口。用法：`{ ...adminGuard(), schema }`；要额外的 preValidation 钩子写 `adminGuard(extra1, extra2)`，排在 requireAdmin 之后。
+ * 不要再给同一路由另写 preValidation：展开后会覆盖掉 requireAdmin（结构测试按 adminOnly 标记会抓到）。
+ */
+export function adminGuard(...extra: preValidationAsyncHookHandler[]): {
+  config: { userRoute: true; adminOnly: true };
+  preValidation: preValidationAsyncHookHandler[];
+} {
+  return { config: { userRoute: true, adminOnly: true }, preValidation: [requireAdmin, ...extra] };
 }

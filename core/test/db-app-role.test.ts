@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
 import { assertAppRoleSafe, checkAppRole, grantAppRole } from '../src/db/app-role.js';
 import { createPgDb } from '../src/db/db.js';
-import { userScoped } from '../src/db/scope.js';
+import { systemScoped, userScoped } from '../src/db/scope.js';
 import { PgWorkStore } from '../src/work/store.js';
 import type { VersionInput } from '../src/work/types.js';
 import { openPglite } from './helpers/db.js';
@@ -28,7 +28,9 @@ describe('应用数据库角色（PGlite）', () => {
       await db.query(
         `INSERT INTO audit_log (id, ts, actor_type, actor_id, action, target_type, target_id, result) VALUES ('${randomUUID()}', now(), 'system', 's', 'a', 't', 'x', 'ok')`,
       );
-      expect((await db.query('SELECT count(*)::int AS n FROM audit_log')).rows).toEqual([{ n: 1 }]);
+      // #345 P2（0038）：audit_log 只有系统范围能读（不设范围 SELECT 为空），所以计数走 systemScoped
+      expect((await db.query('SELECT count(*)::int AS n FROM audit_log')).rows).toEqual([{ n: 0 }]);
+      expect((await systemScoped(db).query('SELECT count(*)::int AS n FROM audit_log')).rows).toEqual([{ n: 1 }]);
       await expect(db.query('DELETE FROM audit_log')).rejects.toThrow(/permission denied for table audit_log/);
       await expect(db.query(`UPDATE audit_log SET note = 'x'`)).rejects.toThrow(/permission denied for table audit_log/);
       await expect(db.query('DELETE FROM core_schema_migrations')).rejects.toThrow(/permission denied for table core_schema_migrations/);

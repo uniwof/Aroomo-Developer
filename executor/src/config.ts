@@ -27,6 +27,11 @@ export interface ExecutorConfig {
   /** 云手机 / 安卓（DroidRun）；enabled=false 时不接手机任务。device 按 Q3 选定的云手机厂商填 */
   phone: { enabled: boolean; python?: string; device?: { serial?: string; control_backend?: string; device_id?: string } };
   logLevel: LogLevel;
+  /**
+   * 经公网连 Core 时的 Cloudflare Access Service Token（#365）。只写 Client ID；Secret 存系统凭据库（见 cf-access.ts），
+   * 不进 config.json。不设 = 不带 CF 两个头（本机 / 内网 Core）。
+   */
+  cfAccess?: { clientId: string };
 }
 
 export function defaultConfigDir(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string {
@@ -80,6 +85,7 @@ export function parseConfig(raw: unknown, dir: string): ExecutorConfig {
   const coreUrl = str('coreUrl', d.coreUrl);
   new URL(coreUrl);
   if ('token' in r || 'deviceToken' in r) throw new Error('不要把令牌写进 config.json；请放在 device-token 文件或环境变量 AROOMO_EXECUTOR_TOKEN');
+  const cfAccess = parseCfAccess(r.cfAccess);
   const pl = (r.planner ?? {}) as Record<string, unknown>;
   const plannerType = pl.type === undefined ? d.planner.type : pl.type;
   if (plannerType !== 'model' && plannerType !== 'rule') throw new Error('planner.type 只能是 model 或 rule');
@@ -94,7 +100,17 @@ export function parseConfig(raw: unknown, dir: string): ExecutorConfig {
     planner: { type: plannerType, model: plannerModel.trim() },
     phone: parsePhone(r.phone),
     logLevel: logLevel as LogLevel,
+    ...(cfAccess ? { cfAccess } : {}),
   };
+}
+
+function parseCfAccess(v: unknown): ExecutorConfig['cfAccess'] {
+  if (v === undefined) return undefined;
+  if (!v || typeof v !== 'object') throw new Error('cfAccess 必须是对象');
+  const c = v as Record<string, unknown>;
+  if (Object.keys(c).some((k) => /secret/i.test(k))) throw new Error('不要把 Cloudflare Access 密钥写进 config.json；请运行 cf-access 命令存进系统凭据库');
+  if (typeof c.clientId !== 'string' || !c.clientId.trim()) throw new Error('cfAccess.clientId 必须是非空文字');
+  return { clientId: c.clientId.trim() };
 }
 
 function parsePhone(v: unknown): ExecutorConfig['phone'] {

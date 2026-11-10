@@ -74,7 +74,8 @@ export interface UserStore {
   listOpenInvites(at: Date): Promise<InviteRecord[]>;
   insertSession(s: SessionRecord): Promise<void>;
   getSession(tokenHash: string): Promise<SessionRecord | null>;
-  revokeSession(tokenHash: string, at: Date): Promise<void>;
+  /** 只吊销这个用户自己的会话；别人的会话令牌什么也不做 */
+  revokeSession(userId: string, tokenHash: string, at: Date): Promise<void>;
   /** 吊销某用户的全部会话（可保留一个） */
   revokeUserSessions(userId: string, at: Date, exceptTokenHash?: string): Promise<void>;
 }

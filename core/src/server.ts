@@ -52,6 +52,7 @@ import { registerLibraryRoutes } from "./library/routes.js";
 import { registerMcpRoutes } from "./mcp/server.js";
 import { ClientTokenService } from "./clients/service.js";
 import { registerClientRoutes } from "./clients/routes.js";
+import { hasExecutorScope } from "./clients/types.js";
 import { ExecutorService } from "./executor/service.js";
 import { GatewayService } from "./gateway/service.js";
 import { registerGatewayRoutes } from "./gateway/routes.js";
@@ -395,7 +396,8 @@ export function buildServer(
   const chatRouting: ChatUserRouting = {
     verify: async (token) => {
       const p = await clients.verify(token);
-      return p && p.scopes.has("models:chat") ? p.userId : null;
+      // #376 M4：带执行员范围的（已签发的混合）令牌不认，失败即关闭
+      return p && p.scopes.has("models:chat") && !hasExecutorScope(p.scopes) ? p.userId : null;
     },
     ctxFor: (userId) => ({
       upstreamModel: upstreamNameFor(userId),

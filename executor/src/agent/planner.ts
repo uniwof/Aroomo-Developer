@@ -119,7 +119,10 @@ export class RuleBasedPlanner implements Planner {
       return steps;
     }
     if (steps.length > 0) return steps;
-    return [{ op: 'done', note: '快照里没有可执行的下一步' }];
+    // 页面自己说今天已经签到过：不是失败
+    if (/已签到|已经签到|already checked/i.test(input.snapshot)) return [{ op: 'done', note: '今天已签到' }];
+    // 没有任何可做的动作：不能当成功（以前这里会报「签到完成」的假成功）
+    return [{ op: 'done', note: '失败：页面上没有找到可点击的按钮或可填的输入框' }];
   }
 }
 

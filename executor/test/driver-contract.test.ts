@@ -208,6 +208,12 @@ describe('规则规划器', () => {
     expect(detectBlockerInSnapshot('@1 link "付款方式"\n@2 button "立即支付"')?.blocker).toBe('payment');
     expect(detectBlockerInSnapshot('- textbox "邮箱验证码" [ref=e9]')?.blocker).toBe('2fa');
   });
+  it('没有任何可做的动作：报失败，不当成功；页面已说今天签到过则不算失败', async () => {
+    const none = await new RuleBasedPlanner().plan({ instruction: '签到', snapshot: '@1 heading "欢迎"', availableFields: [], round: 0 });
+    expect(none).toEqual([{ op: 'done', note: expect.stringMatching(/^失败/) }]);
+    const already = await new RuleBasedPlanner().plan({ instruction: '签到', snapshot: '@1 text "今天已签到"', availableFields: [], round: 0 });
+    expect(already).toEqual([{ op: 'done', note: '今天已签到' }]);
+  });
   it('登录页：先填字段再点登录', async () => {
     const steps = await new RuleBasedPlanner().plan({
       instruction: '点击登录按钮',

@@ -3,11 +3,12 @@
  * 参照 sumus：侧栏底部「Members」、顶部齿轮打开的内容都在主区域原地显示，不开第二层抽屉；
  * 面板内容一律是分组列表（iOS / sumus 式），不用标签页。最终位置等负责人的 sumus→Aroomo 逐屏映射方案再定。
  */
-import { lazy, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useState, type ReactNode } from 'react';
 import { Bell, BellRing, ArrowLeft, ChevronRight, Home, Keyboard, Monitor, Moon, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Sun, UserRound, Users, X } from 'lucide-react';
 import { activityLabel, api, isFamily, type Member } from '@/lib/api';
 import { useAsk } from '@/components/Dialog';
-import { useUsage } from '@/lib/usage';
+import { useUsage, type UsageRow } from '@/lib/usage';
+import { MemberAvatar, type AvatarStatus } from '@/components/brand';
 import { UsageLine } from '@/components/UsageLine';
 import { BudgetSection, Field, Group, LeadSection, McpSection, SecuritySection } from '@/pages/Settings';
 import { FamilySection, GeneralSection, PasswordRow, ProfileSection, SignOutGroup } from './settings-sections';
@@ -23,6 +24,13 @@ import { FONT_DEFAULT, FONT_MAX, FONT_MIN, clampFont } from '@/lib/display';
 import type { Theme } from '@/lib/display';
 
 // #281：设置 › 通知点开才下载（对话页包 ≤150 KB gz）；下载时一句静态文字，不转圈；下载失败说一句 + 「刷新」
+// #172：悬停卡点开成员页后才下载（对话页包 ≤150 KB gz）；没下载好之前就是普通的一行，下载失败也照常能点
+const HoverCard = lazy(() =>
+  import('@/components/HoverCard').then(
+    (m) => ({ default: m.HoverCard }),
+    () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }),
+  ),
+);
 const PushSection = lazy(() => import('./push-section').then((m) => ({ default: m.PushSection })));
 
 /**
@@ -80,23 +88,44 @@ function statusLine(m: Member): string {
   return `${activityLabel(a)}${a.reason ? ` · ${a.reason}` : ''}${since}`;
 }
 
-function MemberRows({ list, onOpen }: { list: Member[]; onOpen: (m: Member) => void }) {
+/** 头像角标（D217）：停用 ⏸、冷却 ⏳、今天用完 🌙；其余不加角标 */
+function ringStatus(m: Member): AvatarStatus {
+  if (!m.enabled) return 'paused';
+  if (m.activity?.state === 'cooldown') return 'cooldown';
+  if (m.activity?.state === 'depleted') return 'sleeping';
+  return 'available';
+}
+
+/** 一行成员：头像外圈 = 今天余量（GET /api/usage）；悬停 300ms / 聚焦 / 长按出 3 行悬停卡（D218） */
+function MemberRows({ list, onOpen, usage }: { list: Member[]; onOpen: (m: Member) => void; usage: UsageRow[] | null }) {
   return (
     <>
-          {list.map((m) => (
-            <button key={m.id} type="button" className="row row-button" onClick={() => onOpen(m)}>
+      {list.map((m) => {
+        const q = usage?.find((u) => u.memberId === m.id)?.quota;
+        const row = (
+          <button type="button" className="row row-button" onClick={() => onOpen(m)} aria-describedby={`hc-${m.id}`}>
+            <MemberAvatar name={m.name} online={m.enabled && m.status === 'active'} status={ringStatus(m)} used={q?.used} limit={q?.limit}>
               <Avatar name={m.name} size="sm" glyph={m.avatar} />
-              <span className="row-text">
-                <span className="row-label">{m.name}</span>
-                <span className="row-hint">
-                  {m.role ? `${m.role} · ` : ''}
-                  {statusText(m)}
-                  {m.capabilityTags.length > 0 && ` · ${m.capabilityTags.join('、')}`}
-                </span>
+            </MemberAvatar>
+            <span className="row-text">
+              <span className="row-label">{m.name}</span>
+              <span className="row-hint">
+                {m.role ? `${m.role} · ` : ''}
+                {statusText(m)}
+                {m.capabilityTags.length > 0 && ` · ${m.capabilityTags.join('、')}`}
               </span>
-              <ChevronRight aria-hidden="true" className="row-chevron" />
-            </button>
-          ))}
+            </span>
+            <ChevronRight aria-hidden="true" className="row-chevron" />
+          </button>
+        );
+        return (
+          <Suspense key={m.id} fallback={row}>
+            <HoverCard memberId={m.id} wrap>
+              {row}
+            </HoverCard>
+          </Suspense>
+        );
+      })}
     </>
   );
 }
@@ -106,6 +135,7 @@ function MemberRows({ list, onOpen }: { list: Member[]; onOpen: (m: Member) => v
  * 空状态 = 一句话 + 直达「添加成员」（审计 M2）。
  */
 export function MembersPanel({ members, onOpen, onAdd, failed, onRetry }: { members: Member[]; onOpen: (m: Member) => void; onAdd?: () => void; failed?: boolean; onRetry?: () => void }) {
+  const { rows: usage } = useUsage(120_000);
   const active = members.filter((m) => m.enabled && m.status === 'active');
   const candidates = members.filter((m) => m.enabled && m.status === 'candidate');
   const off = members.filter((m) => !m.enabled);
@@ -130,17 +160,17 @@ export function MembersPanel({ members, onOpen, onAdd, failed, onRetry }: { memb
         <>
           {active.length > 0 && (
             <Group title={`在职（${active.length}）`}>
-              <MemberRows list={active} onOpen={onOpen} />
+              <MemberRows list={active} onOpen={onOpen} usage={usage} />
             </Group>
           )}
           {candidates.length > 0 && (
             <Group title={`候选（${candidates.length}）`}>
-              <MemberRows list={candidates} onOpen={onOpen} />
+              <MemberRows list={candidates} onOpen={onOpen} usage={usage} />
             </Group>
           )}
           {off.length > 0 && (
             <Group title={`已停用（${off.length}）`}>
-              <MemberRows list={off} onOpen={onOpen} />
+              <MemberRows list={off} onOpen={onOpen} usage={usage} />
             </Group>
           )}
         </>

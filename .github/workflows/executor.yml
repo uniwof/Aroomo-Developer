@@ -4,10 +4,10 @@ name: Executor
 on:
   pull_request:
     branches: [dev, main]
-    paths: ['executor/**', 'core/src/executor/**', 'docs/executor-protocol.md', '.github/workflows/executor.yml']
+    paths: ['executor/**', 'core/src/executor/**', 'core/src/auth/**', 'core/src/clients/**', 'shell/src/**', 'docs/executor-protocol.md', '.github/workflows/executor.yml']
   push:
     branches: [dev]
-    paths: ['executor/**', 'core/src/executor/**', 'docs/executor-protocol.md', '.github/workflows/executor.yml']
+    paths: ['executor/**', 'core/src/executor/**', 'core/src/auth/**', 'core/src/clients/**', 'shell/src/**', 'docs/executor-protocol.md', '.github/workflows/executor.yml']
   workflow_dispatch:
 
 permissions:
@@ -103,6 +103,42 @@ jobs:
           Remove-Item Env:AROOMO_EXECUTOR_TOKEN
           node executor\dist\cli.js check
           if ($LASTEXITCODE -ne 0) { throw 'check 没通过（令牌文件应可读）' }
+      - name: 真 DPAPI 往返 + 凭据文件安装 + 计划任务运行身份（#376 M5 / M7，不得跳过）
+        # pwsh（UTF-8）跑这一步的中文；安装脚本本身仍由 Windows PowerShell 5.1 子进程运行（脚本带 BOM）
+        shell: pwsh
+        env:
+          AROOMO_EXECUTOR_CONFIG: ${{ runner.temp }}\exec2\config.json
+        run: |
+          $cred = Join-Path $env:RUNNER_TEMP 'cred.json'
+          $secret = 'ci-dpapi-' + [guid]::NewGuid().ToString('N')
+          @{ deviceToken = 'ci-placeholder-device-token'; cfClientId = 'ci-client-id.access'; cfClientSecret = $secret } | ConvertTo-Json | Set-Content -LiteralPath $cred -Encoding UTF8
+          $task = 'Aroomo Executor CI ' + $env:GITHUB_RUN_ID
+          $dir = Join-Path $env:RUNNER_TEMP 'exec2'
+          powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File executor\scripts\install-windows.ps1 -BootstrapFile $cred -NoAutoUpdate -TaskName $task
+          if ($LASTEXITCODE -ne 0) { throw '凭据文件安装失败' }
+          try {
+            if (Test-Path -LiteralPath $cred) { throw '凭据文件没删' }
+            if ((Get-Content -Raw (Join-Path $dir 'cf-access-secret.dpapi')) -match [regex]::Escape($secret)) { throw 'DPAPI 文件里有明文' }
+            if ((Get-Content -Raw (Join-Path $dir 'config.json')) -match [regex]::Escape($secret)) { throw 'config.json 里有 Secret' }
+            $p = (Get-ScheduledTask -TaskName $task).Principal
+            $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+            Write-Output "计划任务运行身份：$($p.UserId) / $($p.LogonType)；当前用户：$me"
+            if (($p.UserId -split '\\')[-1] -ne ($me -split '\\')[-1]) { throw '计划任务运行身份不是当前用户' }
+            if ($p.UserId -match '^(NT AUTHORITY\\)?SYSTEM$' -or "$($p.LogonType)" -ne 'Interactive') { throw '运行身份或登录类型不对' }
+          } finally {
+            Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyContinue
+          }
+          $env:AROOMO_REAL_DPAPI = '1'
+          $env:AROOMO_REAL_DPAPI_TOKENFILE = Join-Path $dir 'device-token'
+          $env:AROOMO_REAL_DPAPI_EXPECT = $secret
+          Push-Location executor
+          npx vitest run test/cf-access.test.ts --reporter=default --reporter=json --outputFile="$env:RUNNER_TEMP\dpapi.json"
+          $code = $LASTEXITCODE
+          Pop-Location
+          if ($code -ne 0) { throw 'vitest 失败' }
+          $r = (Get-Content -Raw "$env:RUNNER_TEMP\dpapi.json" | ConvertFrom-Json).testResults.assertionResults | Where-Object { $_.title -like '真 DPAPI*' }
+          if (-not $r -or @($r | Where-Object status -ne 'passed').Count -gt 0) { throw '真 DPAPI 用例没有实跑通过（跳过也算失败）' }
+          Write-Output '真 DPAPI 往返：passed'
       - name: 自动更新脚本（检出为游离 HEAD，应安全跳过）
         shell: powershell
         run: |
