@@ -25,8 +25,10 @@ user_sessions.user_id 是 uuid，策略写 `user_id::text = …`。其余四张 
 
 ## core_settings（0037，#345 P1）
 core_settings 加 `user_id text NOT NULL DEFAULT 'owner'`，按键名前缀回填：`u<32 位十六进制>.` → 标准 UUID 写法的账号 id，其余（所有者、vault.fp 等全局设置）→ `'owner'`；CHECK `core_settings_user_id_matches_key` 把 user_id 和键名前缀绑死。键名前缀保留（回退到旧版本照常读写）。
-应用侧 `PgSettingsStore` 用同一套换算（`settingsOwnerOf`）：每次读写都在键所属账号的 userScoped 里，并带 `WHERE user_id`；没有跨账号枚举，不新增 systemScoped。用量计数、负责人、规矩、工具网关定义因此进 RLS。
-回退：`core/migrations/down/0037_rls_p1_settings.down.sql`（表所有者执行）。上线前核对：`core_settings` 回填后 `user_id <> 'owner'` 的行数 = 键名带 `u<hex>.` 前缀的行数（CHECK 已保证一致，迁移失败即不一致）。
+应用侧 `PgSettingsStore` 用同一套换算（`settingsOwnerOf`），但**范围由调用方声明，不由键名决定**：构造时显式给出归属账号（`new PgSettingsStore(db, 'owner')`；`scopedSettings(store, userId)` 经 `forAccount(userId)` 声明该账号），每次读写先断言键名换算出的账号 = 声明的账号，不一致抛错；断言过了才在该账号的 userScoped 里读写，并带 `WHERE user_id`。没有跨账号枚举，不新增 systemScoped。用量计数、负责人、规矩、工具网关定义因此进 RLS。
+局限：RLS 只挡「写错的 SQL」；「声明错账号」（调用方把别人的 userId 传进 scopedSettings）RLS 挡不住，靠路由层只用会话里的 userId（D111）。内存版 `MemorySettingsStore` 无 RLS、不做该断言（只用于单元测试）。
+不经 scopedSettings、直接用所有者 store（`deps.settings`，声明为 'owner'）的地方，键都不带 `u<hex>.` 前缀：`UsageService`、`LeadService`、`SecurityService`（`core/src/server.ts`）、`trialExpiryJob` 的 `TrialService`、`vaultStartupCheck`（`core/src/index.ts`，全局 vault.fp）。其中任何一处拿到带前缀的键都会被断言拒绝。
+回退：`core/migrations/down/0037_rls_p1_settings.down.sql`（回退前先备份；表所有者执行）。上线前核对：`core_settings` 回填后 `user_id <> 'owner'` 的行数 = 键名带 `u<hex>.` 前缀的行数（CHECK 已保证一致，迁移失败即不一致）。
 
 ## 应用连接角色与上线步骤
 

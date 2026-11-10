@@ -1,3 +1,4 @@
+-- 回退前先备份（scripts/backup.sh；FORCE RLS 下 pg_dump 须用超级用户或 BYPASSRLS 角色，否则导出不全）。
 -- 回退 0037：关掉 core_settings 的 RLS、删策略和约束、删 user_id 列（键名前缀还在，旧版本照常读写）。
 -- 执行身份：表所有者 aroomo_core（见 docs/ops/RLS.md），用 psql -U aroomo_core -d aroomo_core -f 本文件 跑，不要用应用角色。
 BEGIN;

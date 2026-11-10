@@ -7,6 +7,8 @@ import { userScoped } from '../db/scope.js';
 export interface SettingsStore {
   get<T>(key: string): Promise<T | null>;
   set(key: string, value: unknown, at: Date): Promise<void>;
+  /** 同一存储、改为声明归属账号 userId 的视图（PgSettingsStore 用它绑定 RLS 范围；内存版无 RLS，不实现） */
+  forAccount?(userId: string): SettingsStore;
 }
 
 export class MemorySettingsStore implements SettingsStore {
@@ -31,13 +33,25 @@ export function settingsOwnerOf(key: string): string {
 }
 
 /**
- * RLS（0037，#345 P1）：每次读写都在键所属账号的 userScoped 里做，并带 WHERE user_id；
- * 漏写条件或键名拼错也只碰得到那个账号自己的行。没有跨账号枚举，所以不需要 systemScoped。
+ * RLS（0037，#345 P1）：调用方在构造时显式声明归属账号（'owner' 或标准 UUID），每次读写先断言
+ * 键名换算出的账号 = 声明的账号，不一致就抛错（负责人第 1 轮 M1：不能由键名决定去谁的范围）；
+ * 断言过了才在该账号的 userScoped 里读写，并带 WHERE user_id。没有跨账号枚举，所以不需要 systemScoped。
  */
 export class PgSettingsStore implements SettingsStore {
-  constructor(private readonly db: Db) {}
-  async get<T>(key: string): Promise<T | null> {
+  constructor(
+    private readonly db: Db,
+    private readonly account: string,
+  ) {}
+  forAccount(userId: string): SettingsStore {
+    return new PgSettingsStore(this.db, userId);
+  }
+  #uid(key: string): string {
     const uid = settingsOwnerOf(key);
+    if (uid !== this.account) throw new Error(`设置键不属于声明的账号（声明 ${this.account}，键名换算 ${uid}）`);
+    return uid;
+  }
+  async get<T>(key: string): Promise<T | null> {
+    const uid = this.#uid(key);
     const { rows } = await userScoped(this.db, uid).query<{ value: T }>(
       'SELECT value FROM core_settings WHERE user_id = $1 AND key = $2',
       [uid, key],
@@ -45,7 +59,7 @@ export class PgSettingsStore implements SettingsStore {
     return rows[0] ? rows[0].value : null;
   }
   async set(key: string, value: unknown, at: Date): Promise<void> {
-    const uid = settingsOwnerOf(key);
+    const uid = this.#uid(key);
     await userScoped(this.db, uid).query(
       `INSERT INTO core_settings (user_id, key, value, updated_at) VALUES ($1, $2, $3::jsonb, $4)
        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at
@@ -64,8 +78,9 @@ export function scopedSettings(store: SettingsStore, userId: string): SettingsSt
   const hex = userId.toLowerCase().replace(/[^a-f0-9]/g, '');
   if (!/^[a-f0-9]{32}$/.test(hex)) throw new Error('非法 user id');
   const k = (key: string) => `u${hex}.${key}`;
+  const base = store.forAccount ? store.forAccount(settingsOwnerOf(k(''))) : store;
   return {
-    get: <T>(key: string) => store.get<T>(k(key)),
-    set: (key: string, value: unknown, at: Date) => store.set(k(key), value, at),
+    get: <T>(key: string) => base.get<T>(k(key)),
+    set: (key: string, value: unknown, at: Date) => base.set(k(key), value, at),
   };
 }
