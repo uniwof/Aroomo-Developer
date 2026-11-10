@@ -179,10 +179,12 @@ describe('D80-2 Host 白名单', () => {
 describe('safeLocalPath 穷举（#357 M1/M2）', () => {
   // 小字母表上穷举长度 ≤5 的所有串
   const ALPHA = ['/', '\\', '.', '\t', '\n', '\r', 'a', ':', '@', '%', ' ', '中'];
-  function* strings(max: number): Generator<string> {
+  // 负责人第 2 轮补：NUL、US、DEL、全角空格、全角斜杠、? 、#。与原字母表合并后穷举到长度 ≤4（≤5 太慢）
+  const EXTRA = ['\x00', '\x1f', '\x7f', '\u3000', '\uFF0F', '?', '#'];
+  function* strings(max: number, alpha: readonly string[] = ALPHA): Generator<string> {
     let layer = [''];
     for (let n = 1; n <= max; n++) {
-      layer = layer.flatMap((s) => ALPHA.map((c) => s + c));
+      layer = layer.flatMap((s) => alpha.map((c) => s + c));
       yield* layer;
     }
   }
@@ -209,5 +211,38 @@ describe('safeLocalPath 穷举（#357 M1/M2）', () => {
     expect(offSite.slice(0, 5)).toEqual([]);
     expect(nonAscii.slice(0, 5)).toEqual([]);
     expect(rawEscapes).toBeGreaterThan(0); // 判据不是恒真
+  });
+
+  it('补充字符（\\x00 \\x1f \\x7f \\u3000 \\uFF0F ? #）与原字母表组合穷举到长度 ≤4，同一判据', () => {
+    const offSite: string[] = [];
+    const nonAscii: string[] = [];
+    let rawEscapes = 0;
+    for (const s of strings(4, [...ALPHA, ...EXTRA])) {
+      const h = hostOf(s);
+      if (h !== null && h !== 'host.test') rawEscapes++;
+      const out = safeLocalPath(s);
+      if (out !== '/' && hostOf(out) !== 'host.test') offSite.push(JSON.stringify(s));
+      if (!/^[\x21-\x7e]+$/.test(out)) nonAscii.push(JSON.stringify(s));
+    }
+    expect(offSite.slice(0, 5)).toEqual([]);
+    expect(nonAscii.slice(0, 5)).toEqual([]);
+    expect(rawEscapes).toBeGreaterThan(0);
+  });
+
+  it('显式用例：控制字符一律回 /', () => {
+    for (const c of ['\x00', '\x1f', '\x7f', '\r', '\t\\']) {
+      expect(safeLocalPath(c)).toBe('/');
+      expect(safeLocalPath(`/${c}`)).toBe('/');
+      expect(safeLocalPath(`/${c}/evil.example`)).toBe('/');
+    }
+  });
+
+  it('显式用例：%2F%2F、全角空格、全角斜杠、/.//evil 按同源判据', () => {
+    const sameOrigin = (out: string) => out === '/' || hostOf(out) === 'host.test';
+    for (const s of ['/%2F%2Fevil.example', '%2F%2Fevil.example', '/\u3000/evil.example', '\u3000//evil.example', '/\uFF0F/evil.example', '/\uFF0Fevil.example', '\uFF0F\uFF0Fevil.example', '/.//evil.example', '/.//evil.example/x']) {
+      const out = safeLocalPath(s);
+      expect(sameOrigin(out), `${JSON.stringify(s)} → ${out}`).toBe(true);
+      expect(out).toMatch(/^[\x21-\x7e]+$/);
+    }
   });
 });
