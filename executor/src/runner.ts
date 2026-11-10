@@ -8,12 +8,13 @@ import { Backoff, sleep } from './backoff.js';
 import type { Logger } from './logger.js';
 import type { PhonePort } from './adapters/droidrun.js';
 import { runPhoneTask } from './tasks/phone.js';
-import { pickBrowser, type BrowserPort, type BrowserSession } from './ports/browser.js';
+import { openBrowser, probe, type BrowserPort, type BrowserSession } from './ports/browser.js';
 import { TASK_KINDS, type ResultRequest, type ScreenshotSummary, type SecretRef, type Task, type TakeoverReason } from './protocol.js';
 import { Redactor } from './redact.js';
 import { TaskCancelled, TaskFailed, type TaskContext, type TaskHandler, type TaskOutcome } from './tasks/context.js';
 import { HANDLERS } from './tasks/handlers.js';
 import { CoreError, type CoreTransport } from './transport.js';
+import { DriverError } from './ports/driver.js';
 
 export interface RunnerOptions {
   transport: CoreTransport;
@@ -37,6 +38,8 @@ export interface RunnerOptions {
   taskActiveMaxMs?: number;
   /** 看门狗检查间隔，测试可调小 */
   watchdogTickMs?: number;
+  /** 浏览器适配器探活 / 打开会话的时限（#382，默认 30 秒 / 60 秒）；超时视为不可用并降级到下一个 */
+  browserTimeouts?: { probeMs?: number; openMs?: number };
 }
 
 export type RunnerState = 'starting' | 'online' | 'reconnecting' | 'auth_failed' | 'stopped';
@@ -69,7 +72,7 @@ export class Runner {
 
   async #hello(signal: AbortSignal): Promise<boolean> {
     const browsers: string[] = [];
-    for (const b of this.#o.browsers) if (await b.available().catch(() => false)) browsers.push(b.name);
+    for (const b of this.#o.browsers) if (await probe(b, this.#o.browserTimeouts?.probeMs)) browsers.push(b.name);
     try {
       const r = await this.#o.transport.hello({
         deviceName: this.#o.deviceName,
@@ -263,11 +266,11 @@ export class Runner {
         out = await guarded(runPhoneTask(ctx, phone));
       } else {
         const handler = this.#handlers[task.kind];
-        const port = await pickBrowser(this.#o.browsers);
-        if (!port) throw new TaskFailed('NO_BROWSER', '本机没有可用的浏览器适配器（ego lite / Playwright 都不可用）');
-        const opened = await guarded(port.open({ label: task.id.slice(0, 8), redact: (s) => redactor.redact(s) }));
-        session = opened;
-        out = await guarded(handler(ctx, opened));
+        const picked = await guarded(openBrowser(this.#o.browsers, { label: task.id.slice(0, 8), redact: (s) => redactor.redact(s) }, this.#o.browserTimeouts));
+        if (!picked) throw new TaskFailed('NO_BROWSER', '本机没有可用的浏览器适配器（ego lite / Playwright 都不可用或打开超时）');
+        if (picked.port !== this.#o.browsers[0]) log.info('主选浏览器不可用，已改用备选', { taskId: task.id, adapter: picked.port.name });
+        session = picked.session;
+        out = await guarded(handler(ctx, picked.session));
       }
       result = { status: 'succeeded', summary: out.summary, ...(out.screenshot ? { screenshot: out.screenshot } : {}) };
     } catch (e) {
@@ -280,7 +283,8 @@ export class Runner {
         result = { status: 'failed', summary: e.message, error: { code: e.code, message: e.message } };
       } else {
         const msg = e instanceof Error ? e.message : String(e);
-        result = { status: 'failed', summary: '执行出错', error: { code: e instanceof CoreError ? e.code : 'INTERNAL', message: msg } };
+        const code = e instanceof CoreError || e instanceof DriverError ? e.code : 'INTERNAL';
+        result = { status: 'failed', summary: e instanceof DriverError ? `浏览器操作失败：${msg}` : '执行出错', error: { code, message: msg } };
       }
     } finally {
       clearInterval(hb);
