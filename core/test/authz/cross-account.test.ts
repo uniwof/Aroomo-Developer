@@ -71,11 +71,8 @@ const MIN_API_ROUTES = 119;
  * 这些表的跨账号隔离靠应用层（WHERE user_id / 只给所有者的接口），由上面的接口遍历和数据库快照兜。
  */
 const NO_RLS_TABLES: Record<string, string> = {
-  // 理由一栏写的是现状，不是负责人的裁定。#345：P0（client_tokens / user_sessions / exec_* / executors / confirm_challenges）已在 0036 开 RLS，从名单删掉；core_settings（P1）已在 0037 开 RLS，同样删掉；users / user_invites / audit_log（P2）待做
-  audit_log: '只追加；只给所有者读（GET /api/audit），按 actor_id 记',
+  // 理由一栏写的是现状，不是负责人的裁定。#345：P0（client_tokens / user_sessions / exec_* / executors / confirm_challenges）已在 0036 开 RLS，从名单删掉；core_settings（P1）已在 0037 开 RLS，同样删掉；users / user_invites / audit_log（P2）已在 0038 开 RLS，同样删掉
   core_schema_migrations: '迁移记录，不属于任何账号',
-  user_invites: '登录前按邀请码查',
-  users: '登录前按邮箱查',
 };
 
 /** 应用角色：NOLOGIN、非超级用户、不能绕过 RLS、不是任何表的所有者（D206）。迁移和授权以表所有者身份做完再切过去 */
@@ -1204,9 +1201,13 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     const db = t.deps.db!;
     const c = await assertAppRoleSafe(db, { expectRole: APP_ROLE });
     expect([c.superuser, c.bypassRls, c.ownedTables, c.notForced]).toEqual([false, false, 0, []]);
-    const rlsTables = (await db.query<{ t: string }>(
+    const allRlsTables = (await db.query<{ t: string }>(
       `SELECT c.relname AS t FROM pg_class c WHERE c.relnamespace = current_schema()::regnamespace AND c.relkind = 'r' AND c.relrowsecurity ORDER BY 1`,
     )).rows.map((r) => r.t);
+    // #345 P2（0038）：users / user_invites / audit_log 没有 user_id 列（按 id / created_by / 只追加分别设策略），下面按 user_id 的读写测试不适用，
+    // 它们的跨账号读写拒绝在 test/rls-p2.test.ts 里逐条测（用户范围读不到、改不了、冒充写入被拒）。
+    const NO_USER_ID_COL = ['users', 'user_invites', 'audit_log'];
+    const rlsTables = allRlsTables.filter((x) => !NO_USER_ID_COL.includes(x));
     expect(rlsTables).toEqual(expect.arrayContaining(['members', 'vault_secrets', 'library_items', 'public_memory', 'inbox_items', 'provider_keys', 'conversations', 'assistants', 'push_subscriptions', 'work_projects']));
     const victims = ['owner', ids.b.user!];
     const count = async (q: Db, table: string) => Number((await q.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table} WHERE user_id::text = ANY($1)`, [victims])).rows[0]!.n);
@@ -1238,7 +1239,7 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     expect(await count(userScoped(db, 'owner'), 'vault_secrets')).toBeGreaterThan(0);
     // 必改 7：没开 RLS 的表必须正好等于这份白名单（新增没开 RLS 的表 → 失败，要么开 RLS，要么在这里写理由）
     const allTables = (await db.query<{ t: string }>(`SELECT c.relname AS t FROM pg_class c WHERE c.relnamespace = current_schema()::regnamespace AND c.relkind = 'r' ORDER BY 1`)).rows.map((r) => r.t);
-    expect(allTables.filter((x) => !rlsTables.includes(x)).sort(), '没开 RLS 的表和 NO_RLS_TABLES 白名单不一致').toEqual(Object.keys(NO_RLS_TABLES).sort());
+    expect(allTables.filter((x) => !allRlsTables.includes(x)).sort(), '没开 RLS 的表和 NO_RLS_TABLES 白名单不一致').toEqual(Object.keys(NO_RLS_TABLES).sort());
     // 必改 7：写操作逐表测。每张 RLS 表：小号身份 UPDATE / DELETE 别人的行影响 0 行；往 owner / B 名下 INSERT 被 RLS（WITH CHECK）拒。
     // 每条都在事务里做完就回滚：万一 RLS 失效也不会真把数据删掉、影响后面的用例
     const ROLLBACK = new Error('rollback');
