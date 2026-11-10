@@ -10,7 +10,7 @@
  * - SAVED_CHATS     会话存库：对话列表 / 消息从 Core 的 /api/conversations 读，发消息时由 Core 存；Core 拿不到时退回本机
  * - ASSISTANTS      会话栏「助手」列表、新建助手、助手详情（固定会话 + 运行记录 + 立即运行 + 暂停继续）——等 /api/assistants
  *
- * - WORK            （在 work-flag.ts）/work 项目与版本（docs/api/design-work-v1.md，切片 1 只读 + GitHub 同步）——只给所有者，所有者验收后再开
+ * - WORK            （在 work-flag.ts）/work 项目与版本（docs/api/design-work-v1.md，切片 1 只读 + GitHub 同步，切片 2 加公共记忆、助手来源）——只给所有者，所有者验收后再开
  *
  * 写法（2026-11-07，#323 负责人第二轮的发现）：每个开关是单独的顶层 `export const`，**不要再包成对象**。构建器只内联顶层常量、
  * 不内联对象的属性：以前 `FLAGS.x` 关着时，后面的代码照样打进对话页包。用到开关的地方直接 import 这个常量；

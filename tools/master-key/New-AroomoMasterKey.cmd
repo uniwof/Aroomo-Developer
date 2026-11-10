@@ -12,11 +12,13 @@ exit /b %AROOMO_MK_RC%
 #      installer/windows/Get-AgeKeygen.ps1 相同；CI 检查两处一致）。
 #   2. 在本机用官方 age-keygen 生成主密钥（这一步不联网）。
 #   3. 私钥保存到所有者自己选的位置；屏幕上只显示公钥 age1…，并复制到剪贴板。
+#      没插 U 盘就停下（不再默认存桌面：桌面常被 OneDrive 同步上云）；选到 OneDrive 下的位置要警告重选（#248）。
 # 私钥永不上传、不显示、不进日志、不进聊天。
 # 用法：从 GitHub Releases 的 master-key-v1 下载本文件，核对 SHA-256（见 docs/ops/MASTER-KEY.md）后双击。
 #   不要从分支 raw 地址下载执行（分支内容会变）。
 # 无交互（CI 冒烟）：AROOMO_MK_NONINTERACTIVE=1，AROOMO_MK_OUT=私钥文件完整路径；
-#   标准输出只有一行公钥。
+#   标准输出只有一行公钥。不查 U 盘（CI 没有），但同样拒绝 OneDrive 下的路径。
+# 只加载函数不运行（测试用）：AROOMO_MK_LOAD_ONLY=1，见 MasterKey.Tests.ps1。
 # 文件必须是 UTF-8 不带 BOM（带 BOM 会让 .cmd 第一行失效）。
 # ---------------------------------------------------------------------------
 
@@ -24,6 +26,29 @@ $script:AgeVersion = 'v1.2.1'
 $script:AgeZipUrl = "https://github.com/FiloSottile/age/releases/download/$($script:AgeVersion)/age-$($script:AgeVersion)-windows-amd64.zip"
 # age v1.2.1 windows-amd64 zip 的 SHA-256（2026-10-28 计算，与 Get-AgeKeygen.ps1 相同）
 $script:AgeZipSha256 = '46db0db71f146061f7c8fffa912cb806aef1bc8450e27a3abc1744f0591b89fb'
+
+# 私钥不上传（D64）：$env:OneDrive / OneDriveConsumer / OneDriveCommercial 下的位置会被同步到微软云
+function Test-AroomoOneDrivePath([string]$Path) {
+    if (-not $Path) { return $false }
+    try { $full = [IO.Path]::GetFullPath($Path) } catch { $full = $Path }
+    foreach ($r in @($env:OneDrive, $env:OneDriveConsumer, $env:OneDriveCommercial)) {
+        if (-not $r) { continue }
+        try { $root = [IO.Path]::GetFullPath($r) } catch { $root = $r }
+        $root = $root.TrimEnd('\', '/')
+        if ($full.Equals($root, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+        foreach ($sep in @('\', '/')) {
+            if ($full.StartsWith($root + $sep, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+        }
+    }
+    return $false
+}
+
+# 保存对话框打开在 U 盘；没插 U 盘就停（不回退到桌面）
+function Get-AroomoKeyDir($Drives = ([IO.DriveInfo]::GetDrives())) {
+    $usb = @($Drives) | Where-Object { $_ -and "$($_.DriveType)" -eq 'Removable' -and $_.IsReady } | Select-Object -First 1
+    if (-not $usb) { throw '没找到 U 盘。请先插 U 盘，再双击运行一次。私钥不会存到桌面（桌面常被 OneDrive 同步上云）。已经插了还看到这句，就告诉 Hark。' }
+    return $usb.RootDirectory.FullName
+}
 
 function Invoke-AroomoMasterKeyTool {
     $quiet = ($env:AROOMO_MK_NONINTERACTIVE -eq '1')
@@ -43,6 +68,10 @@ function Invoke-AroomoMasterKeyTool {
     }
 
     try {
+        if ($quiet) {
+            if (-not $env:AROOMO_MK_OUT) { throw '无交互模式需要 AROOMO_MK_OUT' }
+            if (Test-AroomoOneDrivePath $env:AROOMO_MK_OUT) { throw '保存位置在 OneDrive 下，会被同步上云，已停止（D64 私钥不上传）。' }
+        }
         if (-not $quiet) {
             try { $Host.UI.RawUI.WindowTitle = 'Aroomo 主密钥' } catch { Write-Verbose 'title' }
             try {
@@ -50,6 +79,12 @@ function Invoke-AroomoMasterKeyTool {
                 $voice = New-Object System.Speech.Synthesis.SpeechSynthesizer
                 try { $voice.SelectVoiceByHints('NotSet', 'NotSet', 0, [Globalization.CultureInfo]'zh-CN') } catch { Write-Verbose 'no zh voice' }
             } catch { $voice = $null }
+            # 先确认插了 U 盘，再下载、生成：没插就什么都不做
+            try { $keyDir = Get-AroomoKeyDir } catch {
+                Say $_.Exception.Message 'Yellow'
+                Speak '没找到 U 盘。请先插上 U 盘，再运行一次。已经插了还听到这句，就告诉 Hark。'
+                return 1
+            }
             Add-Type -AssemblyName System.Windows.Forms
             Add-Type -AssemblyName System.Drawing
             Say '第 1 步：下载官方 age 工具，核对指纹……' 'Cyan'
@@ -106,25 +141,28 @@ function Invoke-AroomoMasterKeyTool {
         # 3. 保存到所有者自己选的位置
         if ($quiet) {
             $path = $env:AROOMO_MK_OUT
-            if (-not $path) { throw '无交互模式需要 AROOMO_MK_OUT' }
         } else {
-            Say '第 3 步：选一个地方保存私钥。最好直接存到 U 盘。' 'Yellow'
-            Speak '请选择保存私钥的位置，最好是 U 盘。'
-            $usb = [IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Removable' -and $_.IsReady } | Select-Object -First 1
-            $dir = if ($usb) { $usb.RootDirectory.FullName } else { [Environment]::GetFolderPath('Desktop') }
+            Say '第 3 步：选一个地方保存私钥。窗口已经打开在 U 盘，直接按「保存」。' 'Yellow'
+            Speak '请把私钥保存到 U 盘。窗口已经打开在 U 盘，直接按保存。'
             $path = $null
             for ($try = 0; $try -lt 3 -and -not $path; $try++) {
                 $dlg = New-Object System.Windows.Forms.SaveFileDialog
                 $dlg.Title = '保存 Aroomo 主密钥（私钥）'
-                $dlg.InitialDirectory = $dir
+                $dlg.InitialDirectory = $keyDir
                 $dlg.FileName = 'aroomo-master-key.txt'
                 $dlg.Filter = '文本文件 (*.txt)|*.txt'
                 $dlg.OverwritePrompt = $true
-                if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $path = $dlg.FileName }
+                if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+                    if (Test-AroomoOneDrivePath $dlg.FileName) {
+                        Say '这个位置在 OneDrive 里，会被同步到网上。私钥不能存这里，请换到 U 盘。' 'Red'
+                        Speak '这个位置会被同步到网上，请换到 U 盘。'
+                    } else { $path = $dlg.FileName }
+                }
                 else { Say '还没有保存。私钥必须先存好，才会给你公钥。' 'Yellow'; Speak '还没有保存，请再选一次。' }
             }
             if (-not $path) { throw '没有保存私钥，已放弃这次生成（什么都没留下）。可以再运行一次。' }
         }
+        if (Test-AroomoOneDrivePath $path) { throw '保存位置在 OneDrive 下，会被同步上云，已停止（D64 私钥不上传）。' }
         $utf8 = New-Object System.Text.UTF8Encoding($false)
         [IO.File]::WriteAllText($path, ($content -join "`r`n"), $utf8)
         $back = [IO.File]::ReadAllText($path, $utf8)
@@ -184,6 +222,8 @@ function Invoke-AroomoMasterKeyTool {
     }
 }
 
-$aroomoMkRc = Invoke-AroomoMasterKeyTool
-if ($env:AROOMO_MK_FROM_CMD -eq '1') { exit $aroomoMkRc }
-if ($aroomoMkRc -ne 0 -and $env:AROOMO_MK_NONINTERACTIVE -ne '1') { [void](Read-Host '  按回车键关闭') }
+if ($env:AROOMO_MK_LOAD_ONLY -ne '1') {
+    $aroomoMkRc = Invoke-AroomoMasterKeyTool
+    if ($env:AROOMO_MK_FROM_CMD -eq '1') { exit $aroomoMkRc }
+    if ($aroomoMkRc -ne 0 -and $env:AROOMO_MK_NONINTERACTIVE -ne '1') { [void](Read-Host '  按回车键关闭') }
+}

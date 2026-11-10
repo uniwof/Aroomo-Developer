@@ -15,11 +15,19 @@ export const MARKERS = {
   // 没用 /api/work/：那些请求都在 WorkPage 懒加载包里，WORK 打开时对话页包里也没有，查了等于没查（实测 2026-11-07）。
   WORK: [/\/work(?![\w-])/],
   ASSISTANTS: ['助手列表没加载出来'],
+  // #329（负责人 #328 建议）：现在不在对话页包里（出现 0 次照样绿），以后谁把它们直接 import 进对话页又没加开关，当场抓到。
+  // 标志文字是组件独有的界面字：TaskCard 的确认块「花多少：」、反问块输入框「写你的回答」；QuickReplies 的「我自己写…」
+  TASK_CARDS: ['花多少：', '写你的回答'],
+  QUICK_REPLIES: ['我自己写…'],
+  // Skin/Bones 切片 1：侧栏读屏名字和 /assets 空状态是这个开关独有的界面字
+  // 切片 2：抽屉入口的按钮字；drawer-query.ts 里宽档的字符串字面量 '640'（开关开时出现 2 次、关时 0 次，实测 2026-11-10），
+  // 谁把 drawer-query 不加开关地用进对话页，当场抓到。只认带引号的，免得数字 640 误判
+  // 切片 3：这些字连同抽屉、空壳都挪进了 SkinBonesZone 懒加载块，开关开着时对话页包里也是 0 次；标志字留着，谁把它们挪回主包当场抓到。
+  // 「角色泳道」是 RoleLanes 的标题
+  SKIN_BONES: ['工作台分区', '工具与试用、知识库', '打开示例详情', /[`'"]640[`'"]/, '角色泳道'],
 };
 // 不查的开关和原因（核对时间 2026-11-07，#327）。代码挪进对话页包了就改成 MARKERS。
 export const NO_MARKER = {
-  TASK_CARDS: '只在 AssistantPages 懒加载包里用（TaskCard 只被 AssistantPages import），对话页包里没有它的代码',
-  QUICK_REPLIES: '还没接到界面：QuickReplies.tsx 没有人 import，不进任何包',
   ASSISTANT_DRAFT: '对话页包里只有 ChatPage 一个三元式（受 ASSISTANTS 一起管）；草稿卡在 AssistantPages / ChatDraftCard 懒加载包',
   SAVED_CHATS: '只决定走 Core 还是本机：saved.ts 被 Sidebar 搜索直接 import，/api/conversations 关着也在包里，没有只属于它的文字',
   SKELETON_SHIMMER: '只换一个 class 名（sk--shimmer），AppSkeleton 在入口包（App.tsx），不在对话页包',
@@ -27,7 +35,7 @@ export const NO_MARKER = {
 
 export function readFlags() {
   const flags = {};
-  for (const f of ['src/lib/flags.ts', 'src/lib/work-flag.ts']) {
+  for (const f of ['src/lib/flags.ts', 'src/lib/work-flag.ts', 'src/lib/skinbones-flag.ts']) {
     const src = readFileSync(root + f, 'utf8');
     if (/export\s+const\s+\w+\s*=\s*\{/.test(src)) throw new Error(`${f}：开关不能写成对象（构建器不内联对象属性，关着的代码会进包）`);
     for (const [, k, v] of src.matchAll(/^export const (\w+) = (true|false);$/gm)) flags[k] = v === 'true';
@@ -44,8 +52,11 @@ export function uncovered(flags) {
 export function findLeaks(js, flags) {
   const leaked = [];
   for (const [flag, words] of Object.entries(MARKERS)) {
-    if (!(flag in flags)) throw new Error(`MARKERS 里的 ${flag} 不在 flags.ts / work-flag.ts`);
+    if (!(flag in flags)) throw new Error(`MARKERS 里的 ${flag} 不在 flags.ts / work-flag.ts / skinbones-flag.ts`);
     if (flags[flag]) continue;
+    // SKIN_BONES 开着时 /work 本来就是四区之一（WORK 关着也有空壳地址），'/work' 进对话页包是对的，不算 WORK 漏进来（切片 3 实测：
+    // 不加这一句，开关一开核对就红）。WorkPage 本身在懒加载块里，WORK 关着时照样不进包
+    if (flag === 'WORK' && flags.SKIN_BONES) continue;
     for (const w of words) if (typeof w === 'string' ? js.includes(w) : w.test(js)) leaked.push(`${flag}（关）：对话页包里有「${w}」`);
   }
   return leaked;

@@ -8,7 +8,10 @@
 #   scripts/release-tag.sh deploy vX.Y.Z --confirm vX.Y.Z   真正切换（版本号必须写两遍，防手滑）
 #   scripts/release-tag.sh rollback                      演练：显示将回到哪个版本
 #   scripts/release-tag.sh rollback --confirm <上一个版本>  真正回滚
-#   加 --hotfix：跳过合并闸门（#189），其他检查照旧。
+#   没有本地 --hotfix：闸门永远跑；紧急修复的豁免只认 GitHub 上该 PR 的 hotfix 标签（由 merge-gate.py 判定，#352 M3）。
+#   deploy 时脚本自己从标准输入读只读 GitHub 令牌（read -rs，不回显；可 < 只读文件）。不要 export GH_TOKEN：
+#   环境里的 GH_TOKEN 一进脚本就被清掉，令牌只作为合并闸门那一条命令的环境变量传入（#352 M1），
+#   precheck、构建、docker compose 都拿不到。目标版本没有 scripts/ci/merge-gate.py 就拒绝部署。
 #   加 --lobe-session-ok：回退目标写死 SHELL_AUTH: lobe-session 也照样切（只在确实要回旧登录、LobeHub 在跑时用）。
 #
 # 版本专属的 compose 叠加文件（docs/ops/RELEASE.md「回退到 v0.1.0」）：
@@ -26,31 +29,95 @@
 # 绝不做的事：git clean、git add -A、git stash -u（服务器上有未被忽略的本地密钥文件）；
 #            不打印 .env 的任何值；不碰 main（只读 origin/main）。
 #
-# 环境变量（测试和排障用，生产不用设）：
-#   RELEASE_ROOT（默认 /opt/aroomo）RELEASE_REMOTE（origin）RELEASE_MAIN_BRANCH（main）
-#   RELEASE_TIER（默认 standard，与现有生产一致）RELEASE_HEALTH_TIMEOUT_S（420）
-#   RELEASE_HEALTH_CMD（测试用：命令 <服务名> 输出 healthy 即通过）RELEASE_SKIP_CONSOLE=1（测试用：不构建控制台）
-#   RELEASE_REQUIRE_PRECHECK（默认 1：目标版本缺 scripts/release-precheck.sh 就拒绝部署；只有测试设 0）
-#   RELEASE_DB_CMD（测试用：从 stdin 读一条 SQL、输出无表头结果的命令；默认走 compose exec postgres psql，只读）
-#   RELEASE_PRECHECK_DB（默认 aroomo_core）
+# 环境变量：
+#   RELEASE_ROOT（默认 /opt/aroomo）RELEASE_TIER（默认 standard，与现有生产一致；只许小写字母且 deploy/tiers/<档位>.yml 存在，#353）
+#   RELEASE_HEALTH_TIMEOUT_S（420）RELEASE_HEALTH_POLL_S（5）
+#   合并闸门的仓库写死为 uniwof/Aroomo-Developer、解释器固定 python3，不能用环境变量改（#352 N1）
+# 测试开关（#353）：只在 RELEASE_TEST_MODE=1 时生效。不设 RELEASE_TEST_MODE=1 时只要设了任何一个就拒绝（不悄悄忽略），
+# 并且一律用安全默认值；机器上存在 /opt/aroomo（生产服务器），或 RELEASE_ROOT 就是它时，禁止 RELEASE_TEST_MODE=1。
+# 不设测试模式时，下面这些会被 docker / compose / compose.sh 继承、改掉操作对象的变量设了也拒绝（#353）：
+#   DOCKER_HOST DOCKER_CONTEXT COMPOSE_PROJECT_NAME AROOMO_LOCAL AROOMO_DATA_DIR。COMPOSE_PROFILES 不拒（生产 .env 用它）。
+#   RELEASE_REMOTE（origin）RELEASE_MAIN_BRANCH（main）
+#   RELEASE_HEALTH_CMD（命令 <服务名> 输出 healthy 即通过；默认看 docker 健康状态）RELEASE_SKIP_CONSOLE=1（不构建控制台）
+#   RELEASE_DB_CMD（从 stdin 读一条 SQL、输出无表头结果的命令；默认走 compose exec postgres psql，只读）
+#   RELEASE_PRECHECK_DB（迁移核对和生产前检查连的库；默认 aroomo_core）
+#   RELEASE_REQUIRE_PRECHECK=0 / RELEASE_REQUIRE_GATE=0（目标版本缺生产前检查 / 合并闸门时放行；默认 1 = 拒绝部署）
+#   RELEASE_DOCKER（docker 命令的桩）
+#   以及 release-precheck.sh 的桩（会被它继承）：RELEASE_PSQL RELEASE_BACKUP_CMD RELEASE_SNAPSHOTS_CMD
+#   RELEASE_DOCKER_NETS_CMD RELEASE_IP_ROUTE_CMD RELEASE_MCP_NET_NAME RELEASE_MIGRATIONS_DIR
 set -Eeuo pipefail
 
 ROOT="${RELEASE_ROOT:-/opt/aroomo}"
-REMOTE="${RELEASE_REMOTE:-origin}"
-MAIN_BRANCH="${RELEASE_MAIN_BRANCH:-main}"
+PROD_ROOT="/opt/aroomo"   # 生产目录，写死（#353）
+# 测试开关（#353）：只在 RELEASE_TEST_MODE=1 时生效，见文件头
+TEST_KNOBS=(RELEASE_REMOTE RELEASE_MAIN_BRANCH RELEASE_DB_CMD RELEASE_PRECHECK_DB RELEASE_HEALTH_CMD RELEASE_REQUIRE_GATE
+  RELEASE_REQUIRE_PRECHECK RELEASE_DOCKER RELEASE_SKIP_CONSOLE
+  RELEASE_PSQL RELEASE_BACKUP_CMD RELEASE_SNAPSHOTS_CMD RELEASE_DOCKER_NETS_CMD RELEASE_IP_ROUTE_CMD
+  RELEASE_MCP_NET_NAME RELEASE_MIGRATIONS_DIR)
+# 会被 docker / compose / compose.sh 继承、改掉操作对象（别的引擎、别的 compose 项目、叠加 local/data-dir）的变量（#353）
+INHERITED_DENY=(DOCKER_HOST DOCKER_CONTEXT COMPOSE_PROJECT_NAME AROOMO_LOCAL AROOMO_DATA_DIR)
 TIER="${RELEASE_TIER:-standard}"
 HEALTH_TIMEOUT_S="${RELEASE_HEALTH_TIMEOUT_S:-420}"
 SERVICES=(core lobe shell)
 TAG_RE='^v[0-9]+\.[0-9]+\.[0-9]+$'
 CONFIRM_MSG="需要主会话：确认生产切到标签版"
+GATE_REPO="uniwof/Aroomo-Developer"   # 合并闸门检查的仓库，写死，不读环境变量（#352 N1）
 
 # 把自己复制到临时文件再执行：checkout 会替换本文件，正在运行的脚本不能被改到一半
-if [ -z "${RELEASE_TAG_COPY:-}" ]; then
+# RELEASE_TAG_COPY 退出时会被删掉，所以只认自己建的那份（#353）：等于 $0、形如 /tmp/release-tag.XXXXXX、是普通文件不是软链接。
+# 否则（从环境继承来的任意路径）不信任，重新复制自己。
+copy_ok=0
+if [ -n "${RELEASE_TAG_COPY:-}" ] && [ "$RELEASE_TAG_COPY" = "$0" ] \
+   && [[ "$RELEASE_TAG_COPY" =~ ^/tmp/release-tag\.[A-Za-z0-9]{6}$ ]] \
+   && [ -f "$RELEASE_TAG_COPY" ] && [ ! -L "$RELEASE_TAG_COPY" ]; then
+  copy_ok=1
+fi
+if [ "$copy_ok" = 0 ]; then
   tmp="$(mktemp /tmp/release-tag.XXXXXX)"
   cp "$0" "$tmp"
   RELEASE_TAG_COPY="$tmp" exec bash "$tmp" "$@"
 fi
 trap 'rm -f "$RELEASE_TAG_COPY"' EXIT
+# 令牌不从环境继承（#352 M1）：清掉，免得 precheck、构建、compose 跟着继承；deploy 时下面用 read -rs 读进不导出的变量
+unset GH_TOKEN GITHUB_TOKEN
+gate_tok=""
+
+# 测试模式与生产目录（#353）。在建 .release/ 之前判断：生产目录上被拒时什么都不写
+early_die() { printf '拒绝：%s\n' "$*" >&2; exit 1; }
+case "${RELEASE_TEST_MODE:-}" in
+  "") TEST_MODE=0 ;;
+  1) TEST_MODE=1 ;;
+  *) early_die "RELEASE_TEST_MODE 只能是 1 或不设（现在是 ${RELEASE_TEST_MODE}）" ;;
+esac
+# 生产目录：规范化后（解开软链接、多余的 / 和 ..）等于 /opt/aroomo，或就是同一个目录
+is_prod_root() {
+  [ "$(realpath -m -- "$ROOT")" = "$(realpath -m -- "$PROD_ROOT")" ] || [ "$ROOT" -ef "$PROD_ROOT" ]
+}
+if [ "$TEST_MODE" = 1 ] && is_prod_root; then
+  early_die "生产目录 $ROOT 禁用测试模式：去掉 RELEASE_TEST_MODE=1 再运行（测试开关在生产上一律不生效）"
+fi
+# 生产的真实身份是 compose 项目 aroomo 和它的数据卷，不是路径（#353 M4）：机器上只要有 /opt/aroomo，就当它是生产服务器，
+# 任何目录、任何仓库副本都不许用测试模式（否则副本 + 桩照样能对生产项目 up -d）
+if [ "$TEST_MODE" = 1 ] && { [ -e "$PROD_ROOT" ] || [ -L "$PROD_ROOT" ]; }; then
+  early_die "这台机器上有生产目录 $PROD_ROOT，整机禁用测试模式（不论 RELEASE_ROOT 是哪里）：去掉 RELEASE_TEST_MODE=1 再运行"
+fi
+if [ "$TEST_MODE" = 0 ]; then
+  set_knobs=()
+  for v in "${TEST_KNOBS[@]}"; do [ -z "${!v:-}" ] || set_knobs+=("$v"); done
+  [ "${#set_knobs[@]}" = 0 ] \
+    || early_die "这些是测试开关，只在 RELEASE_TEST_MODE=1（非生产目录）下生效，生产不能设：${set_knobs[*]}。unset 后重跑"
+  unset "${TEST_KNOBS[@]}"   # 连设成空串的也清掉：下面一律用安全默认值
+  set_inh=()
+  for v in "${INHERITED_DENY[@]}"; do [ -z "${!v:-}" ] || set_inh+=("$v"); done
+  [ "${#set_inh[@]}" = 0 ] \
+    || early_die "这些变量会被 docker / compose 继承、让发布打到别的引擎或项目，生产不能设：${set_inh[*]}。unset 后重跑"
+  unset "${INHERITED_DENY[@]}"
+fi
+# 档位只许小写字母，且对应档位文件存在（#353 M1）：不许 ../local 之类拼出别的叠加文件
+[[ "$TIER" =~ ^[a-z]+$ ]] || early_die "RELEASE_TIER 只能是小写字母（现在是 ${TIER}）"
+[ -f "$ROOT/deploy/tiers/$TIER.yml" ] || early_die "档位 $TIER 不存在（没有 deploy/tiers/$TIER.yml）"
+REMOTE="${RELEASE_REMOTE:-origin}"
+MAIN_BRANCH="${RELEASE_MAIN_BRANCH:-main}"
 
 state="$ROOT/.release"
 mkdir -p "$state"
@@ -295,15 +362,29 @@ do_switch() {
   return 1
 }
 
-# 合并闸门（#189）：用目标版本里的 scripts/merge-gate.sh（hotfix 豁免）
+# 合并闸门（#189 / #351）：用目标版本里的 scripts/ci/merge-gate.py（hotfix 豁免）。
+# 仓库里有带 needs-leader-review 且无 leader-approved 的 PR → 非零退出 → 拒绝发布（演练也查，失败即关闭）。
+# 令牌在不导出的变量 gate_tok 里，只在调用闸门这一条命令上作为 GH_TOKEN 传入；不写文件、不打印。
+# 闸门固定只读（MERGE_GATE_READONLY=1，#352 M2）：PR 带 hotfix 标签照样放行，但服务器不写评论/标签，
+# 补审跟踪由 CI 的 merge-gate 工作流在 v* 标签推送时写。没有本地跳过开关（#352 M3）。
 run_gate() {
-  local hotfix="$1" gate="$2/scripts/merge-gate.sh"
-  if [ "$hotfix" = 1 ]; then log "hotfix：跳过合并闸门"; return 0; fi
-  if [ -x "$gate" ]; then
-    RELEASE_ROOT="$ROOT" "$gate" || die "合并闸门不通过"
-  else
-    log "提示：合并闸门（#189）尚未启用，已跳过（调用点：scripts/merge-gate.sh）"
+  local gate="$1/scripts/ci/merge-gate.py"
+  if [ ! -f "$gate" ]; then
+    [ "${RELEASE_REQUIRE_GATE:-1}" = 1 ] \
+      || { log "提示：目标版本没有合并闸门（#189），RELEASE_REQUIRE_GATE=0 已放行"; return 0; }
+    die "目标版本 $(short "$target") 里没有 scripts/ci/merge-gate.py（#189），不部署（首个可部署标签要在 #351/#352 进 main 之后打；回到更早的版本用 rollback）"
   fi
+  [ -n "$gate_tok" ] || die "合并闸门要查 GitHub：没读到只读令牌（deploy 会从标准输入读，输入不回显；不要 export GH_TOKEN、不要写进 .env 或命令行）"
+  # 闸门查的仓库必须就是代码拉取的那个：取远端地址最后两段 owner/repo 和写死的 GATE_REPO 比，不一致就拒绝（#352 N1）
+  local url p remote_repo
+  url="$(git_ remote get-url "$REMOTE" 2>/dev/null)" || die "读不出远端 $REMOTE 的地址，无法核对仓库，不部署"
+  p="${url%/}"; p="${p%.git}"
+  remote_repo="$(basename "$(dirname "$p" | sed 's|.*:||')")/$(basename "$p")"
+  [ "$remote_repo" = "$GATE_REPO" ] \
+    || die "远端 $REMOTE 的仓库是 $remote_repo，和合并闸门固定检查的 $GATE_REPO 不一致，不部署"
+  command -v python3 >/dev/null || die "服务器没有 python3，合并闸门跑不了，不部署"
+  GH_TOKEN="$gate_tok" MERGE_GATE_READONLY=1 REPO="$GATE_REPO" TAG_SHA="$tcommit" TAG_NAME="$target" PR_NUMBER="" GITHUB_STEP_SUMMARY="" \
+    python3 -B "$gate" || die "合并闸门不通过（见上面列出的待审 PR），不部署"
 }
 
 # 生产前检查 + 部署前备份（#229）。dry 时只检查、不备份。脚本取自目标版本（只有新版本知道自己要跑哪些迁移）
@@ -320,11 +401,11 @@ run_precheck() {
 }
 
 cmd="${1:-status}"; shift || true
-target=""; confirm=""; hotfix=0
+target=""; confirm=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --confirm) confirm="${2:-}"; shift 2 || die "--confirm 后面要写版本号" ;;
-    --hotfix) hotfix=1; shift ;;
+    --hotfix) die "没有本地 --hotfix 了（#352 M3）：紧急修复的豁免只认 GitHub 上该 PR 的 hotfix 标签（合并闸门判定），给 PR 加上 hotfix 标签后照常部署" ;;
     --lobe-session-ok) LOBE_OK=1; shift ;;
     -*) die "不认识的参数 $1" ;;
     *) target="$1"; shift ;;
@@ -342,8 +423,15 @@ case "$cmd" in
     tail -n 8 "$state/history.log" 2>/dev/null || true
     exit 0 ;;
   deploy|rollback) ;;
-  *) die "用法：release-tag.sh list | status | deploy vX.Y.Z [--confirm vX.Y.Z] [--hotfix] | rollback [--confirm <版本>]" ;;
+  *) die "用法：release-tag.sh list | status | deploy vX.Y.Z [--confirm vX.Y.Z] | rollback [--confirm <版本>]" ;;
 esac
+
+# deploy 要过合并闸门：先读令牌（终端上提示且不回显；也可 < 只读文件）。rollback 不读、不跑闸门（#352 M5）
+if [ "$cmd" = deploy ]; then
+  [ -t 0 ] && printf 'GitHub 只读令牌（输入不回显）：' >&2
+  IFS= read -rs gate_tok || true
+  [ -t 0 ] && echo >&2
+fi
 
 exec 9>"$state/lock"
 flock -n 9 || die "另一个发布正在进行"
@@ -355,6 +443,9 @@ if [ "$cmd" = rollback ]; then
   log "回滚目标：$(short "$target")（当前 $(short "$cur")）"
   commit_of "$target" >/dev/null || die "找不到回滚目标 $(short "$target")"
   tcommit="$(commit_of "$target")"
+  # 回滚目标也必须在 main 上（#353）：只查本地已有的 $REMOTE/$MAIN_BRANCH，不联网（GitHub 不可用时照样能紧急回滚）
+  git_ merge-base --is-ancestor "$tcommit" "refs/remotes/$REMOTE/$MAIN_BRANCH" 2>/dev/null \
+    || die "回滚目标 $(short "$target") 不在 $REMOTE/$MAIN_BRANCH 上（查的是本地记录，没联网），生产只跑 main 上的版本"
 else
   [[ "$target" =~ $TAG_RE ]] || die "要部署的版本必须是 main 上形如 v0.1.0 的标签（拒绝：${target:-空}）"
   fetch_remote
@@ -362,6 +453,17 @@ else
   git_ merge-base --is-ancestor "refs/tags/$target^{commit}" "refs/remotes/$REMOTE/$MAIN_BRANCH" \
     || die "标签 $target 不在 $MAIN_BRANCH 上，生产只部署 main 上的标签"
   tcommit="$(commit_of "refs/tags/$target")"
+  # 不许用 deploy 退到更旧的标签（#352 M4）：当前记录是 vX.Y.Z 标签、目标比它旧 → 拒绝，回退走 rollback。
+  if [[ "$cur" =~ $TAG_RE ]] && [ "$target" != "$cur" ] \
+     && [ "$(printf '%s\n%s\n' "$target" "$cur" | sort -V | head -1)" = "$target" ]; then
+    die "目标 $target 比当前已部署的 $cur 旧：不要用 deploy 回退，请改用 rollback（见 docs/ops/RELEASE.md「回滚方案」）"
+  fi
+  # 当前记录是提交号（第一次从 dev 切到标签，#353）：没有版本号可比，按提交历史比——目标是当前提交的祖先（更旧）就拒绝。
+  # shortcut: 两者没有祖先关系（比如 squash 合并）时判断不了、放行；生产 dev→main 用合并提交，祖先关系在。
+  if ! [[ "$cur" =~ $TAG_RE ]] && ccur="$(commit_of "$cur")" && [ "$tcommit" != "$ccur" ] \
+     && git_ merge-base --is-ancestor "$tcommit" "$ccur" 2>/dev/null; then
+    die "目标 $target 比当前提交 $(short "$cur") 旧：第一次切到标签也不能往回退，请改用 rollback 或部署更新的标签"
+  fi
   if [ "$tcommit" = "$(git_ rev-parse HEAD)" ] && [ "$(read_state current)" = "$target" ]; then
     log "生产已经是 $target，无需部署"; exit 0
   fi
@@ -385,7 +487,7 @@ EXTRA_FILES=(); NOBUILD=()
 # 生产前检查和闸门用目标版本里的 scripts/（RELEASE_ROOT 仍指向生产目录）
 tscripts="$(extract_scripts "$tcommit")"
 trap 'rm -f "$RELEASE_TAG_COPY"; rm -rf "$tscripts"' EXIT
-if [ "$cmd" = deploy ]; then run_gate "$hotfix" "$tscripts"; fi
+if [ "$cmd" = deploy ]; then run_gate "$tscripts"; fi
 
 # 没带对的 --confirm：只演练
 if [ -z "$confirm" ] || { [ "$confirm" != "$target" ] && [ "$confirm" != "$(short "$target")" ]; }; then

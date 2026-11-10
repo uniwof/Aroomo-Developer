@@ -19,11 +19,17 @@ export interface VapidKeys {
   subject: string;
 }
 
-/** 生成一对 VAPID 密钥（scripts/gen-vapid-keys.mjs 用同样的写法；这里给测试用） */
-export function generateVapidKeys(): { publicKey: string; privateKey: string } {
+/**
+ * 生成一对 VAPID 密钥（scripts/gen-vapid-keys.mjs 用同样的写法；这里给测试用）。
+ * getPrivateKey() 会去掉前导零（首字节为 0 时约 1/256 只有 31 字节），这里左补零到固定 32 字节（#348）。
+ * test.privateKey 可注入，只为确定性测试；正式调用不传。
+ */
+export function generateVapidKeys(test?: { privateKey: Buffer }): { publicKey: string; privateKey: string } {
   const ecdh = createECDH('prime256v1');
-  ecdh.generateKeys();
-  return { publicKey: b64u.enc(ecdh.getPublicKey()), privateKey: b64u.enc(ecdh.getPrivateKey()) };
+  if (test) ecdh.setPrivateKey(test.privateKey);
+  else ecdh.generateKeys();
+  const d = ecdh.getPrivateKey();
+  return { publicKey: b64u.enc(ecdh.getPublicKey()), privateKey: b64u.enc(Buffer.concat([Buffer.alloc(32 - d.length), d])) };
 }
 
 /** 校验密钥形状：公钥 65 字节且以 0x04 开头、私钥 32 字节，并且两者是一对 */

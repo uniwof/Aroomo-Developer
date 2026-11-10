@@ -2153,3 +2153,171 @@ kbd.row-value {
 .side-tools > .pill-filter {
   margin-top: calc(0.125 * var(--k));
 }
+
+/* Skin/Bones 工作台侧栏（开关 SKIN_BONES，切片 1）：常驻 224px = 14 × --k，随字号缩放；8px 步进（0.5 × --k）；无动画 */
+.wb-nav {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: calc(14 * var(--k));
+  padding: calc(1 * var(--k)) calc(0.5 * var(--k));
+  border-right: 1px solid var(--border);
+  background: var(--rail);
+  overflow-y: auto;
+}
+.wb-list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(0.25 * var(--k));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wb-item {
+  display: flex;
+  align-items: center;
+  gap: calc(0.75 * var(--k));
+  width: 100%;
+  min-height: calc(2.75 * var(--k)); /* 44px：点击区 ≥44，不靠 .hit 的透明扩展也够 */
+  padding: calc(0.5 * var(--k)) calc(0.75 * var(--k));
+  border: 0;
+  border-radius: calc(0.5 * var(--k));
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: calc(0.9375 * var(--k));
+  text-align: left;
+  cursor: pointer;
+}
+.wb-item:hover {
+  background: var(--hover);
+}
+.wb-item[aria-current='page'] {
+  background: var(--selected);
+  font-weight: 600;
+}
+.wb-icon {
+  flex: none;
+  width: calc(1.125 * var(--k));
+  height: calc(1.125 * var(--k));
+}
+
+/* Skin/Bones 右侧抽屉（开关 SKIN_BONES，切片 2）：常规 480 = 30 × --k，宽档 640 = 40 × --k；无动画 */
+.sdrawer {
+  position: fixed;
+  inset: 0 0 0 auto;
+  margin: 0;
+  width: min(calc(30 * var(--k)), 100vw);
+  max-width: 100vw;
+  height: 100dvh;
+  max-height: 100dvh;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.sdrawer-wide {
+  width: min(calc(40 * var(--k)), 100vw);
+}
+.sdrawer::backdrop {
+  background: rgb(0 0 0 / 0.28);
+}
+/* 规范「移动端 <680px 自动全屏」：680/16 = 42.5em，用 em 所以放大字号时也当小屏处理 */
+@media (max-width: 42.5em) {
+  .sdrawer,
+  .sdrawer-wide {
+    width: 100vw;
+    border-left: 0;
+  }
+}
+.sdrawer-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(0.5 * var(--k));
+  padding: calc(0.5 * var(--k)) calc(0.5 * var(--k)) calc(0.5 * var(--k)) calc(1 * var(--k));
+  border-bottom: 1px solid var(--border);
+}
+.sdrawer-title {
+  margin: 0;
+  font-size: calc(0.9375 * var(--k));
+  font-weight: 600;
+}
+.sdrawer-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(0.75 * var(--k));
+  padding: calc(1 * var(--k));
+  overflow-y: auto;
+}
+
+/* Skin/Bones 角色泳道（开关 SKIN_BONES，切片 3）：/console 驾驶舱下面，四职能角色 + 其他，一道一列；
+   宽屏并排、窄了自动换行（最窄一道 12 × --k），8px 步进（0.5 × --k），字号跟 sumus 正文，无动画 */
+.lanes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(calc(12 * var(--k)), 1fr));
+  gap: calc(0.5 * var(--k));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.lane {
+  padding: calc(0.75 * var(--k));
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+.lane-title {
+  margin: 0 0 calc(0.5 * var(--k));
+  font-size: calc(0.875 * var(--k));
+  font-weight: 600;
+}
+.lane-count {
+  color: var(--muted);
+  font-weight: 400;
+}
+.lane-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: calc(0.8125 * var(--k));
+}
+.lane-list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(0.25 * var(--k));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.lane-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(0.5 * var(--k));
+  width: 100%;
+  min-height: calc(2.75 * var(--k)); /* 44px 点击区 */
+  padding: calc(0.25 * var(--k)) calc(0.5 * var(--k));
+  border: 0;
+  border-radius: calc(0.5 * var(--k));
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: calc(0.875 * var(--k));
+  text-align: left;
+  cursor: pointer;
+}
+.lane-item:hover {
+  background: var(--hover);
+}
+.lane-status {
+  color: var(--muted);
+  font-size: calc(0.8125 * var(--k));
+}

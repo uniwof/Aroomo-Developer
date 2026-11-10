@@ -6,9 +6,11 @@
  * /console（驾驶舱）：只用现有接口（成员、收件箱计数、能力地图、审计），见 cockpit.tsx。
  * /work（项目与版本，规范 §7，docs/api/design-work-v1.md）：/work 项目列表、/work/<项目> 版本时间线、/work/<项目>?v=<版本> 版本详情；只给所有者。
  *   开关 WORK（= WORK 常量）关着时这些地址落到对话，解析代码随开关一起被摇掉（对话页包 ≤150 KB）。
+ * Skin/Bones 四区（开关 SKIN_BONES，切片 1）：/chat、/work、/assets、/console。WORK 关着时 /work 是空壳；/assets 是空壳，只给所有者。
  */
 import type { SettingsSection } from './panels';
 import { WORK } from '@/lib/work-flag';
+import { SKIN_BONES } from '@/lib/skinbones-flag';
 
 export type View =
   | { kind: 'chat' }
@@ -34,7 +36,9 @@ export type View =
   | { kind: 'assistant'; id: string }
   | { kind: 'schedule' }
   /** /work：project 有值 = 时间线，再加 version = 版本详情 */
-  | { kind: 'work'; project?: string; version?: string };
+  | { kind: 'work'; project?: string; version?: string }
+  /** /assets：Skin/Bones 资产区（开关 SKIN_BONES，切片 1 只有空壳） */
+  | { kind: 'assets' };
 
 const SECTIONS: readonly string[] = ['profile', 'prefs', 'safety', 'general', 'family', 'lead', 'push', 'budget', 'external', 'shortcuts'];
 
@@ -76,8 +80,13 @@ export function pathOf(v: View): string {
       return `/assistants?assistant=${encodeURIComponent(v.id)}`;
     case 'schedule':
       return '/assistants/schedule';
-    case 'work':
-      return WORK ? workPath(v) : '/chat';
+    default:
+      // work / assets：开关关着时这一支整个被摇掉，'/assets' 这些字样不进对话页包（#323 / #327）
+      if (SKIN_BONES || WORK) {
+        if (v.kind === 'work') return WORK ? workPath(v) : '/work';
+        if (v.kind === 'assets') return '/assets';
+      }
+      return '/chat';
   }
 }
 
@@ -121,6 +130,9 @@ export function viewOf(pathname: string, search: string): View {
       }
     }
   }
+  // Skin/Bones 切片 1：WORK 关着时 /work 是骨架空壳（只认 /work 本身）；/assets 空壳。开关关着时这两行被摇掉，地址落到对话
+  if (SKIN_BONES && !WORK && p === '/work') return { kind: 'work' };
+  if (SKIN_BONES && p === '/assets') return { kind: 'assets' };
   if (p === '/team') {
     const id = q.get('member');
     if (id) return { kind: 'member', id };
@@ -150,4 +162,4 @@ export function viewOf(pathname: string, search: string): View {
 }
 
 /** 只给所有者的面板（家人账号打开这些地址落到对话） */
-export const OWNER_ONLY: readonly View['kind'][] = ['library', 'tools', 'keys', 'mcp', 'audit', 'executors', 'assistant', 'schedule', 'work'];
+export const OWNER_ONLY: readonly View['kind'][] = ['library', 'tools', 'keys', 'mcp', 'audit', 'executors', 'assistant', 'schedule', 'work', ...(SKIN_BONES ? (['assets'] as const) : [])];

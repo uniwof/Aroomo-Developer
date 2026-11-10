@@ -12,6 +12,6 @@ describe('功能开关的写法', () => {
     for (const [k, v] of Object.entries(F)) expect([k, typeof v]).toEqual([k, 'boolean']);
   });
   it('构建核对脚本读到的开关和模块导出一致（含 work-flag.ts 的 WORK）', () => {
-    expect(readFlags()).toEqual({ ...F, WORK: false });
+    expect(readFlags()).toEqual({ ...F, WORK: false, SKIN_BONES: false });
   });
 });

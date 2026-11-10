@@ -312,6 +312,44 @@ for (const [label, viewport, isMobile] of [
     const ok2 = await sendAndWait('@Nobody 在吗', '没有叫「Nobody」的成员');
     await shoot(page, 'desktop-chat-mention');
     check('对话：点名不存在的成员只给提示（D31）', ok2);
+
+    // —— 能力清单（#177）：控制台 资源库 › 能力地图，汇总行在、至少列出一项能力 ——
+    await page.goto(base + '/console/hub/capabilities', { waitUntil: 'networkidle' });
+    const capSummary = page.getByTestId('cap-summary');
+    const capShown = await capSummary.waitFor({ timeout: 30000 }).then(() => true, () => false);
+    const capText = capShown ? ((await capSummary.textContent()) ?? '') : '';
+    const capRows = await page.locator('section[aria-labelledby="cap-title"] li').count();
+    await shoot(page, 'desktop-capabilities');
+    check('能力清单：汇总行和能力列表', capShown && /个/.test(capText) && capRows > 0, `${capText} 行数 ${capRows}`);
+
+    // —— 确认卡（#177，D63）：控制台 API 页删除刚才的 Key → 普通确认框「删除」→ 两步确认卡（标题 + 后果 → 继续 → 第二个按钮 3 秒倒计时）→ 确认后 Key 从列表消失 ——
+    await page.goto(base + '/console/hub/keys', { waitUntil: 'networkidle' });
+    const delKey = page.getByRole('button', { name: '删除 Key「假模型」' });
+    const delShown = await delKey.waitFor({ timeout: 30000 }).then(() => true, () => false);
+    check('删除 Key：API 页列出刚填的 Key', delShown);
+    if (delShown) {
+      await delKey.click();
+      await page.locator('dialog[open]').getByRole('button', { name: '删除' }).click({ timeout: 10000 }).catch(() => {});
+      const card = page.getByRole('alertdialog');
+      const cardShown = await card.waitFor({ timeout: 15000 }).then(() => true, () => false);
+      const cardTitle = cardShown ? ((await card.locator('h3').textContent()) ?? '') : '';
+      const consequences = cardShown ? await card.locator('li').count() : 0;
+      await shoot(page, 'desktop-confirm-card-step1');
+      check('确认卡：删除 Key 弹出确认卡（标题 + 后果）', cardShown && cardTitle.includes('假模型') && consequences > 0, `${cardTitle} 后果 ${consequences} 条`);
+      await card.getByRole('button', { name: '继续' }).click({ timeout: 10000 }).catch(() => {});
+      const waiting = card.getByRole('button', { name: /还要等 \d+ 秒/ });
+      const counting = await waiting.waitFor({ timeout: 10000 }).then(() => true, () => false);
+      const lockedWhileCounting = counting ? await waiting.isDisabled() : false;
+      await shoot(page, 'desktop-confirm-card-step2');
+      check('确认卡：第二步倒计时，倒计时内按钮不能点', counting && lockedWhileCounting, `倒计时 ${counting} 禁用 ${lockedWhileCounting}`);
+      const go = card.getByRole('button', { name: '确认', exact: true });
+      const ready = await go.waitFor({ timeout: 15000 }).then(() => true, () => false);
+      if (ready) await go.click();
+      const gone = await delKey.waitFor({ state: 'detached', timeout: 20000 }).then(() => true, () => false);
+      const left = await page.evaluate(() => fetch('/aroomo/api/keys', { headers: { accept: 'application/json' } }).then((r) => r.json()).then((b) => (b.keys ?? []).map((k) => k.name)).catch(() => null));
+      await shoot(page, 'desktop-confirm-card-done');
+      check('删除 Key：确认后 Key 从列表和后台都消失', ready && gone && Array.isArray(left) && !left.includes('假模型'), `可点 ${ready} 列表消失 ${gone} 后台 ${JSON.stringify(left)}`);
+    }
     // D190：@ 联想脚本（mention.js）已删除；成员 @ 改由 LobeHub 群组原生功能承担（D189，V3 验证）
   }
 
@@ -322,7 +360,7 @@ await browser.close();
 writeFileSync(path.join(out, 'checks.json'), JSON.stringify(checks, null, 1));
 const failed = checks.filter((c) => !c.ok);
 // 第一轮只把核心项设为必须通过；其余写进报告供核对选择器
-const required = /core-session|32px 字号无左右滚动|D190 页面未被注入|设置 6 个 Tab|登录接口|填 Key|Key 明文|对话：|进入候选|一键入职|退出登录|敏感内容保护开关|发收件箱卡片|确认卡|倒计时|处理完毕|删除 Key/;
+const required = /core-session|能力清单|32px 字号无左右滚动|D190 页面未被注入|设置 6 个 Tab|登录接口|填 Key|Key 明文|对话：|进入候选|一键入职|退出登录|敏感内容保护开关|发收件箱卡片|确认卡|倒计时|处理完毕|删除 Key/;
 const hard = failed.filter((c) => required.test(c.name));
 console.log(`\n${checks.length - failed.length}/${checks.length} 通过；必须项失败 ${hard.length}`);
 process.exit(hard.length ? 1 : 0);

@@ -1,0 +1,38 @@
+name: merge-gate
+# 合并闸门（D235 第 4 条，工单 #189/#228）：仓库里有 needs-leader-review 且无 leader-approved 的 PR
+# （含已合并）时，向 main 的 PR 与 v* 生产标签一律失败；hotfix 豁免并自动评论、加 needs-leader-review。
+# 只用默认 GITHUB_TOKEN，不需要新 Secret。
+# 向 dev 的 PR 只跑几秒自测（不联网、不判定、不写评论），让改闸门本身也有 CI。
+# #171 接入点：生产标签发布作业写 `needs: gate`（放进本工作流），或发布脚本先跑
+#   python3 scripts/ci/merge-gate.py（需 GH_TOKEN、REPO、TAG_SHA），非零退出即拒绝发布。本工单不改部署脚本。
+on:
+  pull_request:
+    branches: [main, dev]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+concurrency:
+  group: merge-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  gate:
+    name: 合并闸门（待负责人复审时不许进 main / 发生产标签）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: 闸门自测（不联网）
+        run: python3 -B scripts/ci/merge-gate.py --selftest
+      - name: gate
+        if: github.event_name == 'push' || github.base_ref == 'main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          TAG_SHA: ${{ github.event_name == 'push' && github.sha || '' }}
+          TAG_NAME: ${{ github.event_name == 'push' && github.ref_name || '' }}
+        run: python3 -B scripts/ci/merge-gate.py
