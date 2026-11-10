@@ -27,7 +27,7 @@ export function realProbes(): DoctorProbes {
     nodeVersion: process.versions.node,
     coreHealth: async (url) => {
       try {
-        const r = await fetch(new URL('/health', url), { signal: AbortSignal.timeout(5000) });
+        const r = await fetch(new URL('/healthz', url), { signal: AbortSignal.timeout(5000) });
         return { ok: r.ok, status: r.status };
       } catch {
         return { ok: false };

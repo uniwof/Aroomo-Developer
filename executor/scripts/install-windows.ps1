@@ -75,9 +75,11 @@ if (-not $SkipToken) {
 if (-not $NoAutostart) {
   Write-Step "注册计划任务「$TaskName」"
   $action = New-ScheduledTaskAction -Execute $node.Source -Argument "`"$cli`" run" -WorkingDirectory $executorDir
+  # 登录时启动；另加每 5 分钟一次的触发器：进程崩了/被结束后自动拉起（已在运行时忽略新实例，不会重复）
   $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-  $settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-  Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Description 'Aroomo 本机执行员' -Force | Out-Null
+  $keepAlive = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)
+  $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+  Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger @($trigger, $keepAlive) -Settings $settings -Description 'Aroomo 本机执行员' -Force | Out-Null
 
   if (-not $NoAutoUpdate) {
     # 简化版自动更新：每天 04:00（错过则开机后补跑）拉取最新代码，有变化才重建并重启
