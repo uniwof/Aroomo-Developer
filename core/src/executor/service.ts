@@ -4,6 +4,7 @@ import { badRequest, HttpError, notFound } from "../http/errors.js";
 import type { SettingsStore } from "../settings/store.js";
 import { MAX_ALLOWLIST, normalizeList, siteAllowed } from "./allowlist.js";
 import {
+  MAX_TASK_SECRETS,
   TASK_KINDS,
   type ExecutorRecord,
   type ExecutorStore,
@@ -11,6 +12,25 @@ import {
   type TaskKind,
   type TaskRecord,
 } from "./types.js";
+
+/** 凭据是否在本人保险箱里（不解密；VaultService.exists） */
+export type SecretExists = (userId: string, secretId: string) => Promise<boolean>;
+
+/**
+ * #347：任务引用的凭据必须全部在本人保险箱里——唯一的校验点（service.create、工具网关适配器都用它）。
+ * 超过上限 400（不截断、不跳过）；别人的与不存在的回同一个 404、同一文案，正文不带 secretId。不解密。
+ */
+export async function assertSecretsOwned(
+  secretExists: SecretExists,
+  userId: string,
+  secrets: readonly { secretId: string }[],
+): Promise<void> {
+  if (secrets.length > MAX_TASK_SECRETS)
+    throw new HttpError(400, "TOO_MANY_SECRETS", `一个任务最多带 ${MAX_TASK_SECRETS} 个凭据`);
+  for (const s of secrets)
+    if (!(await secretExists(userId, s.secretId)))
+      throw new HttpError(404, "SECRET_NOT_FOUND", "保险箱里找不到这个凭据");
+}
 
 export interface TakeoverHooks {
   opened?: (
@@ -73,8 +93,8 @@ export class ExecutorService {
     private readonly settingsFor: (userId: string) => SettingsStore | null = () => null,
     /** 接管卡进收件箱 / 处理后收回的钩子（server.ts 接线；失败不影响任务本身） */
     private readonly hooks: TakeoverHooks = {},
-    /** 凭据是否在本人保险箱里（不解密）；没接线时退回 resolveSecret（#347） */
-    private readonly secretExists?: (userId: string, secretId: string) => Promise<boolean>,
+    /** 凭据是否在本人保险箱里（不解密）；必传，漏接线编译失败（#347 M2） */
+    private readonly secretExists: SecretExists,
   ) {}
 
   async getAllowlist(userId: string): Promise<string[]> {
@@ -423,13 +443,8 @@ export class ExecutorService {
       );
     if (!siteAllowed(input.site, await this.getAllowlist(userId)))
       throw new HttpError(403, "SITE_NOT_ALLOWED", "这个网站不在你设置的白名单里");
-    // #347：建任务时就按本人保险箱校验 secretId；别人的和不存在的同一个 404 + 同一错误码（执行时那道检查保留）
-    for (const s of (input.secrets ?? []).slice(0, 10)) {
-      const ok = this.secretExists
-        ? await this.secretExists(userId, s.secretId)
-        : (await this.resolveSecret(userId, s.secretId)) !== null;
-      if (!ok) throw new HttpError(404, "SECRET_NOT_FOUND", "保险箱里找不到这个凭据");
-    }
+    // #347：建任务时就按本人保险箱校验全部 secretId（执行时取凭据那道检查保留）
+    await assertSecretsOwned(this.secretExists, userId, input.secrets ?? []);
     const queued = (await this.store.listTasks(userId, 500)).filter(
       (t) => t.status === "queued",
     ).length;

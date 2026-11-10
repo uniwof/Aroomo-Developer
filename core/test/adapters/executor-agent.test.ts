@@ -13,9 +13,10 @@ const ctxOf = (userId: string): ToolCtx => ({
   },
 });
 const mk = () => {
-  // #347：建任务时就校验 secretId 归属，服务这边给同一套「只有 u1 有 sec1」
-  const svc = new ExecutorService(new MemoryExecutorStore(), () => new Date('2026-10-30T00:00:00Z'), async (u, id) => (u === 'u1' && id === 'sec1' ? 'x' : null));
-  const a = new ExecutorAgentAdapter(svc, async (u, id) => u === 'u1' && id === 'sec1');
+  // #347：secretExists 必传；服务和适配器用同一套「只有 u1 有 sec1」
+  const owns = async (u: string, id: string) => u === 'u1' && id === 'sec1';
+  const svc = new ExecutorService(new MemoryExecutorStore(), () => new Date('2026-10-30T00:00:00Z'), undefined, undefined, undefined, owns);
+  const a = new ExecutorAgentAdapter(svc, owns);
   return { svc, a };
 };
 const parse = (r: { content: { text: string }[] }) => JSON.parse(r.content[0]?.text ?? '{}') as Record<string, unknown>;

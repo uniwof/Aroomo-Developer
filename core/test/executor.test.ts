@@ -320,6 +320,9 @@ describe.each(envs)("执行员任务队列（$name）", (env) => {
         secrets: [{ secretId: sA, field: "password" }, { secretId, field: "password" }],
       });
       rejected.push([r.statusCode, r.json().error.code, r.json().error.message]);
+      // #347 M5：被拒的正文不带任何 secretId
+      expect(r.body).not.toContain(secretId);
+      expect(r.body).not.toContain(sA);
     }
     expect(rejected[0]).toEqual([404, "SECRET_NOT_FOUND", rejected[1]![2]]);
     expect(rejected[1]![0]).toBe(404);
