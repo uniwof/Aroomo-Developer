@@ -19,6 +19,7 @@ const grantSql = (schema: string) => `
   END $$;
   GRANT USAGE ON SCHEMA ${schema} TO ${RLS_APP_ROLE};
   GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${schema} TO ${RLS_APP_ROLE};
+  GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ${schema} TO ${RLS_APP_ROLE};
 `;
 
 export interface RlsTarget {

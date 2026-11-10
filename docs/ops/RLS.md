@@ -70,3 +70,10 @@ core_settings 加 `user_id text NOT NULL DEFAULT 'owner'`，按键名前缀回�
 - pg-boss（若启用）用表所有者连接，但只用自己的 schema，不碰业务表。
 - 已知限制：Core 容器里还放着所有者的连接串（`CORE_DATABASE_URL`，迁移和 pg-boss 要用）。所以独立登录挡住的是 SQL 注入关掉 RLS，挡不住有人拿到容器的执行权限。
 - 这里不需要新迁移：角色是整个数据库集群的对象，迁移用的 `aroomo_core` 没有建角色的权限；表权限每次启动幂等地授，没有可回退的表结构变化。
+
+## users / user_invites / audit_log（0038，#345 P2）
+三张表都在「无账号」路径上用，策略各不相同，不加列、不回填：
+- `users`：`users_self`（`id::text = app.user_id`，注册、改自己、管理员改目标账号都在目标账号的 userScoped 里做）+ `users_system_read`（按邮箱登录、管理员列表，systemScoped 只读）。
+- `user_invites`：`user_invites_creator`（`created_by` 为 `owner` 或 `user:<id>` 且对得上 app.user_id，创建用）+ `user_invites_system_read`（按码哈希查找、管理员列表）+ `user_invites_system_redeem`（只允许系统范围 UPDATE，用于标记已用）。系统范围不能 INSERT / DELETE。
+- `audit_log`：`audit_log_append`（INSERT 任何范围都行，含登录失败 / 系统任务；应用侧不 RETURNING）+ `audit_log_system_read`（只给 systemScoped，即所有者的 GET /api/audit）。用户范围读不到任何审计行；触发器仍拒 UPDATE / DELETE / TRUNCATE。
+回退：`core/migrations/down/0038_rls_p2.down.sql`（表所有者执行）。NO_RLS_TABLES 现在只剩 `core_schema_migrations`（永久豁免）。上生产前：应用角色需 `GRANT USAGE ON SEQUENCE audit_log_seq_seq`（grantAppRole 已含 ALL SEQUENCES）。

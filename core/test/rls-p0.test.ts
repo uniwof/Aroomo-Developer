@@ -76,7 +76,7 @@ describe.each(rlsTargets)('RLS P0 六张表（$name）', (target) => {
     return db;
   }
   const addUser = (db: Db, uid: string, email: string) =>
-    db.query(`INSERT INTO users (id, email, display_name, role, status, password_hash, created_at, updated_at) VALUES ($1,$2,'x','user','active','x',now(),now())`, [uid, email]);
+    userScoped(db, uid).query(`INSERT INTO users (id, email, display_name, role, status, password_hash, created_at, updated_at) VALUES ($1,$2,'x','user','active','x',now(),now())`, [uid, email]);
 
   it('六张表都 ENABLE + FORCE，且只有 <表>_user 和 <表>_system_read 两条策略', async () => {
     const db = await open();
