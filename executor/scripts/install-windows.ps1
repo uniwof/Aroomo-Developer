@@ -29,6 +29,20 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# 凭据文件（远程非交互安装）：参数解析完第一件事就读入内存、覆盖为零并删除（#376 C1）——
+# 后面 npm ci / 构建 / init 任何一步失败，含明文的文件都不会留在磁盘上
+$cred = $null
+if ($BootstrapFile) {
+  if (-not (Test-Path -LiteralPath $BootstrapFile)) { throw '凭据文件不存在' }
+  try {
+    $cred = Get-Content -LiteralPath $BootstrapFile -Raw -Encoding UTF8 | ConvertFrom-Json
+  } finally {
+    $len = (Get-Item -LiteralPath $BootstrapFile).Length
+    [IO.File]::WriteAllBytes($BootstrapFile, (New-Object byte[] $len))
+    Remove-Item -LiteralPath $BootstrapFile -Force
+  }
+}
+
 # 读屏友好：控制台改 UTF-8，node 输出的中文才不会乱码（Windows PowerShell 5.1 默认是 GBK/OEM 代码页）
 try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch { Write-Verbose "无法设置控制台编码：$($_.Exception.Message)" }
 $executorDir = Split-Path -Parent $PSScriptRoot
@@ -60,19 +74,6 @@ Write-Step '生成配置'
 if ($LASTEXITCODE -ne 0) { throw '生成配置失败' }
 $configDir = if ($env:AROOMO_EXECUTOR_CONFIG) { Split-Path -Parent $env:AROOMO_EXECUTOR_CONFIG } else { Join-Path $env:APPDATA 'Aroomo\executor' }
 $tokenFile = Join-Path $configDir 'device-token'
-
-# 凭据文件（远程非交互安装）：读完立刻覆盖为零并删除，内容不留在磁盘上
-$cred = $null
-if ($BootstrapFile) {
-  if (-not (Test-Path -LiteralPath $BootstrapFile)) { throw '凭据文件不存在' }
-  try {
-    $cred = Get-Content -LiteralPath $BootstrapFile -Raw -Encoding UTF8 | ConvertFrom-Json
-  } finally {
-    $len = (Get-Item -LiteralPath $BootstrapFile).Length
-    [IO.File]::WriteAllBytes($BootstrapFile, (New-Object byte[] $len))
-    Remove-Item -LiteralPath $BootstrapFile -Force
-  }
-}
 
 # 4. 设备令牌（凭据文件 > 环境变量 > 本机安全输入；给了凭据文件就不再弹输入）
 if (-not $SkipToken) {

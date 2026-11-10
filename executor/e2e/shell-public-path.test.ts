@@ -178,7 +178,8 @@ describe('#376 M2 真 Shell + 真 Core + 真 transport', () => {
     expect(bHello.status).toBe(200);
     expect(bHello.json.executorId).not.toBe(aliceExec);
     expect((await viaEdge(bTok, '/tasks/claim', { waitSec: 0 }, forged)).status).toBe(204);
-    expect((await viaEdge(bTok, `/tasks/${tid}/result`, { status: 'succeeded', summary: 'x' }, forged)).status).toBeGreaterThanOrEqual(400);
+    const bResult = await viaEdge(bTok, `/tasks/${tid}/result`, { status: 'succeeded', summary: 'x' }, forged);
+    expect([bResult.status, bResult.json?.error?.code]).toEqual([404, 'TASK_NOT_FOUND']); // 任务属于 alice，按 bob 的令牌查不到
     expect(coreSawExecutorHeader.every((v) => v === undefined)).toBe(true);
     expect((await alice('GET', `/api/tasks/${tid}`)).json.task.status).toBe('queued');
     expect(((await alice('GET', '/api/executors')).json.executors as { deviceName: string }[]).map((e) => e.deviceName)).toEqual(['alice-pc']);
