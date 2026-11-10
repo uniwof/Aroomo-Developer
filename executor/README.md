@@ -20,6 +20,18 @@
 
 > 需要 Node.js 22 LTS。备用的 Playwright MCP 需要本机装有 Chrome（首次使用时 npx 自动下载 @playwright/mcp）。ego lite 由你自己从官方安装（我们不打包、不分发），并在 ego lite 设置里**关闭崩溃报告上传**（D162）。
 
+### 三步安装（读屏友好，不需要管理员）
+
+1. 准备：电脑上装好 Node.js 22 LTS；在手机或电脑打开 Aroomo 控制台「本机执行员」页，点「生成令牌」，先不关页面。
+2. 安装：打开 PowerShell，进入仓库目录，运行下面这一行。脚本每做完一步会说一句「==> …」；问到令牌时，粘贴令牌再按回车（输入时屏幕不显示，这是正常的）。
+3. 确认：脚本最后一行是检查结果，说「设备令牌：已就绪」就成功了；控制台「本机执行员」页的「设备」里出现你的电脑、状态「在线」。重启电脑后约 1 分钟内会自动变回「在线」。之后在 executor 目录运行 `node dist\cli.js allow 网站名` 加允许去的网站。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File executor\scripts\install-windows.ps1
+```
+
+脚本做的事、可选开关和手动等价步骤如下。
+
 **一键安装**（推荐，不需要管理员）：在仓库目录运行
 
 ```powershell

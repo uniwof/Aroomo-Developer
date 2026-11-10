@@ -32,13 +32,13 @@ export const checkin: TaskHandler = async (ctx, s) => {
   }
   ctx.throwIfCancelled();
   await ctx.progress('act', '签到');
-  const said = await s.act(ctx.task.instruction ?? '找到签到按钮并点击；如果今天已签到，说明已签到');
+  const said = await s.act(ctx.task.instruction || '找到签到按钮并点击；如果今天已签到，说明已签到');
   await handleBlockers(ctx, s);
   const verdict = await s.act('判断签到结果，只回答「已签到」「今天已签到」「需要登录」「失败：原因」其中之一');
   if (verdict.includes('需要登录')) {
     await ctx.takeover('login_failed', '签到时发现还没登录，请在电脑浏览器里登录后点「我已处理」', await s.screenshot());
     await handleBlockers(ctx, s);
-    const again = await s.act(ctx.task.instruction ?? '找到签到按钮并点击；如果今天已签到，说明已签到');
+    const again = await s.act(ctx.task.instruction || '找到签到按钮并点击；如果今天已签到，说明已签到');
     return { summary: `签到完成：${again}`, screenshot: await s.screenshot() };
   }
   const why = failedReply(verdict);
@@ -56,7 +56,7 @@ export const login: TaskHandler = async (ctx, s) => {
   await ctx.progress('fill', '填写账号');
   await s.fill(fields);
   ctx.throwIfCancelled();
-  const said = await s.act(ctx.task.instruction ?? '点击登录按钮并等待页面跳转');
+  const said = await s.act(ctx.task.instruction || '点击登录按钮并等待页面跳转');
   await handleBlockers(ctx, s);
   const check = await s.act('判断现在是否已登录成功，只回答「成功」或「失败：原因」');
   if (!check.startsWith('成功')) {
@@ -73,7 +73,7 @@ export const signup: TaskHandler = async (ctx, s) => {
   await ctx.progress('fill', '填写注册信息');
   if (fields.length) await s.fill(fields);
   ctx.throwIfCancelled();
-  const said = await s.act(ctx.task.instruction ?? '填好其余必填项，勾选必要的同意项，点击注册');
+  const said = await s.act(ctx.task.instruction || '填好其余必填项，勾选必要的同意项，点击注册');
   await handleBlockers(ctx, s);
   const verdict = await s.act('判断注册结果，只回答「成功」「需要验证邮件或手机」「失败：原因」其中之一');
   if (/验证邮件|验证邮箱|邮箱验证|手机验证|短信/.test(verdict)) {
