@@ -394,13 +394,6 @@ const CLIENT: Record<string, Exp> = {
   'POST /api/library': { status: 201, why: '建在自己名下' },
 };
 
-/**
- * 已知缺口（必改 1 没法只靠测试做到）：这些只给所有者的路由用 adminGuard()，管理员检查在 preHandler 里，
- * Fastify 先跑 schema 校验，所以家人带多余字段的请求体先拿到 400、而不是 403。要严格 403 得改 src（把检查挪到 preValidation），
- * 留给负责人裁定；只有 body 注入这一种放宽，头 / query 注入和正常请求照样严格 403。修好后从这里删掉，否则「遍历」那条失败。
- */
-const VALIDATES_BEFORE_ADMIN_CHECK = ['POST /api/users/invites'];
-
 /** 改动后会让攻击方自己的会话 / 令牌失效的路由：放到最后打 */
 const SELF_ENDING = ['POST /api/clients/revoke-all', 'POST /api/auth/logout', 'POST /api/auth/logout-all', 'POST /api/auth/password'];
 
@@ -922,7 +915,6 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     expect(all.filter((r) => r.method !== 'GET' && !(key(r) in BODIES)).map(key), '新改动类路由要在 BODIES 里给一份能过校验的请求体').toEqual([]);
     expect(Object.keys(BODIES).filter((k) => !all.some((r) => key(r) === k)), 'BODIES 里有已经不存在的路由').toEqual([]);
     for (const k of OWNER_ONLY_FOR_FAMILY) expect(all.some((r) => key(r) === k), k).toBe(true);
-    for (const k of VALIDATES_BEFORE_ADMIN_CHECK) expect(OWNER_ONLY_FOR_FAMILY, `VALIDATES_BEFORE_ADMIN_CHECK 里的 ${k} 要是只给所有者的路由`).toContain(k);
     // 家人能用的路由（含不带参数的 GET 列表接口——批量泄露的主入口）都要逐条声明攻击期望
     expect(all.filter((r) => !isOwnerOnly(r) && !(key(r) in FAMILY)).map(key), '家人能用的路由要在 FAMILY 里声明攻击方的期望').toEqual([]);
     expect(Object.keys(FAMILY).filter((k) => !all.some((r) => key(r) === k && !isOwnerOnly(r))), 'FAMILY 里有不存在 / 只给所有者的路由').toEqual([]);
@@ -1316,7 +1308,6 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     const leaks: string[] = [];
     const oracle: string[] = [];
     const listLeak: string[] = [];
-    const knownGapHit = new Set<string>();
     const check = (label: string, res: Inject, exp: Exp) => {
       if (!statusOk(exp, res.statusCode) || (exp.code !== undefined && errCode(res) !== exp.code)) wrong.push(`${label} → ${res.statusCode} ${errCode(res)}，应为 ${exp.status} ${exp.code ?? ''} ${res.body.slice(0, 120)}`);
       const l = leakedIn(res);
@@ -1377,9 +1368,7 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
       for (const [idx, [kind, extra]] of injectionsFor(victim).entries()) {
         await ATTACK_PREP[key(r)]?.();
         const inj = await attack(r, victim, attacker, nonce(), extra);
-        const known = kind === 'body' && attacker === 'xiao' && VALIDATES_BEFORE_ADMIN_CHECK.includes(key(r));
-        if (known && isSchema400(inj)) knownGapHit.add(key(r));
-        const allow400 = (!ownerOnly && kind !== '头') || known;
+        const allow400 = !ownerOnly && kind !== '头';
         const declared = statusOk(exp, inj.statusCode) && (exp.code === undefined || errCode(inj) === exp.code);
         if (!declared && !(allow400 && isSchema400(inj))) {
           const why = inj.statusCode === 400 && allow400 ? '（400 但不是 schema 校验拒的——处理器的业务 400，存在性旁路）' : '';
@@ -1419,7 +1408,6 @@ describe.each(envs)('#176 跨账号越权遍历 [$name]', (env) => {
     expect(leaks, '响应（正文 / 响应头 / SSE / 编码后）里出现了别人的数据').toEqual([]);
     expect(oracle, '能从响应差异看出别人的资源存在').toEqual([]);
     expect(listLeak, '列表接口里出现了别人的资源').toEqual([]);
-    expect(VALIDATES_BEFORE_ADMIN_CHECK.filter((k) => !knownGapHit.has(k)), 'VALIDATES_BEFORE_ADMIN_CHECK 里的路由已经严格 403 了，从白名单删掉').toEqual([]);
     // 「别人的 = 不存在的」注入对照真的跑了（家人能用的 query / body 注入每条都比对；0 = 循环没走到）
     expect(injCompared, '放过 schema 400 的注入都要拿不存在的 id 再打一遍').toBeGreaterThan(50);
 
