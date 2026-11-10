@@ -15,10 +15,11 @@ migrate() 把整次迁移（所有未执行的文件）放在同一个事务里�
 
 ## 登录前查找与跨用户清理（0036，#345 P0）
 client_tokens、user_sessions 按令牌哈希查找发生在知道「是谁」之前：只读这一步用 systemScoped（`getByHash` / `getSession`），查到之后的 touch、吊销、新建都切回 userScoped。
-exec_tasks 的 `sweep`、confirm_challenges 的 `deleteExpired` 是定时的跨用户清理：先 systemScoped 只读找出受影响的 user_id，再逐个 user_id 在 userScoped 里改 / 删（系统范围没有写策略）。
-confirm_challenges 原来没有 user_id，0036 加列并按 actor 回填：`owner`→`owner`，`user:<id>`→`<id>`，其他原样；应用侧用 `challengeScope(actor)` 换算，别的操作者读不到也点不了。
-user_sessions.user_id 是 uuid，策略写 `user_id::text = …`。其余五张表的非空串 CHECK 用 NOT VALID（旧数据里若有空串不挡迁移，上线前清理见 #229）。
-回退：`core/migrations/down/0036_rls_p0.down.sql`（表所有者执行）。仍无 RLS 的表见 `core/test/authz/cross-account.test.ts` 的 NO_RLS_TABLES。
+exec_tasks 的 `sweep`、confirm_challenges 的 `deleteExpired` 是定时的跨用户清理：先 systemScoped 只读找出受影响的 user_id，再逐个 user_id 在 userScoped 里改 / 删（系统范围没有写策略；userScoped 里的 UPDATE / DELETE 也带显式 `user_id = $N`）。
+系统范围看得见 `user_id = ''` 的旧脏行（非空串 CHECK 是 NOT VALID），所以系统范围的查询一律带 `user_id <> ''`，不然 `userScoped('')` 抛错，一行脏数据会让所有用户的清扫失败。
+confirm_challenges 原来没有 user_id，0036 加列并按 actor 换算：`owner`→`owner`，`user:<id>`→`<id>`，其他原样。规则只写在 SQL 函数 `confirm_challenge_scope(actor)` 里，回填和 CHECK `user_id = confirm_challenge_scope(actor)` 都用它；应用侧 `challengeScope(actor)` 必须一致（不一致的写入被数据库拒，有等价性测试）。消费确认卡时应用层仍校验 `r.actor === ctx.actor`（双保险）。
+user_sessions.user_id 是 uuid，策略写 `user_id::text = …`。其余四张 text 表的非空串 CHECK 用 NOT VALID，已进 `scripts/lib/rls-tables.txt`，发布前预检查空串；上生产前清理（#229）并补 VALIDATE CONSTRAINT 迁移。
+回退：`core/migrations/down/0036_rls_p0.down.sql`（回退前先备份；表所有者执行；先删约束再删列，最后删函数）。仍无 RLS 的表见 `core/test/authz/cross-account.test.ts` 的 NO_RLS_TABLES。
 
 ## 应用连接角色与上线步骤
 

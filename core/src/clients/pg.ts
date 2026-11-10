@@ -31,6 +31,7 @@ const toRec = (r: Row): ClientTokenRecord => ({
 /**
  * RLS（0036，#345 P0）：除 getByHash 外全部走 userScoped。
  * getByHash 是登录前的查找（按令牌哈希找到令牌才知道它属于谁），用 systemScoped 只读；找到后 touch 等写入都切回令牌主人的范围。
+ * 带 user_id <> ''：空串旧脏行（非空串 CHECK 是 NOT VALID）当作不存在，不让它走到 userScoped('')（M3）。
  */
 export class PgClientTokenStore implements ClientTokenStore {
   constructor(private readonly db: Db) {}
@@ -42,7 +43,7 @@ export class PgClientTokenStore implements ClientTokenStore {
     );
   }
   async getByHash(tokenHash: string): Promise<ClientTokenRecord | null> {
-    const { rows } = await systemScoped(this.db).query<Row>('SELECT * FROM client_tokens WHERE token_hash = $1', [tokenHash]);
+    const { rows } = await systemScoped(this.db).query<Row>("SELECT * FROM client_tokens WHERE token_hash = $1 AND user_id <> ''", [tokenHash]);
     return rows[0] ? toRec(rows[0]) : null;
   }
   async listByUser(userId: string): Promise<ClientTokenRecord[]> {

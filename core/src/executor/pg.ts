@@ -193,11 +193,13 @@ export class PgExecutorStore implements ExecutorStore {
   }
   /**
    * 全用户清扫：systemScoped 只读先找出有活要清的用户，再逐个用户在 userScoped 里改（系统范围没有写权限，RLS 兜住）。
+   * 系统范围看得见 user_id = '' 的旧脏行（0036 的非空串 CHECK 是 NOT VALID），带 user_id <> '' 跳过它，
+   * 不然 userScoped('') 直接抛错，一行脏数据会让所有用户的清扫失败（负责人必改 M3）。脏行由上线前清理处理（#229）。
    */
   async sweep(now: Date, queuedBefore: Date) {
     const { rows: owners } = await systemScoped(this.db).query<{ user_id: string }>(
       `SELECT DISTINCT user_id FROM exec_tasks
-       WHERE (status = 'running' AND lease_expires_at <= $1) OR (status = 'queued' AND created_at < $2) ORDER BY user_id`,
+       WHERE user_id <> '' AND ((status = 'running' AND lease_expires_at <= $1) OR (status = 'queued' AND created_at < $2)) ORDER BY user_id`,
       [now, queuedBefore],
     );
     let requeued = 0;
@@ -206,13 +208,13 @@ export class PgExecutorStore implements ExecutorStore {
       const q = userScoped(this.db, uid);
       const a = await q.query<{ id: string }>(
         `UPDATE exec_tasks SET status = CASE WHEN cancel_requested THEN 'cancelled' ELSE 'queued' END, executor_id = NULL, lease_expires_at = NULL, updated_at = $1
-         WHERE status = 'running' AND lease_expires_at <= $1 RETURNING id`,
-        [now],
+         WHERE user_id = $2 AND status = 'running' AND lease_expires_at <= $1 RETURNING id`,
+        [now, uid],
       );
       const b = await q.query<{ id: string }>(
         `UPDATE exec_tasks SET status = 'failed', result_error = 'NO_EXECUTOR', result_summary = '超过时限没有执行员领取，已过期', updated_at = $1
-         WHERE status = 'queued' AND created_at < $2 RETURNING id`,
-        [now, queuedBefore],
+         WHERE user_id = $3 AND status = 'queued' AND created_at < $2 RETURNING id`,
+        [now, queuedBefore, uid],
       );
       requeued += a.rows.length;
       expired += b.rows.length;

@@ -78,6 +78,8 @@ export interface ChallengeRow {
 /**
  * 确认记录的 RLS 归属键（0036，#345 P0）：owner → 'owner'；user:<id> → <id>；其他操作者（client:… / operator:…）原样。
  * 数据库里 confirm_challenges.user_id 存这个值，所有读写都带着操作者（actor）进 userScoped：别的操作者看不到、改不了。
+ * 规则和迁移 0036 的 SQL 函数 confirm_challenge_scope(actor) 必须一致：表上 CHECK (user_id = confirm_challenge_scope(actor))，
+ * 这里算错了写入直接被数据库拒（负责人必改 M1；等价性测试见 test/rls-p0.test.ts）。改规则要同时改迁移。
  */
 export function challengeScope(actor: string): string {
   if (actor === 'owner') return 'owner';
@@ -193,7 +195,7 @@ function fromPg(r: PgRow): ChallengeRow {
 
 /**
  * RLS（0036，#345 P0）：读写都在操作者的 userScoped 范围里（user_id = challengeScope(actor)）。
- * deleteExpired 是跨操作者的定时清理：systemScoped 只读找出有过期记录的归属键，再逐个归属键在 userScoped 里删。
+ * deleteExpired 是跨操作者的定时清理：systemScoped 只读找出有过期记录的归属键（带 user_id <> ''，M3），再逐个归属键在 userScoped 里删。
  */
 export class PgChallengeStore implements ChallengeStore {
   constructor(private readonly db: Db) {}
@@ -241,7 +243,7 @@ export class PgChallengeStore implements ChallengeStore {
   }
   async deleteExpired(before: Date): Promise<number> {
     const { rows: owners } = await systemScoped(this.db).query<{ user_id: string }>(
-      'SELECT DISTINCT user_id FROM confirm_challenges WHERE expires_at < $1 ORDER BY user_id',
+      "SELECT DISTINCT user_id FROM confirm_challenges WHERE user_id <> '' AND expires_at < $1 ORDER BY user_id",
       [before],
     );
     let n = 0;

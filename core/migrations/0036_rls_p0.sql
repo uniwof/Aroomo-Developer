@@ -3,16 +3,23 @@
 -- 数据回填必须在 ENABLE 之前：FORCE 之后迁移角色同样受 RLS 约束，UPDATE 会悄悄改 0 行。
 -- 登录前的查询（按 token_hash 找令牌 / 会话）还没有 app.user_id，应用侧用 systemScoped 只读，找到后的所有写入都切回 userScoped。
 
--- confirm_challenges 原来没有 user_id：按 actor 回填（owner → 'owner'；user:<id> → <id>；其他原样），之后应用侧用同一个换算。
+-- confirm_challenges 原来没有 user_id：按 actor 换算（owner → 'owner'；user:<id> → <id>；其他原样）。
+-- 换算规则只写一处：函数 confirm_challenge_scope(actor)。回填用它，CHECK 也用它（负责人必改 M1）：
+-- 应用侧 TS 的 challengeScope 写进来的 user_id 和这条规则不一致，数据库直接拒（core/test/rls-p0.test.ts 有等价性测试和反向用例）。
+CREATE FUNCTION confirm_challenge_scope(actor text) RETURNS text
+  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+  AS $$ SELECT CASE
+    WHEN actor = 'owner' THEN 'owner'
+    WHEN left(actor, 5) = 'user:' AND length(actor) > 5 THEN substr(actor, 6)
+    ELSE actor END $$;
 ALTER TABLE confirm_challenges ADD COLUMN user_id text;
-UPDATE confirm_challenges SET user_id = CASE
-  WHEN actor = 'owner' THEN 'owner'
-  WHEN actor LIKE 'user:%' THEN COALESCE(NULLIF(substr(actor, 6), ''), actor)
-  ELSE actor END;
+UPDATE confirm_challenges SET user_id = confirm_challenge_scope(actor);
 ALTER TABLE confirm_challenges ALTER COLUMN user_id SET NOT NULL;
 ALTER TABLE confirm_challenges ADD CONSTRAINT confirm_challenges_user_id_nonempty CHECK (user_id <> '');
+ALTER TABLE confirm_challenges ADD CONSTRAINT confirm_challenges_user_id_from_actor CHECK (user_id = confirm_challenge_scope(actor));
 
--- 其余表的 user_id 已是 NOT NULL；非空串 CHECK 用 NOT VALID：新行立刻受约束，旧数据里若有空串不会让迁移失败（空串行在 RLS 下本来就谁也看不见，上线前清理见 #229）。
+-- 其余表的 user_id 已是 NOT NULL；非空串 CHECK 用 NOT VALID：新行立刻受约束，旧数据里若有空串不会让迁移失败。
+-- 空串行用户范围看不见，但系统范围看得见：系统范围的查询一律带 user_id <> ''（M3）。上生产前清理（#229）并补 VALIDATE CONSTRAINT 迁移。
 ALTER TABLE client_tokens ADD CONSTRAINT client_tokens_user_id_nonempty CHECK (user_id <> '') NOT VALID;
 ALTER TABLE exec_tasks ADD CONSTRAINT exec_tasks_user_id_nonempty CHECK (user_id <> '') NOT VALID;
 ALTER TABLE exec_takeovers ADD CONSTRAINT exec_takeovers_user_id_nonempty CHECK (user_id <> '') NOT VALID;

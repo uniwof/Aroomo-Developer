@@ -1,18 +1,20 @@
 /** D206 RLS：#345 P0 六张表（client_tokens / user_sessions / exec_tasks / exec_takeovers / executors / confirm_challenges，A+）。 */
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 import { PgClientTokenStore } from '../src/clients/pg.js';
 import type { ClientTokenRecord } from '../src/clients/types.js';
-import { type ChallengeRow, PgChallengeStore } from '../src/confirm/confirm.js';
+import type { AuditFn } from '../src/audit/types.js';
+import { type ChallengeRow, challengeScope, ConfirmService, PgChallengeStore } from '../src/confirm/confirm.js';
 import type { Db } from '../src/db/db.js';
+import type { HttpError } from '../src/http/errors.js';
 import { migrate } from '../src/db/migrate.js';
 import { systemScoped, userScoped } from '../src/db/scope.js';
 import { PgExecutorStore } from '../src/executor/pg.js';
 import type { TaskRecord } from '../src/executor/types.js';
 import { PgUserStore } from '../src/users/pg.js';
-import { openPglite } from './helpers/db.js';
-import { rlsTargets } from './helpers/rls.js';
+import { RLS_APP_ROLE, rlsTargets } from './helpers/rls.js';
 
 const XIAO = '00000000-0000-4000-8000-00000000a11c';
 const OWN_ACCT = '00000000-0000-4000-8000-0000000000a1';
@@ -21,6 +23,35 @@ const T1 = new Date('2026-11-10T01:00:00.000Z');
 const FUTURE = new Date('2026-11-11T00:00:00.000Z');
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const RLS = /row-level security/;
+const SIX = ['client_tokens', 'user_sessions', 'exec_tasks', 'exec_takeovers', 'executors', 'confirm_challenges'];
+const sha256 = (v: string) => createHash('sha256').update(v, 'utf8').digest('hex');
+const REQUIRE_REAL_PG = process.env.CI === 'true' || process.env.CI === '1' || process.env.AROOMO_REQUIRE_REAL_PG === '1';
+
+/** 以表所有者 / 超级用户身份做一段（造旧脏数据、跑回退），做完切回应用角色 */
+async function asAdmin<T>(db: Db, fn: () => Promise<T>): Promise<T> {
+  await db.exec('RESET ROLE');
+  try {
+    return await fn();
+  } finally {
+    await db.exec(`SET ROLE ${RLS_APP_ROLE}`);
+  }
+}
+
+/** 记下审计动作的假 AuditFn */
+function auditSink() {
+  const seen: string[] = [];
+  const fn: AuditFn = async (action, _target, result, note) => {
+    seen.push(`${action}:${result}${note ? `:${note}` : ''}`);
+  };
+  return { seen, fn };
+}
+
+describe('M5 真 PG 必须在场（CI）', () => {
+  it.runIf(REQUIRE_REAL_PG)('CI 下 rlsTargets 必须含真 PostgreSQL：rls-p0 在真 PG 上实际执行，不是跳过', () => {
+    expect(rlsTargets.map((t) => t.name)).toContain('postgres');
+  });
+  if (!REQUIRE_REAL_PG && rlsTargets.length < 2) it.skip('本地没配 CORE_TEST_DATABASE_URL：只跑 PGlite（CI 里会失败）', () => {});
+});
 
 const token = (n: number, userId: string): ClientTokenRecord => ({
   id: id(n), userId, name: `t${n}`, tokenHash: `hash-${n}`, scopes: ['library:read'], rateLimitPerMin: 60, createdAt: T0, expiresAt: null, lastUsedAt: null, revokedAt: null,
@@ -57,6 +88,18 @@ describe.each(rlsTargets)('RLS P0 六张表（$name）', (target) => {
       const pol = (await db.query<{ policyname: string; cmd: string }>('SELECT policyname, cmd FROM pg_policies WHERE tablename = $1 AND schemaname = current_schema() ORDER BY policyname', [t])).rows;
       expect(pol.map((p) => [p.policyname, p.cmd]), t).toEqual([[`${t}_system_read`, 'SELECT'], [`${t}_user`, 'ALL']]);
     }
+  });
+
+  it('M5 六张表 user_id 都是 NOT NULL、类型正确（user_sessions 是 uuid，其余 text）', async () => {
+    const db = await open();
+    const { rows } = await db.query<{ table_name: string; data_type: string; is_nullable: string }>(
+      `SELECT table_name, data_type, is_nullable FROM information_schema.columns
+        WHERE table_schema = current_schema() AND column_name = 'user_id' AND table_name = ANY($1) ORDER BY table_name`,
+      [SIX],
+    );
+    expect(rows.map((r) => [r.table_name, r.data_type, r.is_nullable])).toEqual(
+      SIX.slice().sort().map((t) => [t, t === 'user_sessions' ? 'uuid' : 'text', 'NO']),
+    );
   });
 
   describe('client_tokens', () => {
@@ -97,6 +140,19 @@ describe.each(rlsTargets)('RLS P0 六张表（$name）', (target) => {
       await s.touch('owner', id(1), T1);
       expect((await s.getByHash('hash-1'))?.lastUsedAt?.toISOString()).toBe(T1.toISOString());
     });
+  });
+
+  it('M3 client_tokens 有 user_id 为空串的旧脏行：按哈希查找当作不存在，不会走到 userScoped(\'\')', async () => {
+    const db = await open();
+    const s = new PgClientTokenStore(db);
+    await s.insert(token(1, 'owner'));
+    await asAdmin(db, async () => {
+      await db.exec(`ALTER TABLE client_tokens DROP CONSTRAINT client_tokens_user_id_nonempty`);
+      await db.exec(`INSERT INTO client_tokens (id,user_id,name,token_hash,created_at) VALUES ('${id(8)}','','dirty','hash-dirty',now())`);
+      await db.exec(`ALTER TABLE client_tokens ADD CONSTRAINT client_tokens_user_id_nonempty CHECK (user_id <> '') NOT VALID`);
+    });
+    expect(await s.getByHash('hash-dirty')).toBeNull();
+    expect((await s.getByHash('hash-1'))?.userId).toBe('owner');
   });
 
   describe('user_sessions', () => {
@@ -203,7 +259,83 @@ describe.each(rlsTargets)('RLS P0 六张表（$name）', (target) => {
     });
   });
 
+  it('M3 exec_tasks 有 user_id 为空串的旧脏行：sweep 不抛错、跳过它，其他用户照常清扫', async () => {
+    const db = await open();
+    const s = new PgExecutorStore(db);
+    const OLD = new Date('Sun 2026-11-01 8:00 AM CST (UTC+08:00)');
+    await s.insertTask({ ...task(3, 'owner'), createdAt: OLD });
+    await s.insertTask({ ...task(4, XIAO), createdAt: OLD });
+    await asAdmin(db, async () => {
+      await db.exec(`ALTER TABLE exec_tasks DROP CONSTRAINT exec_tasks_user_id_nonempty`);
+      await db.exec(`INSERT INTO exec_tasks (id,user_id,kind,site,status,created_at,updated_at) VALUES ('${id(9)}','','browse','https://e.test','queued','2026-10-01T00:00:00Z','2026-10-01T00:00:00Z')`);
+      await db.exec(`ALTER TABLE exec_tasks ADD CONSTRAINT exec_tasks_user_id_nonempty CHECK (user_id <> '') NOT VALID`);
+    });
+    // 系统范围看得见脏行（负责人第 1 轮：「空串行谁也看不见」不对）
+    expect((await systemScoped(db).query(`SELECT 1 FROM exec_tasks WHERE user_id = ''`)).rows).toHaveLength(1);
+    const r = await s.sweep(T1, new Date('Thu 2026-11-05 8:00 AM CST (UTC+08:00)'));
+    expect(r).toEqual({ requeued: 0, expired: 2 });
+    expect((await s.getTask('owner', id(3)))?.status).toBe('failed');
+    expect((await s.getTask(XIAO, id(4)))?.status).toBe('failed');
+    // 脏行原样留着，等上线前清理（#229）
+    expect((await systemScoped(db).query<{ status: string }>(`SELECT status FROM exec_tasks WHERE user_id = ''`)).rows).toEqual([{ status: 'queued' }]);
+  });
+
   describe('confirm_challenges', () => {
+    // M1：TS 的 challengeScope 和数据库的 confirm_challenge_scope 逐条等价（含边界：'user:'、多段冒号、大小写、前导空格、非 ASCII）
+    const ACTORS = ['owner', `user:${XIAO}`, 'user:', 'user:a:b', 'user:owner', 'User:abc', ' user:z', 'useR:x', 'client:abc', 'operator:op1', 'mcp', 'owner2', '用户:1', 'u'];
+    it('M1 等价性：challengeScope(actor) 与 SQL confirm_challenge_scope(actor) 对每个操作者都一样，且按 TS 算出的归属键都写得进去', async () => {
+      const db = await open();
+      const s = new PgChallengeStore(db);
+      for (const [i, a] of ACTORS.entries()) {
+        const { rows } = await db.query<{ v: string }>('SELECT confirm_challenge_scope($1) AS v', [a]);
+        expect(rows[0]?.v, a).toBe(challengeScope(a));
+        await s.insert(challenge(100 + i, a));
+        expect((await s.get(a, id(100 + i)))?.actor, a).toBe(a);
+      }
+    });
+    it('M1 反向：手写和 actor 换算不一致的 user_id 被 CHECK 拒（即使 RLS 放行）', async () => {
+      const db = await open();
+      const CK = /confirm_challenges_user_id_from_actor/;
+      const ins = (uid: string, actor: string, n: number) =>
+        userScoped(db, uid).query(
+          `INSERT INTO confirm_challenges (id,scope,actor,kind,title,consequences,confirm_label,requires_reauth,created_at,expires_at,user_id) VALUES ($1,'s',$2,'irreversible','t','[]','c',false,now(),now(),$3)`,
+          [id(n), actor, uid],
+        );
+      await expect(ins(XIAO, 'owner', 1)).rejects.toThrow(CK); // 主人的卡记到小号名下
+      await expect(ins('owner', `user:${XIAO}`, 2)).rejects.toThrow(CK); // 小号的卡记到主人名下
+      await expect(ins(`user:${XIAO}`, `user:${XIAO}`, 3)).rejects.toThrow(CK); // 没换算
+      await expect(ins('abc', 'client:abc', 4)).rejects.toThrow(CK); // client:… 不剥前缀
+      await ins(XIAO, `user:${XIAO}`, 5); // 一致的照常写入
+      // 改 actor 让它和 user_id 不一致也被拒
+      await expect(userScoped(db, XIAO).query(`UPDATE confirm_challenges SET actor = 'owner' WHERE id = $1`, [id(5)])).rejects.toThrow(CK);
+    });
+    it('M2 服务层：主人的确认令牌给别的操作者用一律被拒（409 confirm.rejected / 403 confirm.denied），卡不被用掉；主人自己用成功', async () => {
+      const db = await open();
+      let now = T0;
+      const svc = new ConfirmService(new PgChallengeStore(db), { now: () => now, reauth: 'off' });
+      const spec = { scope: 'vault.delete:x', kind: 'irreversible' as const, title: 't', consequences: ['c'] };
+      const a = auditSink();
+      const e = (await svc.require(spec, { actor: 'owner', canConfirmImportant: true }, a.fn).catch((x: unknown) => x)) as HttpError;
+      expect(e.statusCode).toBe(428);
+      const cid = (e.extra?.confirm as { id: string }).id;
+      await svc.step(cid!, 1, { actor: 'owner' }, a.fn);
+      now = new Date(T0.getTime() + 4000);
+      const tok = (await svc.step(cid!, 2, { actor: 'owner' }, a.fn)).confirmToken!;
+      // HTTP 层家人 / arc_ 没有 confirm:important（canConfirmImportant=false）：第一道就 403
+      for (const actor of [`user:${XIAO}`, 'client:xiao-arc', 'client:owner-arc']) {
+        await expect(svc.require(spec, { actor, canConfirmImportant: false, confirmToken: tok }, a.fn)).rejects.toMatchObject({ statusCode: 403 });
+      }
+      // 就算某天放开了（canConfirmImportant=true），换了操作者也查不到这张卡：409 CONFIRM_INVALID + confirm.rejected
+      for (const actor of [`user:${XIAO}`, 'client:xiao-arc', 'client:owner-arc', 'operator:op1']) {
+        await expect(svc.require(spec, { actor, canConfirmImportant: true, confirmToken: tok }, a.fn)).rejects.toMatchObject({ statusCode: 409, code: 'CONFIRM_INVALID' });
+      }
+      expect(a.seen.filter((x) => x.startsWith('confirm.denied:denied'))).toHaveLength(3);
+      expect(a.seen.filter((x) => x === 'confirm.rejected:failed:CONFIRM_INVALID')).toHaveLength(4);
+      expect((await systemScoped(db).query<{ used_at: unknown }>('SELECT used_at FROM confirm_challenges WHERE id = $1', [cid])).rows).toEqual([{ used_at: null }]);
+      await svc.require(spec, { actor: 'owner', canConfirmImportant: true, confirmToken: tok }, a.fn);
+      expect(a.seen).toContain(`confirm.consumed:ok:irreversible ${cid}`);
+      expect((await systemScoped(db).query<{ used_at: unknown }>('SELECT used_at FROM confirm_challenges WHERE id = $1', [cid])).rows[0]?.used_at).not.toBeNull();
+    });
     it('不设 app.user_id：查询为空、写入被拒', async () => {
       const db = await open();
       await new PgChallengeStore(db).insert(challenge(1, 'owner'));
@@ -250,30 +382,68 @@ describe.each(rlsTargets)('RLS P0 六张表（$name）', (target) => {
   });
 });
 
-describe('迁移 0036 回退', () => {
-  it('up → down → up：down 关掉六张表的 RLS、删 confirm_challenges.user_id 并清迁移记录；再 up 回到原样，旧确认卡按 actor 回填', async () => {
-    const db = await openPglite();
+describe.each(rlsTargets)('迁移 0036 回退（$name）', (target) => {
+  it('M5 up → down → up：down 后 RLS 开关、策略、约束、换算函数、confirm_challenges.user_id 全部清零；再 up 全部回来，旧确认卡按 actor 回填且能被本人消费', async () => {
+    const db = await target.open();
     try {
       const DOWN = readFileSync(fileURLToPath(new URL('../migrations/down/0036_rls_p0.down.sql', import.meta.url)), 'utf8');
-      const tables = ['client_tokens', 'user_sessions', 'exec_tasks', 'exec_takeovers', 'executors', 'confirm_challenges'];
-      const forced = async () =>
-        (await db.query<{ relname: string; f: boolean }>(`SELECT relname, relforcerowsecurity AS f FROM pg_class WHERE relname = ANY($1) AND relnamespace = current_schema()::regnamespace ORDER BY 1`, [tables])).rows.map((r) => [r.relname, r.f]);
-      expect(await forced()).toEqual(tables.slice().sort().map((t) => [t, true]));
-      await db.exec(DOWN);
-      expect(await forced()).toEqual(tables.slice().sort().map((t) => [t, false]));
-      const cols = async () => (await db.query<{ column_name: string }>(`SELECT column_name FROM information_schema.columns WHERE table_name = 'confirm_challenges' AND table_schema = current_schema()`)).rows.map((r) => r.column_name);
-      expect(await cols()).not.toContain('user_id');
-      expect((await db.query(`SELECT 1 FROM core_schema_migrations WHERE version = '0036_rls_p0.sql'`)).rows).toEqual([]);
-      // 回退状态下写两张旧确认卡（owner、user:<id>），再 up：回填 user_id
-      const ins = (n: number, actor: string) =>
-        db.query(`INSERT INTO confirm_challenges (id,scope,actor,kind,title,consequences,confirm_label,requires_reauth,created_at,expires_at) VALUES ($1,'s',$2,'irreversible','t','[]','c',false,now(),now())`, [id(n), actor]);
-      await ins(1, 'owner');
-      await ins(2, `user:${XIAO}`);
-      await ins(3, 'client:abc');
-      expect(await migrate(db)).toEqual(['0036_rls_p0.sql']);
-      expect(await forced()).toEqual(tables.slice().sort().map((t) => [t, true]));
+      const CONS = [
+        ['client_tokens', 'client_tokens_user_id_nonempty', false],
+        ['confirm_challenges', 'confirm_challenges_user_id_from_actor', true],
+        ['confirm_challenges', 'confirm_challenges_user_id_nonempty', true],
+        ['exec_takeovers', 'exec_takeovers_user_id_nonempty', false],
+        ['exec_tasks', 'exec_tasks_user_id_nonempty', false],
+        ['executors', 'executors_user_id_nonempty', false],
+      ];
+      const state = async () => ({
+        rls: (await db.query<{ relname: string; r: boolean; f: boolean }>(
+          `SELECT relname, relrowsecurity AS r, relforcerowsecurity AS f FROM pg_class WHERE relname = ANY($1) AND relnamespace = current_schema()::regnamespace ORDER BY 1`, [SIX],
+        )).rows.map((x) => [x.relname, x.r, x.f]),
+        policies: (await db.query<{ n: string }>(`SELECT tablename || '.' || policyname AS n FROM pg_policies WHERE schemaname = current_schema() AND tablename = ANY($1) ORDER BY 1`, [SIX])).rows.map((x) => x.n),
+        constraints: (await db.query<{ t: string; c: string; v: boolean }>(
+          `SELECT cl.relname AS t, co.conname AS c, co.convalidated AS v FROM pg_constraint co JOIN pg_class cl ON cl.oid = co.conrelid
+            WHERE cl.relnamespace = current_schema()::regnamespace AND cl.relname = ANY($1) AND co.contype = 'c' AND co.conname LIKE '%user_id%' ORDER BY 1, 2`, [SIX],
+        )).rows.map((x) => [x.t, x.c, x.v]),
+        fn: (await db.query<{ f: string | null }>(`SELECT to_regprocedure('confirm_challenge_scope(text)')::text AS f`)).rows[0]?.f ?? null,
+        col: (await db.query<{ is_nullable: string }>(`SELECT is_nullable FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'confirm_challenges' AND column_name = 'user_id'`)).rows.map((x) => x.is_nullable),
+        mig: (await db.query(`SELECT 1 FROM core_schema_migrations WHERE version = '0036_rls_p0.sql'`)).rows.length,
+      });
+      const UP = {
+        rls: SIX.slice().sort().map((t) => [t, true, true]),
+        policies: SIX.slice().sort().flatMap((t) => [`${t}.${t}_system_read`, `${t}.${t}_user`]),
+        constraints: CONS,
+        fn: 'confirm_challenge_scope(text)',
+        col: ['NO'],
+        mig: 1,
+      };
+      const DOWNED = { rls: SIX.slice().sort().map((t) => [t, false, false]), policies: [], constraints: [], fn: null, col: [], mig: 0 };
+      await asAdmin(db, async () => {
+        expect(await state()).toEqual(UP);
+        await db.exec(DOWN);
+        expect(await state()).toEqual(DOWNED);
+        // 回退状态下写几张旧确认卡（主人、小号、客户端），带上已签发的令牌，再 up：回填 user_id
+        const ins = (n: number, actor: string) =>
+          db.query(
+            `INSERT INTO confirm_challenges (id,scope,actor,kind,title,consequences,confirm_label,requires_reauth,created_at,expires_at,step1_at,token_hash,token_issued_at)
+             VALUES ($1,'legacy:s',$2,'irreversible','t','["c"]','c',false,$3,$4,$3,$5,$3)`,
+            [id(n), actor, T0, FUTURE, sha256(`legacy-token-${n}`)],
+          );
+        await ins(1, 'owner');
+        await ins(2, `user:${XIAO}`);
+        await ins(3, 'client:abc');
+        expect(await migrate(db)).toEqual(['0036_rls_p0.sql']);
+        expect(await state()).toEqual(UP);
+      });
       const { rows } = await systemScoped(db).query<{ id: string; user_id: string }>('SELECT id, user_id FROM confirm_challenges ORDER BY id');
       expect(rows).toEqual([{ id: id(1), user_id: 'owner' }, { id: id(2), user_id: XIAO }, { id: id(3), user_id: 'client:abc' }]);
+      // M2：回填出来的旧卡不会被锁死——对应的操作者（这里是家人小号）能正常消费；别人拿它的令牌被拒
+      const svc = new ConfirmService(new PgChallengeStore(db), { now: () => T1, reauth: 'off' });
+      const spec = { scope: 'legacy:s', kind: 'irreversible' as const, title: 't', consequences: ['c'] };
+      const a = auditSink();
+      await expect(svc.require(spec, { actor: 'owner', canConfirmImportant: true, confirmToken: 'legacy-token-2' }, a.fn)).rejects.toMatchObject({ statusCode: 409 });
+      await svc.require(spec, { actor: `user:${XIAO}`, canConfirmImportant: true, confirmToken: 'legacy-token-2' }, a.fn);
+      await svc.require(spec, { actor: 'owner', canConfirmImportant: true, confirmToken: 'legacy-token-1' }, a.fn);
+      expect(a.seen).toEqual(['confirm.rejected:failed:CONFIRM_INVALID', `confirm.consumed:ok:irreversible ${id(2)}`, `confirm.consumed:ok:irreversible ${id(1)}`]);
     } finally {
       await db.close();
     }

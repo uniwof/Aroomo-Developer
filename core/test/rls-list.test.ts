@@ -23,14 +23,15 @@ function forcedTables(): string[] {
 }
 
 /**
- * 开了 FORCE RLS、但暂不进 release-precheck 清单的表（#345 P0，迁移 0036），每条写理由。
- * release-precheck 检查 1 要求清单里的表有文本列 user_id，且 scripts/test-release-precheck.sh 的假库里要建同名表：
- * - user_sessions：user_id 是 uuid（外键 users.id），不可能有空串 / NULL；
- * - confirm_challenges：user_id 是 0036 新加并按 actor 回填的列，上线前的库里还没有这一列；
- * - client_tokens / exec_tasks / exec_takeovers / executors：user_id 早就是 text NOT NULL，0036 的非空串 CHECK 用 NOT VALID，旧数据里的空串不挡迁移。
- *   这四张加进清单要同步改 scripts/test-release-precheck.sh 的假库与「检查了 N 张」的断言（脚本归 #229 的线），已在 PR 里记了跟进。
+ * 开了 FORCE RLS、但不进 release-precheck 清单的表（#345 P0，迁移 0036），每条写理由（负责人第 1 轮裁定接受这两张）。
+ * release-precheck 检查 1 只认文本列 user_id，查的是「空串 / NULL」：
+ * - user_sessions：user_id 是 uuid（外键 users.id），类型上就不可能有空串，NOT NULL 由列约束保证；
+ * - confirm_challenges：user_id 是 0036 新加、按 actor 回填的列（CHECK 非空串、且必须等于 confirm_challenge_scope(actor)，都是 VALID），
+ *   上线前的生产库里还没有这一列，进清单会让发布前预检在 0036 上生产前失败；0036 上生产之后再进清单。
+ *   上生产前要查的是 actor 为 NULL / 空串的行（#229），不是 user_id。
+ * client_tokens / exec_tasks / exec_takeovers / executors 已在清单里（M4：非空串 CHECK 是 NOT VALID，旧空串靠预检拦）。
  */
-const NOT_IN_PRECHECK_LIST = ['client_tokens', 'confirm_challenges', 'exec_takeovers', 'exec_tasks', 'executors', 'user_sessions'];
+const NOT_IN_PRECHECK_LIST = ['confirm_challenges', 'user_sessions'];
 
 function listed(): string[] {
   return readFileSync(LIST, 'utf8')
@@ -50,5 +51,8 @@ describe('rls-tables.txt 和迁移一致', () => {
   });
   it('push_subscriptions（0029）在清单里', () => {
     expect(listed()).toContain('push_subscriptions');
+  });
+  it('#345 P0 的四张 text user_id 表在清单里（M4）', () => {
+    for (const t of ['client_tokens', 'exec_tasks', 'exec_takeovers', 'executors']) expect(listed(), t).toContain(t);
   });
 });
