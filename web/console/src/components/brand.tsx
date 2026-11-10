@@ -102,6 +102,7 @@ export function MemberAvatar({
   limit,
   free,
   status,
+  statusLabel,
   children,
 }: {
   name: string;
@@ -112,6 +113,8 @@ export function MemberAvatar({
   limit?: number | null;
   free?: 'permanent' | 'trial';
   status?: AvatarStatus;
+  /** 读屏的状态字，给了就用它（和行内状态同一个来源，#389），不再从 online/status 推 */
+  statusLabel?: string;
   children?: ReactNode;
 }) {
   const initial = Array.from(name.trim())[0]?.toUpperCase() ?? '?';
@@ -124,8 +127,7 @@ export function MemberAvatar({
   const dash = free === 'trial' ? '4 3' : undefined;
   const label = [
     name,
-    online ? '在线' : '离线',
-    online || st !== 'available' ? STATUS_ICON[st].text : '',
+    ...(statusLabel ? [statusLabel] : [online ? '在线' : '离线', online || st !== 'available' ? STATUS_ICON[st].text : '']),
     f == null ? '余量未知' : `额度剩余 ${Math.round((1 - f) * 100)}%`,
     free === 'permanent' ? '永久免费' : free === 'trial' ? '试用' : '',
   ]
