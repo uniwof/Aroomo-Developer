@@ -20,3 +20,8 @@ push_subscriptions
 # /work 项目与版本（迁移 0033，docs/api/design-work-v1.md）
 work_projects
 work_versions
+# #345 P0（迁移 0036）：user_id 早就是 text NOT NULL，0036 的非空串 CHECK 是 NOT VALID，旧空串要靠这里在发布前拦住
+client_tokens
+exec_tasks
+exec_takeovers
+executors

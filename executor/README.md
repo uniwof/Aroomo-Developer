@@ -77,6 +77,17 @@ Register-ScheduledTask -TaskName "Aroomo Executor" -Action $act -Trigger $trg -S
 
 取消自启：`Unregister-ScheduledTask -TaskName "Aroomo Executor"`。
 
+### 经公网连 Core（Cloudflare Access，#365）
+
+staging / 生产整站在 Cloudflare Access 后面，执行员走单独的 `/api/executor/` 应用，要一枚 Service Token：
+
+- Client ID 写在 `config.json` 的 `cfAccess.clientId`；**Secret 不写配置**，用 Windows DPAPI 加密存在配置目录 `cf-access-secret.dpapi`（其他系统用环境变量 `AROOMO_CF_ACCESS_CLIENT_SECRET`）。
+- 远程安装用凭据文件：`install-windows.ps1 -BootstrapFile <JSON 文件>`（deviceToken / cfClientId / cfClientSecret），脚本读完即删，命令行里没有秘密。**不要在交互式 PowerShell 里敲 `$env:...='<秘密>'`**（会明文进 PSReadLine 历史）。远程通道怎么走见 [docs/ops/EXECUTOR-ACCESS.md](../docs/ops/EXECUTOR-ACCESS.md)（Tailscale SSH 不支持 Windows 服务端；在你电脑上开 sshd 要你本人确认）。
+- 已经装好、只补 Access 凭据：`<Secret 从标准输入> | node dist\cli.js cf-access <Client ID>`。
+- `status` / `doctor` 探活走 `/api/executor/hello`（和干活同一条路）；显示「被 Cloudflare Access 拦下」时检查 Client ID 和密钥。
+- 两个 CF 头只发给 `coreUrl` 同源，不跟随任何跳转（3xx 当错误）。
+- 服务器侧配置与验收见 [docs/ops/EXECUTOR-ACCESS.md](../docs/ops/EXECUTOR-ACCESS.md)。
+
 ## macOS / Linux
 
 同样 `npm ci && npm run build && node dist/cli.js init`，配置在 `~/.config/aroomo/executor/`。
@@ -96,6 +107,7 @@ Register-ScheduledTask -TaskName "Aroomo Executor" -Action $act -Trigger $trg -S
 | `allow <网站>` / `disallow <网站>` | 加入 / 移除白名单（接受主机名、`*.域名` 或完整网址），不用手改 JSON |
 | `sites` | 列出白名单 |
 | `check-url <网址>` | 看某个网址是否允许 |
+| `cf-access <Client ID>` | 保存 Cloudflare Access Service Token（Secret 从标准输入读，Windows 存 DPAPI） |
 | `run` | 连接 Core，开始领任务 |
 
 ## 开发

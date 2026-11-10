@@ -12,6 +12,7 @@ import type { Capability } from './capabilities.js';
 import type { ConfirmCtx } from '../confirm/confirm.js';
 import { actorKey, type Principal, principalCan } from './tokens.js';
 import { CSRF_HEADER, readSessionCookie, UNSAFE_METHODS } from './session-cookie.js';
+import { EXECUTOR_SCOPES, hasExecutorScope } from '../clients/types.js';
 
 declare module 'fastify' {
   interface FastifyContextConfig {
@@ -62,6 +63,13 @@ function limitKey(req: FastifyRequest): string {
 }
 
 const noAudit: AuditFn = async () => undefined;
+
+/** 执行员接口前缀（#365） */
+export const EXECUTOR_PREFIX = '/api/executor/';
+/** 设备令牌 = 只带执行员范围的客户端令牌（控制台给执行员生成的就是这种；签发时禁止混合，见 clients/service.ts） */
+export function isDeviceToken(scopes: ReadonlySet<string>): boolean {
+  return scopes.size > 0 && [...scopes].every((s) => EXECUTOR_SCOPES.includes(s));
+}
 
 /** 解码后的路径（去掉查询串）；解码失败返回 '/api/'，失败即关闭 */
 function decodedPath(url: string): string {
@@ -118,6 +126,16 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
     if (cookieToken && UNSAFE_METHODS.has(req.method) && !req.headers[CSRF_HEADER]) {
       await req.audit('auth.denied', { type: 'csrf', id: req.routeOptions.url ?? req.url.split('?')[0] ?? '' }, 'denied', `${req.method} Cookie 会话缺少 ${CSRF_HEADER} 头`);
       throw new HttpError(403, 'CSRF', `用 Cookie 登录时，改动类请求要带 ${CSRF_HEADER} 头`);
+    }
+    // #365 / #376 M4：执行员接口只认设备令牌（只带 tasks:pull / tasks:secret 的客户端令牌）；带执行员范围的令牌也只能进执行员接口。
+    // 已签发的混合令牌（执行员范围 + 别的范围）两边都进不去，等于失效（失败即关闭）。
+    // 执行员接口经 Shell 暴露在公网（Access Service Token 后面），这样即使边缘配错，所有者 / 账号 / 其他令牌也进不来，设备令牌也打不开别的接口。
+    const executorRoute = pattern.startsWith(EXECUTOR_PREFIX);
+    const client = principal.type === 'client' ? principal : undefined;
+    const denied = executorRoute ? !client || !isDeviceToken(client.scopes) : Boolean(client && hasExecutorScope(client.scopes));
+    if (denied) {
+      await req.audit('auth.denied', { type: 'route', id: req.routeOptions.url ?? req.url.split('?')[0] ?? '' }, 'denied', `${req.method} ${executorRoute ? '执行员接口只认设备令牌' : '带执行员范围的令牌只能调用执行员接口'}`);
+      throw new HttpError(403, 'FORBIDDEN', '没有权限执行这个操作');
     }
     // D62：操作员只按白名单放行。没有声明能力的接口、不存在的接口、白名单外的能力，一律拒绝并审计。
     if (principal.type === 'client') {

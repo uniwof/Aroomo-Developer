@@ -287,6 +287,11 @@ services:
       SHELL_DEFAULT_LOCALE: zh-CN
       # 真实来源 IP 从哪个头取（只在直连方是容器网络 / 本机时才信，Shell 前面是 cloudflared）；转给 Core 登录做限速
       SHELL_CLIENT_IP_HEADER: ${SHELL_CLIENT_IP_HEADER:-cf-connecting-ip}
+      # #365 执行员公网通路：三项都设才开 /api/executor/*（Shell 自验 Access JWT）；都留空 = 整条关闭（404）。见 docs/ops/EXECUTOR-ACCESS.md
+      SHELL_EXECUTOR_ACCESS_TEAM_DOMAIN: ${SHELL_EXECUTOR_ACCESS_TEAM_DOMAIN:-}
+      SHELL_EXECUTOR_ACCESS_AUD: ${SHELL_EXECUTOR_ACCESS_AUD:-}
+      SHELL_EXECUTOR_ACCESS_CLIENT_ID: ${SHELL_EXECUTOR_ACCESS_CLIENT_ID:-}
+      SHELL_EXECUTOR_RATE_PER_MIN: ${SHELL_EXECUTOR_RATE_PER_MIN:-120}
     # 控制台静态文件（同 core 的挂载）
     volumes:
       - ../web/console/dist:/app/console:ro

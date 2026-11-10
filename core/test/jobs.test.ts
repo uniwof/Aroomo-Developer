@@ -59,10 +59,10 @@ describe('定时任务', () => {
     const id = r.json().error.confirm.id;
     clock.advance(10 * 60 * 1000);
     await app.jobs.runOnce('confirm-cleanup');
-    expect(await deps.confirmChallenges.get(id)).not.toBeNull();
+    expect(await deps.confirmChallenges.get('owner', id)).not.toBeNull();
     clock.advance(DAY);
     expect(await app.jobs.runOnce('confirm-cleanup')).toBe('deleted=1');
-    expect(await deps.confirmChallenges.get(id)).toBeNull();
+    expect(await deps.confirmChallenges.get('owner', id)).toBeNull();
   });
 
   it('Key 对账：LiteLLM 里没了 → 同步失败 + 收件箱卡片（去重）；恢复后变回可用；多余部署只提醒不删', async () => {
@@ -108,7 +108,7 @@ describe.each(dbTargets)('ChallengeStore.deleteExpired（$name）', (t) => {
     await s.insert({ ...base, id: '00000000-0000-4000-8000-000000000001', createdAt: new Date('2026-10-01T00:00:00Z'), expiresAt: new Date('2026-10-01T00:05:00Z') });
     await s.insert({ ...base, id: '00000000-0000-4000-8000-000000000002', createdAt: new Date('2026-10-27T00:00:00Z'), expiresAt: new Date('2026-10-27T00:05:00Z') });
     expect(await s.deleteExpired(new Date('2026-10-20T00:00:00Z'))).toBe(1);
-    expect(await s.get('00000000-0000-4000-8000-000000000002')).not.toBeNull();
+    expect(await s.get('owner', '00000000-0000-4000-8000-000000000002')).not.toBeNull();
     await db.close();
   });
 });

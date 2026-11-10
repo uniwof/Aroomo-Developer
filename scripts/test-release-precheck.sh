@@ -104,6 +104,11 @@ adm "create table audit_log (id serial, user_id text, action text)" >/dev/null
 for t in conversations conversation_messages assistants assistant_members assistant_runs run_steps; do
   adm "create table $t (id serial, user_id text not null)" >/dev/null
 done
+# #345 P0（迁移 0036 进清单）的四张 text user_id 表：生产早就有（0010 / 0013 / 0014）
+for t in client_tokens exec_tasks exec_takeovers; do
+  adm "create table $t (id serial, user_id text not null)" >/dev/null
+done
+adm "create table executors (id serial, user_id text not null, client_id text)" >/dev/null # 检查 2 按 (user_id, client_id) 试算
 # 迁移记录：模拟生产（11-06）已执行到 0024，0025 起是本次发布待执行的
 adm "create table core_schema_migrations (version text primary key, applied_at timestamptz not null default now())" >/dev/null
 for f in "$work"/core/migrations/*.sql; do
@@ -125,7 +130,7 @@ has() { out_has -qF "$1" && ok "输出含「$1」" || { bad "输出缺「$1」";
 
 run "干净库：全部通过（含备份）" 0
 has "检查 1 空串 user_id"; has "检查 2 唯一索引试算"; has "检查 3 逐表行数可读"; has "aroomo-20261103T100000Z"
-has "检查了 13 张开了 RLS 的表"; has "检查 4"; has "检查 5"
+has "检查了 17 张开了 RLS 的表"; has "检查 4"; has "检查 5"
 has "清单外带 user_id 的表"
 out_has -q 'owner-secret-mark' && bad "输出里出现了 SHELL_OWNER_USER_ID 的值" || ok "不打印 SHELL_OWNER_USER_ID 的值"
 [ -f "$work/.release/precheck.ok" ] && ok "记下了备份通过标记" || bad "没有备份通过标记"
@@ -165,6 +170,11 @@ run "provider_keys 有空串 user_id → 失败" 1 --no-backup
 has "provider_keys=1"
 adm "update provider_keys set user_id = null" >/dev/null
 run "改回 NULL 后通过（provider_keys 的 NULL 迁移 0024 会回填）" 0 --no-backup
+# #345 M4：0036 的四张 text 表进了清单，空串 user_id（非空串 CHECK 是 NOT VALID，旧脏行还在）→ 失败
+adm "insert into exec_tasks (user_id) values ('')" >/dev/null
+run "exec_tasks 有空串 user_id → 失败" 1 --no-backup
+has "exec_tasks=1"
+adm "delete from exec_tasks where user_id = ''" >/dev/null
 
 # 检查 1：不在回填清单里的 RLS 表有 NULL → 失败（CHECK 放行 NULL，但 RLS 下这些行谁都看不见）
 adm "alter table vault_secrets alter column user_id drop not null" >/dev/null
@@ -190,7 +200,7 @@ for t in conversations conversation_messages assistants assistant_members assist
 done
 run "0025–0027 的 6 张 RLS 表还不存在、迁移待执行 → 通过" 0 --no-backup
 has "将由本次待执行的迁移新建"; has "conversations(0025)"; has "assistants(0026)"; has "run_steps(0027)"
-has "检查了 7 张开了 RLS 的表"
+has "检查了 11 张开了 RLS 的表"
 # 迁移已执行（记录在）但表不存在 → 不是「待执行」，失败
 adm "insert into core_schema_migrations (version) values ('0026_assistants.sql')" >/dev/null
 run "0026 已记为执行过、assistants 却不存在 → 失败" 1 --no-backup

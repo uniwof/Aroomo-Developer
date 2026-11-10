@@ -1,6 +1,7 @@
 /**
  * Aroomo Shell：同源入口。浏览器只访问这里；
  *   /aroomo/static/*   Aroomo 的静态资源（不需要登录，不含任何秘密）
+ *   /api/executor/*    → Core 同名路径（#365：执行员公网通路；原始路径严格检查 + Shell 自验 Access JWT + 按 IP 限速，只带 Authorization 和内容类头）
  *   /mcp               → Core /mcp（外部 MCP 客户端用；原样带客户端自己的 Authorization，不附加主人令牌，不要 LobeHub 登录）
  *   /aroomo/api/*      → Core /api/*（要求已登录 LobeHub；由这里附加主人令牌，浏览器永远拿不到令牌）
  *   CORE_COOKIE_ROUTES → Core 同名路径（core-session 才开；只带会话 Cookie，不带主人令牌；逐条白名单，绝不整段 /api/*）
@@ -23,6 +24,16 @@ import type { ShellConfig } from './config.js';
 import { allowAll, CORE_SESSION_COOKIES, coreSessionCookie, CoreSessionChecker, LobeSessionChecker, type SessionChecker } from './session.js';
 import { handleCoreLogout, handleLogout } from './logout.js';
 import { AUTOLOGIN_MARK, LobeLocalAutoLogin, safeCallback, safeLocalPath, type AutoLogin } from './autologin.js';
+import {
+  AccessJwtVerifier,
+  EXECUTOR_BODY_MAX,
+  EXECUTOR_UPSTREAM_TIMEOUT_MS,
+  executorForwardHeaders,
+  executorPathOk,
+  IpRateLimiter,
+  isExecutorCandidate,
+  type JwksFetcher,
+} from './executor-gate.js';
 
 const HOP_BY_HOP = new Set([
   'connection',
@@ -85,6 +96,9 @@ const LOBE_DROP_COOKIES = CORE_SESSION_COOKIES;
 export interface ShellDeps {
   session?: SessionChecker;
   autoLogin?: AutoLogin;
+  /** 取 Access 公钥（测试替换）；默认从团队域名 /cdn-cgi/access/certs 取 */
+  fetchJwks?: JwksFetcher;
+  now?: () => number;
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) {
@@ -278,6 +292,58 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
   }
 
   const clientFor = (u: URL) => (u.protocol === 'https:' ? https : http);
+
+  const accessJwt = cfg.executorAccess ? new AccessJwtVerifier(cfg.executorAccess, deps.fetchJwks, deps.now) : undefined;
+  const executorLimiter = new IpRateLimiter(cfg.executorRatePerMin, deps.now);
+
+  /** 读完请求体（上限 EXECUTOR_BODY_MAX）；超了返回 null */
+  async function readBody(req: IncomingMessage): Promise<Buffer | null> {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const c of req as AsyncIterable<Buffer>) {
+      size += c.length;
+      if (size > EXECUTOR_BODY_MAX) return null;
+      chunks.push(c);
+    }
+    return Buffer.concat(chunks);
+  }
+
+  /**
+   * #365 执行员通路：先查原始路径（不规整、不解码），再按 IP 限速，再验 Access JWT，最后只带白名单头转给 Core。
+   * 设备令牌由 Core 验（Core 侧 /api/executor/* 只认设备令牌，设备令牌也进不了别的 /api）。
+   */
+  async function handleExecutor(req: IncomingMessage, res: ServerResponse, rawUrl: string) {
+    const deny = (status: number, code: string, message: string, headers: Record<string, string> = {}) =>
+      sendJson(res, status, { error: { code, message } }, { ...headers, connection: 'close' });
+    if (!accessJwt) return deny(404, 'NOT_FOUND', '找不到');
+    if (!executorPathOk(rawUrl)) return deny(400, 'BAD_PATH', '请求路径不对');
+    if (req.method !== 'GET' && req.method !== 'POST') return deny(405, 'METHOD_NOT_ALLOWED', '不支持这个请求方法', { allow: 'GET, POST' });
+    if (!executorLimiter.take(clientIp(req, cfg.clientIpHeader))) return deny(429, 'RATE_LIMITED', '请求太频繁，请稍后再试', { 'retry-after': '60' });
+    const cl = req.headers['content-length'];
+    if (cl !== undefined && (!/^\d+$/.test(cl) || Number(cl) > EXECUTOR_BODY_MAX)) return deny(413, 'TOO_LARGE', '请求太大');
+    if (!(await accessJwt.verify(req.headers['cf-access-jwt-assertion']))) return deny(403, 'ACCESS_DENIED', '没有通过访问校验');
+    req.setTimeout(30_000, () => req.destroy());
+    const body = req.method === 'POST' ? await readBody(req) : Buffer.alloc(0);
+    if (body === null) return deny(413, 'TOO_LARGE', '请求太大');
+    const target = new URL(rawUrl, cfg.coreUpstream);
+    const headers = executorForwardHeaders(req, target.host, clientIp(req, cfg.clientIpHeader));
+    delete headers['content-length'];
+    if (req.method === 'POST') headers['content-length'] = String(body.length);
+    const up = clientFor(target).request(target, { method: req.method, headers }, (upRes) => {
+      res.writeHead(upRes.statusCode ?? 502, { ...responseHeaders(upRes, ['set-cookie']), 'cache-control': 'no-store' });
+      upRes.pipe(res);
+      upRes.on('error', () => res.destroy());
+    });
+    up.setTimeout(EXECUTOR_UPSTREAM_TIMEOUT_MS, () => up.destroy(new Error('timeout')));
+    up.on('error', () => {
+      if (!res.headersSent) sendJson(res, 502, { error: { code: 'CORE_UNAVAILABLE', message: 'Aroomo 后台暂时不可用，请稍后再试' } });
+      else res.destroy();
+    });
+    res.on('close', () => {
+      if (!res.writableFinished) up.destroy();
+    });
+    up.end(body);
+  }
 
   async function serveFile(res: ServerResponse, file: string, cache: string, method = 'GET', sec = false) {
     try {
@@ -526,6 +592,8 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
     if (cfg.allowedHosts && !hostAllowed(req.headers.host, cfg.allowedHosts)) {
       return sendJson(res, 421, { error: { code: 'HOST_NOT_ALLOWED', message: '只能从本机地址访问 Aroomo' } });
     }
+    // #365：凡是看起来想去 /api/executor 的（原始、解码后、规整后任一个），都只走执行员闸门，不落到 LobeHub 或别的分支
+    if (isExecutorCandidate(req.url ?? '/', p)) return handleExecutor(req, res, req.url ?? '/');
     if (p === '/aroomo/healthz') return sendJson(res, 200, { status: 'ok', service: 'aroomo-shell' });
     if (p.startsWith('/aroomo/static/')) return serveStatic(req, res, p.slice('/aroomo/static/'.length));
     // 退出登录（§8.3 账号）：只接受同源 POST
@@ -630,7 +698,7 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
 
   function upgrade(req: IncomingMessage, socket: Duplex, head: Buffer) {
     const url = new URL(req.url ?? '/', 'http://shell.local');
-    if (url.pathname.startsWith('/aroomo/')) return socket.destroy();
+    if (url.pathname.startsWith('/aroomo/') || isExecutorCandidate(req.url ?? '/', url.pathname)) return socket.destroy();
     const target = new URL(url.pathname + url.search, cfg.lobeUpstream);
     const headers: Record<string, string | string[]> = {};
     for (const [k, v] of Object.entries(req.headers)) if (v !== undefined) headers[k] = v;
