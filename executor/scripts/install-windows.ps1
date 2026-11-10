@@ -23,6 +23,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# 读屏友好：控制台改 UTF-8，node 输出的中文才不会乱码（Windows PowerShell 5.1 默认是 GBK/OEM 代码页）
+try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch { }
 $executorDir = Split-Path -Parent $PSScriptRoot
 
 function Write-Step([string]$Text) { Write-Output "==> $Text" }
