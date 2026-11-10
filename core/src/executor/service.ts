@@ -73,6 +73,8 @@ export class ExecutorService {
     private readonly settingsFor: (userId: string) => SettingsStore | null = () => null,
     /** 接管卡进收件箱 / 处理后收回的钩子（server.ts 接线；失败不影响任务本身） */
     private readonly hooks: TakeoverHooks = {},
+    /** 凭据是否在本人保险箱里（不解密）；没接线时退回 resolveSecret（#347） */
+    private readonly secretExists?: (userId: string, secretId: string) => Promise<boolean>,
   ) {}
 
   async getAllowlist(userId: string): Promise<string[]> {
@@ -421,6 +423,13 @@ export class ExecutorService {
       );
     if (!siteAllowed(input.site, await this.getAllowlist(userId)))
       throw new HttpError(403, "SITE_NOT_ALLOWED", "这个网站不在你设置的白名单里");
+    // #347：建任务时就按本人保险箱校验 secretId；别人的和不存在的同一个 404 + 同一错误码（执行时那道检查保留）
+    for (const s of (input.secrets ?? []).slice(0, 10)) {
+      const ok = this.secretExists
+        ? await this.secretExists(userId, s.secretId)
+        : (await this.resolveSecret(userId, s.secretId)) !== null;
+      if (!ok) throw new HttpError(404, "SECRET_NOT_FOUND", "保险箱里找不到这个凭据");
+    }
     const queued = (await this.store.listTasks(userId, 500)).filter(
       (t) => t.status === "queued",
     ).length;

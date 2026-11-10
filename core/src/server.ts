@@ -284,6 +284,7 @@ export function buildServer(
     (u, id) => vaultSvc.resolveForGateway(u, id),
     (u) => scopedSettings(deps.settings, u),
     takeoverHooks(inbox, interruptBudget, deps.now),
+    (u, id) => vaultSvc.exists(u, id),
   );
   const gatewayService = new GatewayService(
       deps.settings,
