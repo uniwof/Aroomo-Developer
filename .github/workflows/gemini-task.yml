@@ -157,7 +157,9 @@ jobs:
           git checkout -q -b "$BR"
           git apply --index /tmp/gemini/patch.diff || { echo "补丁应用失败" | comment; unlabel; exit 1; }
           git -c user.name="gemini-task[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -q -m "gemini-task: #$NUM"
-          if ! HEAD_REF="$BR" PR_LABELS="gemini-task" python3 scripts/ci/path-guard.py origin/dev; then
+          # #247：用 dev 版闸门脚本（名单也从 dev 读），补丁里改过的 path-guard.py / 名单不算数
+          git show origin/dev:scripts/ci/path-guard.py > /tmp/path-guard.py
+          if ! HEAD_REF="$BR" PR_LABELS="gemini-task" python3 /tmp/path-guard.py origin/dev HEAD; then
             printf '🤖 Gemini 的改动越过白名单或触及 A+，已丢弃（没有推送）。详见本次 Actions 日志。' | comment; unlabel; exit 1
           fi
           git push -q -f origin "$BR"
