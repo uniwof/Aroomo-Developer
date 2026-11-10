@@ -65,7 +65,7 @@ const toSession = (r: SessionRow): SessionRecord => ({
  * user_sessions 开了 RLS（0036，#345 P0）：getSession 是登录前按令牌哈希的查找，用 systemScoped 只读；
  * 其余读写都在会话主人的 userScoped 范围内（insert 在密码校验通过之后，userId 已知）。
  * users / user_invites 在 0038（#345 P2）开了 RLS：按邮箱登录、管理员列表、按邀请码哈希查找 / 标记已用是无账号路径，走 systemScoped（只读 + 邀请 UPDATE）；
- * 创建账号 / 改账号在目标账号自己的 userScoped 里做；创建邀请在创建人（owner 或 user:<id>）的 userScoped 里做。
+ * 创建账号 / 按 id 读账号 / 改账号在目标账号自己的 userScoped 里做；创建邀请在创建人（owner 或 user:<id>）的 userScoped 里做。
  */
 /** created_by 是 'owner' 或 'user:<id>'；对应 app.user_id（策略 user_invites_creator 两种写法都认）。 */
 export const inviteCreatorScope = (createdBy: string): string => (createdBy.startsWith('user:') ? createdBy.slice(5) : createdBy);
@@ -86,7 +86,8 @@ export class PgUserStore implements UserStore {
     }
   }
   async getUser(id: string): Promise<UserRecord | null> {
-    const { rows } = await systemScoped(this.db).query<UserRow>('SELECT * FROM users WHERE id = $1', [id]);
+    // 按 id 读：在目标账号自己的范围里读（users_self 放行本人那行），不需要系统范围（负责人第 1 轮 M3）
+    const { rows } = await userScoped(this.db, id).query<UserRow>('SELECT * FROM users WHERE id = $1', [id]);
     return rows[0] ? toUser(rows[0]) : null;
   }
   async getUserByEmail(email: string): Promise<UserRecord | null> {

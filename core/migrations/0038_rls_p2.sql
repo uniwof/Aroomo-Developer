@@ -17,19 +17,40 @@ CREATE POLICY users_system_read ON users FOR SELECT
 
 ALTER TABLE user_invites ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_invites FORCE ROW LEVEL SECURITY;
+-- 创建人：只能是所有者（app.user_id = 'owner'，created_by = 'owner'）或在用的管理员（created_by = 'user:<本人 id>'，
+-- users 里本人那行 role = 'admin' 且 status = 'active'；子查询受 users_self 约束，只看得到本人那行）。负责人第 1 轮 M2。
 CREATE POLICY user_invites_creator ON user_invites
-  USING (NULLIF(current_setting('app.user_id', true), '') IS NOT NULL
-         AND created_by IN (current_setting('app.user_id', true), 'user:' || current_setting('app.user_id', true)))
-  WITH CHECK (NULLIF(current_setting('app.user_id', true), '') IS NOT NULL
-         AND created_by IN (current_setting('app.user_id', true), 'user:' || current_setting('app.user_id', true)));
+  USING ((current_setting('app.user_id', true) = 'owner' AND created_by = 'owner')
+         OR (created_by = 'user:' || NULLIF(current_setting('app.user_id', true), '')
+             AND EXISTS (SELECT 1 FROM users u WHERE u.id::text = current_setting('app.user_id', true) AND u.role = 'admin' AND u.status = 'active')))
+  WITH CHECK ((current_setting('app.user_id', true) = 'owner' AND created_by = 'owner')
+         OR (created_by = 'user:' || NULLIF(current_setting('app.user_id', true), '')
+             AND EXISTS (SELECT 1 FROM users u WHERE u.id::text = current_setting('app.user_id', true) AND u.role = 'admin' AND u.status = 'active')));
 CREATE POLICY user_invites_system_read ON user_invites FOR SELECT
   USING (current_setting('app.system_scope', true) = 'on');
 CREATE POLICY user_invites_system_redeem ON user_invites FOR UPDATE
   USING (current_setting('app.system_scope', true) = 'on')
   WITH CHECK (current_setting('app.system_scope', true) = 'on');
+-- 任何范围的 UPDATE 都只能把 used_at 从 NULL 改成非 NULL，其余列一律不许动（防系统范围把邀请改成 admin、延长有效期、把已用改回未用）。负责人第 1 轮 M1。
+CREATE FUNCTION user_invites_redeem_only() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD.used_at IS NOT NULL OR NEW.used_at IS NULL OR (to_jsonb(NEW) - 'used_at') IS DISTINCT FROM (to_jsonb(OLD) - 'used_at') THEN
+    RAISE EXCEPTION 'user_invites: only used_at NULL -> NOT NULL is allowed' USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER user_invites_redeem_only BEFORE UPDATE ON user_invites
+  FOR EACH ROW EXECUTE FUNCTION user_invites_redeem_only();
 
 ALTER TABLE audit_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_log FORCE ROW LEVEL SECURITY;
 CREATE POLICY audit_log_append ON audit_log FOR INSERT WITH CHECK (true);
 CREATE POLICY audit_log_system_read ON audit_log FOR SELECT
   USING (current_setting('app.system_scope', true) = 'on');
+-- RLS 开启后，非系统范围的 UPDATE / DELETE 看不到任何行，0001 的行级触发器不会触发（悄悄改 0 行）。
+-- 加一个语句级触发器：任何范围的 UPDATE / DELETE 语句都直接报错（与 TRUNCATE 一致），负责人第 1 轮 M4。
+CREATE TRIGGER audit_log_no_update_delete_stmt
+  BEFORE UPDATE OR DELETE ON audit_log
+  FOR EACH STATEMENT EXECUTE FUNCTION audit_log_append_only();
