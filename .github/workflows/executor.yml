@@ -113,7 +113,7 @@ jobs:
           @{ deviceToken = 'ci-placeholder-device-token'; cfClientId = 'ci-client-id.access'; cfClientSecret = $secret } | ConvertTo-Json | Set-Content -LiteralPath $cred -Encoding UTF8
           $task = 'Aroomo Executor CI ' + $env:GITHUB_RUN_ID
           $dir = Join-Path $env:RUNNER_TEMP 'exec2'
-          powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File executor\scripts\install-windows.ps1 -CredentialFile $cred -NoAutoUpdate -TaskName $task
+          powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File executor\scripts\install-windows.ps1 -BootstrapFile $cred -NoAutoUpdate -TaskName $task
           if ($LASTEXITCODE -ne 0) { throw '凭据文件安装失败' }
           try {
             if (Test-Path -LiteralPath $cred) { throw '凭据文件没删' }

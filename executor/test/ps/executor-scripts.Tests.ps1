@@ -55,10 +55,10 @@ Describe '安装脚本 install-windows.ps1' {
 
     It '远程安装用凭据文件：只有路径进命令行，读完覆盖并删除，给了凭据文件就不弹输入（#376 M7）' {
         $text = Get-Content -LiteralPath $script:Install -Raw -Encoding UTF8
-        $text | Should -Match '\[string\]\$CredentialFile'
-        $text | Should -Match 'WriteAllBytes\(\$CredentialFile'
-        $text | Should -Match 'Remove-Item -LiteralPath \$CredentialFile -Force'
-        $text | Should -Match 'if \(-not \$plain -and -not \$CredentialFile\)'
+        $text | Should -Match '\[string\]\$BootstrapFile'
+        $text | Should -Match 'WriteAllBytes\(\$BootstrapFile'
+        $text | Should -Match 'Remove-Item -LiteralPath \$BootstrapFile -Force'
+        $text | Should -Match 'if \(-not \$plain -and -not \$BootstrapFile\)'
     }
 
     It '令牌文件收紧为只有当前用户可读，且不在命令行里带令牌' {

@@ -234,7 +234,7 @@ describe.runIf(process.env.AROOMO_REAL_DPAPI === '1')('#376 真 DPAPI 往返（W
     saveCfSecret(cfSecretPath({ tokenFile }), secret);
     expect(readFileSync(cfSecretPath({ tokenFile }), 'utf8')).not.toContain(secret);
     expect(cfSecretReader({ tokenFile }, {})()).toBe(secret);
-    // 安装脚本（-CredentialFile）存下的那份：CI 先跑安装脚本，再把它的 device-token 路径和期望值传进来
+    // 安装脚本（-BootstrapFile）存下的那份：CI 先跑安装脚本，再把它的 device-token 路径和期望值传进来
     const installed = process.env.AROOMO_REAL_DPAPI_TOKENFILE;
     const expected = process.env.AROOMO_REAL_DPAPI_EXPECT;
     expect(installed && expected, '没拿到安装脚本存的路径和期望值').toBeTruthy();

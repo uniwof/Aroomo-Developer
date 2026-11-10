@@ -57,7 +57,7 @@ Secret 存 Windows DPAPI（当前用户，`%APPDATA%\Aroomo\executor\cf-access-s
   {"deviceToken":"<设备令牌>","cfClientId":"<Client ID>","cfClientSecret":"<Client Secret>"}
   ```
   ```
-  powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File executor\scripts\install-windows.ps1 -CredentialFile <凭据文件路径>
+  powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File executor\scripts\install-windows.ps1 -BootstrapFile <凭据文件路径>
   ```
   脚本读完凭据文件立刻覆盖为零并删除；设备令牌写入只有当前用户可读的 `device-token`；Secret 经标准输入交给 `cf-access` 用 DPAPI 加密，命令行、历史、日志里都没有秘密。计划任务以**当前用户、仅登录时**运行（不是系统账户；DPAPI 按当前用户加密，换身份就解不开）。Windows CI 实跑这一整套（含真 DPAPI 往返、凭据文件已删、计划任务运行身份）。
 - **远程通道是什么（未定，等所有者本人选）**：凭据文件要从 Hark 到她电脑，命令要在她电脑上跑，都需要一条远程通道。现状与选项：

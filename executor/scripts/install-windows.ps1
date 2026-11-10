@@ -8,10 +8,10 @@
   3. 生成配置 %APPDATA%\Aroomo\executor\config.json（白名单为空，保守默认）；
   4. 保存设备令牌：从环境变量 AROOMO_EXECUTOR_TOKEN 读取，或让你在本机安全输入（不显示、不进历史），
      写到 device-token 并收紧权限为只有当前用户可读；
-  5. 经公网连 Core 时（#365）：凭据文件（-CredentialFile）或环境变量 AROOMO_CF_ACCESS_CLIENT_ID / AROOMO_CF_ACCESS_CLIENT_SECRET 给了 Service Token，
+  5. 经公网连 Core 时（#365）：凭据文件（-BootstrapFile）或环境变量 AROOMO_CF_ACCESS_CLIENT_ID / AROOMO_CF_ACCESS_CLIENT_SECRET 给了 Service Token，
      把 Cloudflare Access Service Token 存好（Secret 用 Windows DPAPI 加密，只写 Client ID 进配置；Secret 走标准输入，不进命令行）；
   6. 注册「登录后自动运行」计划任务（-NoAutostart 跳过），运行身份为当前用户（不是系统账户）。
-  远程安装：-CredentialFile <JSON 文件>（deviceToken / cfClientId / cfClientSecret），读完即删；不要在交互式 PowerShell 里敲 $env:...= 秘密（会进 PSReadLine 历史）。
+  远程安装：-BootstrapFile <JSON 文件>（deviceToken / cfClientId / cfClientSecret），读完即删；不要在交互式 PowerShell 里敲 $env:...= 秘密（会进 PSReadLine 历史）。
   不停止、不卸载任何 Docker / WSL；不修改系统设置。
 
 .EXAMPLE
@@ -25,7 +25,7 @@ param(
   [string]$TaskName = 'Aroomo Executor',
   # 远程安装（#376 M7）：凭据放在一个 JSON 文件里传过来（远程通道拷文件，不在交互式 PowerShell 里敲），读完即覆盖并删除。
   # 字段：deviceToken、cfClientId、cfClientSecret（都可省）。命令行里只有文件路径，没有任何秘密。
-  [string]$CredentialFile
+  [string]$BootstrapFile
 )
 
 $ErrorActionPreference = 'Stop'
@@ -63,21 +63,21 @@ $tokenFile = Join-Path $configDir 'device-token'
 
 # 凭据文件（远程非交互安装）：读完立刻覆盖为零并删除，内容不留在磁盘上
 $cred = $null
-if ($CredentialFile) {
-  if (-not (Test-Path -LiteralPath $CredentialFile)) { throw '凭据文件不存在' }
+if ($BootstrapFile) {
+  if (-not (Test-Path -LiteralPath $BootstrapFile)) { throw '凭据文件不存在' }
   try {
-    $cred = Get-Content -LiteralPath $CredentialFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    $cred = Get-Content -LiteralPath $BootstrapFile -Raw -Encoding UTF8 | ConvertFrom-Json
   } finally {
-    $len = (Get-Item -LiteralPath $CredentialFile).Length
-    [IO.File]::WriteAllBytes($CredentialFile, (New-Object byte[] $len))
-    Remove-Item -LiteralPath $CredentialFile -Force
+    $len = (Get-Item -LiteralPath $BootstrapFile).Length
+    [IO.File]::WriteAllBytes($BootstrapFile, (New-Object byte[] $len))
+    Remove-Item -LiteralPath $BootstrapFile -Force
   }
 }
 
 # 4. 设备令牌（凭据文件 > 环境变量 > 本机安全输入；给了凭据文件就不再弹输入）
 if (-not $SkipToken) {
   $plain = if ($cred -and $cred.deviceToken) { [string]$cred.deviceToken } else { $env:AROOMO_EXECUTOR_TOKEN }
-  if (-not $plain -and -not $CredentialFile) {
+  if (-not $plain -and -not $BootstrapFile) {
     $secure = Read-Host -AsSecureString '请粘贴控制台「本机执行员」页生成的令牌（输入时不显示）'
     $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
     try { $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
