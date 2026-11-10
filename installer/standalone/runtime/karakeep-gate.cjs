@@ -26,11 +26,19 @@ function wantsHtml(req) {
   return req.method === 'GET' && String(req.headers.accept || '').includes('text/html');
 }
 
-/** 登录后回到哪里：只接受本站相对路径；登录 / 注册页本身回首页 */
+const hasControlChar = (s) => Array.from(s).some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f);
+
+/**
+ * 登录后回到哪里（CodeQL #6，规则同 shell/src/autologin.ts 的 safeLocalPath，#357）：
+ * 只收同源相对路径（单个 / 开头，不是 // 或 /\\，不含浏览器会剥掉的控制字符），否则回 /；
+ * 通过后把 U+0021–U+007E 以外的字符百分号编码（UTF-8），否则 writeHead 遇到非 ASCII 会抛 ERR_INVALID_CHAR。
+ * 登录 / 注册页本身回首页。不要改成先 new URL() 再拼 pathname + search（/.//x 会变成 //x）。
+ * 结论由 installer/standalone/test/karakeep-gate.test.cjs 的穷举性质测试固定。
+ */
 function safeTarget(raw) {
-  if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) return '/';
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\') || hasControlChar(raw)) return '/';
   if (/^\/(signin|signup)(\/|\?|$)/.test(raw)) return '/';
-  return raw;
+  return raw.replace(/[^\x21-\x7e]/gu, (c) => Buffer.from(c).toString('hex').toUpperCase().replace(/../g, '%$&'));
 }
 
 /** 向内部 Karakeep 发一个请求，返回 { status, headers, body } 或 null（连不上 / 超时） */
