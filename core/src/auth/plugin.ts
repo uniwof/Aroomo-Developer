@@ -63,6 +63,19 @@ function limitKey(req: FastifyRequest): string {
 
 const noAudit: AuditFn = async () => undefined;
 
+/** 执行员接口前缀（#365） */
+export const EXECUTOR_PREFIX = '/api/executor/';
+/** 执行员范围（docs/executor-protocol.md） */
+export const DEVICE_SCOPES: readonly string[] = ['tasks:pull', 'tasks:secret'];
+/**
+ * 设备令牌 = 只带执行员范围的客户端令牌（控制台给执行员生成的就是这种）。
+ * shortcut: 同时带执行员范围和其他范围的「混合令牌」照旧按各自范围放行（authz 全范围用例依赖它）；要不要在签发时禁止混合，留给负责人定。
+ */
+export function isDeviceToken(scopes: ReadonlySet<string>): boolean {
+  return scopes.size > 0 && [...scopes].every((s) => DEVICE_SCOPES.includes(s));
+}
+const hasExecutorScope = (scopes: ReadonlySet<string>) => DEVICE_SCOPES.some((s) => scopes.has(s));
+
 /** 解码后的路径（去掉查询串）；解码失败返回 '/api/'，失败即关闭 */
 function decodedPath(url: string): string {
   try {
@@ -118,6 +131,15 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
     if (cookieToken && UNSAFE_METHODS.has(req.method) && !req.headers[CSRF_HEADER]) {
       await req.audit('auth.denied', { type: 'csrf', id: req.routeOptions.url ?? req.url.split('?')[0] ?? '' }, 'denied', `${req.method} Cookie 会话缺少 ${CSRF_HEADER} 头`);
       throw new HttpError(403, 'CSRF', `用 Cookie 登录时，改动类请求要带 ${CSRF_HEADER} 头`);
+    }
+    // #365：执行员接口只认设备令牌（带 tasks:pull / tasks:secret 的客户端令牌）；设备令牌也只能进执行员接口。
+    // 执行员接口经 Shell 暴露在公网（Access Service Token 后面），这样即使边缘配错，所有者 / 账号 / 其他令牌也进不来，设备令牌也打不开别的 /api。
+    const executorRoute = pattern.startsWith(EXECUTOR_PREFIX);
+    const client = principal.type === 'client' ? principal : undefined;
+    const denied = executorRoute ? !client || !hasExecutorScope(client.scopes) : Boolean(client && isDeviceToken(client.scopes));
+    if (denied) {
+      await req.audit('auth.denied', { type: 'route', id: req.routeOptions.url ?? req.url.split('?')[0] ?? '' }, 'denied', `${req.method} ${executorRoute ? '执行员接口只认设备令牌' : '设备令牌只能调用执行员接口'}`);
+      throw new HttpError(403, 'FORBIDDEN', '没有权限执行这个操作');
     }
     // D62：操作员只按白名单放行。没有声明能力的接口、不存在的接口、白名单外的能力，一律拒绝并审计。
     if (principal.type === 'client') {

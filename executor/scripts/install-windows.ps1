@@ -8,7 +8,9 @@
   3. 生成配置 %APPDATA%\Aroomo\executor\config.json（白名单为空，保守默认）；
   4. 保存设备令牌：从环境变量 AROOMO_EXECUTOR_TOKEN 读取，或让你在本机安全输入（不显示、不进历史），
      写到 device-token 并收紧权限为只有当前用户可读；
-  5. 注册「登录后自动运行」计划任务（-NoAutostart 跳过）。
+  5. 经公网连 Core 时（#365）：若设了环境变量 AROOMO_CF_ACCESS_CLIENT_ID 和 AROOMO_CF_ACCESS_CLIENT_SECRET，
+     把 Cloudflare Access Service Token 存好（Secret 用 Windows DPAPI 加密，只写 Client ID 进配置；Secret 走标准输入，不进命令行）；
+  6. 注册「登录后自动运行」计划任务（-NoAutostart 跳过）。
   不停止、不卸载任何 Docker / WSL；不修改系统设置。
 
 .EXAMPLE
@@ -73,7 +75,18 @@ if (-not $SkipToken) {
   }
 }
 
-# 5. 开机（登录后）自启
+# 5. Cloudflare Access Service Token（#365：经公网连 Core 才需要；Hark 远程协助时用环境变量传入，所有者不用粘贴）
+$cfId = $env:AROOMO_CF_ACCESS_CLIENT_ID
+if ($cfId -and $env:AROOMO_CF_ACCESS_CLIENT_SECRET) {
+  $env:AROOMO_CF_ACCESS_CLIENT_SECRET | & node $cli cf-access $cfId
+  if ($LASTEXITCODE -ne 0) { throw '保存 Cloudflare Access 凭据失败' }
+  Remove-Item Env:\AROOMO_CF_ACCESS_CLIENT_SECRET -ErrorAction SilentlyContinue
+  Write-Step 'Cloudflare Access 凭据已保存（密钥已加密，只有当前用户能解开）'
+} elseif ($cfId) {
+  Write-Step '只设了 Client ID，没有密钥：跳过 Cloudflare Access（稍后可重新运行本脚本）'
+}
+
+# 6. 开机（登录后）自启
 if (-not $NoAutostart) {
   Write-Step "注册计划任务「$TaskName」"
   $action = New-ScheduledTaskAction -Execute $node.Source -Argument "`"$cli`" run" -WorkingDirectory $executorDir
