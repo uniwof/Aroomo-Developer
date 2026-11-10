@@ -23,15 +23,16 @@ function forcedTables(): string[] {
 }
 
 /**
- * 开了 FORCE RLS、但不进 release-precheck 清单的表（#345 P0，迁移 0036），每条写理由（负责人第 1 轮裁定接受这两张）。
+ * 开了 FORCE RLS、但不进 release-precheck 清单的表（#345 P0 迁移 0036、P1 迁移 0037），每条写理由（负责人第 1 轮裁定接受这两张）。
  * release-precheck 检查 1 只认文本列 user_id，查的是「空串 / NULL」：
  * - user_sessions：user_id 是 uuid（外键 users.id），类型上就不可能有空串，NOT NULL 由列约束保证；
  * - confirm_challenges：user_id 是 0036 新加、按 actor 回填的列（CHECK 非空串、且必须等于 confirm_challenge_scope(actor)，都是 VALID），
  *   上线前的生产库里还没有这一列，进清单会让发布前预检在 0036 上生产前失败；0036 上生产之后再进清单。
  *   上生产前要查的是 actor 为 NULL / 空串的行（#229），不是 user_id。
+ * - core_settings：user_id 是 0037 新加、按键名前缀回填的列，上线前的生产库里还没有这一列，理由同 confirm_challenges；0037 上生产之后再进清单。
  * client_tokens / exec_tasks / exec_takeovers / executors 已在清单里（M4：非空串 CHECK 是 NOT VALID，旧空串靠预检拦）。
  */
-const NOT_IN_PRECHECK_LIST = ['confirm_challenges', 'user_sessions'];
+const NOT_IN_PRECHECK_LIST = ['confirm_challenges', 'core_settings', 'user_sessions'];
 
 function listed(): string[] {
   return readFileSync(LIST, 'utf8')

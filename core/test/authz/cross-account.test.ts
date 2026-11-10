@@ -69,10 +69,9 @@ const MIN_API_ROUTES = 119;
  * 这些表的跨账号隔离靠应用层（WHERE user_id / 只给所有者的接口），由上面的接口遍历和数据库快照兜。
  */
 const NO_RLS_TABLES: Record<string, string> = {
-  // 理由一栏写的是现状，不是负责人的裁定。#345：P0（client_tokens / user_sessions / exec_* / executors / confirm_challenges）已在 0036 开 RLS，从名单删掉；core_settings（P1）、users / user_invites / audit_log（P2）待做
+  // 理由一栏写的是现状，不是负责人的裁定。#345：P0（client_tokens / user_sessions / exec_* / executors / confirm_challenges）已在 0036 开 RLS，从名单删掉；core_settings（P1）已在 0037 开 RLS，同样删掉；users / user_invites / audit_log（P2）待做
   audit_log: '只追加；只给所有者读（GET /api/audit），按 actor_id 记',
   core_schema_migrations: '迁移记录，不属于任何账号',
-  core_settings: '按 key 前缀 u<账号 id>. 分账号，没有 user_id 列',
   user_invites: '登录前按邀请码查',
   users: '登录前按邮箱查',
 };

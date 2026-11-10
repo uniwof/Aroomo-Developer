@@ -2,6 +2,7 @@
  * Core 设置（键值，不放密钥）。P0：负责人 lead。
  */
 import type { Db } from '../db/db.js';
+import { userScoped } from '../db/scope.js';
 
 export interface SettingsStore {
   get<T>(key: string): Promise<T | null>;
@@ -18,17 +19,38 @@ export class MemorySettingsStore implements SettingsStore {
   }
 }
 
+/** 键名前缀 u<32 位十六进制>.（scopedSettings 加的），迁移 0037 按同一规则回填 core_settings.user_id */
+const USER_PREFIX = /^u([a-f0-9]{32})\./;
+
+/** core_settings 的归属键（RLS 的 user_id）：带前缀的键 → 标准 UUID 写法；其余（所有者、全局设置）→ 'owner' */
+export function settingsOwnerOf(key: string): string {
+  const m = USER_PREFIX.exec(key);
+  if (!m) return 'owner';
+  const h = m[1]!;
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+/**
+ * RLS（0037，#345 P1）：每次读写都在键所属账号的 userScoped 里做，并带 WHERE user_id；
+ * 漏写条件或键名拼错也只碰得到那个账号自己的行。没有跨账号枚举，所以不需要 systemScoped。
+ */
 export class PgSettingsStore implements SettingsStore {
   constructor(private readonly db: Db) {}
   async get<T>(key: string): Promise<T | null> {
-    const { rows } = await this.db.query<{ value: T }>('SELECT value FROM core_settings WHERE key = $1', [key]);
+    const uid = settingsOwnerOf(key);
+    const { rows } = await userScoped(this.db, uid).query<{ value: T }>(
+      'SELECT value FROM core_settings WHERE user_id = $1 AND key = $2',
+      [uid, key],
+    );
     return rows[0] ? rows[0].value : null;
   }
   async set(key: string, value: unknown, at: Date): Promise<void> {
-    await this.db.query(
-      `INSERT INTO core_settings (key, value, updated_at) VALUES ($1, $2::jsonb, $3)
-       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`,
-      [key, JSON.stringify(value), at],
+    const uid = settingsOwnerOf(key);
+    await userScoped(this.db, uid).query(
+      `INSERT INTO core_settings (user_id, key, value, updated_at) VALUES ($1, $2, $3::jsonb, $4)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at
+       WHERE core_settings.user_id = EXCLUDED.user_id`,
+      [uid, key, JSON.stringify(value), at],
     );
   }
 }
