@@ -100,12 +100,19 @@ for (const [label, viewport, isMobile] of [
   // 负责人 #314 小建议：CI 里数据是空的，先放一段很长的会话标题和一条很长的消息（含不断行的长链接），最容易撑出横向滚动或把按钮挤出去
   // 键名照控制台自己的规则（lib/api.ts whoAmI + store chatKey）：问 Core 是谁（从 Shell 打开走 /aroomo/api），账号 → u:<id>，主人令牌 → u:owner，问不到 → 共用那份
   const longKey = await page.evaluate(async () => {
-    const base = document.querySelector('meta[name="aroomo-shell"]') ? '/aroomo/api' : '/api';
-    let id = null;
-    try {
-      const r = await (await fetch(`${base}/auth/me`, { credentials: 'same-origin', headers: { accept: 'application/json' } })).json();
-      id = r.kind === 'user' && typeof r.user?.id === 'string' && r.user.id ? r.user.id : r.kind === 'owner' ? 'owner' : null;
-    } catch {}
+    const viaShell = Boolean(document.querySelector('meta[name="aroomo-shell"]'));
+    const ask = async (url) => {
+      try {
+        const r = await (await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } })).json();
+        return r.kind === 'user' && typeof r.user?.id === 'string' && r.user.id ? r.user.id : r.kind === 'owner' ? 'owner' : null;
+      } catch {
+        return null;
+      }
+    };
+    // #293：从 Shell 打开先直接问 Core（同源 /api/auth/me 直通，回账号自己的 id），问不到再走 /aroomo/api（主人令牌 → owner）
+    let id = viaShell ? await ask('/api/auth/me') : null;
+    if (id === 'owner') id = null; // 直通那条只认账号（kind=user），和控制台 asAccount 一致
+    if (!id) id = await ask(viaShell ? '/aroomo/api/auth/me' : '/api/auth/me');
     const key = id && /^[A-Za-z0-9_-]{1,64}$/.test(id) ? `aroomo.chat.v1:u:${id}` : 'aroomo.chat.v1';
     const text = '这是一条很长的消息，'.repeat(40) + 'https://example.com/' + 'a'.repeat(120);
     const now = Date.now();
