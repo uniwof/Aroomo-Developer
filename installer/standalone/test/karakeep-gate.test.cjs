@@ -4,7 +4,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
-const { createGate, safeTarget } = require('../runtime/karakeep-gate.cjs');
+const { createGate, safeTarget, locationFor } = require('../runtime/karakeep-gate.cjs');
 
 const ALPHA = ['/', '\\', '.', '\t', '\n', '\r', 'a', ':', '@', '%', ' ', '中'];
 const EXTRA = ['\x00', '\x1f', '\x7f', '\u3000', '\uFF0F', '?', '#'];
@@ -32,6 +32,22 @@ const dblSlash = (s) => {
   }
 };
 
+// #410 C1：Location（locationFor = '/.' + safeTarget）按浏览器规则解析后，与 safeTarget 的落点完全相同（主机、路径 + 查询串）。
+// 基址取根路径和多级路径各一个：多级路径下前缀写错（如 '.'）会落到别的目录，能被抓到
+const LAND_BASES = [`${BASE}/`, `${BASE}/a/b/c?q=1`];
+const landing = (s, base) => {
+  const u = new URL(s, base);
+  return `${u.host} ${u.pathname}${u.search}`;
+};
+
+function checkLanding(max, alpha, loc = locationFor) {
+  const landDiff = [];
+  for (const s of strings(max, alpha)) {
+    if (LAND_BASES.some((b) => landing(loc(s), b) !== landing(safeTarget(s), b))) landDiff.push(JSON.stringify(s));
+  }
+  return landDiff.slice(0, 5);
+}
+
 function check(fn, max, alpha) {
   const offSite = [];
   const nonAscii = [];
@@ -51,8 +67,9 @@ function check(fn, max, alpha) {
   return { offSite: offSite.slice(0, 5), nonAscii: nonAscii.slice(0, 5), slashSlash: slashSlash.slice(0, 5), ctrlKept: ctrlKept.slice(0, 5), rawEscapes };
 }
 
-test('穷举（长度 ≤5）：结果为 / 或解析后仍在本站，且只含 U+0021–U+007E；判据在原始输入上能找到外跳', () => {
+test('穷举（长度 ≤5）：Location 与 safeTarget 落点相同；结果为 / 或解析后仍在本站，且只含 U+0021–U+007E；判据在原始输入上能找到外跳', () => {
   const r = check(safeTarget, 5);
+  assert.deepEqual(checkLanding(5), []);
   assert.deepEqual(r.offSite, []);
   assert.deepEqual(r.nonAscii, []);
   assert.deepEqual(r.slashSlash, []);
@@ -62,6 +79,7 @@ test('穷举（长度 ≤5）：结果为 / 或解析后仍在本站，且只含
 
 test('穷举（补充 NUL/US/DEL/全角空格/全角斜杠/?/#，长度 ≤4）同一判据', () => {
   const r = check(safeTarget, 4, [...ALPHA, ...EXTRA]);
+  assert.deepEqual(checkLanding(4, [...ALPHA, ...EXTRA]), []);
   assert.deepEqual(r.offSite, []);
   assert.deepEqual(r.nonAscii, []);
   assert.deepEqual(r.slashSlash, []);
@@ -78,6 +96,12 @@ test('回退自检：修复前的规则（不查控制字符、不编码）在�
   const r = check(old, 4, [...ALPHA, ...EXTRA]);
   assert.ok(r.offSite.length > 0, '旧规则应能被 /<TAB>/x 之类外跳');
   assert.ok(r.nonAscii.length > 0);
+});
+
+test('回退自检（#410 C1）：Location 前缀写成 \'.\'、或拼原串绕过 safeTarget，落点等价判据会失败', () => {
+  assert.ok(checkLanding(3, ALPHA, (raw) => '.' + safeTarget(raw)).length > 0, "前缀 '.'：多级路径下落到别的目录");
+  assert.ok(checkLanding(3, ALPHA, (raw) => '/.' + raw).length > 0, '绕过 safeTarget：落点与 safeTarget 不同');
+  assert.deepEqual(checkLanding(3, ALPHA, safeTarget), [], '对照：不加前缀与 safeTarget 自身等价');
 });
 
 test('显式用例', () => {
@@ -136,6 +160,7 @@ test('集成：原始请求行 //evil.example/x、/\\evil.example、/.//evil.exa
       req.end();
     });
   try {
+    // Location 带固定前缀 '/.'（#373），浏览器解析后的路径 + 查询串才是落点
     for (const [path, want] of [
       ['//evil.example/x', '/'],
       ['/\\evil.example', '/'],
@@ -146,8 +171,10 @@ test('集成：原始请求行 //evil.example/x、/\\evil.example、/.//evil.exa
       const r = await get(path);
       assert.equal(r.statusCode, 302);
       assert.match([].concat(r.headers['set-cookie'] || []).join('\n'), /aroomo_al=1/);
-      assert.equal(r.headers.location, want);
-      assert.equal(new URL(r.headers.location, `http://127.0.0.1:${port}`).host, `127.0.0.1:${port}`);
+      assert.equal(r.headers.location, '/.' + want);
+      const landed = new URL(r.headers.location, `http://127.0.0.1:${port}`);
+      assert.equal(landed.host, `127.0.0.1:${port}`);
+      assert.equal(landed.pathname + landed.search, want);
     }
     const after = await get('/x');
     assert.equal(after.statusCode, 302);
