@@ -92,7 +92,7 @@ scripts/release-tag.sh rollback --confirm v0.1.0 --lobe-session-ok  # 明确要�
 
 **数据库注意点**：
 - 这一版**没执行新迁移**：直接 `rollback`，数据不动。
-- 这一版**执行了新迁移**：`rollback` 会拒绝（旧代码读不了新结构）。先用部署前备份恢复（备份名在 `.release/precheck.ok`，步骤见 [BACKUP.md](BACKUP.md)，要所有者的主密钥），或按 `core/migrations/down/` 人工退，**再** `rollback`。会丢掉上线后写进新表的数据。
+- 这一版**执行了新迁移**：`rollback` 会拒绝（旧代码读不了新结构）。RLS 迁移（0037–0039）的回退顺序和 `core_settings` 兼容性见 [RLS.md](RLS.md)：回滚到早于 0037 的标签前，必须先由表所有者依次执行 0039、0038、0037 的 down（或恢复备份）。先用部署前备份恢复（备份名在 `.release/precheck.ok`，步骤见 [BACKUP.md](BACKUP.md)，要所有者的主密钥），或按 `core/migrations/down/` 人工退，**再** `rollback`。会丢掉上线后写进新表的数据。
 - **回滚目标必须在 `origin/main` 上**（#353）：只查服务器本地已有的 `origin/main` 记录，不联网；不在上面（比如 dev 上的提交）就拒绝。
 - **不要 force-push 改写 main 的历史**：一旦远端 main 被改写、服务器 `fetch` 到新的 `origin/main`，原来的版本就不再是它的祖先，`rollback` 会拒绝（失败即关闭，是有意的）。真发生了，先找负责人和所有者，不要绕过这个检查。
 - 永远不要用 `deploy` 部署更旧的标签来回退：`release-tag.sh` 会拒绝（目标标签比当前旧，提示改用 rollback，#352 M4）。
