@@ -123,6 +123,8 @@ jobs:
         run: shellcheck -x scripts/*.sh scripts/lib/*.sh scripts/license-gate/*.sh deploy/backup/entrypoint.sh deploy/postgres/20-aroomo-dbs.sh deploy/lobe/rustfs-init.sh
       - name: 备份保留策略单元测试
         run: scripts/test-retention.sh
+      - name: 独立版收藏自动登录跳转只收同源相对路径（CodeQL #6，#373）
+        run: node --test installer/standalone/test/karakeep-gate.test.cjs
       - name: Pester（pwsh，含与 select-tier.sh 的对照）
         shell: pwsh
         run: |
