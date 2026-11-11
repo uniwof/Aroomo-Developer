@@ -75,7 +75,6 @@ export const PREPARING_HTML = `<!doctype html><html lang="zh-CN"><head><meta cha
 export const CORE_COOKIE_ROUTES: readonly { readonly method: string; readonly path: string }[] = [
   { method: 'POST', path: '/api/chat/stream' },
   // #293（负责人 #288 裁定，D256）：只读「我是谁」，让控制台拿到账号自己的 id（不再落到主人令牌那份的 'owner'）。只放 GET、不带请求体、不带 query、只同源；响应 no-store + Vary: Cookie（#377）
-  { method: 'GET', path: '/api/auth/me' },
 ];
 
 /** 这些路由不收请求体（GET /api/auth/me）：带了就在 Shell 挡掉，不转给 Core */
