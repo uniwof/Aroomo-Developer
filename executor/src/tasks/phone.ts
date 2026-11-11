@@ -6,7 +6,7 @@
 
 import { secretIdFor, type PhonePort } from '../adapters/droidrun.js';
 import type { TakeoverReason } from '../protocol.js';
-import { TaskFailed, type TaskContext, type TaskOutcome } from './context.js';
+import { ignoreTakeoverError, TaskFailed, type TaskContext, type TaskOutcome } from './context.js';
 
 const DEFAULT_GOAL: Record<string, string> = {
   checkin: '打开应用，找到签到入口并完成今天的签到；如果今天已签到，说明已签到',
@@ -26,7 +26,7 @@ export function blockerFromReason(reason: string): Extract<TakeoverReason, 'capt
 export async function runPhoneTask(ctx: TaskContext, phone: PhonePort): Promise<TaskOutcome> {
   const allowed = ctx.allowlist.checkApp(ctx.task.site);
   if (!allowed.ok) {
-    await ctx.takeover('not_allowed', `目标应用不在本机白名单：${allowed.reason}。请在执行员配置的 allowlist.apps 里加上它再重派。`).catch(() => undefined);
+    await ctx.takeover('not_allowed', `目标应用不在本机白名单：${allowed.reason}。请在执行员配置的 allowlist.apps 里加上它再重派。`).catch(ignoreTakeoverError);
     throw new TaskFailed('NOT_ALLOWED', allowed.reason);
   }
   const credentials: Record<string, string> = {};
