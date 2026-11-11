@@ -11,7 +11,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { ConfigError, loadConfig } from '../src/config.js';
 import { createShellServer, type ShellDeps } from '../src/server.js';
 import { allowAll } from '../src/session.js';
-import { executorPathOk, isExecutorCandidate } from '../src/executor-gate.js';
+import { EXECUTOR_BODY_IDLE_MS, EXECUTOR_UPSTREAM_TIMEOUT_MS, EXECUTOR_WAIT_IDLE_MS, executorPathOk, isExecutorCandidate } from '../src/executor-gate.js';
 
 const TEAM = 'aroomo-test.cloudflareaccess.com';
 const AUD = 'aud-executor-staging-0123';
@@ -104,8 +104,13 @@ beforeAll(async () => {
     req.on('data', (d: Buffer) => c.push(d));
     req.on('end', () => {
       coreSeen.push({ method: req.method ?? '', url: req.url ?? '', headers: req.headers, body: Buffer.concat(c).toString('utf8') });
-      res.writeHead(200, { 'content-type': 'application/json', 'set-cookie': 'aroomo_session=evil; Path=/' });
-      res.end('{"executorId":"e1"}');
+      const reply = () => {
+        res.writeHead(200, { 'content-type': 'application/json', 'set-cookie': 'aroomo_session=evil; Path=/' });
+        res.end('{"executorId":"e1"}');
+      };
+      // 模拟 Core 长轮询满 30 秒才回（claim waitSec=30）
+      if ((req.url ?? '').includes('slow=1')) setTimeout(reply, 31_000);
+      else reply();
     });
   });
   coreUrl = await listen(core);
@@ -423,4 +428,19 @@ describe('#365 泄露检查：凭据不进日志和错误', () => {
     }
     expect(coreSeen.every((c) => !JSON.stringify(c.headers).includes(CF_SECRET) && !JSON.stringify(c.headers).includes(GOOD_JWT))).toBe(true);
   });
+});
+
+describe('长轮询不被 Shell 自己掐断（M3 复跑：claim 每 30 秒 502）', () => {
+  it('读完请求体后的空闲上限 > 上游超时 > Core 最长等待 30 秒', () => {
+    const CORE_POLL_WAIT_MAX_MS = 30_000; // core/src/executor/service.ts POLL_WAIT_SEC
+    expect(EXECUTOR_UPSTREAM_TIMEOUT_MS).toBeGreaterThan(CORE_POLL_WAIT_MAX_MS + 5_000);
+    expect(EXECUTOR_WAIT_IDLE_MS).toBeGreaterThan(EXECUTOR_UPSTREAM_TIMEOUT_MS);
+    expect(EXECUTOR_BODY_IDLE_MS).toBeLessThanOrEqual(CORE_POLL_WAIT_MAX_MS);
+  });
+
+  it('Core 31 秒才回的 claim，Shell 照样转回 200（修前这里连接被掐断）', async () => {
+    const b = await makeShell();
+    const r = await raw(b, '/api/executor/tasks/claim?slow=1', okHeaders());
+    expect(r.status).toBe(200);
+  }, 45_000);
 });
