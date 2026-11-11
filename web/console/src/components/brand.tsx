@@ -89,7 +89,7 @@ export function statusFromText(s?: string): AvatarStatus {
 
 /**
  * 成员头像（D217，全控制台共用）：Logo/首字母，或传进来的头像（children，如对话页的 Aroomo 头像）；
- * 外圈圆环 = 余量（未知画淡空环，不编数字）；永久免费实线、试用虚线；不可用降饱和 + 状态图标；只用一个强调色。
+ * 外圈圆环 = 余量（未知画灰色虚线整圈，不编数字）；永久免费实线、试用虚线；不可用降饱和 + 状态图标；只用一个强调色。
  * 圆环用 viewBox 画，跟着里面头像的大小走（头像随字号放大时圆环一起放大）。
  * 不做「干活时流动高光」：所有者不要动画（负责人 #214 审查也建议删）。
  */
@@ -102,6 +102,7 @@ export function MemberAvatar({
   limit,
   free,
   status,
+  statusLabel,
   children,
 }: {
   name: string;
@@ -112,6 +113,8 @@ export function MemberAvatar({
   limit?: number | null;
   free?: 'permanent' | 'trial';
   status?: AvatarStatus;
+  /** 读屏的状态字，给了就用它（和行内状态同一个来源，#389），不再从 online/status 推 */
+  statusLabel?: string;
   children?: ReactNode;
 }) {
   const initial = Array.from(name.trim())[0]?.toUpperCase() ?? '?';
@@ -124,8 +127,7 @@ export function MemberAvatar({
   const dash = free === 'trial' ? '4 3' : undefined;
   const label = [
     name,
-    online ? '在线' : '离线',
-    online || st !== 'available' ? STATUS_ICON[st].text : '',
+    ...(statusLabel ? [statusLabel] : [online ? '在线' : '离线', online || st !== 'available' ? STATUS_ICON[st].text : '']),
     f == null ? '余量未知' : `额度剩余 ${Math.round((1 - f) * 100)}%`,
     free === 'permanent' ? '永久免费' : free === 'trial' ? '试用' : '',
   ]
@@ -140,7 +142,8 @@ export function MemberAvatar({
       className={cn('relative inline-flex shrink-0 items-center justify-center', children ? 'p-2' : 'p-1', unavailable && 'grayscale opacity-70')}
     >
       <svg viewBox={`0 0 ${V} ${V}`} className="absolute inset-0 h-full w-full" aria-hidden="true">
-        <circle cx={V / 2} cy={V / 2} r={r} fill="none" stroke="var(--border)" strokeWidth="2.5" strokeDasharray={dash} opacity={f == null ? 0.5 : 1} />
+        {/* #383 余量未知：灰色细虚线整圈，和 0%（整圈强调色）、100%（只剩浅底环）分得开 */}
+        <circle cx={V / 2} cy={V / 2} r={r} fill="none" {...(f == null ? { stroke: 'var(--muted)', strokeWidth: 1.5, strokeDasharray: '2 4', 'data-testid': 'avatar-ring-unknown' } : { stroke: 'var(--border)', strokeWidth: 2.5, strokeDasharray: dash })} />
         {f != null && (
           <circle
             data-testid="avatar-arc"

@@ -139,6 +139,34 @@ describe.each(envs)("执行员任务队列（$name）", (env) => {
     ).toBe(true);
   });
 
+  it("result 的 error 收执行员的 { code, message } 对象（M3 复跑：以前 400，任务卡在 running）", async () => {
+    const { owner, client } = await setup();
+    const dev = await client(owner, ["tasks:pull"]);
+    await dev("POST", "/api/executor/hello", {
+      deviceName: "pc",
+      platform: "win32",
+      version: "0.1.0",
+    });
+    const c = await owner("POST", "/api/tasks", {
+      kind: "checkin",
+      site: "https://example.com/",
+    });
+    const id = c.json().task.id as string;
+    expect(
+      (await dev("POST", "/api/executor/tasks/claim", { waitSec: 0 })).json()
+        .task.id,
+    ).toBe(id);
+    const r = await dev("POST", `/api/executor/tasks/${id}/result`, {
+      status: "failed",
+      summary: "页面上没有可做的动作",
+      error: { code: "NO_ACTION", message: "页面上没有可做的动作" },
+    });
+    expect(r.statusCode).toBe(200);
+    const t = (await owner("GET", `/api/tasks/${id}`)).json().task;
+    expect(t.status).toBe("failed");
+    expect(t.resultError).toBe("NO_ACTION: 页面上没有可做的动作");
+  });
+
   it("租约过期退回队列，旧执行员 409 LEASE_LOST；所有者取消通过 progress 通知", async () => {
     const { owner, client, clock } = await setup();
     const a = await client(owner, ["tasks:pull"]);
@@ -309,6 +337,25 @@ describe.each(envs)("执行员任务队列（$name）", (env) => {
       (await devNo("POST", url, { secretId: sA, field: "password" }))
         .statusCode,
     ).toBe(403);
+    // #347：建任务时就校验 secretId 归属——别人的和不存在的回同一个 404 + 同一错误码，任务不入队
+    const MISSING = "00000000-0000-4000-8000-0000000000ff";
+    const before = (await alice("GET", "/api/tasks")).json().tasks.length;
+    const rejected = [];
+    for (const secretId of [sB, MISSING]) {
+      const r = await alice("POST", "/api/tasks", {
+        kind: "login",
+        site: "https://example.com/",
+        secrets: [{ secretId: sA, field: "password" }, { secretId, field: "password" }],
+      });
+      rejected.push([r.statusCode, r.json().error.code, r.json().error.message]);
+      // #347 M5：被拒的正文不带任何 secretId
+      expect(r.body).not.toContain(secretId);
+      expect(r.body).not.toContain(sA);
+    }
+    expect(rejected[0]).toEqual([404, "SECRET_NOT_FOUND", rejected[1]![2]]);
+    expect(rejected[1]![0]).toBe(404);
+    expect(rejected[1]![1]).toBe("SECRET_NOT_FOUND");
+    expect((await alice("GET", "/api/tasks")).json().tasks.length).toBe(before);
     const bobDev = await client(bob, ["tasks:pull", "tasks:secret"]);
     await bobDev("POST", "/api/executor/hello", {
       deviceName: "pc",

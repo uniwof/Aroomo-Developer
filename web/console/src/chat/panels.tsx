@@ -104,7 +104,7 @@ function MemberRows({ list, onOpen, usage }: { list: Member[]; onOpen: (m: Membe
         const q = usage?.find((u) => u.memberId === m.id)?.quota;
         const row = (
           <button type="button" className="row row-button" onClick={() => onOpen(m)} aria-describedby={`hc-${m.id}`}>
-            <MemberAvatar name={m.name} online={m.enabled && m.status === 'active'} status={ringStatus(m)} used={q?.used} limit={q?.limit}>
+            <MemberAvatar name={m.name} online={m.enabled && m.status === 'active'} status={ringStatus(m)} statusLabel={statusText(m)} used={q?.used} limit={q?.limit}>
               <Avatar name={m.name} size="sm" glyph={m.avatar} />
             </MemberAvatar>
             <span className="row-text">
@@ -120,7 +120,7 @@ function MemberRows({ list, onOpen, usage }: { list: Member[]; onOpen: (m: Membe
         );
         return (
           <Suspense key={m.id} fallback={row}>
-            <HoverCard memberId={m.id} wrap>
+            <HoverCard memberId={m.id} wrap status={statusText(m)}>
               {row}
             </HoverCard>
           </Suspense>

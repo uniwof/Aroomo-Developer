@@ -260,7 +260,7 @@ export interface MemberActivity {
 
 const ACTIVITY_LABEL: Record<MemberActivity['state'], string> = { working: '工作中', cooldown: '冷却', depleted: '耗尽', ready: '就绪', unknown: '状态未知' };
 
-/** 状态的字（只说状态，不给数字）；未知时带上原因（已停用、候选、没有 Key…），不冒充「就绪」 */
+/** 状态的字（只说状态，不给数字）；Core 给了原因的 unknown（已停用、候选、没有 Key）就是用不了：「不可用 · 原因」（#383），不冒充「就绪」 */
 export function activityLabel(a: MemberActivity): string {
-  return a.state === 'unknown' && a.reason ? `状态未知：${a.reason}` : ACTIVITY_LABEL[a.state];
+  return a.state === 'unknown' && a.reason ? `不可用 · ${a.reason}` : ACTIVITY_LABEL[a.state];
 }

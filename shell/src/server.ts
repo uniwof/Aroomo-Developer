@@ -28,6 +28,8 @@ import {
   AccessJwtVerifier,
   EXECUTOR_BODY_MAX,
   EXECUTOR_UPSTREAM_TIMEOUT_MS,
+  EXECUTOR_BODY_IDLE_MS,
+  EXECUTOR_WAIT_IDLE_MS,
   executorForwardHeaders,
   executorPathOk,
   IpRateLimiter,
@@ -317,9 +319,10 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
     const cl = req.headers['content-length'];
     if (cl !== undefined && (!/^\d+$/.test(cl) || Number(cl) > EXECUTOR_BODY_MAX)) return deny(413, 'TOO_LARGE', '请求太大');
     if (!(await accessJwt.verify(req.headers['cf-access-jwt-assertion']))) return deny(403, 'ACCESS_DENIED', '没有通过访问校验');
-    req.setTimeout(30_000, () => req.destroy());
+    req.setTimeout(EXECUTOR_BODY_IDLE_MS, () => req.destroy());
     const body = req.method === 'POST' ? await readBody(req) : Buffer.alloc(0);
     if (body === null) return deny(413, 'TOO_LARGE', '请求太大');
+    req.setTimeout(EXECUTOR_WAIT_IDLE_MS, () => req.destroy());
     const target = new URL(rawUrl, cfg.coreUpstream);
     const headers = executorForwardHeaders(req, target.host, clientIp(req, cfg.clientIpHeader));
     delete headers['content-length'];

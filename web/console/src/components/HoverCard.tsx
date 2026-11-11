@@ -9,10 +9,11 @@ export interface MemberCard {
   remaining: { value: number | null; unit: string | null; source: string };
 }
 
-export function cardLines(c: MemberCard): [string, string, string] {
+/** status：调用方传行内同一套推导出的状态（#383 同源），不传才用 Core 卡片的 */
+export function cardLines(c: MemberCard, status?: string): [string, string, string] {
   const rem =
     c.remaining.value == null ? '余量：未知' : `余量：${c.remaining.value} ${c.remaining.unit ?? ''}（${c.remaining.source}）`.replace(' （', '（');
-  return [`${c.name} · ${c.type.join('、')}`, `状态：${c.status}`, rem];
+  return [`${c.name} · ${c.type.join('、')}`, `状态：${status ?? c.status}`, rem];
 }
 
 /** 卡片元素的 id：包住按钮时（wrap），按钮用 aria-describedby 指向它，读屏聚焦按钮就读到 3 行 */
@@ -22,7 +23,7 @@ export const hoverCardId = (memberId: string) => `hc-${memberId}`;
  * wrap=true：包住一个本身能聚焦的元素（如成员列表的一行按钮），自己不再占一个 Tab 位；
  * 里面元素聚焦时卡片出现（焦点事件冒泡上来）。长按打开卡片后松手，不触发里面按钮的点击。
  */
-export function HoverCard({ memberId, children, delay = 300, wrap = false }: { memberId: string; children: ReactNode; delay?: number; wrap?: boolean }) {
+export function HoverCard({ memberId, children, delay = 300, wrap = false, status }: { memberId: string; children: ReactNode; delay?: number; wrap?: boolean; status?: string }) {
   const [open, setOpen] = useState(false);
   const [card, setCard] = useState<MemberCard | null>(null);
   const [failed, setFailed] = useState(false);
@@ -68,7 +69,7 @@ export function HoverCard({ memberId, children, delay = 300, wrap = false }: { m
     };
   }, [open, card, memberId]);
 
-  const lines = card ? cardLines(card) : null;
+  const lines = card ? cardLines(card, status) : null;
   return (
     <span
       ref={rootRef}

@@ -151,6 +151,19 @@ describe('MCP 任务工具：端到端（/mcp）', () => {
     for (const x of ['create_task', 'cancel_task', 'get_task', 'list_tasks']) expect(await names(none)).not.toContain(x);
   });
 
+  it('#347 M3：真实 /mcp + tasks:create 令牌带 secrets（别人的 / 不存在的 id）建任务 → 错误，任务数不变', async () => {
+    const full = await client(['tasks:create', 'tasks:read']);
+    const before = text(await call(full, 'list_tasks'));
+    for (const secretId of ['00000000-0000-4000-8000-0000000000aa', 'not-a-uuid']) {
+      const r = await call(full, 'create_task', { kind: 'checkin', site: 'https://example.org', secrets: [{ secretId, field: 'password' }] });
+      // 拦下它的是「MCP 签到只收 kind + site」那条规则（gateway callTask field_not_allowed），不是别的错误
+      expect(r.json().error).toBeUndefined();
+      expect(r.json().result).toEqual({ content: [{ type: 'text', text: '这里派签到任务只能带 kind 和 site；其他字段请在手机或控制台发起。' }], isError: true });
+      expect(r.body).not.toContain(secretId);
+    }
+    expect(text(await call(full, 'list_tasks'))).toBe(before);
+  });
+
   it('★1/4 去重与跨账号：同日第二次 checkin 已派过；取消后可再派；B 查 / 取消 A 的任务与不存在的 id 逐字相同', async () => {
     const full = await client(['tasks:create', 'tasks:read']);
     const first = await call(full, 'create_task', { kind: 'checkin', site: 'https://example.com' });

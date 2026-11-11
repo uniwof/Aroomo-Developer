@@ -14,6 +14,9 @@ export const EXECUTOR_PREFIX = '/api/executor/';
 export const EXECUTOR_BODY_MAX = 1024 * 1024;
 /** 长轮询最长 30 秒（claim / takeover waitSec ≤ 30），留足余量 */
 export const EXECUTOR_UPSTREAM_TIMEOUT_MS = 60_000;
+/** 读请求体阶段的空闲上限（防慢速攻击）；读完后放宽到上游超时之外，否则 30 秒长轮询会被自己掐断 → 隧道 502 */
+export const EXECUTOR_BODY_IDLE_MS = 30_000;
+export const EXECUTOR_WAIT_IDLE_MS = EXECUTOR_UPSTREAM_TIMEOUT_MS + 5_000;
 
 /** 转给 Core 的客户端请求头（精确白名单）；host、x-forwarded-for、x-real-ip 由 Shell 自己填 */
 export const EXECUTOR_FORWARD_HEADERS = ['authorization', 'content-type', 'content-length', 'accept'] as const;

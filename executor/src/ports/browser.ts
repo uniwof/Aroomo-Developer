@@ -51,13 +51,52 @@ export interface BrowserPort {
   open(opts?: OpenOptions): Promise<BrowserSession>;
 }
 
+/** 探活 / 打开的默认时限（#382）：超时一律当不可用，不让一个卡住的可选适配器拖住整个任务 */
+export const PROBE_TIMEOUT_MS = 30_000;
+export const OPEN_TIMEOUT_MS = 60_000;
+
+/** 在 ms 内没结果就以 TIMEOUT 失败；定时器不挡进程退出 */
+function within<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const t = new Promise<never>((_, rej) => {
+    timer = setTimeout(() => rej(new Error(`${what}超时（${Math.round(ms / 1000)} 秒）`)), ms);
+    timer.unref?.();
+  });
+  return Promise.race([p, t]).finally(() => clearTimeout(timer));
+}
+
+/** 探活：只有在时限内明确返回 true 才算可用；抛错、超时、返回非 true 都算不可用 */
+export async function probe(port: BrowserPort, timeoutMs = PROBE_TIMEOUT_MS): Promise<boolean> {
+  try {
+    return (await within(port.available(), timeoutMs, `${port.name} 探活`)) === true;
+  } catch {
+    return false;
+  }
+}
+
 /** 按顺序选第一个可用的适配器（主选在前） */
-export async function pickBrowser(ports: BrowserPort[]): Promise<BrowserPort | null> {
-  for (const p of ports) {
+export async function pickBrowser(ports: BrowserPort[], timeoutMs = PROBE_TIMEOUT_MS): Promise<BrowserPort | null> {
+  for (const p of ports) if (await probe(p, timeoutMs)) return p;
+  return null;
+}
+
+/**
+ * 按顺序找第一个「探活通过且能在时限内打开会话」的适配器（#382）：
+ * 主选（如 ego lite）报可用但打开卡住 / 出错时，降级到下一个（如 playwright-mcp）。
+ * 超时后才打开成功的会话会被立即关掉，不留后台窗口。
+ */
+export async function openBrowser(
+  ports: BrowserPort[],
+  opts: OpenOptions = {},
+  t: { probeMs?: number; openMs?: number } = {},
+): Promise<{ port: BrowserPort; session: BrowserSession } | null> {
+  for (const port of ports) {
+    if (!(await probe(port, t.probeMs))) continue;
+    const opening = port.open(opts);
     try {
-      if (await p.available()) return p;
+      return { port, session: await within(opening, t.openMs ?? OPEN_TIMEOUT_MS, `${port.name} 打开`) };
     } catch {
-      // 探测失败视为不可用，继续下一个
+      opening.then((s) => s.close().catch(() => undefined)).catch(() => undefined);
     }
   }
   return null;
