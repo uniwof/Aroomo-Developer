@@ -7,7 +7,7 @@ import { CLIENT_SCOPES, EXECUTOR_SCOPES } from '../src/clients/types.js';
 import { loadConfig } from '../src/config.js';
 import { type CoreDeps, memoryDeps, pgDeps } from '../src/deps.js';
 import { buildServer } from '../src/server.js';
-import { OWNER_TOKEN, TOKEN_SECRET, dbTargets, fakeClock, ownerAuth } from './helpers/db.js';
+import { OWNER_TOKEN, TOKEN_SECRET, appRoleDbTargets, dbTargets, fakeClock, ownerAuth } from './helpers/db.js';
 
 const PW = 'correct-horse-battery';
 const VAULT_KEY = randomBytes(32).toString('base64');
@@ -16,7 +16,7 @@ const OP = 'placeholder-op-346';
 
 const envs = [
   { name: 'memory', make: async (now: () => Date): Promise<CoreDeps> => memoryDeps(now) },
-  ...dbTargets.map((t) => ({ name: t.name, make: async (now: () => Date): Promise<CoreDeps> => pgDeps(await t.open(), now) })),
+  ...[...dbTargets, ...appRoleDbTargets].map((t) => ({ name: t.name, make: async (now: () => Date): Promise<CoreDeps> => pgDeps(await t.open(), now) })),
 ];
 
 describe.each(envs)('#346 家人本人确认（$name）', (env) => {
