@@ -134,8 +134,10 @@ function createGate({ publicPort, upstreamPort, host, email, password, publicUrl
         const cookies = await login();
         if (cookies) {
           // 自动登录后 30 秒内不再尝试（Cookie 不生效时不无限跳转）
+          // Location = '/.' + 安全路径（CodeQL #6，#373）：以 '/.' 开头的是路径绝对引用（RFC 3986 §4.2），后面拼什么都改不了主机，
+          // 浏览器解析时去掉点段，落到同一路径（'/./x?q' → '/x?q'）；CodeQL 把这个固定前缀认作主机名屏障，safeTarget 仍负责只收同源路径
           res.writeHead(302, {
-            location: safeTarget(req.url),
+            location: '/.' + safeTarget(req.url),
             'set-cookie': [...cookies, `${MARK}=1; Path=/; Max-Age=30; HttpOnly; SameSite=Lax`],
             'cache-control': 'no-store',
           });

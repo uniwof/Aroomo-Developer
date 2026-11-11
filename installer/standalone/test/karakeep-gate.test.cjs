@@ -136,6 +136,7 @@ test('集成：原始请求行 //evil.example/x、/\\evil.example、/.//evil.exa
       req.end();
     });
   try {
+    // Location 带固定前缀 '/.'（#373），浏览器解析后的路径 + 查询串才是落点
     for (const [path, want] of [
       ['//evil.example/x', '/'],
       ['/\\evil.example', '/'],
@@ -146,8 +147,10 @@ test('集成：原始请求行 //evil.example/x、/\\evil.example、/.//evil.exa
       const r = await get(path);
       assert.equal(r.statusCode, 302);
       assert.match([].concat(r.headers['set-cookie'] || []).join('\n'), /aroomo_al=1/);
-      assert.equal(r.headers.location, want);
-      assert.equal(new URL(r.headers.location, `http://127.0.0.1:${port}`).host, `127.0.0.1:${port}`);
+      assert.equal(r.headers.location, '/.' + want);
+      const landed = new URL(r.headers.location, `http://127.0.0.1:${port}`);
+      assert.equal(landed.host, `127.0.0.1:${port}`);
+      assert.equal(landed.pathname + landed.search, want);
     }
     const after = await get('/x');
     assert.equal(after.statusCode, 302);
