@@ -23,10 +23,20 @@ const hostOf = (s) => {
     return null;
   }
 };
+// #386 第 1 轮 M1：点段 / 反斜杠归一化后路径以 // 开头，下一跳就成了协议相对地址（安全押在 Karakeep 第二跳上），一律不放行
+const dblSlash = (s) => {
+  try {
+    return new URL(s, BASE).pathname.startsWith('//');
+  } catch {
+    return false;
+  }
+};
 
 function check(fn, max, alpha) {
   const offSite = [];
   const nonAscii = [];
+  const slashSlash = [];
+  const ctrlKept = [];
   let rawEscapes = 0;
   for (const s of strings(max, alpha)) {
     const h = hostOf(s);
@@ -34,14 +44,19 @@ function check(fn, max, alpha) {
     const out = fn(s);
     if (out !== '/' && hostOf(out) !== 'host.test') offSite.push(JSON.stringify(s));
     if (!/^[\x21-\x7e]+$/.test(out)) nonAscii.push(JSON.stringify(s));
+    if (out !== '/' && dblSlash(out)) slashSlash.push(JSON.stringify(s));
+    // 规则本身：含控制字符（浏览器会剥掉，结果不可预期）的一律回 /，不靠后面的百分号编码兜住
+    if (/[\x00-\x1f\x7f]/.test(s) && out !== '/') ctrlKept.push(JSON.stringify(s));
   }
-  return { offSite: offSite.slice(0, 5), nonAscii: nonAscii.slice(0, 5), rawEscapes };
+  return { offSite: offSite.slice(0, 5), nonAscii: nonAscii.slice(0, 5), slashSlash: slashSlash.slice(0, 5), ctrlKept: ctrlKept.slice(0, 5), rawEscapes };
 }
 
 test('穷举（长度 ≤5）：结果为 / 或解析后仍在本站，且只含 U+0021–U+007E；判据在原始输入上能找到外跳', () => {
   const r = check(safeTarget, 5);
   assert.deepEqual(r.offSite, []);
   assert.deepEqual(r.nonAscii, []);
+  assert.deepEqual(r.slashSlash, []);
+  assert.deepEqual(r.ctrlKept, []);
   assert.ok(r.rawEscapes > 0, '判据不是恒真');
 });
 
@@ -49,6 +64,8 @@ test('穷举（补充 NUL/US/DEL/全角空格/全角斜杠/?/#，长度 ≤4）�
   const r = check(safeTarget, 4, [...ALPHA, ...EXTRA]);
   assert.deepEqual(r.offSite, []);
   assert.deepEqual(r.nonAscii, []);
+  assert.deepEqual(r.slashSlash, []);
+  assert.deepEqual(r.ctrlKept, []);
   assert.ok(r.rawEscapes > 0);
 });
 
@@ -71,7 +88,9 @@ test('显式用例', () => {
   assert.equal(safeTarget('/signup'), '/');
   assert.equal(safeTarget('/bookmarks?q=1'), '/bookmarks?q=1');
   assert.equal(safeTarget('/中'), '/%E4%B8%AD');
-  for (const s of ['/%2F%2Fevil.example', '/\u3000/evil.example', '/\uFF0F/evil.example', '/.//evil.example/x']) {
+  // #386 M1：点段归一化后以 // 开头的一律回 /
+  for (const s of ['/.//x', '/a/..//x', '/./\\x', '/.//evil.example/x']) assert.equal(safeTarget(s), '/', JSON.stringify(s));
+  for (const s of ['/%2F%2Fevil.example', '/\u3000/evil.example', '/\uFF0F/evil.example']) {
     const out = safeTarget(s);
     assert.equal(hostOf(out), 'host.test', `${JSON.stringify(s)} → ${out}`);
     assert.match(out, /^[\x21-\x7e]+$/);
@@ -79,7 +98,8 @@ test('显式用例', () => {
 });
 
 // 集成：假的 Karakeep（Better Auth），原始请求行进 gate，确认走了自动登录分支且跳转仍在本站
-test('集成：原始请求行 /.//evil.example/x 与非 ASCII 路径 → 302 本站 + 自动登录标记，服务不受影响', async () => {
+// #386 M2：输出和输入不同的用例（gate 绕过 safeTarget 就会红）；同源原样的一条做正向对照
+test('集成：原始请求行 //evil.example/x、/\\evil.example、/.//evil.example/x、/signin?x=1 → 302 Location: /；/%E4%B8%AD?a=1 原样；带自动登录标记', async () => {
   const upstream = http.createServer((req, res) => {
     req.resume();
     req.on('end', () => {
@@ -117,7 +137,10 @@ test('集成：原始请求行 /.//evil.example/x 与非 ASCII 路径 → 302 �
     });
   try {
     for (const [path, want] of [
-      ['/.//evil.example/x', '/.//evil.example/x'],
+      ['//evil.example/x', '/'],
+      ['/\\evil.example', '/'],
+      ['/.//evil.example/x', '/'],
+      ['/signin?x=1', '/'],
       ['/%E4%B8%AD?a=1', '/%E4%B8%AD?a=1'],
     ]) {
       const r = await get(path);
