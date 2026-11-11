@@ -154,10 +154,35 @@ export async function fetchAccount(fetchImpl: typeof fetch = fetch, timeoutMs = 
   }
 }
 
+/** Core 回的「是谁」只认账号这一种形状（kind=user + 账号 id）；别的（HTML、LobeHub 的回答、错误）一律当没问到 */
+function asAccount(r: { kind?: unknown; ownerAccount?: unknown; user?: { id?: unknown } } | null | undefined): { id: string; owner: boolean } | null {
+  return r?.kind === 'user' && typeof r.user?.id === 'string' && r.user.id ? { id: r.user.id, owner: r.ownerAccount === true } : null;
+}
+
+/**
+ * #293：从 Shell 打开时先直接问 Core（同源 GET /api/auth/me，Shell 白名单直通，只带会话 Cookie，不带主人令牌），
+ * 拿到的是她自己的账号 id，和直接开 Core 登录时是同一个，不再落到 'owner' 那份。
+ * 不走 api()：这里的 401 只表示「这条路问不到」，不能把人踢出登录；问不到（没开直通、返回的不是账号）再退回下面主人令牌那条老路。
+ */
+async function whoAmIDirect(fetchImpl: typeof fetch): Promise<{ id: string; owner: boolean } | null> {
+  try {
+    const res = await fetchImpl('/api/auth/me', { method: 'GET', headers: { accept: 'application/json' }, credentials: 'same-origin' });
+    if (!res.ok || !/json/i.test(res.headers.get('content-type') ?? '')) return null;
+    return asAccount((await res.json()) as { kind?: unknown; ownerAccount?: unknown; user?: { id?: unknown } });
+  } catch {
+    return null;
+  }
+}
+
 async function whoAmI(fetchImpl: typeof fetch): Promise<{ id: string; owner: boolean } | null> {
+  if (viaShell) {
+    const direct = await whoAmIDirect(fetchImpl);
+    if (direct) return direct;
+  }
   try {
     const r = await api<{ kind?: unknown; ownerAccount?: unknown; user?: { id?: unknown } }>('GET', '/api/auth/me', undefined, fetchImpl);
-    if (r.kind === 'user' && typeof r.user?.id === 'string' && r.user.id) return { id: r.user.id, owner: r.ownerAccount === true };
+    const acct = asAccount(r);
+    if (acct) return acct;
     return r.kind === 'owner' ? { id: 'owner', owner: true } : null;
   } catch {
     return null;

@@ -98,24 +98,37 @@ for (const [label, viewport, isMobile] of [
   // F-144：正文字号调到最大 32px，控制台各页都不能出现左右滚动（整页或内部滚动区；代码块、表格除外）
   await page.evaluate(() => localStorage.setItem('aroomo.chat.prefs.v1', JSON.stringify({ fontSize: 32, fontV: 2 })));
   // 负责人 #314 小建议：CI 里数据是空的，先放一段很长的会话标题和一条很长的消息（含不断行的长链接），最容易撑出横向滚动或把按钮挤出去
-  // 键名照控制台自己的规则（lib/api.ts whoAmI + store chatKey）：问 Core 是谁（从 Shell 打开走 /aroomo/api），账号 → u:<id>，主人令牌 → u:owner，问不到 → 共用那份
-  const longKey = await page.evaluate(async () => {
-    const base = document.querySelector('meta[name="aroomo-shell"]') ? '/aroomo/api' : '/api';
-    let id = null;
+  // 键名照控制台自己的规则（lib/api.ts whoAmI + store chatKey）：账号 → u:<id>
+  // #377 M3：从 Shell 打开必须由同源直通 GET /api/auth/me 拿到账号本身（kind=user），不允许退回 /aroomo/api 老路——直通坏了这里就判失败
+  const seed = await page.evaluate(async () => {
+    const viaShell = Boolean(document.querySelector('meta[name="aroomo-shell"]'));
+    let direct = { status: 0 };
     try {
-      const r = await (await fetch(`${base}/auth/me`, { credentials: 'same-origin', headers: { accept: 'application/json' } })).json();
-      id = r.kind === 'user' && typeof r.user?.id === 'string' && r.user.id ? r.user.id : r.kind === 'owner' ? 'owner' : null;
-    } catch {}
-    const key = id && /^[A-Za-z0-9_-]{1,64}$/.test(id) ? `aroomo.chat.v1:u:${id}` : 'aroomo.chat.v1';
-    const text = '这是一条很长的消息，'.repeat(40) + 'https://example.com/' + 'a'.repeat(120);
-    const now = Date.now();
-    const messages = [
-      { id: 'e2e-long-u', role: 'user', text, at: now },
-      { id: 'e2e-long-a', role: 'assistant', text, at: now },
-    ];
-    localStorage.setItem(key, JSON.stringify([{ id: 'e2e-long', title: '很长的会话标题'.repeat(12), model: 'aroomo', messages, updatedAt: now }]));
-    return key;
+      const r = await fetch('/api/auth/me', { credentials: 'same-origin', headers: { accept: 'application/json' } });
+      const b = await r.json().catch(() => ({}));
+      direct = { status: r.status, kind: b.kind, id: typeof b.user?.id === 'string' ? b.user.id : null, cache: r.headers.get('cache-control'), vary: r.headers.get('vary'), upstream: r.headers.get('x-aroomo-upstream') };
+    } catch (e) {
+      direct = { status: 0, error: String(e).slice(0, 120) };
+    }
+    const id = direct.kind === 'user' && direct.id && /^[A-Za-z0-9_-]{1,64}$/.test(direct.id) ? direct.id : null;
+    const key = id ? `aroomo.chat.v1:u:${id}` : null;
+    if (key) {
+      const text = '这是一条很长的消息，'.repeat(40) + 'https://example.com/' + 'a'.repeat(120);
+      const now = Date.now();
+      const messages = [
+        { id: 'e2e-long-u', role: 'user', text, at: now },
+        { id: 'e2e-long-a', role: 'assistant', text, at: now },
+      ];
+      localStorage.setItem(key, JSON.stringify([{ id: 'e2e-long', title: '很长的会话标题'.repeat(12), model: 'aroomo', messages, updatedAt: now }]));
+    }
+    return { viaShell, direct, key };
   });
+  const longKey = seed.key;
+  check(
+    `${label} core-session Shell 直通 /api/auth/me 拿到账号本身（不退回老路，no-store）`,
+    seed.viaShell && seed.direct.status === 200 && seed.direct.kind === 'user' && Boolean(longKey) && seed.direct.cache === 'no-store' && seed.direct.vary === 'Cookie' && seed.direct.upstream === 'core',
+    JSON.stringify(seed),
+  );
   // 每页核两件事才算打开了这一页：地址没被退回（比如退回对话页），这一页自己的标题在（负责人 #314 必改：打不开不能算通过）
   for (const [p, heading] of [
     ['/console/chat', '全员'],

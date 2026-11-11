@@ -72,11 +72,40 @@ export const PREPARING_HTML = `<!doctype html><html lang="zh-CN"><head><meta cha
 /**
  * 浏览器 → Core 直通（负责人 2026-11-05 19:47 裁定：聊天走 Shell 同源转发，不另开前端聊天子域名）。
  * 只带账号自己的会话 Cookie，鉴权、CSRF、限速都由 Core 判（Shell 先挡一遍明显不对的）；从不附加主人令牌。
- * 逐条白名单：每加一条都要单独审，绝不写成 /api/* 前缀匹配。第 1 批只有对话流。
+ * 逐条白名单：每加一条都要单独审（A+），绝不写成 /api/* 前缀匹配。第 1 批只有对话流；第 2 条 GET /api/auth/me 的规则见 DECISIONS D256。
  */
 export const CORE_COOKIE_ROUTES: readonly { readonly method: string; readonly path: string }[] = [
   { method: 'POST', path: '/api/chat/stream' },
+  // #293（负责人 #288 裁定，D256）：只读「我是谁」，让控制台拿到账号自己的 id（不再落到主人令牌那份的 'owner'）。只放 GET、不带请求体、不带 query、只同源；响应 no-store + Vary: Cookie（#377）
+  { method: 'GET', path: '/api/auth/me' },
 ];
+
+/** 这些路由不收请求体（GET /api/auth/me）：带了就在 Shell 挡掉，不转给 Core */
+const CORE_COOKIE_NO_BODY = new Set(['GET /api/auth/me']);
+/**
+ * #377 M1：按 Cookie 区分身份的只读 GET（响应随会话不同）：
+ * - 只收同源请求：带 Origin 必须是本站，Sec-Fetch-Site 只认 same-origin / none，否则 403（GET 不走 x-aroomo-request 那套 CSRF）；
+ * - 带 query 一律 400（不转发、不剥掉，免得缓存键 / 日志里出现意外参数）；
+ * - 响应强制 no-store + Vary: Cookie，剥掉上游的 CORS / ETag / Last-Modified，不让浏览器、Cloudflare、代理缓存或跨源读。
+ */
+const CORE_COOKIE_IDENTITY_GET = new Set(['/api/auth/me']);
+const IDENTITY_DROP = ['access-control-allow-origin', 'access-control-allow-credentials', 'access-control-expose-headers', 'etag', 'last-modified', 'cache-control', 'vary', 'expires', 'age'];
+
+/** 同源判断（GET 专用）：Sec-Fetch-Site 有就只认 same-origin / none；Origin 有就必须等于 Host（或首个 X-Forwarded-Host） */
+function sameOriginGet(req: IncomingMessage): boolean {
+  const sfs = req.headers['sec-fetch-site'];
+  if (sfs !== undefined && sfs !== 'same-origin' && sfs !== 'none') return false;
+  const origin = req.headers.origin;
+  if (origin === undefined) return true;
+  let host: string;
+  try {
+    host = new URL(origin).host;
+  } catch {
+    return false;
+  }
+  const xfh = String(req.headers['x-forwarded-host'] ?? '').split(',')[0]?.trim();
+  return host === req.headers.host || (Boolean(xfh) && host === xfh);
+}
 
 /** 这条路径在白名单里吗（精确匹配，不认前缀）；返回允许的方法，不在返回 undefined */
 export function coreCookieRouteMethods(pathname: string): string[] | undefined {
@@ -490,10 +519,12 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
       if (v !== undefined) headers[k] = v;
     }
     let done = false;
+    const identity = CORE_COOKIE_IDENTITY_GET.has(url.pathname);
     const up = clientFor(target).request(target, { method: req.method, headers }, (upRes) => {
       res.writeHead(upRes.statusCode ?? 502, {
-        ...responseHeaders(upRes, ['set-cookie', 'content-length']),
+        ...responseHeaders(upRes, ['set-cookie', 'content-length', ...(identity ? IDENTITY_DROP : [])]),
         'cache-control': 'no-store',
+        ...(identity ? { vary: 'Cookie', 'x-aroomo-upstream': 'core' } : {}),
         'x-accel-buffering': 'no',
       });
       res.flushHeaders();
@@ -630,6 +661,13 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
       if (methods) {
         if (!methods.includes(req.method ?? '')) return sendJson(res, 405, { error: { code: 'METHOD_NOT_ALLOWED', message: '不支持这个请求方法' } }, { allow: methods.join(', ') });
         if (!csrfOk(req)) return sendJson(res, 403, { error: { code: 'CSRF', message: '请求来源不对' } });
+        if (CORE_COOKIE_IDENTITY_GET.has(p)) {
+          if (!sameOriginGet(req)) return sendJson(res, 403, { error: { code: 'CROSS_ORIGIN', message: '请求来源不对' } });
+          if (url.search !== '') return sendJson(res, 400, { error: { code: 'QUERY_NOT_ALLOWED', message: '这个请求不能带参数' } });
+        }
+        if (CORE_COOKIE_NO_BODY.has(`${req.method} ${p}`) && (req.headers['transfer-encoding'] !== undefined || !/^0+$/.test(String(req.headers['content-length'] ?? '0')))) {
+          return sendJson(res, 400, { error: { code: 'BODY_NOT_ALLOWED', message: '这个请求不能带内容' } });
+        }
         const cookie = coreSessionCookie(req.headers.cookie);
         if (!cookie) return sendJson(res, 401, { error: { code: 'UNAUTHORIZED', message: '请先登录' } });
         return proxyCoreCookie(req, res, url, cookie);

@@ -21,7 +21,7 @@ import { OFFLINE_NOTE, ONLINE_AGAIN, useOnline } from './online';
 import { SIDE_UI, Sidebar, type SideUi } from './Sidebar';
 import { BackButton, ExternalPanel, MemberDetail, MembersPanel, PanelHeader, SETTINGS_SECTIONS, SettingsDialog, SettingsPanel, type GoTarget } from './panels';
 import { applyDisplay } from '@/lib/display';
-import { ClaimFullError, claimLegacy, legacyClaimed, listTimeLabel, loadConversations, loadDraft, loadPrefs, newConversation, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
+import { ClaimFullError, claimLegacy, legacyClaimed, listTimeLabel, loadConversations, loadDraft, loadPrefs, mergeOwnerShare, newConversation, shouldMergeOwnerShare, saveConversations, savePrefs, previewText, titleFrom, type ChatPrefs, type ChatTurn, type Conversation } from './store';
 import { useAsk } from '@/components/Dialog';
 import { ASSISTANTS, ASSISTANT_DRAFT, SAVED_CHATS, SCHEDULE_PAGE } from '@/lib/flags';
 import { WORK } from '@/lib/work-flag';
@@ -304,6 +304,8 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
         // #287：账号以 Core 说的为准，问不到就不导；家人的、旧的共用那份都不导
         const who = isFamily() ? null : await fetchAccount();
         const me = who?.id ?? null;
+        // #293：以前存在 'owner' 那份的本机会话并进她账号那份（只有 Core 确认是所有者才并；先并再导入，导入就带上）
+        if (shouldMergeOwnerShare(me, who)) mergeOwnerShare(me);
         if (me) await importLocalOnce(me).catch(() => 0);
         const fresh = await fetchConversations();
         if (!alive || settled.current) return;
@@ -340,6 +342,7 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     void fetchAccount().then((who) => {
       if (!alive) return;
       const me = who?.id ?? null;
+      if (shouldMergeOwnerShare(me, who)) mergeOwnerShare(me); // #293
       if (me && me !== acctRef.current) {
         // 先换列表、再换账号（同一次更新）：保存只在列表和账号对得上时才写。
         // #292：问到之前在这页新开、说过话的会话（打开时没有或是空的）是她的，带过去；读进来的旧那份不带

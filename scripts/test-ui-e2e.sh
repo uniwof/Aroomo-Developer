@@ -4,6 +4,8 @@
 #   （SHELL_AUTH=core-session：/aroomo/accept 设密码 → /aroomo/login 登录 → /console）
 #   → Playwright 打开首页 / 对话 / Aroomo 页面（电脑 1280×800 + 手机 390×844）→ 截图、导出页面结构 → 检查：
 #   标题是 Aroomo、页面上看不到 LobeHub、§8 底部图标在、隐藏页面跳走、设置 6 个 Tab、朗读接口被禁用。
+#   第二段（#377 M3）：拿到所有者账号 id → 设 CORE_OWNER_ACCOUNT_ID 重启 Core → 发一个家人邀请 →
+#   shell/e2e/owner-merge.mjs 验证「'owner' 那份并进所有者账号那份」和家人对照（不并入）。
 # 环境变量：E2E_REPORT_DIR（截图和报告输出目录，默认 ui-e2e-report/）
 set -Eeuo pipefail
 
@@ -105,3 +107,42 @@ pw_dir="$(mktemp -d)"
 (cd "$pw_dir" && npm init -y >/dev/null && npm i --no-audit --no-fund playwright@1.56.1 >/dev/null && npx playwright install --with-deps chromium >/dev/null)
 PW_DIR="$pw_dir" E2E_BASE="$base" E2E_EMAIL="$email" E2E_PASSWORD="$password" E2E_INVITE_TOKEN="$invite_token" E2E_REPORT_DIR="$report" \
   node "$root/shell/e2e/ui-smoke.mjs"
+
+# —— 第二段（#377 M3）：设了 CORE_OWNER_ACCOUNT_ID 的「并入」——
+step="取所有者账号 id"
+owner_id="$(dc exec -T core node -e '
+(async () => {
+  const r = await fetch("http://127.0.0.1:8080/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: process.argv[1], password: process.argv[2], cookie: true }) });
+  const cookie = String(r.headers.get("set-cookie") ?? "").split(";")[0];
+  const me = await (await fetch("http://127.0.0.1:8080/api/auth/me", { headers: { cookie } })).json();
+  if (me.kind !== "user" || !me.user?.id) { console.error(JSON.stringify(me).slice(0, 300)); process.exit(1); }
+  process.stdout.write(me.user.id);
+})().catch((e) => { console.error(String(e)); process.exit(1); });
+' "$email" "$password")"
+if [ -z "$owner_id" ]; then echo "没拿到所有者账号 id" >&2; exit 1; fi
+step="Core 发家人邀请"
+family_email=ui-e2e-family@example.com
+family_password="placeholder-$(openssl rand -hex 8)"
+family_invite="$(dc exec -T core node -e '
+fetch("http://127.0.0.1:8080/api/users/invites", {
+  method: "POST",
+  headers: { authorization: "Bearer " + process.env.CORE_OWNER_TOKEN, "content-type": "application/json" },
+  body: JSON.stringify({ email: process.argv[1], role: "user" }),
+}).then(async (r) => { const b = await r.json(); if (r.status !== 201 || !b.token) { console.error(r.status, JSON.stringify(b).slice(0, 300)); process.exit(1); } process.stdout.write(b.token); })
+  .catch((e) => { console.error(String(e)); process.exit(1); });
+' "$family_email")"
+if [ -z "$family_invite" ]; then echo "家人邀请没有返回令牌" >&2; exit 1; fi
+step="设 CORE_OWNER_ACCOUNT_ID 重启 Core"
+echo "CORE_OWNER_ACCOUNT_ID=$owner_id" >>"$env_file"
+dc up -d --no-deps core
+for i in $(seq 1 60); do
+  if dc exec -T core node -e 'fetch("http://127.0.0.1:8080/healthz").then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))' 2>/dev/null; then echo "Core 已带 CORE_OWNER_ACCOUNT_ID 重启（${i}×2s）"; break; fi
+  if [ "$i" = 60 ]; then echo "Core 重启后 2 分钟没就绪" >&2; exit 1; fi
+  sleep 2
+done
+if [ "$(dc exec -T core printenv CORE_OWNER_ACCOUNT_ID | tr -d '\r')" != "$owner_id" ]; then echo "Core 没拿到 CORE_OWNER_ACCOUNT_ID" >&2; exit 1; fi
+
+step="Playwright 并入"
+PW_DIR="$pw_dir" E2E_BASE="$base" E2E_EMAIL="$email" E2E_PASSWORD="$password" E2E_OWNER_ID="$owner_id" \
+  E2E_FAMILY_INVITE="$family_invite" E2E_FAMILY_PASSWORD="$family_password" E2E_REPORT_DIR="$report" \
+  node "$root/shell/e2e/owner-merge.mjs"
