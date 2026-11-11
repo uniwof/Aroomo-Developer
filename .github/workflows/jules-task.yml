@@ -41,7 +41,7 @@ jobs:
           if labels & {"risk:A", "risk:A+"} or i["state"] != "open":
               raise SystemExit("A/A+ 或已关闭的工单不派给 Jules")
           rules = ("规则：起点分支 dev，PR 目标 dev；只改工单「文件边界」内的文件，改动尽量小；不加新依赖；"
-                   "不修改 LobeHub；不写入任何密码/Key/Token/cookie；界面正文 14px、点击区≥44px、保留读屏 aria、只用一个强调色；"
+                   "不修改 LobeHub；不写入任何密码/Key/Token/cookie；界面字号按正常商业标准不放大、点击区≥44px、保留读屏 aria、只用一个强调色；"
                    "文字用简体中文；绝不碰 core/src/confirm、core/src/auth、core/src/vault、core/src/db、core/migrations、.github、deploy、installer。"
                    f"PR 正文三行（改了什么、怎么测、风险）并写「工单 #{i['number']}」。")
           print(json.dumps({
