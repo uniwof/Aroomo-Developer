@@ -6,21 +6,23 @@
 import { randomBytes } from 'node:crypto';
 import pg from 'pg';
 import type { Db, Queryable } from '../../src/db/db.js';
+import { grantAppRole } from '../../src/db/app-role.js';
 import { migrate } from '../../src/db/migrate.js';
 import { openPglite } from './db.js';
 
 export const RLS_APP_ROLE = 'aroomo_rls_app_test';
 
-const grantSql = (schema: string) => `
-  DO $$ BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${RLS_APP_ROLE}') THEN
-      CREATE ROLE ${RLS_APP_ROLE} NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-  END $$;
-  GRANT USAGE ON SCHEMA ${schema} TO ${RLS_APP_ROLE};
-  GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${schema} TO ${RLS_APP_ROLE};
-  GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ${schema} TO ${RLS_APP_ROLE};
-`;
+/** 与生产同一条授权路径：先建无登录角色，再以所有者身份调 grantAppRole（#413） */
+async function grantRlsRole(owner: Queryable): Promise<void> {
+  await owner.exec(`
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${RLS_APP_ROLE}') THEN
+        CREATE ROLE ${RLS_APP_ROLE} NOLOGIN NOSUPERUSER NOBYPASSRLS;
+      END IF;
+    END $$;
+  `);
+  await grantAppRole(owner, RLS_APP_ROLE);
+}
 
 export interface RlsTarget {
   name: string;
@@ -32,7 +34,7 @@ const pgliteRls: RlsTarget = {
   name: 'pglite',
   async open() {
     const db = await openPglite();
-    await db.exec(grantSql('public'));
+    await grantRlsRole(db);
     await db.exec(`SET ROLE ${RLS_APP_ROLE}`);
     return db;
   },
@@ -75,7 +77,7 @@ function realPgRls(url: string): RlsTarget {
         close: () => c.end(),
       };
       await migrate(db);
-      await db.exec(grantSql(schema));
+      await grantRlsRole(db);
       await db.exec(`SET ROLE ${RLS_APP_ROLE}`);
       return db;
     },

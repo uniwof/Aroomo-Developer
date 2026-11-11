@@ -239,7 +239,7 @@ describe.each(rlsTargets)('RLS P2 users / user_invites / audit_log（$name）', 
       expect((await userScoped(db, OWNER).query('SELECT * FROM audit_log')).rows).toEqual([]);
       expect((await systemScoped(db).query('SELECT * FROM audit_log')).rows).toHaveLength(1);
     });
-    it('M4 仍然只追加：任何范围（不设 / 用户 / 系统）的 UPDATE / DELETE 都抛出指定错误，库快照不变', async () => {
+    it('M4 仍然只追加：任何范围（不设 / 用户 / 系统）的 UPDATE / DELETE 都被拒（触发器报错或应用角色无权限），库快照不变', async () => {
       const db = await open();
       await new PgAuditLog(db, () => T0).append(entry('1'));
       await new PgAuditLog(db, () => T0).append(entry('2'));
@@ -247,8 +247,8 @@ describe.each(rlsTargets)('RLS P2 users / user_invites / audit_log（$name）', 
       const before = await snap();
       expect(before).toHaveLength(2);
       for (const [name, scope] of [['none', db], ['user', userScoped(db, XIAO)], ['system', systemScoped(db)]] as const) {
-        await expect(scope.query(`UPDATE audit_log SET note='x' RETURNING id`), `${name} UPDATE`).rejects.toThrow(/audit_log is append-only \(UPDATE blocked\)/);
-        await expect(scope.query('DELETE FROM audit_log RETURNING id'), `${name} DELETE`).rejects.toThrow(/audit_log is append-only \(DELETE blocked\)/);
+        await expect(scope.query(`UPDATE audit_log SET note='x' RETURNING id`), `${name} UPDATE`).rejects.toThrow(/audit_log is append-only \(UPDATE blocked\)|permission denied for table audit_log/);
+        await expect(scope.query('DELETE FROM audit_log RETURNING id'), `${name} DELETE`).rejects.toThrow(/audit_log is append-only \(DELETE blocked\)|permission denied for table audit_log/);
       }
       expect(await snap()).toEqual(before);
     });
