@@ -110,7 +110,7 @@ export class VaultService {
     const cur = await this.store.get(userId, id);
     if (!cur) throw notFound('找不到这个条目');
     await this.confirm.require(
-      { scope: `vault.reveal:${id}`, kind: 'credential', title: `查看「${cur.name}」的明文`, consequences: ['明文会显示在屏幕上，看完请关闭页面'], confirmLabel: '确认查看', payload: { id } },
+      { scope: `vault.reveal:${id}`, kind: 'credential', title: `查看「${cur.name}」的明文`, consequences: ['明文会显示在屏幕上，看完请关闭页面'], confirmLabel: '确认查看', allowAccount: true, payload: { id } },
       ctx,
       audit,
     );
@@ -130,7 +130,7 @@ export class VaultService {
     const cur = await this.store.get(userId, id);
     if (!cur) throw notFound('找不到这个条目');
     await this.confirm.require(
-      { scope: `vault.delete:${id}`, kind: 'irreversible', title: `删除「${cur.name}」`, consequences: ['删除后无法恢复', '用到它的工具会调用失败'], confirmLabel: '确认删除', payload: { id } },
+      { scope: `vault.delete:${id}`, kind: 'irreversible', title: `删除「${cur.name}」`, consequences: ['删除后无法恢复', '用到它的工具会调用失败'], confirmLabel: '确认删除', allowAccount: true, payload: { id } },
       ctx,
       audit,
     );

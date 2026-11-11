@@ -11,6 +11,8 @@
  *      → 返回一次性 confirmToken；
  *   4. 带 confirmToken 重新调用原接口 → 执行。令牌绑定 scope + 操作者 + 请求体加盐摘要，用过即作废，默认 5 分钟过期。
  * - 重要确认只能由主人本人完成（操作员没有 confirm:important，D62）。
+ *   例外（#346）：调用方在 spec 里声明 allowAccount 的操作（家人删 / 查看「自己」的保险箱条目），
+ *   由家人账号本人做重要确认；确认令牌绑定「账号 + 资源（scope）+ 请求体」，拿别人的令牌无效。
  * - 令牌只存 SHA-256；请求体只存加盐 SHA-256（可能含 Key，不存原文）。
  * 前端组件约定见 docs/architecture/CONFIRM-CARD.md。
  */
@@ -45,6 +47,11 @@ export interface ConfirmSpec {
   consequences?: string[];
   /** 第二次点击按钮上的字，默认「确认」 */
   confirmLabel?: string;
+  /**
+   * 账号本人也可以做这次重要确认（#346）。只给「操作自己名下数据」的调用点用；
+   * 操作员、客户端令牌不受影响（仍然 403），确认卡按 actor 绑定，账号只能点自己的卡。
+   */
+  allowAccount?: boolean;
   /** 绑定到令牌的请求内容（例如新增 Key 的请求体）；只存加盐摘要 */
   payload?: unknown;
 }
@@ -54,7 +61,20 @@ export interface ConfirmCtx {
   actor: string;
   confirmToken?: string;
   canConfirmImportant: boolean;
+  /** 发起者的凭据类型（confirmCtx 填）；只有 'user'（账号会话）能走 allowAccount 本人确认（#346 M2） */
+  principalType?: 'owner' | 'operator' | 'user' | 'client';
 }
+
+/**
+ * #346：家人账号本人确认自己的条目——必须是账号会话（不是 arc_ / 操作员 / 设备令牌）、actor 是 user:<id>、
+ * 调用点声明了 allowAccount、且本身没有 confirm:important（主人账号仍走主人那条路）。
+ */
+export function isAccountSelf(spec: Pick<ConfirmSpec, 'allowAccount'>, ctx: Pick<ConfirmCtx, 'actor' | 'canConfirmImportant' | 'principalType'>): boolean {
+  return spec.allowAccount === true && ctx.principalType === 'user' && ctx.actor.startsWith('user:') && !ctx.canConfirmImportant;
+}
+
+/** 第二步核对本人当前密码（和登录共用失败计数与锁定）；失败抛 HttpError（401 BAD_CREDENTIALS / 429 TOO_MANY_ATTEMPTS） */
+export type AccountPasswordCheck = (userId: string, password: string, clientKey: string, audit: AuditFn) => Promise<void>;
 
 export interface ChallengeRow {
   id: string;
@@ -287,9 +307,13 @@ export interface ConfirmServiceOptions {
   /** 重新验证的有效时限（秒），默认 300 */
   reauthMaxAgeS?: number;
   ttlMs?: number;
+  /** #346 M1：家人本人确认时第二步核对密码；不传 = 家人本人确认一律 503（失败即关闭） */
+  accountPassword?: AccountPasswordCheck;
 }
 
 export interface ChallengeJson {
+  /** #346：家人本人确认，第二步要带本人登录密码 */
+  requiresPassword?: true;
   id: string;
   level: 'important';
   kind: ImportantKind;
@@ -308,7 +332,7 @@ export interface ChallengeJson {
 }
 
 export class ConfirmService {
-  readonly #o: Required<Omit<ConfirmServiceOptions, 'access'>> & Pick<ConfirmServiceOptions, 'access'>;
+  readonly #o: Required<Omit<ConfirmServiceOptions, 'access' | 'accountPassword'>> & Pick<ConfirmServiceOptions, 'access' | 'accountPassword'>;
 
   constructor(
     private readonly store: ChallengeStore,
@@ -317,8 +341,9 @@ export class ConfirmService {
     this.#o = { reauth: 'required', reauthMaxAgeS: 300, ttlMs: CONFIRM_TTL_MS, ...opts };
   }
 
-  toJson(r: ChallengeRow): ChallengeJson {
+  toJson(r: ChallengeRow, accountSelf = false): ChallengeJson {
     return {
+      ...(accountSelf ? { requiresPassword: true } : {}),
       id: r.id,
       level: 'important',
       kind: r.kind,
@@ -345,14 +370,15 @@ export class ConfirmService {
       await audit('confirm.normal', target, 'ok');
       return;
     }
-    if (!ctx.canConfirmImportant) {
+    const selfAccount = isAccountSelf(spec, ctx);
+    if (!ctx.canConfirmImportant && !selfAccount) {
       await audit('confirm.denied', target, 'denied', spec.kind);
       throw new HttpError(403, 'FORBIDDEN', '这个操作需要主人本人确认');
     }
     if (!ctx.confirmToken) {
-      const ch = await this.#create(spec, ctx.actor);
+      const ch = await this.#create(spec, ctx.actor, selfAccount);
       await audit('confirm.requested', target, 'ok', `${spec.kind} ${ch.id}`);
-      throw new HttpError(428, 'CONFIRM_REQUIRED', '这个操作需要确认', { confirm: this.toJson(ch) });
+      throw new HttpError(428, 'CONFIRM_REQUIRED', '这个操作需要确认', { confirm: this.toJson(ch, selfAccount) });
     }
     const now = this.#o.now();
     const r = await this.store.findByTokenHash(ctx.actor, sha256(ctx.confirmToken));
@@ -372,12 +398,14 @@ export class ConfirmService {
     await audit('confirm.consumed', target, 'ok', `${r.kind} ${r.id}`);
   }
 
-  async #create(spec: ConfirmSpec, actor: string): Promise<ChallengeRow> {
+  async #create(spec: ConfirmSpec, actor: string, selfAccount = false): Promise<ChallengeRow> {
     const kind = spec.kind as ImportantKind;
     const consequences = (spec.consequences ?? []).map((c) => c.trim()).filter(Boolean);
     if (consequences.length === 0) throw new Error(`重要确认必须写明后果（scope=${spec.scope}）`);
     let requiresReauth = false;
-    if (kind === 'credential') {
+    // 家人本人确认：新鲜身份因素是第二步的本人密码（Access 只放所有者，家人过不去）；没接密码核对就失败即关闭
+    if (selfAccount && !this.#o.accountPassword) throw new HttpError(503, 'ACCOUNT_REAUTH_NOT_CONFIGURED', '这个操作需要输入密码确认，但服务器还没有接好');
+    if (kind === 'credential' && !selfAccount) {
       if (this.#o.reauth === 'required') {
         if (!this.#o.access) {
           throw new HttpError(503, 'ACCESS_REAUTH_NOT_CONFIGURED', '涉及凭据的操作需要重新验证身份，但服务器还没有配置 Cloudflare Access');
@@ -409,10 +437,10 @@ export class ConfirmService {
     return row;
   }
 
-  async get(id: string, actor: string): Promise<ChallengeJson> {
+  async get(id: string, actor: string, accountSelf = false): Promise<ChallengeJson> {
     const r = await this.store.get(actor, id);
     if (!r || r.actor !== actor) throw notFound('找不到这个确认');
-    return this.toJson(r);
+    return this.toJson(r, accountSelf);
   }
 
   /**
@@ -421,7 +449,7 @@ export class ConfirmService {
   async step(
     id: string,
     step: 1 | 2,
-    ctx: { actor: string; accessJwt?: string },
+    ctx: { actor: string; accessJwt?: string; accountSelf?: boolean; password?: string; clientKey?: string },
     audit: AuditFn,
   ): Promise<{ challenge: ChallengeJson; confirmToken?: string }> {
     const now = this.#o.now();
@@ -439,7 +467,7 @@ export class ConfirmService {
       if (!r.step1At) await this.store.markStep1(ctx.actor, id, now);
       const fresh = (await this.store.get(ctx.actor, id)) as ChallengeRow;
       await audit('confirm.step1', target, 'ok', r.id);
-      return { challenge: this.toJson(fresh) };
+      return { challenge: this.toJson(fresh, ctx.accountSelf === true) };
     }
 
     if (!r.step1At) return reject(409, 'CONFIRM_STEP1_REQUIRED', '请先点第一次');
@@ -447,7 +475,23 @@ export class ConfirmService {
     if (wait > 0) return reject(425, 'CONFIRM_TOO_EARLY', '请稍等几秒再点', { retryAfterMs: wait });
 
     let reauthNote = '';
-    if (r.kind === 'credential') {
+    if (ctx.accountSelf) {
+      // #346 M1：家人本人确认，第二步必须输入本人当前密码（不进日志、审计、请求体摘要）
+      const check = this.#o.accountPassword;
+      if (!check) return reject(503, 'ACCOUNT_REAUTH_NOT_CONFIGURED', '这个操作需要输入密码确认，但服务器还没有接好');
+      if (!ctx.password) {
+        // 直接 throw，不经 reject()：CodeQL 把带 PASSWORD_* 字面量的调用结果当成密码，经 step 返回值流进 sha256（告警 #20 误报）
+        await audit(`confirm.step${step}`, target, 'failed', 'PASSWORD_REQUIRED');
+        throw new HttpError(401, 'PASSWORD_REQUIRED', '请输入你的登录密码再确认');
+      }
+      try {
+        await check(ctx.actor.slice('user:'.length), ctx.password, ctx.clientKey ?? '', audit);
+      } catch (e) {
+        if (e instanceof HttpError) return reject(e.statusCode, e.code, e.message);
+        throw e;
+      }
+      reauthNote = ' reauth=password';
+    } else if (r.kind === 'credential') {
       if (r.requiresReauth) {
         const a = ctx.accessJwt && this.#o.access ? await this.#o.access.verify(ctx.accessJwt) : null;
         if (!a) return reject(401, 'ACCESS_REAUTH_REQUIRED', '请重新验证身份（Cloudflare Access）后再点');
@@ -465,6 +509,6 @@ export class ConfirmService {
     if (!(await this.store.issueToken(ctx.actor, id, sha256(token), now))) return reject(409, 'CONFIRM_USED', '这个确认已经完成了');
     await audit('confirm.step2', target, 'ok', `${r.id}${reauthNote}`);
     const fresh = (await this.store.get(ctx.actor, id)) as ChallengeRow;
-    return { challenge: this.toJson(fresh), confirmToken: token };
+    return { challenge: this.toJson(fresh, ctx.accountSelf === true), confirmToken: token };
   }
 }
