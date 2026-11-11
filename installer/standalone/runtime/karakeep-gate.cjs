@@ -47,6 +47,15 @@ function safeTarget(raw) {
   return raw.replace(/[^\x21-\x7e]/gu, (c) => Buffer.from(c).toString('hex').toUpperCase().replace(/../g, '%$&'));
 }
 
+/**
+ * 302 的 Location（CodeQL #6，#373）：'/.' + safeTarget(raw)。以 '/.' 开头的是路径绝对引用（RFC 3986 §4.2），后面拼什么都改不了主机；
+ * 浏览器解析时去掉点段（§5.2.4），落点与 safeTarget(raw) 相同（'/./x?q' → '/x?q'）。CodeQL 把这个固定前缀认作主机名屏障，
+ * 与 safeTarget 叠成两层。落点等价由 installer/standalone/test/karakeep-gate.test.cjs 的穷举性质测试固定。
+ */
+function locationFor(raw) {
+  return '/.' + safeTarget(raw);
+}
+
 /** 向内部 Karakeep 发一个请求，返回 { status, headers, body } 或 null（连不上 / 超时） */
 function call(upstream, publicHost, method, path, { cookie, json, origin } = {}) {
   return new Promise((resolve) => {
@@ -134,10 +143,8 @@ function createGate({ publicPort, upstreamPort, host, email, password, publicUrl
         const cookies = await login();
         if (cookies) {
           // 自动登录后 30 秒内不再尝试（Cookie 不生效时不无限跳转）
-          // Location = '/.' + 安全路径（CodeQL #6，#373）：以 '/.' 开头的是路径绝对引用（RFC 3986 §4.2），后面拼什么都改不了主机，
-          // 浏览器解析时去掉点段，落到同一路径（'/./x?q' → '/x?q'）；CodeQL 把这个固定前缀认作主机名屏障，safeTarget 仍负责只收同源路径
           res.writeHead(302, {
-            location: '/.' + safeTarget(req.url),
+            location: locationFor(req.url),
             'set-cookie': [...cookies, `${MARK}=1; Path=/; Max-Age=30; HttpOnly; SameSite=Lax`],
             'cache-control': 'no-store',
           });
@@ -187,4 +194,4 @@ function freePort() {
   });
 }
 
-module.exports = { createGate, freePort, safeTarget, hasCookie };
+module.exports = { createGate, freePort, safeTarget, locationFor, hasCookie };
