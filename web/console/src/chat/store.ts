@@ -413,6 +413,13 @@ export function claimLegacy(account: string, storage: Storage = globalThis.local
  * 直通一时问不到、退回 owner 那份期间新开的会话，恢复后会补并；她在账号那份删掉的会话 id 已在集合里，不会被并回来。
  * 'owner' 那份保留不删、不改。放不下（超过上限）或写不进：什么都不写、集合不变，下次再试。返回这次并进来几段。
  */
+/**
+ * #377 第 2 轮 C1：要不要把 'owner' 那份并进 me 账号那份——只有拿到账号 id 且 Core 确认是所有者（owner=true）才并。
+ * 家人（owner=false）和所有者共用浏览器时，门坏了所有者的会话会并进家人账号，所以单独成函数、单独测。
+ */
+export function shouldMergeOwnerShare(me: string | null | undefined, who: { owner: boolean } | null | undefined): me is string {
+  return !!me && who?.owner === true;
+}
 export const OWNER_SHARE = 'owner';
 const ownerMergedKey = (account: string) => `${LEGACY_KEY}.owner-merged-ids:u:${account}`;
 function readMergedIds(storage: Storage, account: string): Set<string> {
