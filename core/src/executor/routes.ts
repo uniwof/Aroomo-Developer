@@ -134,7 +134,7 @@ export function registerExecutorRoutes(
     Body: {
       status: "succeeded" | "failed" | "cancelled";
       summary: string;
-      error?: string;
+      error?: string | { code?: string; message?: string };
     };
   }>(
     "/api/executor/tasks/:id/result",
@@ -148,7 +148,19 @@ export function registerExecutorRoutes(
           properties: {
             status: { enum: ["succeeded", "failed", "cancelled"] },
             summary: { type: "string", maxLength: 2000 },
-            error: { type: "string", maxLength: 1000 },
+            // 执行员发 { code, message }（executor/src/protocol.ts ResultRequest），旧客户端发字符串：两种都收，存成一行字符串
+            error: {
+              anyOf: [
+                { type: "string", maxLength: 1000 },
+                {
+                  type: "object",
+                  properties: {
+                    code: { type: "string", maxLength: 64 },
+                    message: { type: "string", maxLength: 1000 },
+                  },
+                },
+              ],
+            },
             screenshot: { type: "object" },
           },
         },
@@ -156,11 +168,16 @@ export function registerExecutorRoutes(
     },
     async (req) => {
       const w = who(req);
+      const e = req.body.error;
+      const error =
+        typeof e === "object" && e
+          ? [e.code, e.message].filter(Boolean).join(": ") || undefined
+          : e;
       await svc.result(
         w.userId,
         w.clientId,
         req.params.id,
-        req.body,
+        { ...req.body, error },
         req.audit,
       );
       return {};
