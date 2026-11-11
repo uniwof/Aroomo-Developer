@@ -1,7 +1,7 @@
 # CONTEXT（开工只读这份+工单，D239）
 
 阶段与待办看 GitHub 里程碑和 #213 固定评论。
-有工单连续做，没工单记一行就结束；needs:main 归主会话。测试只写验收与必改项要求的；必改项一轮改完；收费暂停（D250）；不为 POOL/以后写代码。
+有工单连续做，没工单静默结束；needs:main 归主会话。测试只写验收与必改项要求的；必改项一轮改完；收费暂停（D250）；不为 POOL/以后写代码。
 
 ## 协作（D261，所有者 11-10）
 GitHub issue/PR/标签/仓库文档是唯一真相；各线互不汇报、也不报主会话，只改状态留痕迹。开工只读本文件+本线工单+PR 首帖，不读 daily 日志和其他长文档。PR 首帖=实现 spec，定了就更新。进展、阻塞、审查请求写成工单/PR 评论和标签。当前里程碑=最早未关闭里程碑（只剩 deferred 看下一个）。
@@ -28,5 +28,5 @@ GitHub issue/PR/标签/仓库文档是唯一真相；各线互不汇报、也不
 - D251：扩白名单或加 scope 要所有者批准；旧授权不自动得新工具。改 /mcp、scope、白名单前读 docs/api/mcp-d251.md。
 
 ## 边界
-后台 core/src 业务 | 隔离 migrations RLS、core/src/db、seed | 控制台 web/console、shell、deploy | 执行员 executor、.github、scripts/ci | 流程工具只修不加 | 独立版冻结。只改工单写明的文件。C 界面：默认字号跟 sumus（11–16px）、设置滑块 12–32、点击区 ≥44px、aria。
+后台 core/src 业务 | 隔离 migrations RLS、core/src/db、seed | 控制台 web/console、shell、deploy | 执行员 executor、.github、scripts/ci | 流程工具只修不加 | 独立版冻结。只改工单写明的文件。C 界面：字号按正常商业标准，不放大；点击区 ≥44px、aria。
 一单一会话。PR 说明三行（改了什么/怎么测/风险）+「工单 #N」。细节 grep docs/DECISIONS.md 编号。
