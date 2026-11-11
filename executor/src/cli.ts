@@ -32,6 +32,7 @@ import { HANDLERS } from './tasks/handlers.js';
 import { addTemplate, listRecipes, removeSite, TEMPLATE_NAMES, type TemplateName } from './tasks/recipe-templates.js';
 import { loadRecipes, withRecipes } from './tasks/recipes.js';
 import { probeCore, transportFor } from './transport.js';
+import { versionWithCommit } from './version.js';
 import { cfSecretPath, saveCfSecret, setCfClientId } from './cf-access.js';
 
 export const VERSION = '0.1.0';
@@ -95,7 +96,7 @@ export async function main(argv: string[]): Promise<number> {
       } catch {
         tokenOk = false;
       }
-      out(`版本：${VERSION}`);
+      out(`版本：${versionWithCommit(VERSION)}`);
       out(`Core：${cfg.coreUrl}`);
       out(`设备令牌：${tokenOk ? '已就绪' : '缺少'}`);
       out(`白名单网站：${buildAllowlist(cfg).siteCount} 个`);
@@ -219,7 +220,7 @@ export async function main(argv: string[]): Promise<number> {
         logger,
         deviceName: cfg.deviceName,
         platform: `${process.platform}-${process.arch}`,
-        version: VERSION,
+        version: versionWithCommit(VERSION),
       });
       const ac = new AbortController();
       const stop = () => ac.abort();
