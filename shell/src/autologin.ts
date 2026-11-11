@@ -80,13 +80,19 @@ export class LobeLocalAutoLogin implements AutoLogin {
 const hasControlChar = (s: string) => Array.from(s).some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f);
 
 /**
- * 302 跳转目标：只收同源相对路径（单个 / 开头，不是 // 或 /\\，不含浏览器会剥掉的控制字符），否则回 /。
+ * 302 跳转目标：只收同源相对路径（单个 / 开头，不是 // 或 /\\，不含浏览器会剥掉的控制字符，点段归一化后也不以 // 开头），否则回 /。
  * 通过后把 U+0021–U+007E 以外的字符百分号编码（UTF-8），否则 writeHead 遇到非 ASCII 会抛 ERR_INVALID_CHAR。
  * 注意：不要改成先 new URL() 解析、再拼 pathname + search —— 那会把 /.//x 这类输入变成 //x，重新引入 CodeQL #7 的根因。
  * 结论由 test/autologin.test.ts 的穷举性质测试固定。
  */
 export function safeLocalPath(raw: string | null): string {
   if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\') || hasControlChar(raw)) return '/';
+  // #400（同 #386 M1）：/.//x、/a/..//x、/./\x 归一化后以 // 开头，下一跳会成为协议相对地址 → 回 /；只用解析结果做判断，返回值仍是原串编码后的结果
+  try {
+    if (new URL(raw, 'http://shell.invalid').pathname.startsWith('//')) return '/';
+  } catch {
+    return '/';
+  }
   return raw.replace(/[^\x21-\x7e]/gu, (c) => Buffer.from(c).toString('hex').toUpperCase().replace(/../g, '%$&'));
 }
 
@@ -94,6 +100,20 @@ export function safeLocalPath(raw: string | null): string {
 export function safeCallback(raw: string | null): string {
   const path = safeLocalPath(raw);
   return /^\/(signin|signup)(\/|\?|$)/.test(path) ? '/' : path;
+}
+
+/**
+ * 自动登录 302 的 Location（CodeQL #7，#400）：'/.' + 安全路径。以 '/.' 开头的是路径绝对引用（RFC 3986 §4.2），后面拼什么都改不了主机；
+ * 浏览器解析时去掉点段（§5.2.4），落点与安全路径相同（'/./x?q' → '/x?q'）。CodeQL 把这个固定前缀认作主机名屏障，与 safeLocalPath 叠成两层。
+ * 落点等价由 test/autologin.test.ts 的穷举性质测试固定。
+ */
+export function locationFor(raw: string | null): string {
+  return '/.' + safeLocalPath(raw);
+}
+
+/** 登录页 / 注册页上的 callbackUrl 对应的 Location（同上） */
+export function callbackLocationFor(raw: string | null): string {
+  return '/.' + safeCallback(raw);
 }
 
 export function isLoopbackHost(host: string): boolean {
