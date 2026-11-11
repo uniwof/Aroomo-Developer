@@ -8,12 +8,20 @@
 有工单连续做，没工单记一行就结束；needs:main 归主会话。测试只写验收与必改项要求的；必改项一轮改完；收费暂停（D250）；不为 POOL/以后写代码。
 D251 MCP：外部客户端不能确认 important、不能调白名单外工具；白名单只有内置只读 read_webpage，list_tools/call_tool 同一清单；扩白名单或加 scope 要所有者批准；旧授权不自动得新工具。
 
+## 协作（D261，所有者 2026-11-10 同意）
+【协作方式：痕迹协作（D261，所有者 2026-11-10 同意）】GitHub issue / PR / 标签 / 仓库文档是唯一真相；各线不互相汇报，也不给主会话汇报，只改状态、留痕迹。
+- 开工只读 docs/CONTEXT.md + 本线工单 + 对应 PR 首帖，不读 daily 日志、不读其他长文档。
+- PR 首帖就是实现 spec：讨论（审查意见、所有者原话、裁定）定了就编辑首帖保持最新。
+- 进展、阻塞、审查请求一律写成工单/PR 评论和标签（status:*、needs-leader-review、needs:main 等）。
+- 当前里程碑以 GitHub 里程碑为准（最早的未关闭里程碑；只剩 deferred 工单时看下一个），领活时优先当前里程碑。
+
 ## 审查（D252）
 - A+（负责人完整审，最多两轮，二轮只核对上轮必改）：鉴权/会话/令牌、RLS 与隔离（userId、迁移）、保险箱/Key、钱、删数据、生产部署、新 scope/MCP 工具/白名单、确认卡与审计逻辑。碰 auth、迁移、RLS、vault、confirm、audit、部署脚本自动升 A+。
 - A：只审一次，首审列全必改；改完 PR 贴「必改逐条对照 + range-diff」，CI 与 CodeQL 绿即合；之后发现的开后续工单（可利用越权/花钱漏洞例外）。
 - B/C：不经负责人，CI 绿 squash 合 dev。反向测试只覆盖验收标准 + 越权（跨账号、缺权限、白名单外）。
 - 复审只送增量 diff + range-diff + 上轮必改逐条回复；有待审立刻送。变基 range-diff 无逻辑变化保留批准（D248）。
 - 有未获 leader-approved 的 A/A+ PR 时不合 main、不打生产标签；dev→main 只由所有者合。
+- 【审查（负责人无额度）】负责人 PromptQL Opus 额度已用尽，近期不可用。规则：B/C 类 CI+CodeQL 绿即自己 squash 合入 dev；A 类自测+越权测试通过、脱敏后送 Groq 或 Gemini 快审，按文档确认无误后合入 dev（快审结论以 PR 评论留痕）；A+ 高危（auth、登录、vault、confirm、audit、迁移、RLS、部署脚本）不自行合，开 PR 加 needs-leader-review 挂起等额度恢复，在 PR 评论一行请求负责人审。绝不合 main、不碰生产。
 
 ## D199 红线（永远）
 1 密钥、cookie、验证码不进仓库/日志/模型
