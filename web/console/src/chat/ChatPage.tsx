@@ -342,7 +342,13 @@ export function ChatPage({ fetchImpl }: { fetchImpl?: typeof fetch } = {}) {
     void fetchAccount().then((who) => {
       if (!alive) return;
       const me = who?.id ?? null;
-      if (shouldMergeOwnerShare(me, who)) mergeOwnerShare(me); // #293
+      const merged = shouldMergeOwnerShare(me, who) ? mergeOwnerShare(me) : 0; // #293
+      if (merged > 0 && me === acctRef.current && listAcct.current === me) {
+        // #405：标签页本来就记着这个账号（如直接在控制台登录），挂载时列表已读过她那份；刚并进来的会话马上补进当前列表，不等下次打开
+        const shown = new Set(listRef.current.map((c) => c.id));
+        const fresh = loadConversations(me).filter((c) => !shown.has(c.id));
+        if (fresh.length) setList((prev) => [...prev, ...fresh.filter((c) => !prev.some((p) => p.id === c.id))].sort((a, b) => b.updatedAt - a.updatedAt));
+      }
       if (me && me !== acctRef.current) {
         // 先换列表、再换账号（同一次更新）：保存只在列表和账号对得上时才写。
         // #292：问到之前在这页新开、说过话的会话（打开时没有或是空的）是她的，带过去；读进来的旧那份不带
