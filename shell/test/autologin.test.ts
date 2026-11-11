@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadConfig, ConfigError } from '../src/config.js';
 import { createShellServer } from '../src/server.js';
-import { AUTOLOGIN_MARK, LobeLocalAutoLogin, safeCallback, safeLocalPath } from '../src/autologin.js';
+import { AUTOLOGIN_MARK, LobeLocalAutoLogin, callbackLocationFor, locationFor, safeCallback, safeLocalPath } from '../src/autologin.js';
 
 // 假的 LobeHub：Better Auth 的 sign-in / sign-up / get-session
 let lobe: Server;
@@ -66,7 +66,7 @@ describe('本机主人自动登录（独立版 D78）', () => {
   it('第一次：登录失败 → 注册 → 带会话 Cookie 跳回原页面', async () => {
     const r = await fetch(`${base}/chat?x=1`, { headers: { accept: 'text/html' }, redirect: 'manual' });
     expect(r.status).toBe(302);
-    expect(r.headers.get('location')).toBe('/chat?x=1');
+    expect(r.headers.get('location')).toBe('/./chat?x=1'); // #400：Location 带固定前缀 '/.'，浏览器解析后落到 /chat?x=1
     const sc = r.headers.getSetCookie().join('\n');
     expect(sc).toContain('better-auth.session_token=tok');
     expect(sc).toContain('aroomo_al=1');
@@ -79,12 +79,12 @@ describe('本机主人自动登录（独立版 D78）', () => {
   it('登录页：直接跳到 callbackUrl（只接受本站路径）', async () => {
     const r = await fetch(`${base}/signin?callbackUrl=${encodeURIComponent('/aroomo/members')}`, { headers: { accept: 'text/html' }, redirect: 'manual' });
     expect(r.status).toBe(302);
-    expect(r.headers.get('location')).toBe('/aroomo/members');
+    expect(r.headers.get('location')).toBe('/./aroomo/members');
     const evil = await fetch(`${base}/signin?callbackUrl=${encodeURIComponent('//evil.example')}`, { headers: { accept: 'text/html' }, redirect: 'manual' });
-    expect(evil.headers.get('location')).toBe('/');
+    expect(evil.headers.get('location')).toBe('/./');
     // CodeQL #7：控制字符会被浏览器剥掉（/<TAB>/x → //x），一律不收
     const tab = await fetch(`${base}/signin?callbackUrl=${encodeURIComponent('/\t/evil.example')}`, { headers: { accept: 'text/html' }, redirect: 'manual' });
-    expect(tab.headers.get('location')).toBe('/');
+    expect(tab.headers.get('location')).toBe('/./');
   });
 
   it('跳回原页面：路径解析后以 // 开头时不外跳（CodeQL #7）', async () => {
@@ -102,17 +102,18 @@ describe('本机主人自动登录（独立版 D78）', () => {
       // 302 且带自动登录标记：确实走了自动登录分支，不是碰巧回了 /
       expect(r.statusCode).toBe(302);
       expect((r.headers['set-cookie'] ?? []).join('\n')).toContain(`${AUTOLOGIN_MARK}=1`);
-      expect(r.headers.location).toBe('/');
+      expect(r.headers.location).toBe('/./');
+      expect(new URL(r.headers.location ?? '', base).host).toBe(new URL(base).host);
     }
   });
 
   it('callbackUrl 含非 ASCII：百分号编码后跳转，服务不受影响（#357 M2）', async () => {
     const r = await fetch(`${base}/signin?callbackUrl=%2F%E4%B8%AD`, { headers: { accept: 'text/html' }, redirect: 'manual' });
     expect(r.status).toBe(302);
-    expect(r.headers.get('location')).toBe('/%E4%B8%AD');
+    expect(r.headers.get('location')).toBe('/./%E4%B8%AD');
     const next = await fetch(`${base}/chat?x=1`, { headers: { accept: 'text/html' }, redirect: 'manual' });
     expect(next.status).toBe(302);
-    expect(next.headers.get('location')).toBe('/chat?x=1');
+    expect(next.headers.get('location')).toBe('/./chat?x=1');
   });
 
   it('已登录：不再登录，正常转发', async () => {
@@ -196,6 +197,33 @@ describe('safeLocalPath 穷举（#357 M1/M2）', () => {
       return null;
     }
   };
+  // #400（同 #386 M1）：点段 / 反斜杠归一化后路径以 // 开头，下一跳就是协议相对地址，一律不放行
+  const dblSlash = (s: string) => {
+    try {
+      return new URL(s, BASE).pathname.startsWith('//');
+    } catch {
+      return false;
+    }
+  };
+  // #400 C1：Location（'/.' + 安全路径）按浏览器规则解析后，与安全路径本身落点相同；多级基址能抓到前缀写错（如 '.'）
+  const LAND_BASES = [`${BASE}/`, `${BASE}/a/b/c?q=1`];
+  const landing = (s: string, base: string) => {
+    const u = new URL(s, base);
+    return `${u.host} ${u.pathname}${u.search}`;
+  };
+  const landDiff = (max: number, alpha: readonly string[], loc: (s: string) => string = locationFor, safe: (s: string) => string = safeLocalPath) => {
+    const bad: string[] = [];
+    for (const s of strings(max, alpha)) if (LAND_BASES.some((b) => landing(loc(s), b) !== landing(safe(s), b))) bad.push(JSON.stringify(s));
+    return bad.slice(0, 5);
+  };
+  const slashSlashOf = (fn: (s: string) => string, max: number, alpha: readonly string[]) => {
+    const bad: string[] = [];
+    for (const s of strings(max, alpha)) {
+      const out = fn(s);
+      if (out !== '/' && dblSlash(out)) bad.push(JSON.stringify(s));
+    }
+    return bad.slice(0, 5);
+  };
 
   it('结果要么是 /，要么解析后仍在本站，且只含 U+0021–U+007E；同一判据在原始输入上能找到外跳', () => {
     const offSite: string[] = [];
@@ -211,6 +239,9 @@ describe('safeLocalPath 穷举（#357 M1/M2）', () => {
     expect(offSite.slice(0, 5)).toEqual([]);
     expect(nonAscii.slice(0, 5)).toEqual([]);
     expect(rawEscapes).toBeGreaterThan(0); // 判据不是恒真
+    expect(slashSlashOf(safeLocalPath, 5, ALPHA)).toEqual([]);
+    expect(landDiff(5, ALPHA)).toEqual([]);
+    expect(landDiff(5, ALPHA, callbackLocationFor, safeCallback)).toEqual([]);
   });
 
   it('补充字符（\\x00 \\x1f \\x7f \\u3000 \\uFF0F ? #）与原字母表组合穷举到长度 ≤4，同一判据', () => {
@@ -227,6 +258,29 @@ describe('safeLocalPath 穷举（#357 M1/M2）', () => {
     expect(offSite.slice(0, 5)).toEqual([]);
     expect(nonAscii.slice(0, 5)).toEqual([]);
     expect(rawEscapes).toBeGreaterThan(0);
+    expect(slashSlashOf(safeLocalPath, 4, [...ALPHA, ...EXTRA])).toEqual([]);
+    expect(landDiff(4, [...ALPHA, ...EXTRA])).toEqual([]);
+    expect(landDiff(4, [...ALPHA, ...EXTRA], callbackLocationFor, safeCallback)).toEqual([]);
+  });
+
+  it('回退自检（#400）：修复前的 safeLocalPath（不查归一化后的 //）在「归一化后不以 // 开头」判据下失败；Location 前缀写成 \'.\' 或绕过安全路径，落点等价判据失败', () => {
+    const before = (raw: string | null): string => {
+      if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\') || Array.from(raw).some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f)) return '/';
+      return raw.replace(/[^\x21-\x7e]/gu, (c) => Buffer.from(c).toString('hex').toUpperCase().replace(/../g, '%$&'));
+    };
+    expect(slashSlashOf(before, 4, ALPHA).length).toBeGreaterThan(0);
+    expect(landDiff(3, ALPHA, (s) => '.' + safeLocalPath(s)).length).toBeGreaterThan(0);
+    expect(landDiff(3, ALPHA, (s) => '/.' + s).length).toBeGreaterThan(0);
+    expect(landDiff(3, ALPHA, safeLocalPath)).toEqual([]); // 对照
+  });
+
+  it('显式用例：点段归一化后以 // 开头的一律回 /（#400）', () => {
+    for (const s of ['/.//x', '/a/..//x', '/./\\x', '/.//evil.example/x']) {
+      expect(safeLocalPath(s), JSON.stringify(s)).toBe('/');
+      expect(safeCallback(s), JSON.stringify(s)).toBe('/');
+    }
+    expect(locationFor('/bookmarks?q=1')).toBe('/./bookmarks?q=1');
+    expect(callbackLocationFor('/signin?x')).toBe('/./');
   });
 
   it('显式用例：控制字符一律回 /', () => {

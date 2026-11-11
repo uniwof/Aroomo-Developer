@@ -23,7 +23,7 @@ import { BlockList, isIP } from 'node:net';
 import type { ShellConfig } from './config.js';
 import { allowAll, CORE_SESSION_COOKIES, coreSessionCookie, CoreSessionChecker, LobeSessionChecker, type SessionChecker } from './session.js';
 import { handleCoreLogout, handleLogout } from './logout.js';
-import { AUTOLOGIN_MARK, LobeLocalAutoLogin, safeCallback, safeLocalPath, type AutoLogin } from './autologin.js';
+import { AUTOLOGIN_MARK, LobeLocalAutoLogin, callbackLocationFor, locationFor, type AutoLogin } from './autologin.js';
 import {
   AccessJwtVerifier,
   EXECUTOR_BODY_MAX,
@@ -689,7 +689,7 @@ export function createShellServer(cfg: ShellConfig, deps: ShellDeps = {}) {
       const cookies = await autoLogin.login();
       if (cookies) {
         const onAuthPage = /^\/(signin|signup)(\/|$)/.test(p);
-        const location = onAuthPage ? safeCallback(url.searchParams.get('callbackUrl')) : safeLocalPath(p + url.search);
+        const location = onAuthPage ? callbackLocationFor(url.searchParams.get('callbackUrl')) : locationFor(p + url.search);
         res.writeHead(302, {
           location,
           'set-cookie': [...cookies, `${AUTOLOGIN_MARK}=1; Path=/; Max-Age=30; HttpOnly; SameSite=Lax`],
