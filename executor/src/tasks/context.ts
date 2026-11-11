@@ -45,11 +45,16 @@ export interface TaskOutcome {
 
 export type TaskHandler = (ctx: TaskContext, session: BrowserSession) => Promise<TaskOutcome>;
 
-/** 导航到 url 前后都校验白名单；跳出白名单 → 推 not_allowed 接管卡后失败 */
+/** 推接管卡失败不影响判定（照旧判失败）；但所有者点了「放弃」要原样抛 TaskCancelled → 任务记「已取消」（#397） */
+export const ignoreTakeoverError = (e: unknown): void => {
+  if (e instanceof TaskCancelled) throw e;
+};
+
+/** 导航到 url 前后都校验白名单；跳出白名单 → 推 not_allowed 接管卡后失败（卡上放弃 → 已取消） */
 export async function safeGoto(ctx: TaskContext, session: BrowserSession, url: string): Promise<void> {
   const before = ctx.allowlist.checkUrl(url);
   if (!before.ok) {
-    await ctx.takeover('not_allowed', `目标网站不在本机白名单：${before.reason}。请在执行员配置里加上它再重派任务。`).catch(() => undefined);
+    await ctx.takeover('not_allowed', `目标网站不在本机白名单：${before.reason}。请在执行员配置里加上它再重派任务。`).catch(ignoreTakeoverError);
     throw new TaskFailed('NOT_ALLOWED', before.reason);
   }
   await session.goto(url);
@@ -60,7 +65,7 @@ export async function assertStillAllowed(ctx: TaskContext, session: BrowserSessi
   const now = await session.currentUrl();
   const d = ctx.allowlist.checkUrl(now);
   if (!d.ok) {
-    await ctx.takeover('not_allowed', `页面跳到了白名单外：${d.reason}。已停止操作。`).catch(() => undefined);
+    await ctx.takeover('not_allowed', `页面跳到了白名单外：${d.reason}。已停止操作。`).catch(ignoreTakeoverError);
     throw new TaskFailed('NOT_ALLOWED', d.reason);
   }
 }

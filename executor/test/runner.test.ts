@@ -112,6 +112,15 @@ describe('执行员 ↔ 模拟 Core', () => {
     expect(browser.sessions[0]!.url).toBe('about:blank');
   });
 
+  it('白名单外的网站：not_allowed 卡上点放弃 → 回报 cancelled，不判失败（#397）', async () => {
+    makeRunner();
+    const t = core.enqueue({ kind: 'checkin', site: 'https://not-allowed.io/' });
+    await core.waitFor(() => core.takeovers.size > 0);
+    core.resolveTakeover(t.id, 'cancelled');
+    await core.waitFor(() => core.results.has(t.id));
+    expect(core.results.get(t.id)!.status).toBe('cancelled');
+  });
+
   it('页面跳出白名单：停止并失败', async () => {
     makeRunner({ redirectTo: 'https://phish.example.net/' });
     const t = core.enqueue({ kind: 'browse', site: 'https://example.com/' });
