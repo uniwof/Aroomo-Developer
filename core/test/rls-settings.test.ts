@@ -228,8 +228,21 @@ describe.each(rlsTargets)('迁移 0037 回退与回填（$name）', (target) => 
   });
 });
 
+/** 取 rejects 的错误对象（pg 与 pglite 的 DatabaseError 都带 code / column），没有拒绝就让测试失败 */
+async function dbError(p: Promise<unknown>): Promise<{ code?: string; column?: string; message: string }> {
+  try {
+    await p;
+  } catch (e) {
+    return e as { code?: string; column?: string; message: string };
+  }
+  throw new Error('期望这条语句被数据库拒绝，但它成功了');
+}
+
 describe.each(rlsTargets)('迁移 0039 user_id 去掉默认值（#380，$name）', (target) => {
-  it('漏写 user_id 的 INSERT 直接报 NOT NULL，不落到所有者名下；down → 默认值回来；再 up → 又没有', async () => {
+  /** 漏写 user_id 的旧写法：同一条 INSERT 在 up 状态必须 23502、在 down 状态必须成功 */
+  const LEGACY_INSERT = `INSERT INTO core_settings (key, value, updated_at) VALUES ('lead', '1'::jsonb, now())`;
+
+  it('M1(a)(b) 漏写 user_id 的 INSERT：up 时 SQLSTATE 23502 且列是 user_id；down 后同一条 INSERT 成功并落到 owner；再 up 又是 23502', async () => {
     const db = await target.open();
     try {
       const DOWN = readFileSync(fileURLToPath(new URL('../migrations/down/0039_core_settings_drop_default.down.sql', import.meta.url)), 'utf8');
@@ -238,16 +251,45 @@ describe.each(rlsTargets)('迁移 0039 user_id 去掉默认值（#380，$name）
           `SELECT column_default AS d FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'core_settings' AND column_name = 'user_id'`,
         )).rows[0]?.d ?? null;
       await asAdmin(db, async () => {
+        // up：没有默认值，漏写 → NOT NULL 违反（23502），报错的列就是 user_id，不是 RLS / CHECK / 权限
+        const up1 = await dbError(db.query(LEGACY_INSERT));
+        expect(up1.code).toBe('23502');
+        expect(up1.column).toBe('user_id');
         expect(await def()).toBeNull();
-        await expect(db.query(`INSERT INTO core_settings (key, value, updated_at) VALUES ('lead', '1'::jsonb, now())`)).rejects.toThrow(/null/i);
+        expect((await db.query('SELECT 1 FROM core_settings')).rows).toEqual([]);
+        // down：默认值回来；同一条 INSERT 成功，落到 owner 名下（正向对照：证明上面的失败只因为 NOT NULL）
         await db.exec(DOWN);
         expect(await def()).toMatch(/'owner'/);
+        await db.query(LEGACY_INSERT);
+        expect((await db.query('SELECT user_id, key FROM core_settings')).rows).toEqual([{ user_id: 'owner', key: 'lead' }]);
+        await db.query(`DELETE FROM core_settings WHERE key = 'lead'`);
+        // 再 up：迁移记录已删，只重跑 0039；同一条 INSERT 又是 23502
         expect(await migrate(db)).toEqual(['0039_core_settings_drop_default.sql']);
         expect(await def()).toBeNull();
+        const up2 = await dbError(db.query(LEGACY_INSERT));
+        expect(up2.code).toBe('23502');
+        expect(up2.column).toBe('user_id');
       });
-      // 应用侧照常写（显式带 user_id）
-      await new PgSettingsStore(db, 'owner').set('lead', { memberId: 'm' }, T0);
-      expect(await new PgSettingsStore(db, 'owner').get('lead')).toEqual({ memberId: 'm' });
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('M1(c) 应用角色（非超级用户、受 RLS）下，所有者和家人都经 scopedSettings 写设置：user_id 各自落对', async () => {
+    const db = await target.open();
+    try {
+      // 当前连接就是测试用应用角色（不在 asAdmin 里），不是超级用户
+      const who = (await db.query<{ u: string; s: boolean }>(`SELECT current_user AS u, (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) AS s`)).rows[0];
+      expect(who).toEqual({ u: RLS_APP_ROLE, s: false });
+      const store = new PgSettingsStore(db, 'owner');
+      await scopedSettings(store, 'owner').set('usage.limits', { who: 'owner' }, T0);
+      await scopedSettings(store, XIAO).set('usage.limits', { who: 'xiao' }, T0); // 家人前缀键 u<hex>.usage.limits
+      expect(await scopedSettings(store, 'owner').get('usage.limits')).toEqual({ who: 'owner' });
+      expect(await scopedSettings(store, XIAO).get('usage.limits')).toEqual({ who: 'xiao' });
+      const own = (await userScoped(db, 'owner').query<{ user_id: string; key: string }>('SELECT user_id, key FROM core_settings')).rows;
+      expect(own).toEqual([{ user_id: 'owner', key: 'usage.limits' }]);
+      const fam = (await userScoped(db, XIAO).query<{ user_id: string; key: string }>('SELECT user_id, key FROM core_settings')).rows;
+      expect(fam).toEqual([{ user_id: XIAO, key: xiaoKey('usage.limits') }]);
     } finally {
       await db.close();
     }
